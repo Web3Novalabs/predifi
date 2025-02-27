@@ -7,6 +7,7 @@ pub mod Predifi {
     use core::starknet::storage::{
         Map, StoragePathEntry, StoragePointerReadAccess, StoragePointerWriteAccess,
     };
+    use core::array::ArrayTrait;
 
 
     #[storage]
@@ -81,6 +82,26 @@ pub mod Predifi {
 
             self.pools.entry(pool_id).write(new_pool);
             true
+        }
+
+        fn get_all_pools(self: @ContractState) -> Array<PoolDetails> {
+            let mut pool_array = array![];
+            let pool_count = self.pool_count.read();
+            let mut i: u256 = 1;
+            
+            loop {
+                if i > pool_count {
+                    break;
+                }
+                
+                // Leer el pool usando el método entry().read()
+                let pool = self.pools.entry(i).read();
+                pool_array.append(pool);
+                
+                i += 1;
+            };
+            
+            pool_array
         }
     }
 
