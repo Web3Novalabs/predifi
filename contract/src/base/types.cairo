@@ -21,7 +21,7 @@ pub enum Status {
 pub struct UserStake {
     pub amount: u256,
     pub shares: u256,
-    pub option: felt252,
+    pub option: u8,
 }
 
 #[derive(Drop, Serde, PartialEq, starknet::Store, Clone)]
@@ -123,6 +123,8 @@ pub struct PoolDetails {
     pub poolLockTime: u64,
     pub poolEndTime: u64,
     // pool options, the options that users can bet on
+    // pub option1: felt252,
+    // pub option2: felt252,
     pub option1: felt252,
     pub option2: felt252,
     // betamounts in strk
@@ -141,3 +143,4 @@ pub struct PoolDetails {
     pub totalSharesOption2: u256,
     pub initial_share_price: u16,
 }
+

@@ -1,7 +1,7 @@
 function PoolTypes() {
   return (
     <section className="grid gap-7">
-      <div className="grid grid-cols-2 gap-20 mb-4 border-b border-[#525252] pb-10">
+      <div className="grid grid-cols-2 gap-20 mb-4 border-b border-[#131842] pb-10">
         <div className="grid gap-1">
           <h1 className="font-semibold text-xl">Win Bet (Main Pool Type)</h1>
           <p>
@@ -23,7 +23,7 @@ function PoolTypes() {
           </p>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-20 mb-4 border-b border-[#525252] pb-10 order-1">
+      <div className="grid grid-cols-2 gap-20 mb-4 pb-10 order-1">
         <div className="grid gap-1">
           <h1 className="font-semibold text-xl">
             Opinion-Based Prediction (Secondary Pool Type)
@@ -45,7 +45,7 @@ function PoolTypes() {
           </p>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-20 mb-4 border-b border-[#525252] pb-10">
+      <div className="grid grid-cols-2 gap-20 mb-4 border-b border-[#131842] pb-10">
         <div className="grid gap-1">
           <h1 className="font-semibold text-xl">Over/Under Pools </h1>
           <p>
@@ -67,7 +67,7 @@ function PoolTypes() {
           </p>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-20 mb-4 border-b border-[#525252] pb-10">
+      <div className="grid grid-cols-2 gap-20 mb-4 border-b border-[#131842] pb-10">
         <div className="grid gap-1 order-1">
           <h1 className="font-semibold text-xl">Parlay Pools </h1>
           <p>

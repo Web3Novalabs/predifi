@@ -9,6 +9,7 @@ import { useAccount } from "@starknet-react/core";
 import { useContext, useState } from "react";
 import ChevronDown from "@/svg/chevron-down";
 import { FilterContext } from "@/context/filter-context-provider";
+import { Toaster } from "@/components/ui/sonner";
 function ProfileLayout({
   children,
 }: Readonly<{
@@ -23,8 +24,10 @@ function ProfileLayout({
     try {
       await navigator.clipboard.writeText(url);
       //toast.success("Copied!");
+      Toaster.success("Copied!")
     } catch (error) {
       //toast.error("Failed to copy!, try aagin");
+      Toaster.error("Failed to copy!, try again")
       console.log(error);
     }
   };
@@ -128,6 +131,9 @@ function ProfileLayout({
         </Link>
       </div>
       {children}
+
+      
+    
     </>
   );
 }

@@ -1,4 +1,4 @@
-"use client"
+"use client";
 import { AllFilterContext } from "@/context/all-contex-provider";
 import { routes } from "@/lib/route";
 import ChevronDown from "@/svg/chevron-down";
@@ -12,7 +12,7 @@ function DashboardRoot({
   children: React.ReactNode;
 }>) {
   const { setGetType, getType } = useContext(AllFilterContext);
-  const [isOpen, setIsOpen]=useState(false);
+  const [isOpen, setIsOpen] = useState(false);
   return (
     <>
       <div className="flex justify-between items-center md:border-b md:border-[#373737] mb-12">

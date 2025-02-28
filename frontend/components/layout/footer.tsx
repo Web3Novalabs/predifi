@@ -3,7 +3,7 @@ import Twitter from "@/svg/twitter";
 
 function Footer(){
     return (
-      <footer className="">
+      <footer className="px-5 md:px-10 xl:px-[100px]">
         <h2 className="text-xl font-normal border-b pb-3">PrediFi</h2>
         <div className="flex justify-between items-center pb-8 mt-3">
           <ul className="flex justify-between items-center gap-4">

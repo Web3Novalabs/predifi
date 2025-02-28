@@ -7,6 +7,7 @@ import StarknetProvider from "@/components/starknet-provider";
 import FilterContextProvider from "@/context/filter-context-provider";
 import AllFilterContextProvider from "@/context/all-contex-provider";
 import Script from "next/script";
+import { Toaster } from "@/components/ui/sonner";
 
 const Jersey10 = Jersey_10({
   subsets: ["latin"],
@@ -21,8 +22,8 @@ const WorkSans = Work_Sans({
 
 export const metadata: Metadata = {
   title: "PrediFI - Onchain Prediction Protocol",
-  description: "Prediction Protocol built on starknet, predict various outcomes across various fields",
-
+  description:
+    "Prediction Protocol built on starknet, predict various outcomes across various fields",
 };
 
 export default function RootLayout({
@@ -37,18 +38,29 @@ export default function RootLayout({
         <Script src="https://telegram.org/js/telegram-web-app.js"></Script>
       </head>
       <body
-        className={`${Jersey10.variable} ${WorkSans.variable} antialiased px-5 md:px-10 xl:px-16 text-[#FFFFFF] font-work bg-[#13131A]`}
+        className={`${Jersey10.variable} ${WorkSans.variable} antialiased text-[#FFFFFF] font-work bg-[#100e16]`}
       >
         <StarknetProvider>
           <Nav />
           <AllFilterContextProvider>
             <FilterContextProvider>
-              <section className="max-w-screen-[1500px] mx-auto mt-14 min-h-screen pb-14">
+              <section className="max-w-screen-[1500px] mx-auto min-h-screen pb-14">
                 {children}
               </section>
             </FilterContextProvider>
           </AllFilterContextProvider>
           <Footer />
+          <Toaster
+            toastOptions={{
+              unstyled: true,
+              classNames: {
+                error: "toaster toast-error",
+                success: "toaster toast-success",
+                warning: "toaster toast-warning",
+                info: "toaster toast-info",
+              },
+            }}
+          />
         </StarknetProvider>
       </body>
     </html>
