@@ -26,7 +26,7 @@ fn deploy_predifi() -> IPredifiDispatcher {
 }
 
 
-// #[test]
+#[test]
 fn test_create_pool() {
     let contract = deploy_predifi();
     let result = contract
