@@ -28,14 +28,14 @@ pub trait IPredifi<TContractState> {
 
     // Pool Queries
     fn get_all_pools(self: @TContractState) -> Array<PoolDetails>;
-// fn get_active_pools(self: @TContractState) -> Array<PoolDetails>;
-// fn get_locked_pools(self: @TContractState) -> Array<PoolDetails>;
-// fn get_closed_pools(self: @TContractState) -> Array<PoolDetails>;
-// fn get_pool_by_id(self: @TContractState, pool_id: u32) -> PoolDetails;
-// fn get_pools_by_contract_address(
-//     self: @TContractState, contract_address: ContractAddress,
-// ) -> Array<PoolDetails>;
-// fn get_pools_by_category(self: @TContractState, category: Category) -> Array<PoolDetails>;
+    // fn get_active_pools(self: @TContractState) -> Array<PoolDetails>;
+    // fn get_locked_pools(self: @TContractState) -> Array<PoolDetails>;
+    // fn get_closed_pools(self: @TContractState) -> Array<PoolDetails>;
+    // fn get_pool_by_id(self: @TContractState, pool_id: u32) -> PoolDetails;
+    // fn get_pools_by_contract_address(
+    //     self: @TContractState, contract_address: ContractAddress,
+    // ) -> Array<PoolDetails>;
+    // fn get_pools_by_category(self: @TContractState, category: Category) -> Array<PoolDetails>;
 
     // // User Actions and Queries
     fn vote_in_pool(
