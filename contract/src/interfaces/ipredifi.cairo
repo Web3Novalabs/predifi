@@ -1,5 +1,6 @@
 use crate::base::types::{PoolDetails, Pool, Category, ValidateOptions, PoolOdds};
 use starknet::ContractAddress;
+use crate::base::types::{UserStake};
 
 #[starknet::interface]
 pub trait IPredifi<TContractState> {
@@ -23,7 +24,7 @@ pub trait IPredifi<TContractState> {
         category: Category,
     ) -> bool;
     // fn validate_pool(ref self: TContractState, pool_id: u32, option: ValidateOptions) -> bool;
-// fn upgrade(ref self: TContractState, new_class_hash: starknet::class_hash::ClassHash);
+    // fn upgrade(ref self: TContractState, new_class_hash: starknet::class_hash::ClassHash);
 
     // Pool Queries
     fn get_all_pools(self: @TContractState) -> Array<PoolDetails>;
@@ -37,9 +38,28 @@ pub trait IPredifi<TContractState> {
 // fn get_pools_by_category(self: @TContractState, category: Category) -> Array<PoolDetails>;
 
     // // User Actions and Queries
-// fn vote_in_pool(ref self: TContractState, pool_id: u32, amount: u32, option: felt252) ->
-// bool;
-// fn claim(ref self: TContractState, pool_id: u32) -> bool;
+    fn vote_in_pool(
+        ref self: TContractState,
+        pool_id: u256,
+        amount: u256,
+        option: u8,
+        recepient: ContractAddress,
+        token: ContractAddress,
+    ) -> bool;
+    // Function to update user stake
+    fn update_user_stake(
+        ref self: TContractState, user: ContractAddress, amount: u256, shares: u256, option: u8,
+    );
+    // Function to get user stake details
+    fn get_user_stake(ref self: TContractState, user: ContractAddress) -> UserStake;
+    fn calculate_user_shares(
+        ref self: TContractState,
+        user_stake: u256,
+        total_stake: u256,
+        total_shares: u256,
+        odds: u16,
+    ) -> u256;
+    // fn claim(ref self: TContractState, pool_id: u32) -> bool;
 // fn get_user_wins(self: @TContractState, user: ContractAddress) -> u32;
 // fn get_user_losses(self: @TContractState, user: ContractAddress) -> u32;
 // fn get_user_total_bets(self: @TContractState, user: ContractAddress) -> u32;
