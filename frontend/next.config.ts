@@ -12,3 +12,14 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
+// /** @type {import('next').NextConfig} */
+// const nextConfig = {
+//   output: 'standalone',
+//   env: {
+//     CAIRO_BUILD_PATH: '../contracts/target/dev/'
+//   },
+// };
+
+// module.exports = nextConfig;
+
