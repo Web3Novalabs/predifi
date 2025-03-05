@@ -1,12 +1,21 @@
 {
-    "build": {
-      "env": {
-        "PATH": "$HOME/.scarb/bin:$PATH"
-      },
-      "outputDirectory": "frontend/.next"
-    },
-    "ignoreCommand": "git diff --quiet HEAD^ HEAD"
-  }
+  "version": 2,
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/next"
+    }
+  ],
+  "build": {
+    "env": {
+      "NEXT_PUBLIC_RPC_URL": "http://localhost:3000",
+      "CAIRO_CONTRACT_PATH": "./contract/src"
+    }
+  },
+  "routes": [
+    { "src": "/(.*)", "dest": "frontend/$1" }
+  ]
+}
 
 
   
