@@ -24,6 +24,7 @@ pub trait IPoolReading<TContractState> {
     fn get_pools_by_contract_address(
         self: @TContractState, contract_address: ContractAddress,
     ) -> Array<PoolDetails>;
+    fn get_pool_by_id(self: @TContractState, pool_id: u256) -> PoolDetails;
 }
 
 
@@ -128,6 +129,13 @@ pub mod pool_reading_component {
                 i += 1;
             };
             pool_array
+        }
+
+        fn get_pool_by_id(self: @TContractState, pool_id: u256) -> PoolDetails {
+            match self.pool_details.get(pool_id) {
+                Some(pool) => pool.clone(),
+                None => panic!("Pool not found"),
+            }
         }
     }
 }
