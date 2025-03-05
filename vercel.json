@@ -3,13 +3,11 @@
       "env": {
         "PATH": "$HOME/.scarb/bin:$PATH"
       },
-      "commands": [
-        "bash contracts/scripts/install-scarb.sh",   
-        "cd contracts && scarb build",              
-        "cd frontend && pnpm install && pnpm build" 
-      ],
       "outputDirectory": "frontend/.next"
     },
     "ignoreCommand": "git diff --quiet HEAD^ HEAD"
   }
+
+
+  
   
