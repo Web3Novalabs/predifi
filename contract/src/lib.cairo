@@ -18,3 +18,9 @@ pub mod presets {
 pub mod predifi;
 pub mod vrf;
 pub mod vrf2;
+
+pub mod tests {
+    pub mod test_contract {
+        pub mod tests
+    }
+}
