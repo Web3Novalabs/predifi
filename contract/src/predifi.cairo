@@ -11,6 +11,10 @@ pub mod Predifi {
     // package imports
     use crate::base::types::{PoolDetails, PoolOdds, Pool, Category, Status, UserStake};
     use crate::interfaces::ipredifi::IPredifi;
+    use crate::presets::NonTransferableNFT::NonTransferableNFT::{
+        INonTransferableNFTDispatcher, INonTransferableNFTDispatcherTrait,
+    };
+
 
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -21,11 +25,14 @@ pub mod Predifi {
         pool_count: u256, // number of pools available totally
         pool_odds: Map<u256, PoolOdds>,
         pool_vote: Map<u256, bool>, // pool id to vote
-        user_stakes: Map<ContractAddress, UserStake> // Mapping user -> stake details
+        user_stakes: Map<ContractAddress, UserStake>, // Mapping user -> stake details
+        nft_contract: ContractAddress // Address of the NFT contract
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState) {}
+    fn constructor(ref self: ContractState, nft_contract: ContractAddress) {
+        self.nft_contract.write(nft_contract);
+    }
 
     #[abi(embed_v0)]
     impl predifi of IPredifi<ContractState> {
@@ -108,6 +115,10 @@ pub mod Predifi {
             };
 
             self.pool_odds.write(pool_id, initial_odds);
+
+            let nft_contract = self.nft_contract.read();
+            let nft = INonTransferableNFTDispatcher { contract_address: nft_contract };
+            nft.mint(pool_id);
 
             pool_id
         }
