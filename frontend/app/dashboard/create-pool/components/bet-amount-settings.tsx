@@ -1,7 +1,7 @@
 "use client";
 
 import { type Control, Controller } from "react-hook-form";
-import FormInput from "../ui/form-input";
+import FormInput from "./ui/form-input";
 import type { creatorInputs } from "@/type/type";
 
 interface BetAmountSettingsProps {

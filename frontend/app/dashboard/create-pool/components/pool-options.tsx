@@ -1,8 +1,8 @@
 "use client";
 
 import { type Control, Controller } from "react-hook-form";
-import FormInput from "../ui/form-input";
-import FormSelect from "../ui/form-select";
+import FormInput from "./ui/form-input";
+import FormSelect from "./ui/form-select";
 import type { creatorInputs } from "@/type/type";
 
 interface PoolOptionsProps {

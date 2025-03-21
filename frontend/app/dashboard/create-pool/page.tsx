@@ -4,7 +4,7 @@ import { Controller, type SubmitHandler, useForm } from "react-hook-form";
 import "react-datetime/css/react-datetime.css";
 import { useState } from "react";
 import type { creatorInputs } from "@/type/type";
-import { DateInput } from "./components/pool/date-input";
+import { DateInput } from "./components/date-input";
 import { useAccount } from "@starknet-react/core";
 import { useCustomReadContract } from "@/hooks/useContractFetch";
 import { abi } from "@/lib/abi";
@@ -15,9 +15,9 @@ import Loading from "@/components/loading-spinner";
 import FormInput from "./components/ui/form-input";
 import FormSelect from "./components/ui/form-select";
 import FormTextarea from "./components/ui/form-textarea";
-import ImageUpload from "./components/pool/image-upload";
-import PoolOptions from "./components/pool/pool-options";
-import BetAmountSettings from "./components/pool/bet-amount-settings";
+import ImageUpload from "./components/image-upload";
+import PoolOptions from "./components/pool-options";
+import BetAmountSettings from "./components/bet-amount-settings";
 
 function CreatePoolForm() {
   const [image, setImage] = useState<null | string>(null);
