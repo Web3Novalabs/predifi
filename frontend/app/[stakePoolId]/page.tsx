@@ -14,7 +14,6 @@ function StakePoolId() {
 
   const {
     register,
-    handleSubmit,
     formState: { errors },
   } = useForm();
 
