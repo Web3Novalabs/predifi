@@ -44,7 +44,7 @@ function StakePoolId() {
         </div>
         <div className="w-full gap-[40px]  flex flex-col">
           <div>
-            <h2 className="font-semibold font-work text-2xl">
+            <h2 className="font-work text-2xl text-[#CCCCCC] text-[24px] font-[600]">
               PredFi to win the hackathon Pool ID: {stakePoolId}
             </h2>
           </div>
