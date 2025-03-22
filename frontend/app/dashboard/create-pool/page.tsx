@@ -111,7 +111,7 @@ function CreatePoolForm() {
           data={data}
         />
       )}
-      <section className="max-w-7xl mx-auto px-4 py-6 text-[#CCCCCC]">
+      <section className=" py-6 text-[#CCCCCC]">
         <h2 className="text-2xl font-bold mb-6">Create a pool</h2>
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-8">
           {/* Pool Basic Info - Reverted with static status */}
@@ -147,7 +147,7 @@ function CreatePoolForm() {
               />
             </div>
 
-            <div className="flex justify-center w-full xl:justify-end order-2 sm:order-none">
+            <div className="flex justify-center w-full md:justify-end order-2 sm:order-none">
               <Controller
                 name="poolImage"
                 control={control}
