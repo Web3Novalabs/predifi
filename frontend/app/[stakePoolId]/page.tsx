@@ -32,7 +32,7 @@ function StakePoolId() {
           </button>
         </div>
       </div>
-      <div className=" w-full flex sm:flex-col lg:flex-row gap-3 mt-20">
+      <div className=" w-full flex sm:flex-col lg:flex-row gap-[100px] mt-20">
         <div className="md:w-[433px] w-full hidden lg:flex sm:mx-auto flex-none h-[404px] ">
           <Image
             src={img}
