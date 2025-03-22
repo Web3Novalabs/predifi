@@ -19,9 +19,11 @@ pub enum Status {
 
 #[derive(Drop, Serde, PartialEq, starknet::Store, Clone)]
 pub struct UserStake {
+    pub pool_id: u256,
     pub amount: u256,
     pub shares: u256,
-    pub option: u8,
+    pub option: bool,
+    pub timestamp: u64,
 }
 
 #[derive(Drop, Serde, PartialEq, starknet::Store, Clone)]
