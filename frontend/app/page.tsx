@@ -10,10 +10,10 @@ export default function Home() {
   return (
     <div className="">
       <header className="flex flex-col items-center justify-center gap-5 p-6 header-bg h-[70vh]">  
-        <h1 className="font-jersey font-normal text-center text-5xl">
+        <h1 className="font-jersey font-normal  text-white text-center text-5xl">
           Transform Predictions Into Profits!
         </h1>
-        <p className="font-normal text-center text-xl">
+        <p className="font-normal text-white text-center text-xl">
           Create and participate in decentralized prediction markets across
           sports, finance, and pop culture.
         </p>

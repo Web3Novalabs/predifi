@@ -1,6 +1,6 @@
 function HowITWork() {
   return (
-    <section className="grid gap-3 p-4 sm:p-6 lg:p-10">
+    <section className="grid gap-3 p-4 text-white sm:p-6 lg:p-10">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 h-auto lg:h-[243px]">
         <div className="bg-[#030317] rounded-md p-6 sm:p-10">
           <div className="w-full md:w-full lg:w-1/2 flex flex-col justify-between gap-4 sm:gap-8">

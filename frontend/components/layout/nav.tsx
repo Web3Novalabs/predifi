@@ -8,12 +8,14 @@ import ChevronDown from "@/svg/chevron-down";
 import Link from "next/link";
 import { routes } from "@/lib/route";
 import Image from "next/image";
+import DarkModeToggle from "./DarkmodeButton";
 
 function Nav() {
   const [openModal, setModal] = useState(false);
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect({});
   const user = isConnected ? addressSlice(address ?? "") : "Connect Wallet";
+ 
 
   const { data } = useStarkName({
     address,
@@ -22,6 +24,8 @@ function Nav() {
   function modalHandler() {
     setModal((prev) => !prev);
   }
+
+  
   return (
     <>
       {openModal && !isConnected && <Conectors setIsOpen={modalHandler} />}
@@ -36,7 +40,7 @@ function Nav() {
             <li>about</li>
           </ul>
           <Button
-            className="bg-transparent rounded-full hover:bg-transparent shadow-none border border-white text-white"
+            className="bg-transparent rounded-full hover:bg-transparent shadow-none border  "
             onClick={modalHandler}
           >
             {data ? data : user}
@@ -61,6 +65,8 @@ function Nav() {
               Disconnect Wallet
             </Button>
           )}
+
+          <DarkModeToggle />
         </nav>
       </div>
     </>
