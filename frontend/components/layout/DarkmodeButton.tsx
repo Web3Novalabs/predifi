@@ -23,7 +23,7 @@ export default function DarkModeToggle() {
         <Moon className="text-gray-400" />
        
       ) : (
-        <Sun className="text-yellow-700" />
+        <Sun className="text-yellow-600" />
         
       )}
     </button>
