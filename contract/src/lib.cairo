@@ -5,6 +5,7 @@ pub mod base {
 
 pub mod interfaces {
     pub mod ipredifi;
+    pub mod iUtils;
 }
 
 pub mod presets {
@@ -12,3 +13,4 @@ pub mod presets {
 }
 
 pub mod predifi;
+pub mod utils;
