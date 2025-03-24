@@ -143,5 +143,6 @@ pub struct PoolDetails {
     pub totalSharesOption1: u256,
     pub totalSharesOption2: u256,
     pub initial_share_price: u16,
+    pub exists: bool,
 }
 
