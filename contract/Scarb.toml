@@ -20,6 +20,12 @@ sierra = true
 [scripts]
 test = "snforge test"
 
+[[tool.snforge.fork]]
+name = "SEPOLIA_LATEST"
+url = "https://free-rpc.nethermind.io/sepolia-juno/"
+block_id.tag = "latest"
+
+
 # Visit https://foundry-rs.github.io/starknet-foundry/appendix/scarb-toml.html for more information
 
 # [tool.snforge]                                             # Define `snforge` tool section

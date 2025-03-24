@@ -777,6 +777,7 @@ fn test_set_pragma_contract_zero_addr() {
 
 /// testing if pragma price feed is accessible and returning values
 #[test]
+#[fork("SEPOLIA_LATEST")]
 fn test_get_strk_usd_price() {
     let (utils_dispatcher, _) = deploy_utils();
     let price = utils_dispatcher.get_strk_usd_price(); // accessing pragma price feeds
