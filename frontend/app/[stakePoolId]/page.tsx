@@ -47,14 +47,16 @@ function StakePoolId() {
   };
 
   return (
-    <section className="md:px-10 px-5 font-['Work_Sans']">
+    <section className="md:mx-10 px-5 font-['Work_Sans'] xl:px-[70px]">
       <div className="w-full border-b-[1px] border-[#373737] flex justify-between">
         <div className="flex gap-[13px]">
           <TabNavigation />
         </div>
         <div>
           <button className="flex items-center gap-[10px] text-[16px] font-[400] hover:bg-[#373737] text-[#CCCCCC] rounded-[5px] transition-all duration-200 px-5 py-2">
-            <span className="flex flex-none">Create <span className="hidden sm:flex px-1">New</span>  Pool</span>
+            <span className="flex flex-none">
+              Create <span className="hidden sm:flex px-1">New</span> Pool
+            </span>
             <PlusIcon />
           </button>
         </div>
@@ -91,15 +93,24 @@ function StakePoolId() {
           />
           <div className="flex gap-[20px] relative flex-col sm:flex-row">
             <div className="flex flex-col gap-[15px] w-full">
-              <h3 className="text-[#8F8F8F] text-[16px] font-[600]">Total Amount in Pool</h3>
-              <span className="text-[#CCCCCC] font-[400] text-[16px]">$10,000</span>
+              <h3 className="text-[#8F8F8F] text-[16px] font-[600]">
+                Total Amount in Pool
+              </h3>
+              <span className="text-[#CCCCCC] font-[400] text-[16px]">
+                $10,000
+              </span>
             </div>
             <div className="flex flex-col w-full">
-              <label htmlFor="startDate" className="text-[#9596A0] text-[0.875rem] mb-1">
+              <label
+                htmlFor="startDate"
+                className="text-[#9596A0] text-[0.875rem] mb-1"
+              >
                 Start Date <span className="text-[#C04639]">*</span>
               </label>
-              <div className="bg-transparent border-[1px] border-[#252625] text-white px-4 py-[0.75rem] rounded-[0.5rem]"
-                onClick={() => openDatePicker(startDateInputRef)}>
+              <div
+                className="bg-transparent border-[1px] border-[#252625] text-white px-4 py-[0.75rem] rounded-[0.5rem]"
+                onClick={() => openDatePicker(startDateInputRef)}
+              >
                 {formData.startDate || "Select date"}
               </div>
               <input
@@ -111,11 +122,16 @@ function StakePoolId() {
               />
             </div>
             <div className="flex flex-col w-full">
-              <label htmlFor="endDate" className="text-[#9596A0] text-[0.875rem] mb-1">
+              <label
+                htmlFor="endDate"
+                className="text-[#9596A0] text-[0.875rem] mb-1"
+              >
                 End Date <span className="text-[#C04639]">*</span>
               </label>
-              <div className="bg-transparent border-[1px] border-[#252625] text-white px-4 py-[0.75rem] rounded-[0.5rem]"
-                onClick={() => openDatePicker(endDateInputRef)}>
+              <div
+                className="bg-transparent border-[1px] border-[#252625] text-white px-4 py-[0.75rem] rounded-[0.5rem]"
+                onClick={() => openDatePicker(endDateInputRef)}
+              >
                 {formData.endDate || "Select date"}
               </div>
               <input
