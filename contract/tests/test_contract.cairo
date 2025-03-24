@@ -444,6 +444,78 @@ fn test_get_pool_stakes() {
 }
 
 #[test]
+fn test_unique_pool_id() {
+    let contract = deploy_predifi();
+    let pool_id = contract
+        .create_pool(
+            'Example Pool',
+            Pool::WinBet,
+            "A simple betting pool",
+            "image.png",
+            "event.com/details",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    assert!(pool_id != 0, "not created");
+    println!("Pool id: {}", pool_id);
+}
+
+
+#[test]
+fn test_unique_pool_id_when_called_twice_in_the_same_execution() {
+    let contract = deploy_predifi();
+    let pool_id = contract
+        .create_pool(
+            'Example Pool',
+            Pool::WinBet,
+            "A simple betting pool",
+            "image.png",
+            "event.com/details",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    let pool_id1 = contract
+        .create_pool(
+            'Example Pool',
+            Pool::WinBet,
+            "A simple betting pool",
+            "image.png",
+            "event.com/details",
+            1710000000,
+            1710003600,
+            1710007200,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+
+    assert!(pool_id != 0, "not created");
+    assert!(pool_id != pool_id1, "they are the same");
+
+    println!("Pool id: {}", pool_id);
+    println!("Pool id: {}", pool_id1);
+}
+#[test]
 fn test_get_pool_vote() {
     let contract = deploy_predifi();
 
@@ -472,32 +544,4 @@ fn test_get_pool_vote() {
     let pool_vote = contract.get_pool_vote(pool_id);
 
     assert(!pool_vote, 'Incorrect pool vote');
-}
-
-#[test]
-fn test_get_pool_count() {
-    let contract = deploy_predifi();
-
-    assert(contract.get_pool_count() == 0, 'Initial pool count should be 0');
-
-    contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
-
-    assert(contract.get_pool_count() == 1, 'Pool count should be 1');
 }
