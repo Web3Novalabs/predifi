@@ -54,7 +54,7 @@ function StakePoolId() {
         </div>
         <div>
           <button className="flex items-center gap-[10px] text-[16px] font-[400] hover:bg-[#373737] text-[#CCCCCC] rounded-[5px] transition-all duration-200 px-5 py-2">
-            <span>Create New Pool</span>
+            <span className="flex flex-none">Create <span className="hidden sm:flex px-1">New</span>  Pool</span>
             <PlusIcon />
           </button>
         </div>
