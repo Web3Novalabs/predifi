@@ -1,15 +1,18 @@
 #[starknet::contract]
 pub mod Predifi {
     // Cairo imports
-    use starknet::{ContractAddress, get_block_timestamp, get_caller_address};
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
     };
+    use starknet::{ContractAddress, get_block_timestamp, get_caller_address};
+    use crate::base::errors::Errors::{
+        AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
+    };
     // oz imports
 
     // package imports
-    use crate::base::types::{PoolDetails, PoolOdds, Pool, Category, Status, UserStake};
+    use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
     use crate::interfaces::ipredifi::IPredifi;
 
     // 1 STRK in WEI
@@ -20,8 +23,25 @@ pub mod Predifi {
         pools: Map<u256, PoolDetails>, // pool id to pool details struct
         pool_count: u256, // number of pools available totally
         pool_odds: Map<u256, PoolOdds>,
+        pool_stakes: Map<u256, UserStake>,
         pool_vote: Map<u256, bool>, // pool id to vote
-        user_stakes: Map<ContractAddress, UserStake> // Mapping user -> stake details
+        user_stakes: Map<(u256, ContractAddress), UserStake> // Mapping user -> stake details
+    }
+
+    // Events
+    #[event]
+    #[derive(Drop, starknet::Event)]
+    enum Event {
+        BetPlaced: BetPlaced,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct BetPlaced {
+        pool_id: u256,
+        address: ContractAddress,
+        option: felt252,
+        amount: u256,
+        shares: u256,
     }
 
     #[constructor]
@@ -119,6 +139,75 @@ pub mod Predifi {
         fn pool_odds(self: @ContractState, pool_id: u256) -> PoolOdds {
             self.pool_odds.read(pool_id)
         }
+
+        fn get_pool(self: @ContractState, pool_id: u256) -> PoolDetails {
+            self.pools.read(pool_id)
+        }
+
+        fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) {
+            let pool = self.pools.read(pool_id);
+            let option1: felt252 = pool.option1;
+            let option2: felt252 = pool.option2;
+            assert(option == option1 || option == option2, INVALID_POOL_OPTION);
+            assert(pool.status == Status::Active, INACTIVE_POOL);
+            assert(amount >= pool.minBetAmount, AMOUNT_BELOW_MINIMUM);
+            assert(amount <= pool.maxBetAmount, AMOUNT_ABOVE_MAXIMUM);
+
+            let mut pool = self.pools.read(pool_id);
+            if option == option1 {
+                pool.totalStakeOption1 += amount;
+                pool
+                    .totalSharesOption1 += self
+                    .calculate_shares(amount, pool.totalStakeOption1, pool.totalStakeOption2);
+            } else {
+                pool.totalStakeOption2 += amount;
+                pool
+                    .totalSharesOption2 += self
+                    .calculate_shares(amount, pool.totalStakeOption2, pool.totalStakeOption1);
+            }
+            pool.totalBetAmountStrk += amount;
+            pool.totalBetCount += 1;
+
+            // Update pool odds
+            let odds = self
+                .calculate_odds(pool.pool_id, pool.totalStakeOption1, pool.totalStakeOption2);
+            self.pool_odds.write(pool_id, odds);
+
+            // Calculate the user's shares
+            let shares: u256 = if option == option1 {
+                self.calculate_shares(amount, pool.totalStakeOption1, pool.totalStakeOption2)
+            } else {
+                self.calculate_shares(amount, pool.totalStakeOption2, pool.totalStakeOption1)
+            };
+
+            // Store user stake
+            let user_stake = UserStake {
+                option: option == option2, amount, shares, timestamp: get_block_timestamp(),
+            };
+            let address: ContractAddress = get_caller_address();
+            self.user_stakes.write((pool.pool_id, address), user_stake);
+            self.pool_vote.write(pool.pool_id, option == option2);
+            self.pool_stakes.write(pool.pool_id, user_stake);
+            self.pools.write(pool.pool_id, pool);
+            // Emit event
+            self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
+        }
+
+        fn get_user_stake(
+            self: @ContractState, pool_id: u256, address: ContractAddress,
+        ) -> UserStake {
+            self.user_stakes.read((pool_id, address))
+        }
+        fn get_pool_stakes(self: @ContractState, pool_id: u256) -> UserStake {
+            self.pool_stakes.read(pool_id)
+        }
+
+        fn get_pool_vote(self: @ContractState, pool_id: u256) -> bool {
+            self.pool_vote.read(pool_id)
+        }
+        fn get_pool_count(self: @ContractState) -> u256 {
+            self.pool_count.read()
+        }
     }
 
     #[generate_trait]
@@ -128,6 +217,86 @@ pub mod Predifi {
         ) { // TODO: Uncomment code after ERC20 implementation
         // let strk_token = IErc20Dispatcher { contract_address: self.strk_token_address.read() };
         // strk_token.transfer_from(creator, get_contract_address(), ONE_STRK);
+        }
+
+        fn calculate_shares(
+            ref self: ContractState,
+            amount: u256,
+            total_stake_selected_option: u256,
+            total_stake_other_option: u256,
+        ) -> u256 {
+            let total_pool_amount = total_stake_selected_option + total_stake_other_option;
+
+            if total_stake_selected_option == 0 {
+                return amount;
+            }
+
+            let shares = (amount * total_pool_amount) / (total_stake_selected_option + 1);
+            shares
+        }
+
+        fn calculate_odds(
+            ref self: ContractState,
+            pool_id: u256,
+            total_stake_option1: u256,
+            total_stake_option2: u256,
+        ) -> PoolOdds {
+            // Fetch the current pool odds
+            let current_pool_odds = self.pool_odds.read(pool_id);
+
+            // If no current pool odds exist, use the initial odds (5000 for both options)
+            let initial_odds = 5000; // 0.5 in decimal (5000/10000)
+            let current_option1_odds = if current_pool_odds.option1_odds == 0 {
+                initial_odds
+            } else {
+                current_pool_odds.option1_odds
+            };
+            let current_option2_odds = if current_pool_odds.option2_odds == 0 {
+                initial_odds
+            } else {
+                current_pool_odds.option2_odds
+            };
+
+            // Calculate the total pool amount
+            let total_pool_amount = total_stake_option1 + total_stake_option2;
+
+            // If no stakes are placed, return the current pool odds
+            if total_pool_amount == 0 {
+                return PoolOdds {
+                    option1_odds: current_option1_odds,
+                    option2_odds: current_option2_odds,
+                    option1_probability: current_option1_odds,
+                    option2_probability: current_option2_odds,
+                    implied_probability1: 10000 / current_option1_odds,
+                    implied_probability2: 10000 / current_option2_odds,
+                };
+            }
+
+            // Calculate the new odds based on the stakes
+            let new_option1_odds = (total_stake_option2 * 10000) / total_pool_amount;
+            let new_option2_odds = (total_stake_option1 * 10000) / total_pool_amount;
+
+            // update the new odds with the current odds (weighted average)
+            let option1_odds = (current_option1_odds + new_option1_odds) / 2;
+            let option2_odds = (current_option2_odds + new_option2_odds) / 2;
+
+            // Calculate probabilities
+            let option1_probability = option1_odds;
+            let option2_probability = option2_odds;
+
+            // Calculate implied probabilities
+            let implied_probability1 = 10000 / option1_odds;
+            let implied_probability2 = 10000 / option2_odds;
+
+            // Return the updated PoolOdds struct
+            PoolOdds {
+                option1_odds: option1_odds,
+                option2_odds: option2_odds,
+                option1_probability,
+                option2_probability,
+                implied_probability1,
+                implied_probability2,
+            }
         }
     }
 }
