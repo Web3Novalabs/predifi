@@ -48,7 +48,7 @@ function StakePoolId() {
 
   return (
     <section className="md:px-10 px-5 font-['Work_Sans']">
-      <div className="w-full border-b-[1px] border-[#373737] flex justify-between flex-col sm:flex-row">
+      <div className="w-full border-b-[1px] border-[#373737] flex justify-between">
         <div className="flex gap-[13px]">
           <TabNavigation />
         </div>
@@ -127,7 +127,7 @@ function StakePoolId() {
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Button className="rounded-full bg-[#FFFFFF66] text-[16px] text-[#CCCCCC] h-[43px] border border-[#373737]">
               Yes: PredFi to win
             </Button>
