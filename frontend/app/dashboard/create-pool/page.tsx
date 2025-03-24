@@ -111,7 +111,7 @@ function CreatePoolForm() {
           data={data}
         />
       )}
-      <section className=" py-6 text-[#CCCCCC]">
+      <section className=" py-6 ">
         <h2 className="text-2xl font-bold mb-6">Create a pool</h2>
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-8">
           {/* Pool Basic Info - Reverted with static status */}
@@ -212,7 +212,7 @@ function CreatePoolForm() {
           <div className="flex justify-end mt-4">
             <button
               type="submit"
-              className="border-[#373737] hover:bg-[#444444] text-white rounded-full border px-6 py-2 transition-colors"
+              className=" hover:bg-[#444444]  rounded-full border px-6 py-2 transition-colors"
             >
               Preview pool
             </button>

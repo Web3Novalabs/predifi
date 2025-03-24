@@ -4,14 +4,14 @@
 @tailwind utilities;
 
 body {
-  @apply bg-white text-black dark:bg-white  dark:text-black;
+  @apply bg-black text-black dark:bg-white  dark:text-black;
   font-family: Arial, Helvetica, sans-serif;
 }
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 0%;
+    --background: 0 0% 0%;
+    --foreground: 0 0% 100%;
     --card: 0 0% 100%;
     --card-foreground: 0 0% 3.9%;
     --popover: 0 0% 100%;
