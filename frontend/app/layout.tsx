@@ -8,6 +8,7 @@ import FilterContextProvider from "@/context/filter-context-provider";
 import AllFilterContextProvider from "@/context/all-contex-provider";
 import Script from "next/script";
 import { Toaster } from "@/components/ui/sonner";
+import ThemeProvider from "@/components/layout/Themeprovider";
 
 const Jersey10 = Jersey_10({
   subsets: ["latin"],
@@ -40,28 +41,30 @@ export default function RootLayout({
       <body
         className={`${Jersey10.variable} ${WorkSans.variable} antialiased text-[#FFFFFF] font-work bg-[#100e16]`}
       >
-        <StarknetProvider>
-          <Nav />
-          <AllFilterContextProvider>
-            <FilterContextProvider>
-              <section className="max-w-screen-[1500px] mx-auto min-h-screen pb-14">
-                {children}
-              </section>
-            </FilterContextProvider>
-          </AllFilterContextProvider>
-          <Footer />
-          <Toaster
-            toastOptions={{
-              unstyled: true,
-              classNames: {
-                error: "toaster toast-error",
-                success: "toaster toast-success",
-                warning: "toaster toast-warning",
-                info: "toaster toast-info",
-              },
-            }}
-          />
-        </StarknetProvider>
+        <ThemeProvider>
+          <StarknetProvider>
+            <Nav />
+            <AllFilterContextProvider>
+              <FilterContextProvider>
+                <section className="max-w-screen-[1500px] mx-auto min-h-screen pb-14">
+                  {children}
+                </section>
+              </FilterContextProvider>
+            </AllFilterContextProvider>
+            <Footer />
+            <Toaster
+              toastOptions={{
+                unstyled: true,
+                classNames: {
+                  error: "toaster toast-error",
+                  success: "toaster toast-success",
+                  warning: "toaster toast-warning",
+                  info: "toaster toast-info",
+                },
+              }}
+            />
+          </StarknetProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

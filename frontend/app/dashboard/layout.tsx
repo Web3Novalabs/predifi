@@ -35,7 +35,7 @@ function DashboardRoot({
   const Tab = ({ label, value, isActive, onClick }: TabProps) => (
     <button
       className={`px-4 py-2.5 min-w-[100px] xl:min-w-[120px] rounded-t-full grid place-content-center capitalize cursor-pointer transition-colors ${
-        isActive ? "bg-[#FFFFFF75]" : "bg-[#373737]"
+        isActive ? "border" : "bg-[#373737] text-white"
       }`}
       onClick={() => onClick(value)}
     >
@@ -55,7 +55,7 @@ function DashboardRoot({
 
   return (
     <div className="max-w-7xl mx-auto px-4 md:px-6 xl:px-14">
-      <div className="flex justify-between items-center md:border-b md:border-[#373737] mb-6 md:mb-8 xl:mb-12">
+      <div className="flex justify-between items-center md:border-b  mb-6 md:mb-8 xl:mb-12">
         <div className="relative md:hidden border-[#373737] border rounded-full h-[30px] w-[150px] px-2">
           <select
             value={getType}
@@ -86,7 +86,7 @@ function DashboardRoot({
               onClick={setGetType}
             />
           ))}
-          <div className="bg-[#373737] min-w-[100px] xl:min-w-[120px] px-4 py-2.5 grid place-content-center rounded-t-full">
+          <div className="bg-[#373737] text-white min-w-[100px] xl:min-w-[120px] px-4 py-2.5 grid place-content-center rounded-t-full">
             <Link href={routes.profile}>Profile</Link>
           </div>
         </div>

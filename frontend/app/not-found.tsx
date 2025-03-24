@@ -7,13 +7,13 @@ export default function NotFound() {
       <div className="container max-w-6xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-12 py-8">
         <div className="w-full lg:w-1/2 order-2 lg:order-1">
           <div className="max-w-lg mx-auto lg:mx-0">
-            <h1 className="text-4xl md:text-6xl font-bold text-white mb-4">
+            <h1 className="text-4xl md:text-6xl font-bold  mb-4">
               OOOps!
             </h1>
-            <h2 className="text-2xl md:text-3xl font-semibold text-gray-200 mb-4">
+            <h2 className="text-2xl md:text-3xl font-semibold  mb-4">
               Page Not Found
             </h2>
-            <p className="text-gray-300 text-base md:text-lg mb-8">
+            <p className=" text-base md:text-lg mb-8">
               Sorry about that! Please visit our homepage to get where you need
               to go.
             </p>
