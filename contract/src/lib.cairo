@@ -4,6 +4,7 @@ pub mod base {
 }
 
 pub mod interfaces {
+    pub mod ierc721;
     pub mod ipredifi;
 }
 

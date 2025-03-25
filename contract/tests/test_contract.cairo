@@ -1,8 +1,13 @@
 use contract::base::types::{Category, Pool, PoolDetails, Status};
+use contract::interfaces::ierc721::IERC721MintableDispatcher;
 use contract::interfaces::ipredifi::{IPredifiDispatcher, IPredifiDispatcherTrait};
 use core::felt252;
 use core::traits::Into;
-use snforge_std::{ContractClassTrait, DeclareResultTrait, declare};
+use openzeppelin::token::erc721::interface::{IERC721Dispatcher, IERC721DispatcherTrait};
+use snforge_std::{
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
+    stop_cheat_caller_address,
+};
 use starknet::{
     ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
 };
@@ -215,7 +220,6 @@ fn get_default_pool_params() -> (
         Category::Sports // category
     )
 }
-
 #[test]
 fn test_vote() {
     let contract = deploy_predifi();
@@ -545,3 +549,140 @@ fn test_get_pool_vote() {
 
     assert(!pool_vote, 'Incorrect pool vote');
 }
+// #[test]
+// fn test_nft_minting_during_pool_creation() {
+//     let contract = deploy_predifi();
+//     let contract_address = contract.contract_address;
+//     let nft_dispatcher = IERC721Dispatcher { contract_address };
+
+//     // Create a pool which should mint an NFT
+//     let pool_id = contract.create_pool(
+//         'NFT Test Pool',
+//         Pool::WinBet,
+//         "A pool for NFT testing",
+//         "nft_image.png",
+//         "nft_event.com/details",
+//         1710000000,
+//         1710003600,
+//         1710007200,
+//         'Option A',
+//         'Option B',
+//         100,
+//         10000,
+//         5,
+//         false,
+//         Category::Sports,
+//     );
+
+//     // Verify NFT was minted to pool creator
+//     let owner = nft_dispatcher.owner_of(pool_id);
+//     assert(owner == contract_address.into(), 'NFT should be owned by contract creator');
+
+//     // Verify NFT balance
+//     let balance = nft_dispatcher.balance_of(contract_address.into());
+//     assert(balance == 1, 'Contract creator should own 1 NFT');
+// }
+
+// #[test]
+// #[should_panic(expected: "NFTs are non-transferable")]
+// fn test_nft_non_transferable() {
+//     let contract = deploy_predifi();
+//     let contract_address = contract.contract_address;
+//     let nft_dispatcher = IERC721Dispatcher { contract_address };
+//     let user = starknet::contract_address_const::<0x123>();
+
+//     // Create a pool to get an NFT
+//     let pool_id = contract.create_pool(
+//         'Transfer Test Pool',
+//         Pool::WinBet,
+//         "A pool for transfer testing",
+//         "transfer_image.png",
+//         "transfer_event.com/details",
+//         1710000000,
+//         1710003600,
+//         1710007200,
+//         'Option A',
+//         'Option B',
+//         100,
+//         10000,
+//         5,
+//         false,
+//         Category::Sports,
+//     );
+
+//     // Attempt to transfer the NFT (should panic)
+//     nft_dispatcher.transfer_from(contract_address, user, pool_id);
+// }
+
+// #[test]
+// fn test_multiple_nft_ownership() {
+//     let contract = deploy_predifi();
+//     let contract_address = contract.contract_address;
+//     let nft_dispatcher = IERC721Dispatcher { contract_address };
+
+//     // Create multiple pools to get multiple NFTs
+//     let mut pool_ids = ArrayTrait::new();
+//     for i in 0..3_u8 {
+//         let pool_id = contract.create_pool(
+//             'Multiple NFT Pool',
+//             Pool::WinBet,
+//             "A pool for multiple NFT testing",
+//             "multiple_image.png",
+//             "multiple_event.com/details",
+//             1710000000,
+//             1710003600,
+//             1710007200,
+//             'Option A',
+//             'Option B',
+//             100,
+//             10000,
+//             5,
+//             false,
+//             Category::Sports,
+//         );
+//         pool_ids.append(pool_id);
+//     }
+
+//     // Verify contract creator owns all NFTs
+//     let balance = nft_dispatcher.balance_of(contract_address);
+//     assert(balance == 3, 'Contract creator should own 3 NFTs');
+
+//     // Verify ownership of each NFT
+//     for i in 0..3_u8 {
+//         let owner = nft_dispatcher.owner_of(*pool_ids.get(i).unwrap());
+//         assert(owner == contract_address, 'NFT should be owned by contract creator');
+//     }
+// }
+
+// #[test]
+// #[should_panic(expected: "NFTs are non-transferable")]
+// fn test_safe_transfer_from_failure() {
+//     let contract = deploy_predifi();
+//     let contract_address = contract.contract_address;
+//     let nft_dispatcher = IERC721Dispatcher { contract_address };
+//     let user = starknet::contract_address_const::<0x123>();
+
+//     // Create a pool to get an NFT
+//     let pool_id = contract.create_pool(
+//         'Safe Transfer Test Pool',
+//         Pool::WinBet,
+//         "A pool for safe transfer testing",
+//         "safe_transfer_image.png",
+//         "safe_transfer_event.com/details",
+//         1710000000,
+//         1710003600,
+//         1710007200,
+//         'Option A',
+//         'Option B',
+//         100,
+//         10000,
+//         5,
+//         false,
+//         Category::Sports,
+//     );
+
+//     // Attempt safe transfer (should panic)
+//     nft_dispatcher.safe_transfer_from(contract_address, user, pool_id, ArrayTrait::new().span());
+// }
+
+

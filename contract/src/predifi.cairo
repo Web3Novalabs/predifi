@@ -1,6 +1,11 @@
 #[starknet::contract]
 pub mod Predifi {
     // Cairo imports
+    use core::hash::{HashStateExTrait, HashStateTrait};
+    use core::pedersen::PedersenTrait;
+    use core::poseidon::PoseidonTrait;
+    use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::token::erc721::{ERC721Component, ERC721HooksEmptyImpl};
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
@@ -9,15 +14,42 @@ pub mod Predifi {
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
     };
-
-    use core::{pedersen::PedersenTrait, poseidon::PoseidonTrait};
-
-    use core::hash::{HashStateTrait, HashStateExTrait};
     // oz imports
 
     // package imports
     use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
+    use crate::interfaces::ierc721::IERC721Mintable;
     use crate::interfaces::ipredifi::IPredifi;
+
+    component!(path: ERC721Component, storage: erc721, event: ERC721Event);
+    component!(path: SRC5Component, storage: src5, event: SRC5Event);
+
+    #[abi(embed_v0)]
+    impl ERC721MintableImpl of IERC721Mintable<ContractState> {
+        fn mint(ref self: ContractState, to: ContractAddress, token_id: u256) {
+            // Only allow minting from within the contract
+            assert(get_caller_address() == get_contract_address(), 'Only contract can mint');
+            self.erc721.mint(to, token_id);
+        }
+
+        fn safeTransferFrom(
+            ref self: ContractState,
+            from: ContractAddress,
+            to: ContractAddress,
+            tokenId: u256,
+            data: Span<felt252>,
+        ) {
+            assert(false, 'NFTs are non-transferable');
+        }
+
+        fn transferFrom(
+            ref self: ContractState, from: ContractAddress, to: ContractAddress, tokenId: u256,
+        ) {
+            assert(false, 'NFTs are non-transferable');
+        }
+    }
+
+    impl ERC721InternalImpl = ERC721Component::InternalImpl<ContractState>;
 
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -33,6 +65,10 @@ pub mod Predifi {
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
+        #[substorage(v0)]
+        erc721: ERC721Component::Storage,
+        #[substorage(v0)]
+        src5: SRC5Component::Storage,
     }
 
     // Events
@@ -40,6 +76,8 @@ pub mod Predifi {
     #[derive(Drop, starknet::Event)]
     enum Event {
         BetPlaced: BetPlaced,
+        ERC721Event: ERC721Component::Event,
+        SRC5Event: SRC5Component::Event,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -105,7 +143,7 @@ pub mod Predifi {
             // While a pool with this pool_id already exists, generate a new one.
             while self.retrieve_pool(pool_id) {
                 pool_id = self.generate_deterministic_number();
-            };
+            }
 
             // Create pool details structure
             let creator_address = get_caller_address();
@@ -151,6 +189,9 @@ pub mod Predifi {
             };
 
             self.pool_odds.write(pool_id, initial_odds);
+
+            // Mint NFT for the pool creator
+            self.mint_pool_nft(creator_address, pool_id);
 
             pool_id
         }
@@ -373,6 +414,12 @@ pub mod Predifi {
                 implied_probability1,
                 implied_probability2,
             }
+        }
+
+        fn mint_pool_nft(ref self: ContractState, to: ContractAddress, token_id: u256) {
+            // Only allow minting from within the contract
+            assert(get_caller_address() == get_contract_address(), 'Only contract can mint');
+            self.erc721.mint(to, token_id);
         }
     }
 }
