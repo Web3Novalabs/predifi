@@ -8,6 +8,7 @@ import ChevronDown from "@/svg/chevron-down";
 import Link from "next/link";
 import { routes } from "@/lib/route";
 import Image from "next/image";
+import DarkModeToggle from "./DarkmodeButton";
 
 function Nav() {
   const [openModal, setModal] = useState(false);
@@ -22,6 +23,7 @@ function Nav() {
   function modalHandler() {
     setModal((prev) => !prev);
   }
+
   return (
     <>
       {openModal && !isConnected && <Conectors setIsOpen={modalHandler} />}
@@ -35,8 +37,11 @@ function Nav() {
             <li>How it works</li>
             <li>about</li>
           </ul>
+
+         <div className="flex items-center gap-3">
+         <DarkModeToggle />
           <Button
-            className="bg-transparent rounded-full hover:bg-transparent shadow-none border border-white text-white"
+            className="bg-transparent rounded-full hover:bg-transparent shadow-none border  "
             onClick={modalHandler}
           >
             {data ? data : user}
@@ -48,6 +53,8 @@ function Nav() {
               <ChevronDown />
             </span>
           </Button>
+         </div>
+
           {openModal && (
             <Button
               className={`fixed top-16 right-20 transition-all duration-500 text-[#37B7C3] border border-[#37B7C3] bg-inherit rounded-full hover:bg-transparent ${

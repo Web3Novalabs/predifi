@@ -11,7 +11,7 @@ function CreatePoolModal({modalHandle,sendFn,data}:poolModal){
           className="fixed h-screen w-full bg-[#868686]/20 backdrop-blur-md top-0 left-0"
           onClick={modalHandle}
         />
-        <div className="w-[90%] max-h-[500px] grid mmin-h-[467px]  z-50 h-fit bg-[#1E1E1E] top-1/2 right-1/2 fixed -translate-y-[50%] translate-x-[50%] rounded-lg border border-[#fff] py-6 px-4 overflow-scroll max-w-5xl">
+        <div className="w-[90%] max-h-[500px] grid mmin-h-[467px]  z-50 h-fit  top-1/2 right-1/2 fixed -translate-y-[50%] translate-x-[50%] rounded-lg border  py-6 px-4 overflow-scroll max-w-5xl">
           <div
             className=" border-b border-[#373737] flex items-center p-2 gap-2 mb-5"
             onClick={modalHandle}
