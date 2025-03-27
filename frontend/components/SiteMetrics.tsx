@@ -35,8 +35,8 @@ const SITE_METRICS: MetricCardProps[] = [
 // Main Site Metrics Component
 const SiteMetrics: React.FC = () => {
     return (
-        <section className="my-10 px-5 md:px-10 xl:px-[100px]">
-            <div className="border p-[3em] lg:p-[100px] rounded-lg">
+        <section className="my-10 px-5 md:px-10 xl:px-[100px] text-white">
+            <div className=" p-[3em] lg:p-[100px] rounded-lg bg-[#E68369]">
                 <h2 className="text-3xl font-normal font-jersey text-center mb-10">
                     Site Metrics
                 </h2>
