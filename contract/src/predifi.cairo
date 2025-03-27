@@ -9,6 +9,7 @@ pub mod Predifi {
     use openzeppelin::token::erc721::{ERC721Component, ERC721HooksEmptyImpl};
     use starknet::class_hash::ClassHash;
     use starknet::contract_address::contract_address_const;
+
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
@@ -17,6 +18,8 @@ pub mod Predifi {
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
     };
+
+    // oz imports
 
     // package imports
     use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
@@ -186,6 +189,11 @@ pub mod Predifi {
 
         fn pool_count(self: @ContractState) -> u256 {
             self.pool_count.read()
+        }
+
+        fn get_pool_creator(self: @ContractState, pool_id: u256) -> ContractAddress {
+            let pool = self.pools.read(pool_id);
+            pool.address
         }
 
         fn pool_odds(self: @ContractState, pool_id: u256) -> PoolOdds {

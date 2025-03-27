@@ -5,6 +5,7 @@ pub mod base {
 
 pub mod interfaces {
     pub mod ierc721;
+    pub mod iUtils;
     pub mod ipredifi;
 }
 
@@ -14,3 +15,4 @@ pub mod presets {
 }
 
 pub mod predifi;
+pub mod utils;
