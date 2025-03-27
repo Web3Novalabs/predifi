@@ -1,8 +1,11 @@
 use contract::base::types::{Category, Pool, PoolDetails, Status};
-use contract::interfaces::ierc721::IERC721MintableDispatcher;
+use contract::interfaces::ierc721::{
+    IERC721Mintable, IERC721MintableDispatcher, IERC721MintableDispatcherTrait,
+};
 use contract::interfaces::ipredifi::{IPredifiDispatcher, IPredifiDispatcherTrait};
 use core::felt252;
 use core::traits::Into;
+use openzeppelin::token::erc721::ERC721Component;
 use openzeppelin::token::erc721::interface::{IERC721Dispatcher, IERC721DispatcherTrait};
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
@@ -12,15 +15,44 @@ use starknet::{
     ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
 };
 
+
 fn owner() -> ContractAddress {
     'owner'.try_into().unwrap()
 }
 
 fn deploy_predifi() -> IPredifiDispatcher {
-    let contract_class = declare("Predifi").unwrap().contract_class();
+    // First deploy the ERC721 contract
+    let deployer: ContractAddress = get_contract_address();
+    let (_, erc721_general_dispatch, nft_contract) = deploy_erc721(deployer);
 
-    let (contract_address, _) = contract_class.deploy(@array![].into()).unwrap();
-    (IPredifiDispatcher { contract_address })
+    // Then deploy Predifi with the NFT contract address
+    let contract_class = declare("Predifi").unwrap().contract_class();
+    let mut constructor_calldata = array![];
+    constructor_calldata.append(nft_contract.contract_address.into());
+    let (contract_address, _) = contract_class.deploy(@constructor_calldata).unwrap();
+
+    IPredifiDispatcher { contract_address }
+}
+
+
+fn deploy_erc721(
+    deployer: ContractAddress,
+) -> (ContractAddress, IERC721Dispatcher, IERC721MintableDispatcher) {
+    // Declaring the contract class
+    let contract_class = declare("ERC721").unwrap().contract_class();
+    // Creating the data to send to the constructor, first specifying as a default value
+    let mut data_to_constructor = Default::default();
+    // Packing the data into the constructor
+    Serde::serialize(@deployer, ref data_to_constructor);
+    // Deploying the contract, and getting the address
+    let (address, _) = contract_class.deploy(@data_to_constructor).unwrap();
+
+    // Returning the address of the contract and the dispatchers
+    return (
+        address,
+        IERC721Dispatcher { contract_address: address },
+        IERC721MintableDispatcher { contract_address: address },
+    );
 }
 
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -220,6 +252,7 @@ fn get_default_pool_params() -> (
         Category::Sports // category
     )
 }
+
 #[test]
 fn test_vote() {
     let contract = deploy_predifi();
@@ -549,140 +582,58 @@ fn test_get_pool_vote() {
 
     assert(!pool_vote, 'Incorrect pool vote');
 }
-// #[test]
-// fn test_nft_minting_during_pool_creation() {
-//     let contract = deploy_predifi();
-//     let contract_address = contract.contract_address;
-//     let nft_dispatcher = IERC721Dispatcher { contract_address };
 
-//     // Create a pool which should mint an NFT
-//     let pool_id = contract.create_pool(
-//         'NFT Test Pool',
-//         Pool::WinBet,
-//         "A pool for NFT testing",
-//         "nft_image.png",
-//         "nft_event.com/details",
-//         1710000000,
-//         1710003600,
-//         1710007200,
-//         'Option A',
-//         'Option B',
-//         100,
-//         10000,
-//         5,
-//         false,
-//         Category::Sports,
-//     );
+// ERC721 Tests
+fn mint_nft(
+    contract_address: ContractAddress,
+    dispatcher: IERC721MintableDispatcher,
+    caller: ContractAddress,
+    recipient: ContractAddress,
+    token_id: u256,
+) {
+    start_cheat_caller_address(contract_address, caller);
+    dispatcher.mint(recipient, token_id);
+    stop_cheat_caller_address(contract_address);
+}
 
-//     // Verify NFT was minted to pool creator
-//     let owner = nft_dispatcher.owner_of(pool_id);
-//     assert(owner == contract_address.into(), 'NFT should be owned by contract creator');
+#[test]
+fn test_mint_nft() {
+    // Accounts
+    let alice: ContractAddress = 1.try_into().unwrap();
+    let deployer: ContractAddress = get_contract_address();
 
-//     // Verify NFT balance
-//     let balance = nft_dispatcher.balance_of(contract_address.into());
-//     assert(balance == 1, 'Contract creator should own 1 NFT');
-// }
+    // Deploy contract
+    let (_, _, nft_contract) = deploy_erc721(deployer);
 
-// #[test]
-// #[should_panic(expected: "NFTs are non-transferable")]
-// fn test_nft_non_transferable() {
-//     let contract = deploy_predifi();
-//     let contract_address = contract.contract_address;
-//     let nft_dispatcher = IERC721Dispatcher { contract_address };
-//     let user = starknet::contract_address_const::<0x123>();
+    // First mint should succeed
+    start_cheat_caller_address(nft_contract.contract_address, nft_contract.contract_address);
+    nft_contract.mint(alice, 2);
+    stop_cheat_caller_address(nft_contract.contract_address);
+}
 
-//     // Create a pool to get an NFT
-//     let pool_id = contract.create_pool(
-//         'Transfer Test Pool',
-//         Pool::WinBet,
-//         "A pool for transfer testing",
-//         "transfer_image.png",
-//         "transfer_event.com/details",
-//         1710000000,
-//         1710003600,
-//         1710007200,
-//         'Option A',
-//         'Option B',
-//         100,
-//         10000,
-//         5,
-//         false,
-//         Category::Sports,
-//     );
+#[test]
+fn test_mint_multiple_nfts() {
+    let deployer: ContractAddress = get_contract_address();
+    let alice: ContractAddress = 1.try_into().unwrap();
 
-//     // Attempt to transfer the NFT (should panic)
-//     nft_dispatcher.transfer_from(contract_address, user, pool_id);
-// }
+    // Deploy contract
+    let (_, _, nft_contract) = deploy_erc721(deployer);
 
-// #[test]
-// fn test_multiple_nft_ownership() {
-//     let contract = deploy_predifi();
-//     let contract_address = contract.contract_address;
-//     let nft_dispatcher = IERC721Dispatcher { contract_address };
+    // Mint token id 2 to Alice (since token 1 is minted in constructor)
+    start_cheat_caller_address(nft_contract.contract_address, nft_contract.contract_address);
+    nft_contract.mint(alice, 2);
+    nft_contract.mint(alice, 3);
+    nft_contract.mint(alice, 4);
+    stop_cheat_caller_address(nft_contract.contract_address);
+}
 
-//     // Create multiple pools to get multiple NFTs
-//     let mut pool_ids = ArrayTrait::new();
-//     for i in 0..3_u8 {
-//         let pool_id = contract.create_pool(
-//             'Multiple NFT Pool',
-//             Pool::WinBet,
-//             "A pool for multiple NFT testing",
-//             "multiple_image.png",
-//             "multiple_event.com/details",
-//             1710000000,
-//             1710003600,
-//             1710007200,
-//             'Option A',
-//             'Option B',
-//             100,
-//             10000,
-//             5,
-//             false,
-//             Category::Sports,
-//         );
-//         pool_ids.append(pool_id);
-//     }
+#[test]
+#[should_panic(expected: 'Only contract can mint')]
+fn test_unauthorized_minting() {
+    let deployer: ContractAddress = get_contract_address();
+    let (_, _, nft_contract) = deploy_erc721(deployer);
+    let recipient: ContractAddress = 1.try_into().unwrap();
 
-//     // Verify contract creator owns all NFTs
-//     let balance = nft_dispatcher.balance_of(contract_address);
-//     assert(balance == 3, 'Contract creator should own 3 NFTs');
-
-//     // Verify ownership of each NFT
-//     for i in 0..3_u8 {
-//         let owner = nft_dispatcher.owner_of(*pool_ids.get(i).unwrap());
-//         assert(owner == contract_address, 'NFT should be owned by contract creator');
-//     }
-// }
-
-// #[test]
-// #[should_panic(expected: "NFTs are non-transferable")]
-// fn test_safe_transfer_from_failure() {
-//     let contract = deploy_predifi();
-//     let contract_address = contract.contract_address;
-//     let nft_dispatcher = IERC721Dispatcher { contract_address };
-//     let user = starknet::contract_address_const::<0x123>();
-
-//     // Create a pool to get an NFT
-//     let pool_id = contract.create_pool(
-//         'Safe Transfer Test Pool',
-//         Pool::WinBet,
-//         "A pool for safe transfer testing",
-//         "safe_transfer_image.png",
-//         "safe_transfer_event.com/details",
-//         1710000000,
-//         1710003600,
-//         1710007200,
-//         'Option A',
-//         'Option B',
-//         100,
-//         10000,
-//         5,
-//         false,
-//         Category::Sports,
-//     );
-
-//     // Attempt safe transfer (should panic)
-//     nft_dispatcher.safe_transfer_from(contract_address, user, pool_id, ArrayTrait::new().span());
-// }
-
-
+    // Try to mint without being the contract - should fail
+    nft_contract.mint(recipient, 1_u256);
+}

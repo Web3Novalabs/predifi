@@ -11,9 +11,6 @@ pub trait IERC721Mintable<TContractState> {
         tokenId: u256,
         data: Span<felt252>,
     );
-    fn transferFrom(
-        ref self: TContractState, from: ContractAddress, to: ContractAddress, tokenId: u256,
-    );
 }
 
 #[starknet::interface]

@@ -10,6 +10,8 @@ pub mod interfaces {
 
 pub mod presets {
     pub mod ERC20;
+    pub mod ERC721;
 }
 
 pub mod predifi;
+pub mod predifii;

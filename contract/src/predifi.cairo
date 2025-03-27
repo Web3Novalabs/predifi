@@ -4,8 +4,11 @@ pub mod Predifi {
     use core::hash::{HashStateExTrait, HashStateTrait};
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
+    // oz imports
     use openzeppelin::introspection::src5::SRC5Component;
     use openzeppelin::token::erc721::{ERC721Component, ERC721HooksEmptyImpl};
+    use starknet::class_hash::ClassHash;
+    use starknet::contract_address::contract_address_const;
     use starknet::storage::{
         Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess,
@@ -14,42 +17,19 @@ pub mod Predifi {
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
     };
-    // oz imports
 
     // package imports
     use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
-    use crate::interfaces::ierc721::IERC721Mintable;
+    use crate::interfaces::ierc721::{
+        IERC721Mintable, IERC721MintableDispatcher, IERC721MintableDispatcherTrait,
+    };
     use crate::interfaces::ipredifi::IPredifi;
+    use crate::presets::ERC721;
 
     component!(path: ERC721Component, storage: erc721, event: ERC721Event);
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
 
-    #[abi(embed_v0)]
-    impl ERC721MintableImpl of IERC721Mintable<ContractState> {
-        fn mint(ref self: ContractState, to: ContractAddress, token_id: u256) {
-            // Only allow minting from within the contract
-            assert(get_caller_address() == get_contract_address(), 'Only contract can mint');
-            self.erc721.mint(to, token_id);
-        }
-
-        fn safeTransferFrom(
-            ref self: ContractState,
-            from: ContractAddress,
-            to: ContractAddress,
-            tokenId: u256,
-            data: Span<felt252>,
-        ) {
-            assert(false, 'NFTs are non-transferable');
-        }
-
-        fn transferFrom(
-            ref self: ContractState, from: ContractAddress, to: ContractAddress, tokenId: u256,
-        ) {
-            assert(false, 'NFTs are non-transferable');
-        }
-    }
-
-    impl ERC721InternalImpl = ERC721Component::InternalImpl<ContractState>;
+    impl ERC721Impl = ERC721Component::InternalImpl<ContractState>;
 
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -69,6 +49,7 @@ pub mod Predifi {
         erc721: ERC721Component::Storage,
         #[substorage(v0)]
         src5: SRC5Component::Storage,
+        nft_contract: IERC721MintableDispatcher,
     }
 
     // Events
@@ -89,6 +70,13 @@ pub mod Predifi {
         shares: u256,
     }
 
+    #[derive(Drop, starknet::Event)]
+    struct Transfer {
+        from: ContractAddress,
+        to: ContractAddress,
+        token_id: u256,
+    }
+
     #[derive(Drop, Hash)]
     struct HashingProperties {
         username: felt252,
@@ -101,8 +89,11 @@ pub mod Predifi {
         login: HashingProperties,
     }
 
+
     #[constructor]
-    fn constructor(ref self: ContractState) {}
+    fn constructor(ref self: ContractState, nft_address: ContractAddress) {
+        self.nft_contract.write(IERC721MintableDispatcher { contract_address: nft_address });
+    }
 
     #[abi(embed_v0)]
     impl predifi of IPredifi<ContractState> {
@@ -189,9 +180,6 @@ pub mod Predifi {
             };
 
             self.pool_odds.write(pool_id, initial_odds);
-
-            // Mint NFT for the pool creator
-            self.mint_pool_nft(creator_address, pool_id);
 
             pool_id
         }
@@ -416,10 +404,9 @@ pub mod Predifi {
             }
         }
 
-        fn mint_pool_nft(ref self: ContractState, to: ContractAddress, token_id: u256) {
-            // Only allow minting from within the contract
-            assert(get_caller_address() == get_contract_address(), 'Only contract can mint');
-            self.erc721.mint(to, token_id);
+        fn mint(ref self: ContractState, to: ContractAddress, token_id: u256) {
+            // Use the NFT contract dispatcher to mint
+            self.nft_contract.read().mint(to, token_id);
         }
     }
 }
