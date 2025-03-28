@@ -4,61 +4,45 @@ pub mod Predifi {
     use core::hash::{HashStateExTrait, HashStateTrait};
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
-    // oz imports
-    use openzeppelin::access::accesscontrol::AccessControlComponent;
-    use openzeppelin::introspection::src5::SRC5Component;
     use starknet::storage::{
-        Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
-        StoragePointerWriteAccess, Vec, VecTrait,
+        Map, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
+        StoragePointerWriteAccess,
     };
-    use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
+    use starknet::{
+        ContractAddress, get_block_number, get_block_timestamp, get_caller_address,
+        get_contract_address,
+    };
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
     };
+    // oz imports
 
     // package imports
-    use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
+    use crate::base::types::{
+        Category, Pool, PoolDetails, PoolOdds, Status, UserStake, ValidatorData,
+    };
     use crate::interfaces::ipredifi::IPredifi;
 
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
 
-    // 200 PREDIFI TOKEN in WEI
-    const MIN_STAKE_AMOUNT: u256 = 200_000_000_000_000_000_000;
-
-    // Validator role
-    const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
-
-    // components definition
-    component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
-    component!(path: SRC5Component, storage: src5, event: SRC5Event);
-
-    // AccessControl
-    #[abi(embed_v0)]
-    impl AccessControlImpl =
-        AccessControlComponent::AccessControlImpl<ContractState>;
-    impl AccessControlInternalImpl = AccessControlComponent::InternalImpl<ContractState>;
-
-    // SRC5
-    #[abi(embed_v0)]
-    impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
-
     #[storage]
-    pub struct Storage {
+    struct Storage {
         pools: Map<u256, PoolDetails>, // pool id to pool details struct
         pool_count: u256, // number of pools available totally
         pool_odds: Map<u256, PoolOdds>,
         pool_stakes: Map<u256, UserStake>,
         pool_vote: Map<u256, bool>, // pool id to vote
         user_stakes: Map<(u256, ContractAddress), UserStake>, // Mapping user -> stake details
-        #[substorage(v0)]
-        pub accesscontrol: AccessControlComponent::Storage,
-        #[substorage(v0)]
-        src5: SRC5Component::Storage,
-        validators: Vec<ContractAddress>,
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
+        validators: Map<ContractAddress, ValidatorData>,
+        validators_index: Map<ContractAddress, u256>, // Tracks validator's position in list
+        validators_list: Map<u256, ContractAddress>, // Index -> Address
+        validators_count: u256,
+        pool_validators: Map<(u256, u256), ContractAddress>, // (pool_id, index) -> Address
+        pool_validator_count: Map<u256, u256>,
     }
 
     // Events
@@ -66,11 +50,7 @@ pub mod Predifi {
     #[derive(Drop, starknet::Event)]
     enum Event {
         BetPlaced: BetPlaced,
-        UserStaked: UserStaked,
-        #[flat]
-        AccessControlEvent: AccessControlComponent::Event,
-        #[flat]
-        SRC5Event: SRC5Component::Event,
+        ValidatorRegistered: ValidatorRegistered,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -80,12 +60,6 @@ pub mod Predifi {
         option: felt252,
         amount: u256,
         shares: u256,
-    }
-    #[derive(Drop, starknet::Event)]
-    struct UserStaked {
-        pool_id: u256,
-        address: ContractAddress,
-        amount: u256,
     }
 
     #[derive(Drop, Hash)]
@@ -98,6 +72,12 @@ pub mod Predifi {
     struct Hashed {
         id: felt252,
         login: HashingProperties,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct ValidatorRegistered {
+        validator: ContractAddress,
+        stake: u256,
     }
 
     #[constructor]
@@ -133,6 +113,7 @@ pub mod Predifi {
             let current_time = get_block_timestamp();
             assert!(current_time < poolStartTime, "Start time must be in the future");
             assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
+            assert(self.validators_count.read() >= 10, 'Need 10+ validators');
 
             // Collect pool creation fee (1 STRK)
             self.collect_pool_creation_fee(get_caller_address());
@@ -176,6 +157,8 @@ pub mod Predifi {
                 exists: true,
             };
 
+            self.select_validators(pool_id);
+
             self.pools.write(pool_id, pool_details);
 
             let initial_odds = PoolOdds {
@@ -189,19 +172,11 @@ pub mod Predifi {
 
             self.pool_odds.write(pool_id, initial_odds);
 
-            // Add to pool count
-            self.pool_count.write(self.pool_count.read() + 1);
-
             pool_id
         }
 
         fn pool_count(self: @ContractState) -> u256 {
             self.pool_count.read()
-        }
-
-        fn get_pool_creator(self: @ContractState, pool_id: u256) -> ContractAddress {
-            let pool = self.pools.read(pool_id);
-            pool.address
         }
 
         fn pool_odds(self: @ContractState, pool_id: u256) -> PoolOdds {
@@ -261,22 +236,6 @@ pub mod Predifi {
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
 
-        fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
-            assert(amount >= MIN_STAKE_AMOUNT, 'stake amount too low');
-            let address: ContractAddress = get_caller_address();
-            // Add to previous stake if any
-            let mut stake = self.user_stakes.read((pool_id, address));
-            stake.amount = amount + stake.amount;
-            // write the new stake
-            self.user_stakes.write((pool_id, address), stake);
-            // grant the validator role
-            self.accesscontrol._grant_role(VALIDATOR_ROLE, address);
-            // add caller to validator list
-            self.validators.append().write(address);
-            // emit event
-            self.emit(UserStaked { pool_id, address, amount });
-        }
-
         fn get_user_stake(
             self: @ContractState, pool_id: u256, address: ContractAddress,
         ) -> UserStake {
@@ -297,6 +256,51 @@ pub mod Predifi {
         fn retrieve_pool(self: @ContractState, pool_id: u256) -> bool {
             let pool = self.pools.read(pool_id);
             pool.exists
+        }
+
+        fn register_validator(ref self: ContractState, stake: u256) {
+            let caller = get_caller_address();
+            assert(stake > 0, 'Stake must be positive');
+
+            // Read existing validator data
+            let mut data = self.validators.read(caller);
+
+            // Check if already registered using status flag
+            let is_new_validator = !data.status;
+
+            // Update validator data
+            data.status = true;
+            data.preodifiTokenAmount += stake;
+            self.validators.write(caller, data);
+
+            // Only add to list if new validator
+            if is_new_validator {
+                let count = self.validators_count.read();
+                self.validators_list.write(count, caller);
+                self.validators_index.write(caller, count);
+                self.validators_count.write(count + 1_u256);
+            }
+        }
+
+
+        fn verify_validator_assignment(
+            self: @ContractState, pool_id: u256, validator: ContractAddress,
+        ) -> bool {
+            let count = self.pool_validator_count.read(pool_id);
+            let mut i = 0;
+            loop {
+                if i >= count {
+                    break false;
+                }
+                if self.pool_validators.read((pool_id, i)) == validator {
+                    break true;
+                }
+                i += 1;
+            }
+        }
+
+        fn get_validators_count(self: @ContractState) -> u256 {
+            self.validators_count.read()
         }
     }
 
@@ -434,6 +438,76 @@ pub mod Predifi {
                 implied_probability1,
                 implied_probability2,
             }
+        }
+
+        fn select_validators(ref self: ContractState, pool_id: u256) {
+            let total_validators = self.validators_count.read();
+            assert(total_validators >= 10_u256, 'Insufficient validators');
+
+            // Create a temporary array of validator indexes
+            let mut validator_indexes = ArrayTrait::<u256>::new();
+            let mut i: u256 = 0_u256;
+            while i < total_validators {
+                validator_indexes.append(i);
+                i += 1_u256;
+            }
+
+            // Fisher-Yates shuffle implementation
+            let seed = self.generate_strong_seed(pool_id);
+            let mut rng_state = seed;
+            let mut selected_count: u256 = 0_u256;
+            let mut selected_validators = ArrayTrait::<ContractAddress>::new();
+
+            while selected_count < 10_u256 {
+                // Generate random index using remaining length
+                let remaining = total_validators - selected_count;
+                let rand_num = self.prng(rng_state) % remaining;
+                rng_state = self.prng(rng_state);
+
+                // Get validator address directly from storage
+                let validator_index = validator_indexes
+                    .at((selected_count + rand_num).try_into().unwrap());
+                let validator_addr = self.validators_list.read(*validator_index);
+
+                if self.validators.read(validator_addr).status {
+                    selected_validators.append(validator_addr);
+                    selected_count += 1_u256;
+                }
+            }
+
+            // Write selected validators to storage
+            let mut count: u256 = 0_u256;
+            while count < selected_count {
+                self
+                    .pool_validators
+                    .write((pool_id, count), *selected_validators.at(count.try_into().unwrap()));
+                count += 1_u256;
+            }
+
+            self.pool_validator_count.write(pool_id, selected_count);
+        }
+
+        fn generate_strong_seed(ref self: ContractState, pool_id: u256) -> u256 {
+            let nonce = self.nonce.read();
+            let block_number = get_block_number();
+            let timestamp = get_block_timestamp();
+            let caller = get_caller_address();
+
+            // Build Pedersen hash chain
+            let mut hasher = PedersenTrait::new(0);
+            hasher = hasher.update_with(pool_id);
+            hasher = hasher.update_with(block_number);
+            hasher = hasher.update_with(timestamp);
+            hasher = hasher.update_with(caller);
+            hasher = hasher.update_with(nonce);
+
+            hasher.finalize().try_into().unwrap()
+        }
+
+        fn prng(ref self: ContractState, input: u256) -> u256 {
+            let mut hasher = PoseidonTrait::new();
+            hasher = hasher.update_with(input);
+            hasher.finalize().try_into().unwrap()
         }
     }
 }
