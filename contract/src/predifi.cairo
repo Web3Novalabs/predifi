@@ -250,7 +250,10 @@ pub mod Predifi {
 
             // Store user stake
             let user_stake = UserStake {
-                option: option == option2, amount, shares, timestamp: get_block_timestamp(),
+                option: option == option2,
+                amount: amount,
+                shares: shares,
+                timestamp: get_block_timestamp(),
             };
             let address: ContractAddress = get_caller_address();
             self.user_stakes.write((pool.pool_id, address), user_stake);
