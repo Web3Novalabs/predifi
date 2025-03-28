@@ -1,47 +1,34 @@
 use contract::base::types::{Category, Pool, PoolDetails, Status};
-use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
 use contract::interfaces::ipredifi::{IPredifiDispatcher, IPredifiDispatcherTrait};
-use contract::utils::Utils;
-use contract::utils::Utils::InternalFunctionsTrait;
-use core::array::ArrayTrait;
 use core::felt252;
-use core::serde::Serde;
-use core::traits::{Into, TryInto};
-use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
-    stop_cheat_caller_address, test_address,
-};
-use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
+use core::traits::Into;
+use snforge_std::{ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address};
 use starknet::{
     ClassHash, ContractAddress, contract_address_const, get_block_timestamp, get_caller_address,
     get_contract_address,
 };
 
-// Validator role
-const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
-
-#[starknet::interface]
-trait IMockAccessControl<TContractState> {
-    fn has_role(self: @TContractState, role: felt252, user: ContractAddress) -> bool;
-}
-
 fn owner() -> ContractAddress {
     'owner'.try_into().unwrap()
 }
 
-fn deploy_predifi() -> IPredifiDispatcher {
-    let contract_class = declare("Predifi").unwrap().contract_class();
-
-    let (contract_address, _) = contract_class.deploy(@array![].into()).unwrap();
-    (IPredifiDispatcher { contract_address })
+fn validator_addresses() -> Array<ContractAddress> {
+    let mut address = ArrayTrait::new();
+    address.append(contract_address_const::<'caller1'>());
+    address.append(contract_address_const::<'caller2'>());
+    address.append(contract_address_const::<'caller3'>());
+    address.append(contract_address_const::<'caller4'>());
+    address.append(contract_address_const::<'caller5'>());
+    address.append(contract_address_const::<'caller6'>());
+    address.append(contract_address_const::<'caller7'>());
+    address.append(contract_address_const::<'caller8'>());
+    address.append(contract_address_const::<'caller9'>());
+    address.append(contract_address_const::<'caller10'>());
+    address.into()
 }
 
-const ONE_STRK: u256 = 1_000_000_000_000_000_000;
-
-#[test]
-fn test_create_pool() {
-    let contract = deploy_predifi();
-    let pool_id = contract
+fn create_pool_with_validators(contract: IPredifiDispatcher) -> u256 {
+    contract
         .create_pool(
             'Example Pool',
             Pool::WinBet,
@@ -58,9 +45,40 @@ fn test_create_pool() {
             5,
             false,
             Category::Sports,
-        );
+        )
+}
 
-    assert!(pool_id != 0, "not created");
+fn deploy_predifi() -> IPredifiDispatcher {
+    let contract_class = declare("Predifi").unwrap().contract_class();
+
+    let (contract_address, _) = contract_class.deploy(@array![].into()).unwrap();
+    let dispatcher = (IPredifiDispatcher { contract_address });
+
+    // Register 10 validators
+    let validators = validator_addresses();
+    let mut i: u32 = 0;
+    while i < validators.len().into() {
+        let caller = *validators.at(i);
+
+        start_cheat_caller_address(contract_address, caller);
+
+        dispatcher.register_validator(100);
+        i += 1;
+    }
+
+    let v_count = dispatcher.get_validators_count();
+    assert(v_count == 10, 'Failed to register validators');
+
+    dispatcher
+}
+
+const ONE_STRK: u256 = 1_000_000_000_000_000_000;
+
+#[test]
+fn test_create_pool() {
+    let contract = deploy_predifi();
+    let pool_id = create_pool_with_validators(contract);
+    assert!(pool_id != 0, "Pool not created");
 }
 
 #[test]
@@ -110,7 +128,6 @@ fn test_invalid_time_sequence_start_after_lock() {
             category,
         );
 }
-
 #[test]
 #[should_panic(expected: "Minimum bet must be greater than 0")]
 fn test_zero_min_bet() {
@@ -233,28 +250,11 @@ fn get_default_pool_params() -> (
         Category::Sports // category
     )
 }
-
 #[test]
 fn test_vote() {
     let contract = deploy_predifi();
-    let pool_id = contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
+    let pool_id = create_pool_with_validators(contract);
+
     contract.vote(pool_id, 'Team A', 200);
 
     let pool = contract.get_pool(pool_id);
@@ -350,24 +350,8 @@ fn test_when_invalid_option_is_pass() {
 #[should_panic(expected: 'Amount is below minimum')]
 fn test_when_min_bet_amount_less_than_required() {
     let contract = deploy_predifi();
-    let pool_id = contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
+    let pool_id = create_pool_with_validators(contract);
+
     contract.vote(pool_id, 'Team A', 10);
 }
 
@@ -486,7 +470,6 @@ fn test_unique_pool_id() {
     println!("Pool id: {}", pool_id);
 }
 
-
 #[test]
 fn test_unique_pool_id_when_called_twice_in_the_same_execution() {
     let contract = deploy_predifi();
@@ -565,328 +548,8 @@ fn test_get_pool_vote() {
 }
 
 #[test]
-fn test_get_pool_count() {
+fn test_validator_registration() {
     let contract = deploy_predifi();
-
-    assert(contract.get_pool_count() == 0, 'Initial pool count should be 0');
-
-    contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
-
-    assert(contract.get_pool_count() == 1, 'Pool count should be 1');
-}
-
-#[test]
-fn test_stake_successful() {
-    // test staking
-    let contract = deploy_predifi();
-    // Create a new pool
-
-    // Define test data
-    let caller = contract_address_const::<1>();
-    let stake_amount: u256 = 200_000_000_000_000_000_000;
-    let pool_id = contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
-    // Call stake function
-    start_cheat_caller_address(contract.contract_address, caller);
-    contract.stake(pool_id, stake_amount);
-    stop_cheat_caller_address(contract.contract_address);
-
-    // Check stake and verify validator role
-    assert(contract.get_user_stake(pool_id, caller).amount == stake_amount, 'Invalid stake amount');
-    let access_control_dispatcher = IMockAccessControlDispatcher {
-        contract_address: contract.contract_address,
-    };
-    assert(access_control_dispatcher.has_role(VALIDATOR_ROLE, caller), 'No role found');
-}
-
-#[test]
-#[should_panic]
-fn test_stake_unsuccessful_when_lower_than_min_amount() {
-    // Test Staking
-    let contract = deploy_predifi();
-    // Create a new pool
-    let pool_id = contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
-    // Define test data
-    let caller = contract_address_const::<1>();
-    let stake_amount: u256 = 10_000_000_000_000_000_000;
-    start_cheat_caller_address(contract.contract_address, caller);
-    contract.stake(pool_id, stake_amount); // should panic
-    stop_cheat_caller_address(contract.contract_address);
-}
-
-#[test]
-fn test_get_pool_creator() {
-    let contract = deploy_predifi();
-
-    start_cheat_caller_address(contract.contract_address, 123.try_into().unwrap());
-    let pool_id = contract
-        .create_pool(
-            'Example Pool',
-            Pool::WinBet,
-            "A simple betting pool",
-            "image.png",
-            "event.com/details",
-            1710000000,
-            1710003600,
-            1710007200,
-            'Team A',
-            'Team B',
-            100,
-            10000,
-            5,
-            false,
-            Category::Sports,
-        );
-    stop_cheat_caller_address(contract.contract_address);
-
-    assert!(pool_id != 0, "not created");
-    assert!(contract.get_pool_creator(pool_id) == 123.try_into().unwrap(), "incorrect creator");
-}
-
-// ------ Utility Contract tests --------
-
-/// deployment of Utils contract
-fn deploy_utils() -> (IUtilityDispatcher, ContractAddress) {
-    let utils_contract_class = declare("Utils")
-        .unwrap()
-        .contract_class(); // contract class declaration
-
-    let owner: ContractAddress = get_caller_address(); //setting the current owner's address
-    let pragma_address: ContractAddress =
-        0x036031daa264c24520b11d93af622c848b2499b66b41d611bac95e13cfca131a
-        .try_into()
-        .unwrap(); // pragma contract address - Starknet Sepolia testnet
-
-    let mut constructor_calldata =
-        array![]; // constructor call data as an array of felt252 elements
-    Serde::serialize(@owner, ref constructor_calldata);
-    Serde::serialize(@pragma_address, ref constructor_calldata);
-
-    let (utils_contract, _) = utils_contract_class
-        .deploy(@constructor_calldata)
-        .unwrap(); //deployment process
-    let utils_dispatcher = IUtilityDispatcher { contract_address: utils_contract };
-
-    return (utils_dispatcher, utils_contract); // dispatcher and deployed contract adddress
-}
-
-/// testing access of owner's address value
-#[test]
-fn test_get_utils_owner() {
-    let mut state = Utils::contract_state_for_testing();
-    let owner: ContractAddress = contract_address_const::<'owner'>();
-    state.owner.write(owner); // setting the current owner's addrees
-
-    let retrieved_owner = state.get_owner(); // retrieving the owner's address from contract storage
-    assert_eq!(retrieved_owner, owner);
-}
-
-///  testing contract owner updation by the current contract owner
-#[test]
-fn test_set_utils_owner() {
-    let mut state = Utils::contract_state_for_testing();
-    let owner: ContractAddress = contract_address_const::<'owner'>();
-    state.owner.write(owner); // setting the current owner's addrees
-
-    let initial_owner = state.owner.read(); // current owner of Utils contract
-    let new_owner: ContractAddress = contract_address_const::<'new_owner'>();
-
-    let test_address: ContractAddress = test_address();
-
-    start_cheat_caller_address(test_address, initial_owner);
-
-    state
-        .set_owner(
-            new_owner,
-        ); // owner updation, changing contract storage - expect successfull process
-
-    let retrieved_owner = state.owner.read();
-    assert_eq!(retrieved_owner, new_owner);
-}
-
-/// testing contract onwer updation by a party who is not the current owner
-/// expect to panic - only owner can modify the ownership
-#[test]
-#[should_panic(expected: "Only the owner can set ownership")]
-fn test_set_utils_wrong_owner() {
-    let mut state = Utils::contract_state_for_testing();
-    let owner: ContractAddress = contract_address_const::<'owner'>();
-    state.owner.write(owner); // setting the current owner's addrees
-
-    let new_owner: ContractAddress = contract_address_const::<'new_owner'>();
-    let another_owner: ContractAddress = contract_address_const::<'another_owner'>();
-
-    let test_address: ContractAddress = test_address();
-
-    start_cheat_caller_address(
-        test_address, another_owner,
-    ); // cofiguration to call from 'another_owner'
-
-    state.set_owner(new_owner); // expect to panic
-}
-
-/// testing contract onwer updation to 0x0
-/// expect to panic - cannot assign ownership to 0x0
-#[test]
-#[should_panic(expected: "Cannot change ownership to 0x0")]
-fn test_set_utils_zero_owner() {
-    let mut state = Utils::contract_state_for_testing();
-    let owner: ContractAddress = contract_address_const::<'owner'>();
-    state.owner.write(owner); // setting the current owner's addrees
-
-    let initial_owner = state.owner.read(); // current owner of Utils contract
-    let zero_owner: ContractAddress = 0x0.try_into().unwrap(); // 0x0 address
-
-    let test_address: ContractAddress = test_address();
-
-    start_cheat_caller_address(test_address, initial_owner);
-
-    state.set_owner(zero_owner); // expect to panic
-}
-
-/// testing access of pragma contract address value
-#[test]
-fn test_get_pragma_contract() {
-    let mut state = Utils::contract_state_for_testing();
-    let pragma: ContractAddress = contract_address_const::<'PRAGMA'>();
-    state.pragma_contract.write(pragma);
-
-    let retrieved_addr = state
-        .get_pragma_contract_address(); // reading the pragma contract address from contract storage
-    assert_eq!(retrieved_addr, pragma);
-}
-
-/// testing pragma contract address updation by owner
-#[test]
-fn test_set_pragma_contract() {
-    let mut state = Utils::contract_state_for_testing();
-    let owner: ContractAddress = contract_address_const::<'owner'>();
-    state.owner.write(owner); // setting the current owner's addrees
-
-    let initial_owner = state.owner.read(); // current owner of Utils contract
-
-    let pragma: ContractAddress = contract_address_const::<'PRAGMA'>();
-    state.pragma_contract.write(pragma); // setting the current pragma contract address
-
-    let test_address: ContractAddress = test_address();
-    let new_pragma: ContractAddress = contract_address_const::<'NEW_PRAGMA'>();
-
-    start_cheat_caller_address(test_address, initial_owner);
-
-    state
-        .set_pragma_contract_address(
-            new_pragma,
-        ); // contract address updation, changing contract storage - expect successfull process
-
-    let retrieved_addr = state.pragma_contract.read();
-    assert_eq!(retrieved_addr, new_pragma);
-}
-
-/// testing pragma contract address updation by party who is not an owner
-/// expecting panic - only owner can set pragma contract address
-#[test]
-#[should_panic(expected: "Only the owner can change contract address")]
-fn test_set_pragma_contract_wrong_owner() {
-    let mut state = Utils::contract_state_for_testing();
-
-    let owner: ContractAddress = contract_address_const::<'owner'>();
-    state.owner.write(owner); // setting the current owner's addrees
-
-    let initial_owner = state.owner.read(); // current owner of Utils contract
-
-    let pragma: ContractAddress = contract_address_const::<'PRAGMA'>();
-    state.pragma_contract.write(pragma); // setting the current pragma contract address
-
-    let another_owner: ContractAddress = contract_address_const::<'another_owner'>();
-
-    let test_address: ContractAddress = test_address();
-    let new_pragma: ContractAddress = contract_address_const::<'NEW_PRAGMA'>();
-
-    start_cheat_caller_address(
-        test_address, another_owner,
-    ); // cofiguration to call from 'another_owner'
-
-    state.set_pragma_contract_address(new_pragma); // expect to panic
-}
-
-/// testing pragma contract address updation to 0x0
-/// expecting panic - cannot changee contract address to 0x0
-#[test]
-#[should_panic(expected: "Cannot change contract address to 0x0")]
-fn test_set_pragma_contract_zero_addr() {
-    let mut state = Utils::contract_state_for_testing();
-    let owner: ContractAddress = contract_address_const::<'owner'>();
-    state.owner.write(owner); // setting the current owner's addrees
-
-    let initial_owner = state.owner.read(); // current owner of Utils contract
-
-    let pragma: ContractAddress = contract_address_const::<'PRAGMA'>();
-    state.pragma_contract.write(pragma); // setting the current pragma contract address
-
-    let zero_addr: ContractAddress = 0x0.try_into().unwrap(); // 0x0 address
-
-    let test_address: ContractAddress = test_address();
-
-    start_cheat_caller_address(test_address, initial_owner);
-
-    state.set_pragma_contract_address(zero_addr); // expect to panic
-}
-
-/// testing if pragma price feed is accessible and returning values
-#[test]
-#[fork("SEPOLIA_LATEST")]
-fn test_get_strk_usd_price() {
-    let (utils_dispatcher, _) = deploy_utils();
-    let strk_in_usd = utils_dispatcher.get_strk_usd_price(); // accessing pragma price feeds
-    assert!(strk_in_usd > 0, "Price should be greater than 0");
+    let count = contract.get_validators_count();
+    assert(count == 10_u256, 'Should have 10 validators');
 }

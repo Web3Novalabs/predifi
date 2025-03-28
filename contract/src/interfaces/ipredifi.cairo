@@ -26,12 +26,14 @@ pub trait IPredifi<TContractState> {
     fn pool_odds(self: @TContractState, pool_id: u256) -> PoolOdds;
     fn get_pool(self: @TContractState, pool_id: u256) -> PoolDetails;
     fn vote(ref self: TContractState, pool_id: u256, option: felt252, amount: u256);
-    fn stake(ref self: TContractState, pool_id: u256, amount: u256);
     fn get_user_stake(self: @TContractState, pool_id: u256, address: ContractAddress) -> UserStake;
     fn get_pool_stakes(self: @TContractState, pool_id: u256) -> UserStake;
     fn get_pool_vote(self: @TContractState, pool_id: u256) -> bool;
     fn get_pool_count(self: @TContractState) -> u256;
     fn retrieve_pool(self: @TContractState, pool_id: u256) -> bool;
-    fn get_pool_creator(self: @TContractState, pool_id: u256) -> ContractAddress;
+    fn register_validator(ref self: TContractState, stake: u256);
+    fn verify_validator_assignment(
+        self: @TContractState, pool_id: u256, validator: ContractAddress,
+    ) -> bool;
+    fn get_validators_count(self: @TContractState) -> u256;
 }
-
