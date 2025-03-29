@@ -1,4 +1,5 @@
 "use client";
+
 import { ArgentMobileConnector } from "starknetkit/argentMobile";
 import { WebWalletConnector } from "starknetkit/webwallet";
 import { sepolia, mainnet } from "@starknet-react/chains";
@@ -12,7 +13,18 @@ import {
 } from "@starknet-react/core";
 import { jsonRpcProvider } from "@starknet-react/core";
 import { ReactNode, useCallback } from "react";
-//import { cartridgeInstance } from "../utils/controller";
+import { ControllerConnector } from "@cartridge/connector";
+import { constants } from "starknet";
+
+// IMPORTANT: Create the ControllerConnector outside the component
+// This prevents recreation on each render
+const cartridgeConnector = new ControllerConnector({
+  chains: [
+    { rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia" },
+    { rpcUrl: "https://api.cartridge.gg/x/starknet/mainnet" },
+  ],
+  defaultChainId: constants.StarknetChainId.SN_SEPOLIA,
+});
 
 const StarknetProvider = ({ children }: { children: ReactNode }) => {
   const chains = [mainnet, sepolia];
@@ -21,7 +33,6 @@ const StarknetProvider = ({ children }: { children: ReactNode }) => {
     includeRecommended: "always",
   });
 
-  console.log(process.env.NEXT_PUBLIC_ALCHEMY_API_KEY);
   const rpc = useCallback(() => {
     return {
       nodeUrl: process.env.NEXT_PUBLIC_ALCHEMY_API_KEY,
@@ -38,13 +49,15 @@ const StarknetProvider = ({ children }: { children: ReactNode }) => {
     inAppBrowserOptions: {},
   });
 
+  const webWalletConnector = new WebWalletConnector({
+    url: "https://web.argent.xyz",
+  });
+
   const connectors = [
     ...injected,
-    new WebWalletConnector({
-      url: "https://web.argent.xyz",
-    }) as never as Connector,
+    webWalletConnector as never as Connector,
     ArgentMobile as never as Connector,
-    //cartridgeInstance,
+    cartridgeConnector as never as Connector,
   ];
 
   return (
