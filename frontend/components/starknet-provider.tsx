@@ -9,11 +9,12 @@ import {
   StarknetConfig,
   starkscan,
   useInjectedConnectors,
-  cartridgeProvider,
 } from "@starknet-react/core";
 import { jsonRpcProvider } from "@starknet-react/core";
 import { ReactNode, useCallback } from "react";
 import { ControllerConnector } from "@cartridge/connector";
+import { constants } from "starknet";
+
 const StarknetProvider = ({ children }: { children: ReactNode }) => {
   const chains = [mainnet, sepolia];
   const { connectors: injected } = useInjectedConnectors({
@@ -28,10 +29,6 @@ const StarknetProvider = ({ children }: { children: ReactNode }) => {
     };
   }, []);
 
-  const cartridgeConnector = new ControllerConnector({
-    rpc:cartridgeProvider().nodeUrl,
-  });
-
   const provider = jsonRpcProvider({ rpc });
 
   const ArgentMobile = ArgentMobileConnector.init({
@@ -42,13 +39,22 @@ const StarknetProvider = ({ children }: { children: ReactNode }) => {
     inAppBrowserOptions: {},
   });
 
+  const cartridgeConnector = new ControllerConnector({
+    chains: [
+      { rpcUrl: "https://api.cartridge.gg/x/starknet/sepolia" },
+      { rpcUrl: "https://api.cartridge.gg/x/starknet/mainnet" },
+    ],
+    defaultChainId: constants.StarknetChainId.SN_SEPOLIA,
+  });
+
   const connectors = [
     ...injected,
     new WebWalletConnector({
       url: "https://web.argent.xyz",
     }) as never as Connector,
     ArgentMobile as never as Connector,
-    cartridgeConnector,
+    cartridgeConnector as never as Connector,
+    //cartridgeInstance,
   ];
 
   return (
