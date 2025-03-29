@@ -10,12 +10,16 @@ pub mod Predifi {
     };
     use starknet::{
         ContractAddress, get_block_number, get_block_timestamp, get_caller_address,
-        get_contract_address,
+        get_contract_address, class_hash::ClassHash,
     };
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
     };
     // oz imports
+    use openzeppelin::upgrades::{interface::IUpgradeable, UpgradeableComponent};
+
+    //components
+    component!(path: UpgradeableComponent, storage: upgradeable, event: UpgradeableEvent);
 
     // package imports
     use crate::base::types::{
@@ -43,6 +47,9 @@ pub mod Predifi {
         validators_count: u256,
         pool_validators: Map<(u256, u256), ContractAddress>, // (pool_id, index) -> Address
         pool_validator_count: Map<u256, u256>,
+        version: u8,
+        #[substorage(v0)]
+        upgradeable: UpgradeableComponent::Storage,
     }
 
     // Events
@@ -51,6 +58,13 @@ pub mod Predifi {
     enum Event {
         BetPlaced: BetPlaced,
         ValidatorRegistered: ValidatorRegistered,
+        UserStaked: UserStaked,
+        #[flat]
+        AccessControlEvent: AccessControlComponent::Event,
+        #[flat]
+        SRC5Event: SRC5Component::Event,
+        #[flat]
+        UpgradeableEvent: UpgradeableComponent::Event,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -78,6 +92,15 @@ pub mod Predifi {
     struct ValidatorRegistered {
         validator: ContractAddress,
         stake: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct UserStaked {
+        pool_id: u256,
+        address: ContractAddress,
+        option: felt252,
+        amount: u256,
+        shares: u256,
     }
 
     #[constructor]
@@ -510,4 +533,14 @@ pub mod Predifi {
             hasher.finalize().try_into().unwrap()
         }
     }
+
+    #[abi(embed_v0)]
+    impl UpgradeableImpl of IUpgradeable<ContractState> {
+        fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
+            self.version.write(self.version.read() + 1);
+            self.upgradeable.upgrade(new_class_hash);
+        }
+    }
+
+    impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
 }
