@@ -5,6 +5,7 @@ version = 1
 name = "contract"
 version = "0.1.0"
 dependencies = [
+ "openzeppelin",
  "pragma_lib",
  "snforge_std",
 ]
@@ -139,12 +140,14 @@ dependencies = [
 [[package]]
 name = "snforge_scarb_plugin"
 version = "0.39.0"
-source = "git+https://github.com/foundry-rs/starknet-foundry?tag=v0.39.0#13ee73d44807f57b7e2c64be766161f48ca04c27"
+source = "registry+https://scarbs.xyz/"
+checksum = "sha256:61ae2333de26d9e6e4b535916f8da7916bfd95c951c765c6fbd36038289a636c"
 
 [[package]]
 name = "snforge_std"
 version = "0.39.0"
-source = "git+https://github.com/foundry-rs/starknet-foundry?tag=v0.39.0#13ee73d44807f57b7e2c64be766161f48ca04c27"
+source = "registry+https://scarbs.xyz/"
+checksum = "sha256:31f118f54e5d87393e50c07e8c052f03ff4af945a2b65b56e6edbd3b5b7fd127"
 dependencies = [
  "snforge_scarb_plugin",
 ]
