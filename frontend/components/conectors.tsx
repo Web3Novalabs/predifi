@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useConnect } from "@starknet-react/core";
+import { Connector } from "@starknet-react/core";
 import { Button } from "./ui/button";
 import { modal } from "@/type/type";
 import CrossX from "@/svg/cross";
@@ -8,7 +9,7 @@ import ControllerIcon from "@/svg/cartridge";
 import Image from "next/image";
 
 function Conectors({ setIsOpen }: modal) {
-  const [clientConnectors, setClientConnectors] = useState<any[]>([]);
+  const [clientConnectors, setClientConnectors] = useState<Connector[]>([]);
   const { connect, connectors } = useConnect();
 
   useEffect(() => {
