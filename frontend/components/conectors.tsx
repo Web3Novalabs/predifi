@@ -1,18 +1,20 @@
-import Image from "next/image";
+import { useEffect, useState } from "react";
 import { useConnect } from "@starknet-react/core";
 import { Button } from "./ui/button";
 import { modal } from "@/type/type";
 import CrossX from "@/svg/cross";
 import ArgentIcon from "@/svg/argent";
 import ControllerIcon from "@/svg/cartridge";
-import { useEffect } from "react";
+import Image from "next/image";
 
 function Conectors({ setIsOpen }: modal) {
+  const [clientConnectors, setClientConnectors] = useState<any[]>([]);
   const { connect, connectors } = useConnect();
 
-  // Debugging: Log available connectors
   useEffect(() => {
-    console.log("Connectors in UI:", connectors.map(c => c.id));
+    if (typeof window !== "undefined") {
+      setClientConnectors(connectors);
+    }
   }, [connectors]);
 
   return (
@@ -29,7 +31,7 @@ function Conectors({ setIsOpen }: modal) {
           Select Wallet
         </h1>
         <div className="grid grid-cols-4 gap-3 mt-5">
-          {connectors.map((connector) => (
+          {clientConnectors.map((connector) => (
             <Button
               key={connector.id}
               onClick={() => {
