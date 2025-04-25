@@ -21,7 +21,6 @@ pub trait IPredifi<TContractState> {
         isPrivate: bool,
         category: Category,
     ) -> u256;
-
     fn pool_count(self: @TContractState) -> u256;
     fn pool_odds(self: @TContractState, pool_id: u256) -> PoolOdds;
     fn get_pool(self: @TContractState, pool_id: u256) -> PoolDetails;

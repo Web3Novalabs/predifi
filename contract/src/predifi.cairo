@@ -7,6 +7,10 @@ pub mod Predifi {
     // oz imports
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::token::erc20::interface::{
+        ERC20ABIDispatcher, ERC20ABIDispatcherTrait, IERC20Dispatcher, IERC20DispatcherTrait,
+        IERC20MetadataDispatcher, IERC20MetadataDispatcherTrait,
+    };
     use starknet::storage::{
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
@@ -28,6 +32,7 @@ pub mod Predifi {
 
     // Validator role
     const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
+    const ADMIN_ROLE: felt252 = selector!("ADMIN_ROLE");
 
     // components definition
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
@@ -51,6 +56,7 @@ pub mod Predifi {
         pool_stakes: Map<u256, UserStake>,
         pool_vote: Map<u256, bool>, // pool id to vote
         user_stakes: Map<(u256, ContractAddress), UserStake>, // Mapping user -> stake details
+        token_addr: ContractAddress,
         #[substorage(v0)]
         pub accesscontrol: AccessControlComponent::Storage,
         #[substorage(v0)]
@@ -59,6 +65,15 @@ pub mod Predifi {
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
+        protocol_treasury: u256,
+        creator_treasuries: Map<ContractAddress, u256>,
+        validator_treasuries: Map<
+            ContractAddress, u256,
+        >, // Validator address to their accumulated fees
+        pool_outcomes: Map<
+            u256, bool,
+        >, // Pool ID to outcome (true = option2 won, false = option1 won)
+        pool_resolved: Map<u256, bool>,
     }
 
     // Events
@@ -67,6 +82,9 @@ pub mod Predifi {
     enum Event {
         BetPlaced: BetPlaced,
         UserStaked: UserStaked,
+        FeesCollected: FeesCollected,
+        PoolResolved: PoolResolved,
+        FeeWithdrawn: FeeWithdrawn,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -87,7 +105,27 @@ pub mod Predifi {
         address: ContractAddress,
         amount: u256,
     }
+    #[derive(Drop, starknet::Event)]
+    struct FeesCollected {
+        fee_type: felt252,
+        pool_id: u256,
+        recipient: ContractAddress,
+        amount: u256,
+    }
 
+    #[derive(Drop, starknet::Event)]
+    struct PoolResolved {
+        pool_id: u256,
+        winning_option: bool,
+        total_payout: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct FeeWithdrawn {
+        fee_type: felt252,
+        recipient: ContractAddress,
+        amount: u256,
+    }
     #[derive(Drop, Hash)]
     struct HashingProperties {
         username: felt252,
@@ -101,7 +139,11 @@ pub mod Predifi {
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState) {}
+    fn constructor(ref self: ContractState, token_addr: ContractAddress, validator:ContractAddress, admin: ContractAddress) {
+        self.token_addr.write(token_addr);
+        self.accesscontrol._grant_role(ADMIN_ROLE, admin);
+        self.accesscontrol._grant_role(VALIDATOR_ROLE, validator)
+    }
 
     #[abi(embed_v0)]
     impl predifi of IPredifi<ContractState> {
@@ -134,8 +176,10 @@ pub mod Predifi {
             assert!(current_time < poolStartTime, "Start time must be in the future");
             assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
 
+            let creator_address = get_caller_address();
+          
             // Collect pool creation fee (1 STRK)
-            self.collect_pool_creation_fee(get_caller_address());
+            self.collect_pool_creation_fee(creator_address);
 
             let mut pool_id = self.generate_deterministic_number();
 
@@ -145,7 +189,6 @@ pub mod Predifi {
             }
 
             // Create pool details structure
-            let creator_address = get_caller_address();
             let pool_details = PoolDetails {
                 pool_id: pool_id,
                 address: creator_address,
@@ -221,6 +264,21 @@ pub mod Predifi {
             assert(amount >= pool.minBetAmount, AMOUNT_BELOW_MINIMUM);
             assert(amount <= pool.maxBetAmount, AMOUNT_ABOVE_MAXIMUM);
 
+            // Transfer betting amount from the user to the contract
+            let caller = get_caller_address();
+            let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
+
+            // Check balance and allowance
+            let user_balance = dispatcher.balance_of(caller);
+            assert(user_balance >= amount, 'Insufficient balance');
+
+            let contract_address = get_contract_address();
+            let allowed_amount = dispatcher.allowance(caller, contract_address);
+            assert(allowed_amount >= amount, 'Insufficient allowance');
+
+            // Transfer the tokens
+            dispatcher.transfer_from(caller, contract_address, amount);
+
             let mut pool = self.pools.read(pool_id);
             if option == option1 {
                 pool.totalStakeOption1 += amount;
@@ -267,6 +325,21 @@ pub mod Predifi {
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
             assert(amount >= MIN_STAKE_AMOUNT, 'stake amount too low');
             let address: ContractAddress = get_caller_address();
+
+            // Transfer stake amount from user to contract
+            let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
+
+            // Check balance and allowance
+            let user_balance = dispatcher.balance_of(address);
+            assert(user_balance >= amount, 'Insufficient balance');
+
+            let contract_address = get_contract_address();
+            let allowed_amount = dispatcher.allowance(address, contract_address);
+            assert(allowed_amount >= amount, 'Insufficient allowance');
+
+            // Transfer the tokens
+            dispatcher.transfer_from(address, contract_address, amount);
+
             // Add to previous stake if any
             let mut stake = self.user_stakes.read((pool_id, address));
             stake.amount = amount + stake.amount;
@@ -314,11 +387,86 @@ pub mod Predifi {
 
     #[generate_trait]
     impl Private of PrivateTrait {
-        fn collect_pool_creation_fee(
-            ref self: ContractState, creator: ContractAddress,
-        ) { // TODO: Uncomment code after ERC20 implementation
-        // let strk_token = IErc20Dispatcher { contract_address: self.strk_token_address.read() };
-        // strk_token.transfer_from(creator, get_contract_address(), ONE_STRK);
+        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
+            // Retrieve the STRK token contract
+            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+
+            // Check if the creator has sufficient balance for pool creation fee
+            let creator_balance = strk_token.balance_of(creator);
+            assert(creator_balance >= ONE_STRK, 'Insufficient STRK balance');
+
+            // Check allowance to ensure the contract can transfer tokens
+            let contract_address = get_contract_address();
+            let allowed_amount = strk_token.allowance(creator, contract_address);
+            assert(allowed_amount >= ONE_STRK, 'Insufficient allowance');
+
+            // Transfer the pool creation fee from creator to the contract
+            strk_token.transfer_from(creator, contract_address, ONE_STRK);
+        }
+
+        fn withdraw_protocol_fees(ref self: ContractState, recipient: ContractAddress) {
+            // Only admin can withdraw protocol fees
+            assert(self.accesscontrol.has_role(ADMIN_ROLE, get_caller_address()), 'Not an admin');
+
+            let amount = self.protocol_treasury.read();
+            assert(amount > 0, 'No fees to withdraw');
+
+            // Reset protocol treasury
+            self.protocol_treasury.write(0);
+
+            // Transfer fees to recipient
+            let token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+            token.transfer(recipient, amount);
+
+            // Emit event
+            self
+                .emit(
+                    Event::FeeWithdrawn(FeeWithdrawn { fee_type: 'protocol', recipient, amount }),
+                );
+        }
+
+        fn withdraw_validator_fees(ref self: ContractState) {
+            let validator = get_caller_address();
+            assert(self.accesscontrol.has_role(VALIDATOR_ROLE, validator), 'Not a validator');
+
+            let amount = self.validator_treasuries.read(validator);
+            assert(amount > 0, 'No fees to withdraw');
+
+            // Reset validator treasury
+            self.validator_treasuries.write(validator, 0);
+
+            // Transfer fees to validator
+            let token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+            token.transfer(validator, amount);
+
+            // Emit event
+            self
+                .emit(
+                    Event::FeeWithdrawn(
+                        FeeWithdrawn { fee_type: 'validator', recipient: validator, amount },
+                    ),
+                );
+        }
+
+        fn withdraw_creator_fees(ref self: ContractState) {
+            let creator = get_caller_address();
+            let amount = self.creator_treasuries.read(creator);
+            assert(amount > 0, 'No fees to withdraw');
+
+            // Reset creator treasury
+            self.creator_treasuries.write(creator, 0);
+
+            // Transfer fees to creator
+            let token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+            token.transfer(creator, amount);
+
+            // Emit event
+            self
+                .emit(
+                    Event::FeeWithdrawn(
+                        FeeWithdrawn { fee_type: 'creator', recipient: creator, amount },
+                    ),
+                );
         }
 
 
@@ -366,8 +514,6 @@ pub mod Predifi {
             self.user_hash_pedersen.write(pedersen_hash);
             pedersen_hash
         }
-
-
         fn calculate_shares(
             ref self: ContractState,
             amount: u256,
