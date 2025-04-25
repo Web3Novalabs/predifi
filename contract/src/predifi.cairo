@@ -139,7 +139,12 @@ pub mod Predifi {
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState, token_addr: ContractAddress, validator:ContractAddress, admin: ContractAddress) {
+    fn constructor(
+        ref self: ContractState,
+        token_addr: ContractAddress,
+        validator: ContractAddress,
+        admin: ContractAddress,
+    ) {
         self.token_addr.write(token_addr);
         self.accesscontrol._grant_role(ADMIN_ROLE, admin);
         self.accesscontrol._grant_role(VALIDATOR_ROLE, validator)
@@ -177,7 +182,7 @@ pub mod Predifi {
             assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
 
             let creator_address = get_caller_address();
-          
+
             // Collect pool creation fee (1 STRK)
             self.collect_pool_creation_fee(creator_address);
 
@@ -404,69 +409,102 @@ pub mod Predifi {
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
         }
 
-        fn withdraw_protocol_fees(ref self: ContractState, recipient: ContractAddress) {
-            // Only admin can withdraw protocol fees
-            assert(self.accesscontrol.has_role(ADMIN_ROLE, get_caller_address()), 'Not an admin');
+        fn collect_protocol_fee(
+            ref self: ContractState, pool_id: u256, total_amount: u256,
+        ) -> u256 {
+            // Protocol fee is fixed at 5%
+            let protocol_fee_percentage = 5_u8;
+            let protocol_fee = (total_amount * protocol_fee_percentage.into()) / 100_u256;
 
-            let amount = self.protocol_treasury.read();
-            assert(amount > 0, 'No fees to withdraw');
+            // Add to protocol treasury
+            let current_protocol_treasury = self.protocol_treasury.read();
+            self.protocol_treasury.write(current_protocol_treasury + protocol_fee);
 
-            // Reset protocol treasury
-            self.protocol_treasury.write(0);
-
-            // Transfer fees to recipient
-            let token = IERC20Dispatcher { contract_address: self.token_addr.read() };
-            token.transfer(recipient, amount);
-
-            // Emit event
+            // Emit event for protocol fee collection
+            let contract_address = get_contract_address();
             self
                 .emit(
-                    Event::FeeWithdrawn(FeeWithdrawn { fee_type: 'protocol', recipient, amount }),
-                );
-        }
-
-        fn withdraw_validator_fees(ref self: ContractState) {
-            let validator = get_caller_address();
-            assert(self.accesscontrol.has_role(VALIDATOR_ROLE, validator), 'Not a validator');
-
-            let amount = self.validator_treasuries.read(validator);
-            assert(amount > 0, 'No fees to withdraw');
-
-            // Reset validator treasury
-            self.validator_treasuries.write(validator, 0);
-
-            // Transfer fees to validator
-            let token = IERC20Dispatcher { contract_address: self.token_addr.read() };
-            token.transfer(validator, amount);
-
-            // Emit event
-            self
-                .emit(
-                    Event::FeeWithdrawn(
-                        FeeWithdrawn { fee_type: 'validator', recipient: validator, amount },
+                    Event::FeesCollected(
+                        FeesCollected {
+                            fee_type: selector!("protocol"),
+                            pool_id,
+                            recipient: contract_address,
+                            amount: protocol_fee,
+                        },
                     ),
                 );
+
+            protocol_fee
         }
 
-        fn withdraw_creator_fees(ref self: ContractState) {
-            let creator = get_caller_address();
-            let amount = self.creator_treasuries.read(creator);
-            assert(amount > 0, 'No fees to withdraw');
 
-            // Reset creator treasury
-            self.creator_treasuries.write(creator, 0);
+        fn collect_validator_fee(
+            ref self: ContractState, pool_id: u256, total_amount: u256,
+        ) -> u256 {
+            // Validator fee is fixed at 10%
+            let validator_fee_percentage = 10_u8;
+            let validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
 
-            // Transfer fees to creator
-            let token = IERC20Dispatcher { contract_address: self.token_addr.read() };
-            token.transfer(creator, amount);
+            // Distribute validator fees evenly among all validators
+            self.distribute_validator_fees(pool_id, validator_fee);
 
-            // Emit event
-            self
-                .emit(
-                    Event::FeeWithdrawn(
-                        FeeWithdrawn { fee_type: 'creator', recipient: creator, amount },
-                    ),
-                );
+            validator_fee
+        }
+
+        // Helper function to distribute validator fees evenly
+        fn distribute_validator_fees(
+            ref self: ContractState, pool_id: u256, total_validator_fee: u256,
+        ) {
+            let validator_count = self.validators.len();
+            if validator_count == 0 {
+                // If no validators, add to protocol treasury
+                let current_protocol_treasury = self.protocol_treasury.read();
+                self.protocol_treasury.write(current_protocol_treasury + total_validator_fee);
+
+                // Emit event
+                let contract_address = get_contract_address();
+                self
+                    .emit(
+                        Event::FeesCollected(
+                            FeesCollected {
+                                fee_type: selector!("protocol_fallback"),
+                                pool_id,
+                                recipient: contract_address,
+                                amount: total_validator_fee,
+                            },
+                        ),
+                    );
+                return;
+            }
+
+            // Convert validator_count to u256 for the division
+            let validator_count_u256: u256 = validator_count.into();
+            let fee_per_validator = total_validator_fee / validator_count_u256;
+
+            // Distribute to each validator
+            let mut i: u64 = 0;
+            while i < validator_count {
+                let validator_address = self.validators.at(i).read();
+                let current_validator_treasury = self.validator_treasuries.read(validator_address);
+                self
+                    .validator_treasuries
+                    .write(validator_address, current_validator_treasury + fee_per_validator);
+
+                // Emit event for this validator's fee
+                self
+                    .emit(
+                        Event::FeesCollected(
+                            FeesCollected {
+                                fee_type: selector!("validator"),
+                                pool_id,
+                                recipient: validator_address,
+                                amount: fee_per_validator,
+                            },
+                        ),
+                    );
+
+                i += 1;
+            }
         }
 
 

@@ -1,13 +1,13 @@
 use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
 use contract::interfaces::ipredifi::{IPredifiDispatcher, IPredifiDispatcherTrait};
-use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use contract::utils::Utils;
 use contract::utils::Utils::InternalFunctionsTrait;
 use core::array::ArrayTrait;
 use core::felt252;
 use core::serde::Serde;
 use core::traits::{Into, TryInto};
+use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
     stop_cheat_caller_address, test_address,
@@ -28,17 +28,16 @@ fn deploy_predifi() -> (IPredifiDispatcher, ContractAddress, ContractAddress) {
     let admin: ContractAddress = contract_address_const::<'admin'>();
     let validator: ContractAddress = contract_address_const::<'validator'>();
 
-
-
     // Deploy mock ERC20
     let erc20_class = declare("STARKTOKEN").unwrap().contract_class();
     let mut calldata = array![POOL_CREATOR.into(), owner.into(), 6];
     let (erc20_address, _) = erc20_class.deploy(@calldata).unwrap();
 
-
     let contract_class = declare("Predifi").unwrap().contract_class();
 
-    let (contract_address, _) = contract_class.deploy(@array![erc20_address.into(), admin.into(), validator.into()]).unwrap();
+    let (contract_address, _) = contract_class
+        .deploy(@array![erc20_address.into(), admin.into(), validator.into()])
+        .unwrap();
     let dispatcher = IPredifiDispatcher { contract_address };
     (dispatcher, POOL_CREATOR, erc20_address)
 }
@@ -146,7 +145,7 @@ fn test_zero_min_bet() {
     start_cheat_caller_address(erc20_address, pool_creator);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
-        let (
+    let (
         poolName,
         poolType,
         poolDescription,
@@ -196,8 +195,8 @@ fn test_excessive_creator_fee() {
     start_cheat_caller_address(erc20_address, pool_creator);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
-    
-        let (
+
+    let (
         poolName,
         poolType,
         poolDescription,
@@ -216,7 +215,7 @@ fn test_excessive_creator_fee() {
     ) =
         get_default_pool_params();
 
-        start_cheat_caller_address(contract.contract_address, pool_creator);
+    start_cheat_caller_address(contract.contract_address, pool_creator);
     contract
         .create_pool(
             poolName,
@@ -282,14 +281,13 @@ fn test_vote() {
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address); 
-    
-    start_cheat_caller_address(contract.contract_address, pool_creator);
-   let pool_id = create_default_pool(contract);
-    
-    contract.vote(pool_id, 'Team A', 200);
-    stop_cheat_caller_address(contract.contract_address); 
+    stop_cheat_caller_address(erc20_address);
 
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+
+    contract.vote(pool_id, 'Team A', 200);
+    stop_cheat_caller_address(contract.contract_address);
 
     let pool = contract.get_pool(pool_id);
     assert(pool.totalBetCount == 1, 'Total bet count should be 1');
@@ -305,15 +303,14 @@ fn test_vote_with_user_stake() {
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address); 
-    
+    stop_cheat_caller_address(erc20_address);
+
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
 
     let pool = contract.get_pool(pool_id);
     contract.vote(pool_id, 'Team A', 200);
-    stop_cheat_caller_address(contract.contract_address); 
-
+    stop_cheat_caller_address(contract.contract_address);
 
     let user_stake = contract.get_user_stake(pool_id, pool.address);
     assert(user_stake.amount == 200, 'Incorrect amount');
@@ -330,7 +327,7 @@ fn test_successful_get_pool() {
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
-    
+
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
     let pool = contract.get_pool(pool_id);
@@ -347,7 +344,7 @@ fn test_when_invalid_option_is_pass() {
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
-    
+
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
     contract.vote(pool_id, 'Team C', 200);
@@ -363,7 +360,7 @@ fn test_when_min_bet_amount_less_than_required() {
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
-    
+
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
     contract.vote(pool_id, 'Team A', 10);
@@ -379,7 +376,7 @@ fn test_when_max_bet_amount_greater_than_required() {
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
-    
+
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
     contract.vote(pool_id, 'Team B', 1000000);
@@ -394,7 +391,7 @@ fn test_get_pool_odds() {
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
-    
+
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
     contract.vote(pool_id, 'Team A', 100);
@@ -412,7 +409,7 @@ fn test_get_pool_stakes() {
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address); 
+    stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
@@ -432,8 +429,8 @@ fn test_unique_pool_id() {
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address); 
-    
+    stop_cheat_caller_address(erc20_address);
+
     start_cheat_caller_address(contract.contract_address, pool_creator);
     let pool_id = create_default_pool(contract);
     assert!(pool_id != 0, "not created");
@@ -447,8 +444,8 @@ fn test_unique_pool_id_when_called_twice_in_the_same_execution() {
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address); 
-    
+    stop_cheat_caller_address(erc20_address);
+
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
     let pool_id1 = create_default_pool(contract);
@@ -465,8 +462,8 @@ fn test_get_pool_vote() {
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address); 
-     
+    stop_cheat_caller_address(erc20_address);
+
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = create_default_pool(contract);
     contract.vote(pool_id, 'Team A', 200);
@@ -483,7 +480,7 @@ fn test_get_pool_count() {
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, voter);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address);     
+    stop_cheat_caller_address(erc20_address);
     assert(contract.get_pool_count() == 0, 'Initial pool count should be 0');
 
     start_cheat_caller_address(contract.contract_address, voter);
@@ -493,13 +490,13 @@ fn test_get_pool_count() {
 
 #[test]
 fn test_stake_successful() {
- let (contract, caller, erc20_address) = deploy_predifi();
+    let (contract, caller, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, caller);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address);   
+    stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, caller);
     let pool_id = create_default_pool(contract);
@@ -519,7 +516,7 @@ fn test_get_pool_creator() {
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, POOL_CREATOR);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address);   
+    stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, POOL_CREATOR);
     let pool_id = create_default_pool(contract);
@@ -783,7 +780,7 @@ fn test_creator_fee_multiple_pools() {
             false,
             Category::Sports,
         );
-        stop_cheat_caller_address(contract.contract_address);
+    stop_cheat_caller_address(contract.contract_address);
 
     let creator_fee1 = contract.get_creator_fee_percentage(pool_id1);
     let creator_fee2 = contract.get_creator_fee_percentage(pool_id2);
