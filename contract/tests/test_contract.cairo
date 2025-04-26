@@ -695,13 +695,159 @@ fn test_set_pragma_contract_zero_addr() {
 
     state.set_pragma_contract_address(zero_addr); // expect to panic
 }
-/// testing if pragma price feed is accessible and returning values
-// #[test]
-// #[fork("SEPOLIA_LATEST")]
-// fn test_get_strk_usd_price() {
-//     let (utils_dispatcher, _) = deploy_utils();
-//     let strk_in_usd = utils_dispatcher.get_strk_usd_price(); // accessing pragma price feeds
-//     assert!(strk_in_usd > 0, "Price should be greater than 0");
-// }
 
+#[test]
+fn test_track_user_participation() {
+    let contract = deploy_predifi();
+    let pool_id = create_default_pool(contract);
 
+    let user = contract_address_const::<42>();
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Check that user hasn't participated in any pools yet
+    assert(contract.get_user_pool_count(user) == 0, 'Should be 0');
+    assert(!contract.has_user_participated_in_pool(user, pool_id), 'No participation');
+
+    // User votes in the pool
+    contract.vote(pool_id, 'Team A', 200);
+
+    // Check that participation is tracked
+    assert(contract.get_user_pool_count(user) == 1, 'Count should be 1');
+    assert(contract.has_user_participated_in_pool(user, pool_id), 'Should participate');
+
+    // Create another pool
+    let pool_id2 = create_default_pool(contract);
+
+    // User votes in second pool
+    contract.vote(pool_id2, 'Team A', 200);
+
+    // Check count increased
+    assert(contract.get_user_pool_count(user) == 2, 'Count should be 2');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_get_user_pools() {
+    let contract = deploy_predifi();
+
+    let user = contract_address_const::<42>();
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create three pools
+    let pool_id1 = create_default_pool(contract);
+    let pool_id2 = create_default_pool(contract);
+    let pool_id3 = create_default_pool(contract);
+
+    // User participates in pools 1 and 3
+    contract.vote(pool_id1, 'Team A', 200);
+    contract.vote(pool_id3, 'Team A', 200);
+
+    // Get all participated pools
+    let user_pools = contract.get_user_pools(user, Option::None);
+
+    // Verify the user has participated in exactly 2 pools
+    assert(user_pools.len() == 2, 'Should have 2 pools');
+
+    // Check that pools 1 and 3 are in the array
+    // We need to check each value manually
+    let mut found_pool1 = false;
+    let mut found_pool2 = false;
+    let mut found_pool3 = false;
+
+    let mut i = 0;
+    while i < user_pools.len() {
+        let pool_id = *user_pools.at(i);
+        if pool_id == pool_id1 {
+            found_pool1 = true;
+        } else if pool_id == pool_id2 {
+            found_pool2 = true;
+        } else if pool_id == pool_id3 {
+            found_pool3 = true;
+        }
+        i += 1;
+    }
+
+    assert(found_pool1, 'Pool 1 not found');
+    assert(!found_pool2, 'Pool 2 found');
+    assert(found_pool3, 'Pool 3 not found');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_get_user_pools_by_status() {
+    let contract = deploy_predifi();
+
+    let user = contract_address_const::<42>();
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Create three pools
+    let pool_id1 = create_default_pool(contract);
+    let pool_id2 = create_default_pool(contract);
+    let pool_id3 = create_default_pool(contract);
+
+    // User participates in all pools
+    contract.vote(pool_id1, 'Team A', 200);
+    contract.vote(pool_id2, 'Team A', 200);
+    contract.vote(pool_id3, 'Team A', 200);
+
+    // All pools should be active by default
+    let active_pools = contract.get_user_active_pools(user);
+    assert(active_pools.len() == 3, 'Need 3 active');
+
+    // No locked or settled pools yet
+    let locked_pools = contract.get_user_locked_pools(user);
+    assert(locked_pools.len() == 0, 'Need 0 locked');
+
+    let settled_pools = contract.get_user_settled_pools(user);
+    assert(settled_pools.len() == 0, 'Need 0 settled');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_stake_updates_participation() {
+    let contract = deploy_predifi();
+    let pool_id = create_default_pool(contract);
+
+    let user = contract_address_const::<42>();
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // Verify user hasn't participated yet
+    assert(contract.get_user_pool_count(user) == 0, 'Should be 0');
+
+    // User stakes in the pool
+    let stake_amount: u256 = 200_000_000_000_000_000_000;
+    contract.stake(pool_id, stake_amount);
+
+    // Check that participation is tracked
+    assert(contract.get_user_pool_count(user) == 1, 'Count should be 1');
+    assert(contract.has_user_participated_in_pool(user, pool_id), 'Should participate');
+
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_multiple_actions_single_pool() {
+    let contract = deploy_predifi();
+    let pool_id = create_default_pool(contract);
+
+    let user = contract_address_const::<42>();
+    start_cheat_caller_address(contract.contract_address, user);
+
+    // User votes in the pool
+    contract.vote(pool_id, 'Team A', 200);
+
+    // Check participation count
+    assert(contract.get_user_pool_count(user) == 1, 'Count should be 1');
+
+    // User also stakes in the same pool
+    let stake_amount: u256 = 200_000_000_000_000_000_000;
+    contract.stake(pool_id, stake_amount);
+
+    // Count should still be 1 as it's the same pool
+    assert(contract.get_user_pool_count(user) == 1, 'Should still be 1');
+
+    stop_cheat_caller_address(contract.contract_address);
+}

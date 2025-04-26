@@ -59,6 +59,19 @@ pub mod Predifi {
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
+        user_pools: Map<
+            (ContractAddress, u256), bool,
+        >, // Mapping (user, pool_id) -> has_participated
+        user_pool_count: Map<
+            ContractAddress, u256,
+        >, // Tracks how many pools each user has participated in
+        user_participated_pools: Map<
+            (ContractAddress, u256), bool,
+        >, // Maps (user, pool_id) to participation status
+        user_pool_ids: Map<(ContractAddress, u256), u256>, // Maps (user, index) -> pool_id
+        user_pool_ids_count: Map<
+            ContractAddress, u256,
+        > // Tracks how many pool IDs are stored for each user
     }
 
     // Events
@@ -260,6 +273,7 @@ pub mod Predifi {
             self.pool_vote.write(pool.pool_id, option == option2);
             self.pool_stakes.write(pool.pool_id, user_stake);
             self.pools.write(pool.pool_id, pool);
+            self.track_user_participation(address, pool_id);
             // Emit event
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
@@ -276,9 +290,75 @@ pub mod Predifi {
             self.accesscontrol._grant_role(VALIDATOR_ROLE, address);
             // add caller to validator list
             self.validators.append().write(address);
+
+            self.track_user_participation(address, pool_id);
             // emit event
             self.emit(UserStaked { pool_id, address, amount });
         }
+
+        /// Returns whether a user has participated in a specific pool
+        fn has_user_participated_in_pool(
+            self: @ContractState, user: ContractAddress, pool_id: u256,
+        ) -> bool {
+            self.user_participated_pools.read((user, pool_id))
+        }
+
+        /// Returns the number of pools a user has participated in
+        fn get_user_pool_count(self: @ContractState, user: ContractAddress) -> u256 {
+            self.user_pool_count.read(user)
+        }
+
+        fn get_user_pools(
+            self: @ContractState, user: ContractAddress, status_filter: Option<Status>,
+        ) -> Array<u256> {
+            let mut result: Array<u256> = ArrayTrait::new();
+            let pool_ids_count = self.user_pool_ids_count.read(user);
+
+            // Pre-check if we have any pools to avoid gas costs on empty iterations
+            if pool_ids_count == 0 {
+                return result;
+            }
+
+            // Iterate through all pool IDs this user has participated in
+            let mut i: u256 = 0;
+            while i < pool_ids_count {
+                let pool_id = self.user_pool_ids.read((user, i));
+
+                // Only read from storage if needed
+                if self.has_user_participated_in_pool(user, pool_id) {
+                    // Apply status filter only if a filter is provided
+                    if let Option::Some(status) = status_filter {
+                        let pool = self.pools.read(pool_id);
+                        if pool.exists && pool.status == status {
+                            result.append(pool_id);
+                        }
+                    } else if self.retrieve_pool(pool_id) {
+                        // No filter, just check if pool exists
+                        result.append(pool_id);
+                    }
+                }
+                i += 1;
+            }
+
+            result
+        }
+
+
+        /// Returns a list of active pools the user has participated in
+        fn get_user_active_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
+            self.get_user_pools(user, Option::Some(Status::Active))
+        }
+
+        /// Returns a list of locked pools the user has participated in
+        fn get_user_locked_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
+            self.get_user_pools(user, Option::Some(Status::Locked))
+        }
+
+        /// Returns a list of settled pools the user has participated in
+        fn get_user_settled_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
+            self.get_user_pools(user, Option::Some(Status::Settled))
+        }
+
 
         fn get_user_stake(
             self: @ContractState, pool_id: u256, address: ContractAddress,
@@ -309,6 +389,13 @@ pub mod Predifi {
 
         fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
             10_u8
+        }
+
+        // Check if a user has participated in a specific pool
+        fn check_user_participated(
+            self: @ContractState, user: ContractAddress, pool_id: u256,
+        ) -> bool {
+            self.user_pools.read((user, pool_id))
         }
     }
 
@@ -445,6 +532,24 @@ pub mod Predifi {
                 option2_probability,
                 implied_probability1,
                 implied_probability2,
+            }
+        }
+        /// Tracks user participation in a pool
+        /// This function is called when a user votes or stakes in a pool
+        fn track_user_participation(ref self: ContractState, user: ContractAddress, pool_id: u256) {
+            // Check if this is a new participation
+            if !self.user_participated_pools.read((user, pool_id)) {
+                // Mark this pool as participated
+                self.user_participated_pools.write((user, pool_id), true);
+
+                // Increment the user's pool count
+                let current_count = self.user_pool_count.read(user);
+                self.user_pool_count.write(user, current_count + 1);
+
+                // Add this pool_id to the user's list of participated pools
+                let user_pool_ids_count = self.user_pool_ids_count.read(user);
+                self.user_pool_ids.write((user, user_pool_ids_count), pool_id);
+                self.user_pool_ids_count.write(user, user_pool_ids_count + 1);
             }
         }
     }
