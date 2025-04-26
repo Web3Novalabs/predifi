@@ -325,10 +325,10 @@ pub mod Predifi {
             // Get the pool details
             let pool = self.pools.read(pool_id);
             assert(pool.exists, 'Pool does not exist');
-            
+
             // Get current timestamp
             let current_time = get_block_timestamp();
-            
+
             // Store previous state for event emission
             let previous_state = pool.status;
             let new_state = match pool.status {
@@ -355,26 +355,27 @@ pub mod Predifi {
                 },
                 Status::Closed => Status::Closed,
             };
-            
+
             // If state has changed, update storage and emit event
             if new_state != previous_state {
                 // Create a new PoolDetails with updated status
                 let mut updated_pool = pool;
                 updated_pool.status = new_state;
                 self.pools.write(pool_id, updated_pool);
-                
+
                 // Emit state change event
-                self.emit(
-                    PoolStateUpdated {
-                        pool_id,
-                        previous_state,
-                        new_state,
-                        updated_by: get_caller_address(),
-                        timestamp: current_time,
-                    }
-                );
+                self
+                    .emit(
+                        PoolStateUpdated {
+                            pool_id,
+                            previous_state,
+                            new_state,
+                            updated_by: get_caller_address(),
+                            timestamp: current_time,
+                        },
+                    );
             }
-            
+
             new_state
         }
     }
