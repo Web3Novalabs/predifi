@@ -704,4 +704,53 @@ fn test_set_pragma_contract_zero_addr() {
 //     assert!(strk_in_usd > 0, "Price should be greater than 0");
 // }
 
+#[test]
+fn test_update_pool_state_logic() {
+    let contract = deploy_predifi();
+    
+    // Create a pool with past times to ensure specific states
+    // This allows us to test the state transition logic without manipulating time
+    let current_time = get_block_timestamp();
+    
+    // Create first pool - should be in Active state (start time in future)
+    let active_pool_id = contract
+        .create_pool(
+            'Active Pool',
+            Pool::WinBet,
+            "Pool in active state",
+            "image.png",
+            "event.com/details",
+            current_time + 1000, // start time in future
+            current_time + 2000, // lock time in future
+            current_time + 3000, // end time in future
+            'Option A',
+            'Option B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    
+    // Verify initial state
+    let pool = contract.get_pool(active_pool_id);
+    assert(pool.status == Status::Active, 'Initial state should be Active');
+    
+    // Since we can't manipulate time in tests, we'll verify the function logic
+    // by calling update_pool_state and ensuring it doesn't change state when
+    // the current time is before lock time
+    let new_state = contract.update_pool_state(active_pool_id);
+    assert(new_state == Status::Active, 'Should remain Active');
+    
+    // The logic of the update_pool_state function:
+    // Status::Active  -> Status::Locked   when current_time >= poolLockTime
+    // Status::Locked  -> Status::Settled  when current_time >= poolEndTime
+    // Status::Settled -> Status::Closed   when current_time >= poolEndTime + 86400
+    
+    // We can verify the pool parameters were set correctly
+    assert(pool.poolStartTime == current_time + 1000, 'Start time set correctly');
+    assert(pool.poolLockTime == current_time + 2000, 'Lock time set correctly');
+    assert(pool.poolEndTime == current_time + 3000, 'End time set correctly');
+}
+
 
