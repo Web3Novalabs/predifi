@@ -86,6 +86,7 @@ pub mod Predifi {
     enum Event {
         BetPlaced: BetPlaced,
         UserStaked: UserStaked,
+        PoolStateUpdated: PoolStateUpdated,
         FeesCollected: FeesCollected,
         PoolResolved: PoolResolved,
         FeeWithdrawn: FeeWithdrawn,
@@ -118,6 +119,13 @@ pub mod Predifi {
     }
 
     #[derive(Drop, starknet::Event)]
+    struct PoolStateUpdated {
+        pool_id: u256,
+        previous_state: Status,
+        new_state: Status,
+        updated_by: ContractAddress,
+        timestamp: u64,
+    }
     struct PoolResolved {
         pool_id: u256,
         winning_option: bool,
@@ -395,6 +403,66 @@ pub mod Predifi {
         fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
             10_u8
         }
+
+        fn update_pool_state(ref self: ContractState, pool_id: u256) -> Status {
+            // Get the pool details
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, 'Pool does not exist');
+
+            // Get current timestamp
+            let current_time = get_block_timestamp();
+
+            // Store previous state for event emission
+            let previous_state = pool.status;
+            let new_state = match pool.status {
+                Status::Active => {
+                    if current_time >= pool.poolLockTime {
+                        Status::Locked
+                    } else {
+                        Status::Active
+                    }
+                },
+                Status::Locked => {
+                    if current_time >= pool.poolEndTime {
+                        Status::Settled
+                    } else {
+                        Status::Locked
+                    }
+                },
+                Status::Settled => {
+                    if current_time >= pool.poolEndTime + 86400 {
+                        Status::Closed
+                    } else {
+                        Status::Settled
+                    }
+                },
+                Status::Closed => Status::Closed,
+            };
+
+            // If state has changed, update storage and emit event
+            if new_state != previous_state {
+                // Create a new PoolDetails with updated status
+                let mut updated_pool = pool;
+                updated_pool.status = new_state;
+                self.pools.write(pool_id, updated_pool);
+
+                // Emit state change event
+                self
+                    .emit(
+                        PoolStateUpdated {
+                            pool_id,
+                            previous_state,
+                            new_state,
+                            updated_by: get_caller_address(),
+                            timestamp: current_time,
+                        },
+                    );
+            }
+
+            new_state
+        }
+    }
+
 
         fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
             // Retrieve the STRK token contract

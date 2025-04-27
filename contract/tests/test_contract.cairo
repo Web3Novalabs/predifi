@@ -9,8 +9,8 @@ use core::serde::Serde;
 use core::traits::{Into, TryInto};
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
-    stop_cheat_caller_address, test_address,
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp,
+    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{
@@ -986,4 +986,62 @@ fn test_distribute_validation_fee() {
 //     assert!(strk_in_usd > 0, "Price should be greater than 0");
 // }
 
+#[test]
+fn test_update_pool_state_logic() {
+    let contract = deploy_predifi();
+
+    // Get current time
+    let current_time = get_block_timestamp();
+
+    // Create a pool with specific timestamps
+    let active_pool_id = contract
+        .create_pool(
+            'Active Pool',
+            Pool::WinBet,
+            "Pool in active state",
+            "image.png",
+            "event.com/details",
+            current_time + 1000, // start time in future
+            current_time + 2000, // lock time in future
+            current_time + 3000, // end time in future
+            'Option A',
+            'Option B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+
+    // Verify initial state
+    let pool = contract.get_pool(active_pool_id);
+    assert(pool.status == Status::Active, 'Initial state should be Active');
+
+    // Test transition: Active -> Locked
+    // Set block timestamp to just after lock time
+    start_cheat_block_timestamp(contract.contract_address, current_time + 2001);
+    let new_state = contract.update_pool_state(active_pool_id);
+    assert(new_state == Status::Locked, 'State should be Locked');
+
+    // Test transition: Locked -> Settled
+    // Set block timestamp to just after end time
+    start_cheat_block_timestamp(contract.contract_address, current_time + 3001);
+    let new_state = contract.update_pool_state(active_pool_id);
+    assert(new_state == Status::Settled, 'State should be Settled');
+
+    // Test transition: Settled -> Closed
+    // Set block timestamp to 24 hours + 1 second after end time
+    start_cheat_block_timestamp(contract.contract_address, current_time + 3000 + 86401);
+    let new_state = contract.update_pool_state(active_pool_id);
+    assert(new_state == Status::Closed, 'State should be Closed');
+
+    // Test that no further transitions occur once Closed
+    // Set block timestamp to 48 hours after end time
+    start_cheat_block_timestamp(contract.contract_address, current_time + 3000 + 172800);
+    let new_state = contract.update_pool_state(active_pool_id);
+    assert(new_state == Status::Closed, 'Should remain Closed');
+
+    // Reset block timestamp cheat
+    stop_cheat_block_timestamp(contract.contract_address);
+}
 
