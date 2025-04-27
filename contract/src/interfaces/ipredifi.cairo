@@ -21,7 +21,6 @@ pub trait IPredifi<TContractState> {
         isPrivate: bool,
         category: Category,
     ) -> u256;
-
     fn pool_count(self: @TContractState) -> u256;
     fn pool_odds(self: @TContractState, pool_id: u256) -> PoolOdds;
     fn get_pool(self: @TContractState, pool_id: u256) -> PoolDetails;
@@ -36,5 +35,15 @@ pub trait IPredifi<TContractState> {
     fn get_creator_fee_percentage(self: @TContractState, pool_id: u256) -> u8;
     fn get_validator_fee_percentage(self: @TContractState, pool_id: u256) -> u8;
     fn update_pool_state(ref self: TContractState, pool_id: u256) -> Status;
+    fn collect_pool_creation_fee(ref self: TContractState, creator: ContractAddress);
+    fn calculate_validator_fee(ref self: TContractState, pool_id: u256, total_amount: u256) -> u256;
+    fn distribute_validator_fees(ref self: TContractState, pool_id: u256);
+    fn retrieve_validator_fee(self: @TContractState, pool_id: u256) -> u256;
+    fn add_validators(
+        ref self: TContractState,
+        validator1: ContractAddress,
+        validator2: ContractAddress,
+        validator3: ContractAddress,
+        validator4: ContractAddress,
+    ) -> Array<ContractAddress>;
 }
-
