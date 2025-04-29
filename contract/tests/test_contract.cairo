@@ -948,6 +948,7 @@ fn test_distribute_validation_fee() {
     let validator2 = contract_address_const::<'validator2'>();
     let validator3 = contract_address_const::<'validator3'>();
     let validator4 = contract_address_const::<'validator4'>();
+    let zero_address: ContractAddress = contract_address_const::<'zero'>();
 
     let erc20 = IERC20Dispatcher { contract_address: erc20_address };
     let validators = dispatcher.add_validators(validator1, validator2, validator3, validator4);
@@ -1094,11 +1095,13 @@ fn test_manual_pool_state_update() {
 
     // Get current time
     let current_time = get_block_timestamp();
+
+    // Add token approval for user
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-    // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, user);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
+
     start_cheat_caller_address(contract.contract_address, user);
     // Create a pool with specific timestamps
     let pool_id = contract
@@ -1363,5 +1366,93 @@ fn test_validator_can_update_state() {
     // Verify state change
     let updated_pool = contract.get_pool(pool_id);
     assert(updated_pool.status == Status::Locked, 'should be updated by validator');
+}
+
+#[test]
+fn test_assign_random_validators() {
+    // Deploy the contract
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Create validators
+    let validator1 = contract_address_const::<'validator1'>();
+    let validator2 = contract_address_const::<'validator2'>();
+    let validator3 = contract_address_const::<'validator3'>();
+    let validator4 = contract_address_const::<'validator4'>();
+    let zero_address: ContractAddress = contract_address_const::<'zero'>();
+
+    // Add validators to the contract
+    let _validators = contract.add_validators(validator1, validator2, validator3, validator4);
+
+    // Set up token approval for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create a pool
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assign random validators to the pool
+    contract.assign_random_validators(pool_id);
+
+    // Get the assigned validators
+    let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+
+    // Verify that validators were assigned
+    assert(assigned_validator1 != zero_address, 'Validator1 should be assigned');
+    assert(assigned_validator2 != zero_address, 'Validator2 should be assigned');
+
+    // Verify that the assigned validators are from our added validators
+    let is_valid_validator1 = assigned_validator1 == validator1
+        || assigned_validator1 == validator2
+        || assigned_validator1 == validator3
+        || assigned_validator1 == validator4;
+
+    let is_valid_validator2 = assigned_validator2 == validator1
+        || assigned_validator2 == validator2
+        || assigned_validator2 == validator3
+        || assigned_validator2 == validator4;
+
+    assert(is_valid_validator1, 'Validator1');
+    assert(is_valid_validator2, 'Validator2');
+}
+
+
+#[test]
+fn test_assign_random_validators_initial_validator() {
+    // Deploy the contract
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Get the validator that was added during deployment
+    let expected_validator = contract_address_const::<'validator'>();
+
+    // Explicitly add the validator to the validators list
+    contract
+        .add_validators(
+            expected_validator, expected_validator, expected_validator, expected_validator,
+        );
+
+    // Set up token approval for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create a pool
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assign random validators to the pool
+    contract.assign_random_validators(pool_id);
+
+    // Get the assigned validators
+    let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+
+    // Verify that both assigned validators are the expected validator
+    assert(assigned_validator1 == expected_validator, 'Should assign initial validator');
+    assert(assigned_validator2 == expected_validator, 'Should assign initial validator');
 }
 
