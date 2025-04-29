@@ -1644,3 +1644,119 @@ fn test_validator_distribution() {
     assert(validators_used >= 3_u8, 'Not enough validators used');
 }
 
+
+#[test]
+fn test_limited_validators_assignment() {
+    // Deploy the contract
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Create just one validator
+    let single_validator = contract_address_const::<'single_validator'>();
+
+    // Add only one validator to the contract
+    contract.add_validators(single_validator, single_validator, single_validator, single_validator);
+
+    // Set up token approval for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 1_000_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Get current timestamp
+    let current_time = get_block_timestamp();
+
+    // Create multiple pools
+    let mut pool_ids: Array<u256> = ArrayTrait::new();
+    let num_pools = 3;
+
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+
+    // Create 3 different pools
+    let mut i: u8 = 0;
+    while i < num_pools {
+        let pool_id = contract
+            .create_pool(
+                'Limited Test Pool', // poolName
+                Pool::WinBet, // poolType
+                "Testing limited validators", // poolDescription
+                "image.jpg", // poolImage
+                "https://example.com", // poolEventSourceUrl
+                current_time + 50, // poolStartTime (future)
+                current_time + 150, // poolLockTime (future)
+                current_time + 1000, // poolEndTime (future)
+                'Yes', // option1
+                'No', // option2
+                1_000_000_000_000_000_000, // minBetAmount (1 token)
+                100_000_000_000_000_000_000, // maxBetAmount (100 tokens)
+                5, // creatorFee (5%)
+                false, // isPrivate
+                Category::Sports // category
+            );
+        pool_ids.append(pool_id);
+        i += 1;
+    }
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assign validators to each pool
+    let mut i: u32 = 0;
+    while i < pool_ids.len() {
+        let pool_id = *pool_ids.at(i);
+        contract.assign_random_validators(pool_id);
+        i += 1;
+    }
+
+    // Check that all pools have the same validator assigned
+    // Since there's only one validator, it should be assigned to all pools
+    let mut i: u32 = 0;
+    while i < pool_ids.len() {
+        let pool_id = *pool_ids.at(i);
+        let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+
+        // Both validator1 and validator2 should be the single validator we added
+        assert(assigned_validator1 == single_validator, 'Wrong validator1 assigned');
+        assert(assigned_validator2 == single_validator, 'Wrong validator2 assigned');
+
+        i += 1;
+    }
+
+    // Now add a second validator and verify it gets used for new pools
+    let second_validator = contract_address_const::<'second_validator'>();
+
+    // Clear validators and add two different ones
+    contract.add_validators(single_validator, second_validator, single_validator, second_validator);
+
+    // Create one more pool
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let new_pool_id = contract
+        .create_pool(
+            'New Pool', // poolName
+            Pool::WinBet, // poolType
+            "Testing with two validators", // poolDescription
+            "image.jpg", // poolImage
+            "https://example.com", // poolEventSourceUrl
+            current_time + 50, // poolStartTime (future)
+            current_time + 150, // poolLockTime (future)
+            current_time + 1000, // poolEndTime (future)
+            'Yes', // option1
+            'No', // option2
+            1_000_000_000_000_000_000, // minBetAmount (1 token)
+            100_000_000_000_000_000_000, // maxBetAmount (100 tokens)
+            5, // creatorFee (5%)
+            false, // isPrivate
+            Category::Sports // category
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assign validators to the new pool
+    contract.assign_random_validators(new_pool_id);
+
+    // Check that the new pool has different validators assigned
+    let (new_assigned_validator1, new_assigned_validator2) = contract
+        .get_pool_validators(new_pool_id);
+
+    // At least one of the validators should be the second validator
+    let has_second_validator = new_assigned_validator1 == second_validator
+        || new_assigned_validator2 == second_validator;
+
+    assert(has_second_validator, 'Second validator not used');
+}
