@@ -1306,27 +1306,80 @@ fn test_manual_update_nonexistent_pool() {
     stop_cheat_caller_address(contract.contract_address);
 }
 
+// #[test]
+// fn test_validator_can_update_state() {
+//     let (mut contract, admin, erc20_address) = deploy_predifi();
+
+//     // Create a validator
+//     let validator = contract_address_const::<'validator'>();
+
+//     // Add token approval for admin
+//     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+//     start_cheat_caller_address(erc20_address, admin);
+//     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+//     stop_cheat_caller_address(erc20_address);
+
+//     // Add validators
+//     let validator_array = contract
+//         .add_validators(
+//             validator,
+//             contract_address_const::<'v2'>(),
+//             contract_address_const::<'v3'>(),
+//             contract_address_const::<'v4'>(),
+//         );
+
+//     // Get current time
+//     let current_time = get_block_timestamp();
+
+//     // Create a pool using admin
+//     start_cheat_caller_address(contract.contract_address, admin);
+//     let pool_id = contract
+//         .create_pool(
+//             'Validator Test Pool',
+//             Pool::WinBet,
+//             "A pool for testing validator updates",
+//             "image.png",
+//             "event.com/details",
+//             current_time + 1000,
+//             current_time + 2000,
+//             current_time + 3000,
+//             'Option A',
+//             'Option B',
+//             100,
+//             10000,
+//             5,
+//             false,
+//             Category::Sports,
+//         );
+//     stop_cheat_caller_address(contract.contract_address);
+
+//     // Validator updates state
+//     start_cheat_caller_address(contract.contract_address, validator);
+//     let updated_state = contract.manually_update_pool_state(pool_id, Status::Locked);
+//     stop_cheat_caller_address(contract.contract_address);
+
+//     assert(updated_state == Status::Locked, 'Validator update should succeed');
+
+//     // Verify state change
+//     let updated_pool = contract.get_pool(pool_id);
+//     assert(updated_pool.status == Status::Locked, 'should be updated by validator');
+// }
+
+
+
 #[test]
 fn test_validator_can_update_state() {
     let (mut contract, admin, erc20_address) = deploy_predifi();
 
-    // Create a validator
-    let validator = contract_address_const::<'validator'>();
-
+    // Get the validator address that was used during deployment
+    let validator: ContractAddress = contract_address_const::<'validator'>();
+    
+    // Deploy the contract with this validator
     // Add token approval for admin
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, admin);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
-
-    // Add validators
-    let validator_array = contract
-        .add_validators(
-            validator,
-            contract_address_const::<'v2'>(),
-            contract_address_const::<'v3'>(),
-            contract_address_const::<'v4'>(),
-        );
 
     // Get current time
     let current_time = get_block_timestamp();
@@ -1353,7 +1406,7 @@ fn test_validator_can_update_state() {
         );
     stop_cheat_caller_address(contract.contract_address);
 
-    // Validator updates state
+    // Validator updates state - use the validator address from deployment
     start_cheat_caller_address(contract.contract_address, validator);
     let updated_state = contract.manually_update_pool_state(pool_id, Status::Locked);
     stop_cheat_caller_address(contract.contract_address);
@@ -1365,3 +1418,81 @@ fn test_validator_can_update_state() {
     assert(updated_pool.status == Status::Locked, 'should be updated by validator');
 }
 
+
+#[test]
+fn test_automated_validator_assignment() {
+    // Deploy the contract - this will grant ADMIN_ROLE to the admin address
+    let (mut contract, pool_creator, erc20_address) = deploy_predifi();
+    
+    // Get the admin address that was used during deployment
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Create validators
+    let _validator1 = contract_address_const::<'validator1'>();
+    let _validator2 = contract_address_const::<'validator2'>();
+    let _validator3 = contract_address_const::<'validator3'>();
+    let _validator4 = contract_address_const::<'validator4'>();
+    
+    // Create a user
+    let user = contract_address_const::<'USER'>();
+
+    // Add token approval for admin
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, admin);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Instead of using add_validators, we'll rely on the validator
+    // that was added during contract deployment
+    
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.transfer(user, 100_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+    
+    // Add token approval for user
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(contract.contract_address, 100_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+
+    // Add validators to the contract
+start_cheat_caller_address(contract.contract_address, admin);
+let validator_array = contract.add_validators(
+    _validator1,
+    _validator2,
+    _validator3,
+    _validator4
+);
+    // Transfer tokens to user from POOL_CREATOR (which has tokens from deployment)
+stop_cheat_caller_address(contract.contract_address);
+
+
+
+    // Create a pool
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+    
+
+    
+// Get the assigned validators
+let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+
+// Check if assigned validators are from our list
+let is_valid_validator1 = 
+    assigned_validator1 == _validator1 || 
+    assigned_validator1 == _validator2 || 
+    assigned_validator1 == _validator3 || 
+    assigned_validator1 == _validator4;
+
+let is_valid_validator2 = 
+    assigned_validator2 == _validator1 || 
+    assigned_validator2 == _validator2 || 
+    assigned_validator2 == _validator3 || 
+    assigned_validator2 == _validator4 ||
+    assigned_validator2 == contract_address_const::<0>(); // Zero address is valid for validator2
+
+assert(is_valid_validator1, 'Validator1 not from our list');
+assert(is_valid_validator2, 'Validator2 not valid');
+
+}

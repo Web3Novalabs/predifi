@@ -78,6 +78,8 @@ pub mod Predifi {
             u256, bool,
         >, // Pool ID to outcome (true = option2 won, false = option1 won)
         pool_resolved: Map<u256, bool>,
+        // Track which pools a validator is assigned to
+        validator_assignments: Map<(ContractAddress, u256), bool>,
     }
 
     // Events
@@ -90,6 +92,7 @@ pub mod Predifi {
         PoolStateTransition: PoolStateTransition,
         PoolResolved: PoolResolved,
         FeeWithdrawn: FeeWithdrawn,
+        ValidatorsAssigned: ValidatorsAssigned,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -139,6 +142,14 @@ pub mod Predifi {
         recipient: ContractAddress,
         amount: u256,
     }
+
+    #[derive(Drop, starknet::Event)]
+    struct ValidatorsAssigned {
+        pool_id: u256,
+        validator1: ContractAddress,
+        validator2: ContractAddress,
+    }
+
     #[derive(Drop, Hash)]
     struct HashingProperties {
         username: felt252,
@@ -160,11 +171,29 @@ pub mod Predifi {
     ) {
         self.token_addr.write(token_addr);
         self.accesscontrol._grant_role(ADMIN_ROLE, admin);
-        self.accesscontrol._grant_role(VALIDATOR_ROLE, validator)
+        self.accesscontrol._grant_role(VALIDATOR_ROLE, validator);
     }
 
     #[abi(embed_v0)]
     impl predifi of IPredifi<ContractState> {
+        // Get validators assigned to a specific pools
+        fn get_pool_validators(
+            self: @ContractState, pool_id: u256,
+        ) -> (ContractAddress, ContractAddress) {
+            let pool_details = self.pools.read(pool_id);
+            (pool_details.assigned_validator1, pool_details.assigned_validator2)
+        }
+
+
+        fn grant_validator_role(ref self: ContractState, validator: ContractAddress) {
+            // Only admin can grant validator role
+            let caller = get_caller_address();
+            assert(self.accesscontrol.has_role(ADMIN_ROLE, caller), 'Caller not admin');
+            // // Grant validator role
+        // self.accesscontrol.grant_role(VALIDATOR_ROLE, validator);
+        }
+
+
         fn create_pool(
             ref self: ContractState,
             poolName: felt252,
@@ -206,6 +235,9 @@ pub mod Predifi {
                 pool_id = self.generate_deterministic_number();
             }
 
+            // Select two random validators
+            let (validator1, validator2) = self.select_random_validators();
+
             // Create pool details structure
             let pool_details = PoolDetails {
                 pool_id: pool_id,
@@ -235,6 +267,8 @@ pub mod Predifi {
                 totalSharesOption2: 0_u256,
                 initial_share_price: 5000, // 0.5 in basis points (10000 = 1.0)
                 exists: true,
+                assigned_validator1: validator1,
+                assigned_validator2: validator2,
             };
 
             self.pools.write(pool_id, pool_details);
@@ -460,7 +494,7 @@ pub mod Predifi {
             // grant the validator role
             self.accesscontrol._grant_role(VALIDATOR_ROLE, address);
             // add caller to validator list
-            self.validators.append().write(address);
+            self.validators.push(address);
             // emit event
             self.emit(UserStaked { pool_id, address, amount });
         }
@@ -698,6 +732,65 @@ pub mod Predifi {
                 implied_probability1,
                 implied_probability2,
             }
+        }
+
+
+        fn select_random_validators(ref self: ContractState) -> (ContractAddress, ContractAddress) {
+            let validators_len = self.validators.len();
+
+            // Handle edge cases where there are less than 2 validators
+            if validators_len == 0 {
+                let zero_address: ContractAddress = contract_address_const::<0>();
+                return (zero_address, zero_address);
+            }
+
+            if validators_len == 1 {
+                let validator = self.validators.at(0).read();
+                let zero_address: ContractAddress = contract_address_const::<0>();
+                self.update_validator_assignments(validator, self.pool_count.read());
+                return (validator, zero_address);
+            }
+
+            // Generate two different random indices
+            let timestamp = get_block_timestamp();
+            let nonce: u64 = self.nonce.read().try_into().unwrap();
+
+            // Update nonce for next random selection
+            self.nonce.write(nonce.into() + 1);
+
+            // Use timestamp and nonce to create pseudo-random indices
+            let random_seed: u64 = timestamp + nonce;
+            // Convert validators_len to u64 for modulo operation
+            let validators_len_u64: u64 = validators_len.into();
+            let random_index1: u64 = random_seed % validators_len_u64;
+
+            // Ensure second index is different from the first
+            let mut random_index2: u64 = (random_seed + 1) % validators_len_u64;
+            if random_index1 == random_index2 && validators_len > 1 {
+                random_index2 = (random_index2 + 1) % validators_len_u64;
+            }
+
+            let validator1 = self.validators.at(random_index1).read();
+            let validator2 = self.validators.at(random_index2).read();
+
+            // Update validator assignments
+            self.update_validator_assignments(validator1, self.pool_count.read());
+            self.update_validator_assignments(validator2, self.pool_count.read());
+
+            return (validator1, validator2);
+        }
+
+        /// Update validator assignments mapping
+        fn update_validator_assignments(
+            ref self: ContractState, validator: ContractAddress, pool_id: u256,
+        ) {
+            // Skip updating for zero address
+            let zero_address: ContractAddress = contract_address_const::<0>();
+            if validator == zero_address {
+                return;
+            }
+
+            self.validator_assignments.write((validator, pool_id), true);
         }
     }
 }

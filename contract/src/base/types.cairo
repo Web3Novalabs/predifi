@@ -144,5 +144,7 @@ pub struct PoolDetails {
     pub totalSharesOption2: u256,
     pub initial_share_price: u16,
     pub exists: bool,
+    pub assigned_validator1: starknet::ContractAddress,
+    pub assigned_validator2: starknet::ContractAddress,
 }
 
