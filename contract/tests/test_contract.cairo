@@ -1529,3 +1529,118 @@ fn test_assign_multiple_validators() {
     );
 }
 
+#[test]
+fn test_validator_distribution() {
+    // Deploy the contract
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Create multiple validators with different addresses
+    let validator1 = contract_address_const::<'validator1'>();
+    let validator2 = contract_address_const::<'validator2'>();
+    let validator3 = contract_address_const::<'validator3'>();
+    let validator4 = contract_address_const::<'validator4'>();
+
+    // Add validators to the contract
+    contract.add_validators(validator1, validator2, validator3, validator4);
+
+    // Set up token approval for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 1_000_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Get current timestamp
+    let current_time = get_block_timestamp();
+
+    // Create multiple pools
+    let mut pool_ids: Array<u256> = ArrayTrait::new();
+    let num_pools = 5;
+
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+
+    // Create 5 different pools
+    let mut i: u8 = 0;
+    while i < num_pools {
+        let pool_id = contract
+            .create_pool(
+                'Test Pool', // poolName
+                Pool::WinBet, // poolType
+                "Test pool description", // poolDescription
+                "image.jpg", // poolImage
+                "https://example.com", // poolEventSourceUrl
+                current_time + 50, // poolStartTime (future)
+                current_time + 150, // poolLockTime (future)
+                current_time + 1000, // poolEndTime (future)
+                'Yes', // option1
+                'No', // option2
+                1_000_000_000_000_000_000, // minBetAmount (1 token)
+                100_000_000_000_000_000_000, // maxBetAmount (100 tokens)
+                5, // creatorFee (5%)
+                false, // isPrivate
+                Category::Sports // category
+            );
+        pool_ids.append(pool_id);
+        i += 1;
+    }
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assign validators to each pool
+    let mut i: u32 = 0;
+    while i < pool_ids.len() {
+        let pool_id = *pool_ids.at(i);
+        contract.assign_random_validators(pool_id);
+        i += 1;
+    }
+
+    // Check that validators are distributed across pools
+    // We should see different validators assigned to different pools
+    let mut validator1_count = 0_u8;
+    let mut validator2_count = 0_u8;
+    let mut validator3_count = 0_u8;
+    let mut validator4_count = 0_u8;
+
+    let mut i: u32 = 0;
+    while i < pool_ids.len() {
+        let pool_id = *pool_ids.at(i);
+        let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+
+        // Count how many times each validator is assigned
+        if assigned_validator1 == validator1 || assigned_validator2 == validator1 {
+            validator1_count += 1;
+        }
+
+        if assigned_validator1 == validator2 || assigned_validator2 == validator2 {
+            validator2_count += 1;
+        }
+
+        if assigned_validator1 == validator3 || assigned_validator2 == validator3 {
+            validator3_count += 1;
+        }
+
+        if assigned_validator1 == validator4 || assigned_validator2 == validator4 {
+            validator4_count += 1;
+        }
+
+        i += 1;
+    }
+
+    // Verify that at least 3 different validators were used
+    // This is a simple check to ensure some level of distribution
+    let mut validators_used = 0;
+    if validator1_count > 0 {
+        validators_used += 1;
+    }
+    if validator2_count > 0 {
+        validators_used += 1;
+    }
+    if validator3_count > 0 {
+        validators_used += 1;
+    }
+    if validator4_count > 0 {
+        validators_used += 1;
+    }
+
+    // With 5 pools and 4 validators, we should see at least 3 different validators used
+    assert(validators_used >= 3_u8, 'Not enough validators used');
+}
+
