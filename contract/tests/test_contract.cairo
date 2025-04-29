@@ -9,7 +9,7 @@ use core::serde::Serde;
 use core::traits::{Into, TryInto};
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, declare, start_cheat_block_timestamp,
+    ContractClassTrait, DeclareResultTrait, declare, spy_events, start_cheat_block_timestamp,
     start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
@@ -1172,7 +1172,7 @@ fn test_unauthorized_manual_update() {
     // Get current time
     let current_time = get_block_timestamp();
 
-    // Add token approval for admin
+    // Add token approval for user
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, admin);
     erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
@@ -1454,5 +1454,78 @@ fn test_assign_random_validators_initial_validator() {
     // Verify that both assigned validators are the expected validator
     assert(assigned_validator1 == expected_validator, 'Should assign initial validator');
     assert(assigned_validator2 == expected_validator, 'Should assign initial validator');
+}
+
+#[test]
+fn test_assign_multiple_validators() {
+    // Deploy the contract
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Create multiple validators with different addresses
+    let validator1 = contract_address_const::<'validator1'>();
+    let validator2 = contract_address_const::<'validator2'>();
+    let validator3 = contract_address_const::<'validator3'>();
+    let validator4 = contract_address_const::<'validator4'>();
+
+    // Add validators to the contract
+    contract.add_validators(validator1, validator2, validator3, validator4);
+
+    // Set up token approval for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create a pool
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assign random validators to the pool
+    contract.assign_random_validators(pool_id);
+
+    // Get the assigned validators
+    let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+
+    // Verify that validators were assigned
+    assert(assigned_validator1 != contract_address_const::<0>(), 'Validator1 not assigned');
+    assert(assigned_validator2 != contract_address_const::<0>(), 'Validator2 not assigned');
+
+    // Verify that different validators were assigned
+    assert(assigned_validator1 != assigned_validator2, 'Same validator assigned twice');
+
+    // Verify that the assigned validators are from our added validators
+    let is_valid_validator1 = assigned_validator1 == validator1
+        || assigned_validator1 == validator2
+        || assigned_validator1 == validator3
+        || assigned_validator1 == validator4;
+
+    let is_valid_validator2 = assigned_validator2 == validator1
+        || assigned_validator2 == validator2
+        || assigned_validator2 == validator3
+        || assigned_validator2 == validator4;
+
+    assert(is_valid_validator1, 'Invalid validator1 assigned');
+    assert(is_valid_validator2, 'Invalid validator2 assigned');
+
+    // Create a second pool and verify different validators can be assigned
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id2 = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assign random validators to the second pool
+    contract.assign_random_validators(pool_id2);
+
+    // Get the assigned validators for the second pool
+    let (assigned_validator1_pool2, assigned_validator2_pool2) = contract
+        .get_pool_validators(pool_id2);
+
+    // Verify that validators were assigned to the second pool
+    assert(
+        assigned_validator1_pool2 != contract_address_const::<0>(), 'Pool2 validator1 not assigned',
+    );
+    assert(
+        assigned_validator2_pool2 != contract_address_const::<0>(), 'Pool2 validator2 not assigned',
+    );
 }
 
