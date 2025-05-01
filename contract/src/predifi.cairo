@@ -685,7 +685,8 @@ pub mod Predifi {
             self.pool_validator_assignments.read(pool_id)
         }
 
-        /// Assigns three validators to a prediction pool, selected randomly from the available validator list.
+        /// Assigns three validators to a prediction pool, selected randomly from the available
+        /// validator list.
         fn assign_random_validators(ref self: ContractState, pool_id: u256) {
             let validator_count = self.validators.len();
 
@@ -735,14 +736,16 @@ pub mod Predifi {
             pool_id: u256,
             validator1: ContractAddress,
             validator2: ContractAddress,
-            validator3: ContractAddress
+            validator3: ContractAddress,
         ) {
             self.pool_validator_assignments.write(pool_id, (validator1, validator2, validator3));
             let timestamp = get_block_timestamp();
             self
                 .emit(
                     Event::ValidatorsAssigned(
-                        ValidatorsAssigned { pool_id, validator1, validator2, validator3, timestamp },
+                        ValidatorsAssigned {
+                            pool_id, validator1, validator2, validator3, timestamp,
+                        },
                     ),
                 );
         }
