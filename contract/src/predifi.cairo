@@ -162,6 +162,7 @@ pub mod Predifi {
         pool_id: u256,
         validator1: ContractAddress,
         validator2: ContractAddress,
+        validator3: ContractAddress
         timestamp: u64,
     }
 
