@@ -2394,12 +2394,12 @@ fn test_limited_validators_assignment() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+        let (assigned_validator1, assigned_validator2, assigned_validator3) = contract.get_pool_validators(pool_id);
 
         // Both validator1 and validator2 should be the single validator we added
         assert(assigned_validator1 == single_validator, 'Wrong validator1 assigned');
         assert(assigned_validator2 == single_validator, 'Wrong validator2 assigned');
-
+        assert(assigned_validator3 == single_validator, 'Wrong validator3 assigned');
         i += 1;
     }
 
