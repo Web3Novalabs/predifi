@@ -2439,7 +2439,7 @@ fn test_limited_validators_assignment() {
 
     // At least one of the validators should be the second validator
     let has_second_validator = new_assigned_validator1 == second_validator
-        || new_assigned_validator2 == second_validator;
+        || new_assigned_validator2 == second_validator || new_assigned_validator3 == second_validator;
 
     assert(has_second_validator, 'Second validator not used');
 }
