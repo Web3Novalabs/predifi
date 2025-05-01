@@ -2287,7 +2287,7 @@ fn test_assign_multiple_validators() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+        let (assigned_validator1, assigned_validator2, assigned_validator3) = contract.get_pool_validators(pool_id);
 
         // Count how many times each validator is assigned
         if assigned_validator1 == validator1 || assigned_validator2 == validator1 {
@@ -2477,8 +2477,8 @@ fn test_assign_random_validators_initial_validator() {
     let (assigned_validator1, assigned_validator2,assigned_validator3) = contract.get_pool_validators(pool_id);
 
     // Verify that both assigned validators are the expected validator
-    assert(assigned_validator1 == expected_validator, 'Should assign initial validator1');
-    assert(assigned_validator2 == expected_validator, 'Should assign initial validator2');
-    assert(assigned_validator3 == expected_validator, 'Should assign initial validator3');
+    assert(assigned_validator1 == expected_validator, 'Should assign initial validator');
+    assert(assigned_validator2 == expected_validator, 'Should assign initial validator');
+    assert(assigned_validator3 == expected_validator, 'Should assign initial validator');
 }
 
