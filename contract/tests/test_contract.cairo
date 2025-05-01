@@ -557,7 +557,8 @@ fn test_get_utils_owner() {
     let owner: ContractAddress = contract_address_const::<'owner'>();
     state.owner.write(owner); // setting the current owner's addrees
 
-    let retrieved_owner = state.get_owner(); // retrieving the owner's address from contract storage
+    let retrieved_owner = state
+        .get_owner(); // retrieving the owner's address from contract storage
     assert_eq!(retrieved_owner, owner);
 }
 
@@ -2096,7 +2097,8 @@ fn test_assign_random_validators() {
     contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2, assigned_validator3) = contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2, assigned_validator3) = contract
+        .get_pool_validators(pool_id);
 
     // Verify that validators were assigned
     assert(assigned_validator1 != zero_address, 'Validator1 should be assigned');
@@ -2146,13 +2148,14 @@ fn test_assign_exactly_two_validators() {
     contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2, assigned_validator3) = contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2, assigned_validator3) = contract
+        .get_pool_validators(pool_id);
 
     // Verify that validators were assigned
     assert(assigned_validator1 != zero_address, 'Validator1 should be assigned');
     assert(assigned_validator2 != zero_address, 'Validator2 should be assigned');
     assert(assigned_validator3 != zero_address, 'Validator3 should be assigned');
-    
+
     // Verify that the assigned validators are from our added validators
     assert(
         assigned_validator1 == validator1 || assigned_validator1 == validator2,
@@ -2190,7 +2193,8 @@ fn test_assign_exactly_two_validators() {
     let mut k: u8 = 0;
     while k < num_pools {
         let pool_id = *pool_ids.at(k.into());
-        let (pool_validator1, pool_validator2,pool_validator3) = contract.get_pool_validators(pool_id);
+        let (pool_validator1, pool_validator2, pool_validator3) = contract
+            .get_pool_validators(pool_id);
 
         // Verify validators are assigned
         assert(pool_validator1 != zero_address, 'Pool validator1 not assigned');
@@ -2287,7 +2291,8 @@ fn test_assign_multiple_validators() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        let (assigned_validator1, assigned_validator2, assigned_validator3) = contract.get_pool_validators(pool_id);
+        let (assigned_validator1, assigned_validator2, assigned_validator3) = contract
+            .get_pool_validators(pool_id);
 
         // Count how many times each validator is assigned
         if assigned_validator1 == validator1 || assigned_validator2 == validator1 {
@@ -2394,7 +2399,8 @@ fn test_limited_validators_assignment() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        let (assigned_validator1, assigned_validator2, assigned_validator3) = contract.get_pool_validators(pool_id);
+        let (assigned_validator1, assigned_validator2, assigned_validator3) = contract
+            .get_pool_validators(pool_id);
 
         // Both validator1 and validator2 should be the single validator we added
         assert(assigned_validator1 == single_validator, 'Wrong validator1 assigned');
@@ -2435,11 +2441,13 @@ fn test_limited_validators_assignment() {
     contract.assign_random_validators(new_pool_id);
 
     // Check that the new pool has different validators assigned
-    let (new_assigned_validator1, new_assigned_validator2,new_assigned_validator3) = contract.get_pool_validators(new_pool_id);
+    let (new_assigned_validator1, new_assigned_validator2, new_assigned_validator3) = contract
+        .get_pool_validators(new_pool_id);
 
     // At least one of the validators should be the second validator
     let has_second_validator = new_assigned_validator1 == second_validator
-        || new_assigned_validator2 == second_validator || new_assigned_validator3 == second_validator;
+        || new_assigned_validator2 == second_validator
+        || new_assigned_validator3 == second_validator;
 
     assert(has_second_validator, 'Second validator not used');
 }
@@ -2474,7 +2482,8 @@ fn test_assign_random_validators_initial_validator() {
     contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2,assigned_validator3) = contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2, assigned_validator3) = contract
+        .get_pool_validators(pool_id);
 
     // Verify that both assigned validators are the expected validator
     assert(assigned_validator1 == expected_validator, 'Should assign initial validator');
