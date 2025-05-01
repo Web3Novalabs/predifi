@@ -67,7 +67,7 @@ pub trait IPredifi<TContractState> {
 
     fn get_pool_validators(
         self: @TContractState, pool_id: u256,
-    ) -> (ContractAddress, ContractAddress);
+    ) -> (ContractAddress, ContractAddress, ContractAddress);
 
     fn assign_random_validators(ref self: TContractState, pool_id: u256);
     fn assign_validators(
