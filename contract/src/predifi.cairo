@@ -93,7 +93,7 @@ pub mod Predifi {
             ContractAddress, u256,
         >, // Tracks how many pool IDs are stored for each user
         // Mapping to track which validators are assigned to which pools
-        pool_validator_assignments: Map<u256, (ContractAddress, ContractAddress)>,
+        pool_validator_assignments: Map<u256, (ContractAddress, ContractAddress, ContractAddress)>,
     }
 
     // Events
@@ -685,45 +685,53 @@ pub mod Predifi {
 
         fn get_pool_validators(
             self: @ContractState, pool_id: u256,
-        ) -> (ContractAddress, ContractAddress) {
+        ) -> (ContractAddress, ContractAddress, ContractAddress) {
             self.pool_validator_assignments.read(pool_id)
         }
 
+        /// Assigns three validators to a prediction pool, selected randomly from the available validator list.
         fn assign_random_validators(ref self: ContractState, pool_id: u256) {
-            // Get the number of available validators
             let validator_count = self.validators.len();
 
-            // If we have fewer than 2 validators, handle the edge case
             if validator_count == 0 {
-                // No validators available, don't assign any
                 return;
             } else if validator_count == 1 {
-                // Only one validator available, assign the same validator twice
                 let validator = self.validators.at(0).read();
-                self.assign_validators(pool_id, validator, validator);
+                self.assign_validators(pool_id, validator, validator, validator);
+                return;
+            } else if validator_count == 2 {
+                let validator1 = self.validators.at(0).read();
+                let validator2 = self.validators.at(1).read();
+                self.assign_validators(pool_id, validator1, validator2, validator1);
                 return;
             }
 
-            // Generate two random indices for validator selection
-            // Use the pool_id and timestamp to create randomness
+            // Generate three unique random indices for validator selection
             let timestamp = get_block_timestamp();
             let seed1 = pool_id + timestamp.into();
             let seed2 = pool_id + (timestamp * 2).into();
+            let seed3 = pool_id + (timestamp * 3).into();
 
-            // Use modulo to get indices within the range of available validators
             let index1 = seed1 % validator_count.into();
-            // Ensure the second index is different from the first
             let mut index2 = seed2 % validator_count.into();
-            if index1 == index2 && validator_count > 1 {
+            let mut index3 = seed3 % validator_count.into();
+
+            // Ensure all indices are unique
+            if index2 == index1 {
                 index2 = (index2 + 1) % validator_count.into();
             }
+            if index3 == index1 || index3 == index2 {
+                index3 = (index3 + 1) % validator_count.into();
+                if index3 == index1 || index3 == index2 {
+                    index3 = (index3 + 1) % validator_count.into();
+                }
+            }
 
-            // Get the selected validators
             let validator1 = self.validators.at(index1.try_into().unwrap()).read();
             let validator2 = self.validators.at(index2.try_into().unwrap()).read();
+            let validator3 = self.validators.at(index3.try_into().unwrap()).read();
 
-            // Assign the selected validators to the pool
-            self.assign_validators(pool_id, validator1, validator2);
+            self.assign_validators(pool_id, validator1, validator2, validator3);
         }
 
         fn assign_validators(
@@ -731,13 +739,14 @@ pub mod Predifi {
             pool_id: u256,
             validator1: ContractAddress,
             validator2: ContractAddress,
+            validator3: ContractAddress,
         ) {
-            self.pool_validator_assignments.write(pool_id, (validator1, validator2));
+            self.pool_validator_assignments.write(pool_id, (validator1, validator2, validator3));
             let timestamp = get_block_timestamp();
             self
                 .emit(
                     Event::ValidatorsAssigned(
-                        ValidatorsAssigned { pool_id, validator1, validator2, timestamp },
+                        ValidatorsAssigned { pool_id, validator1, validator2, validator3, timestamp },
                     ),
                 );
         }
