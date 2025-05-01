@@ -92,7 +92,7 @@ pub mod Predifi {
             ContractAddress, u256,
         >, // Tracks how many pool IDs are stored for each user
         // Mapping to track which validators are assigned to which pools
-        pool_validator_assignments: Map<u256, (ContractAddress, ContractAddress)>,
+        pool_validator_assignments: Map<u256, (ContractAddress, ContractAddress, ContractAddress)>,
     }
 
     // Events
