@@ -734,7 +734,7 @@ pub mod Predifi {
             pool_id: u256,
             validator1: ContractAddress,
             validator2: ContractAddress,
-            validator3: ContractAddress,
+            validator3: ContractAddress
         ) {
             self.pool_validator_assignments.write(pool_id, (validator1, validator2, validator3));
             let timestamp = get_block_timestamp();
