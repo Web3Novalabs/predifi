@@ -1,5 +1,7 @@
 use starknet::ContractAddress;
-use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
+use crate::base::types::{
+    Category, Pool, PoolDetails, PoolOdds, Status, UserActivity, UserStake, UserStats,
+};
 #[starknet::interface]
 pub trait IPredifi<TContractState> {
     // Pool Creation and Management
@@ -77,6 +79,20 @@ pub trait IPredifi<TContractState> {
         validator2: ContractAddress,
         validator3: ContractAddress,
     );
+    fn get_user_stats(self: @TContractState, user: ContractAddress) -> UserStats;
+    fn get_user_history(
+        self: @TContractState, user: ContractAddress, page_size: u256, page_number: u256,
+    ) -> (Array<UserActivity>, u256);
+    fn update_user_stats(
+        ref self: TContractState, user: ContractAddress, pool_id: u256, amount: u256, won: bool,
+    );
+    fn calculate_reward(self: @TContractState, pool_id: u256, user: ContractAddress) -> u256;
+    fn resolve_pool(ref self: TContractState, pool_id: u256, winning_option: bool);
+    fn get_pool_outcome(self: @TContractState, pool_id: u256) -> (bool, bool);
+
+    fn grant_validator_role(ref self: TContractState, address: ContractAddress);
+    fn revoke_validator_role(ref self: TContractState, address: ContractAddress);
+    fn is_validator(self: @TContractState, address: ContractAddress) -> bool;
     // Functions for filtering pools by status
     fn get_active_pools(self: @TContractState) -> Array<PoolDetails>;
     fn get_locked_pools(self: @TContractState) -> Array<PoolDetails>;

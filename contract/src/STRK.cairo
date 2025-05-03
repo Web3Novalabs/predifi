@@ -47,7 +47,7 @@ pub mod STARKTOKEN {
         self.erc20.initializer(name, symbol);
         self.ownable.initializer(owner);
         self.custom_decimals.write(decimals);
-        self.erc20.mint(recipient, 200_000_000_000_000_000_000_000);
+        self.erc20.mint(recipient, 1000_000_000_000_000_000_000_000_000_000);
     }
 
     #[abi(embed_v0)]

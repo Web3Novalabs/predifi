@@ -146,3 +146,29 @@ pub struct PoolDetails {
     pub exists: bool,
 }
 
+#[derive(Drop, Serde)]
+pub struct UserStats {
+    pub total_stakes: u256,
+    pub wins: u256,
+    pub losses: u256,
+    pub win_loss_ratio: u256,
+    pub pending_rewards: u256,
+    pub total_rewards: u256,
+    pub active_pools: Array<u256>,
+    pub locked_pools: Array<u256>,
+    pub settled_pools: Array<u256>,
+}
+
+#[derive(Drop, Serde)]
+pub struct UserActivity {
+    pub pool_id: u256,
+    pub pool_name: felt252,
+    pub amount: u256,
+    pub option: felt252,
+    pub timestamp: u64,
+    pub status: Status,
+    pub won: bool,
+    pub resolved: bool,
+    pub reward: u256,
+}
+
