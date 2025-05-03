@@ -24,9 +24,7 @@ pub mod Predifi {
     };
 
     // package imports
-    use crate::base::types::{
-        Category, Pool, PoolDetails, PoolOdds, Status, UserActivity, UserStake, UserStats,
-    };
+    use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
     use crate::interfaces::ipredifi::IPredifi;
 
     // 1 STRK in WEI
@@ -96,11 +94,6 @@ pub mod Predifi {
         >, // Tracks how many pool IDs are stored for each user
         // Mapping to track which validators are assigned to which pools
         pool_validator_assignments: Map<u256, (ContractAddress, ContractAddress, ContractAddress)>,
-        user_total_stakes: Map<ContractAddress, u256>,
-        user_wins: Map<ContractAddress, u256>,
-        user_losses: Map<ContractAddress, u256>,
-        user_pending_rewards: Map<ContractAddress, u256>,
-        user_total_rewards: Map<ContractAddress, u256>,
     }
 
     // Events
@@ -762,187 +755,6 @@ pub mod Predifi {
                 );
         }
 
-        /// Returns comprehensive statistics for a user
-        fn get_user_stats(self: @ContractState, user: ContractAddress) -> UserStats {
-            let total_stakes = self.user_total_stakes.read(user);
-            let wins = self.user_wins.read(user);
-            let losses = self.user_losses.read(user);
-            let pending_rewards = self.user_pending_rewards.read(user);
-            let total_rewards = self.user_total_rewards.read(user);
-            let win_loss_ratio = if losses == 0 {
-                wins.into() // Avoid division by zero
-            } else {
-                wins / losses
-            };
-
-            UserStats {
-                total_stakes,
-                wins,
-                losses,
-                win_loss_ratio,
-                pending_rewards,
-                total_rewards,
-                active_pools: self.get_user_active_pools(user),
-                locked_pools: self.get_user_locked_pools(user),
-                settled_pools: self.get_user_settled_pools(user),
-            }
-        }
-
-        /// Returns paginated historical activity for a user
-        fn get_user_history(
-            self: @ContractState, user: ContractAddress, page_size: u256, page_number: u256,
-        ) -> (Array<UserActivity>, u256) {
-            let total_pools = self.user_pool_count.read(user);
-            let start_index = page_number * page_size;
-            let end_index = start_index + page_size;
-            let actual_end = if end_index > total_pools {
-                total_pools
-            } else {
-                end_index
-            };
-
-            let mut activities = ArrayTrait::new();
-            let mut i = start_index;
-            while i < actual_end {
-                let pool_id = self.user_pool_ids.read((user, i));
-                let pool = self.pools.read(pool_id);
-                let stake = self.user_stakes.read((pool_id, user));
-                let resolved = self.pool_resolved.read(pool_id);
-                let won = if resolved {
-                    let user_vote = self.pool_vote.read(pool_id);
-                    let outcome = self.pool_outcomes.read(pool_id);
-                    user_vote == outcome
-                } else {
-                    false
-                };
-
-                activities
-                    .append(
-                        UserActivity {
-                            pool_id,
-                            pool_name: pool.poolName,
-                            amount: stake.amount,
-                            option: if stake.option {
-                                pool.option2
-                            } else {
-                                pool.option1
-                            },
-                            timestamp: stake.timestamp,
-                            status: pool.status,
-                            won,
-                            resolved,
-                            reward: if won && resolved {
-                                self.calculate_reward(pool_id, user)
-                            } else {
-                                0
-                            },
-                        },
-                    );
-                i += 1;
-            }
-
-            (activities, total_pools)
-        }
-
-
-        /// Updates user statistics when a pool is resolved
-        fn update_user_stats(
-            ref self: ContractState, user: ContractAddress, pool_id: u256, amount: u256, won: bool,
-        ) {
-            // Update total stakes
-            let total_stakes = self.user_total_stakes.read(user) + amount;
-            self.user_total_stakes.write(user, total_stakes);
-
-            // Update win/loss count
-            if won {
-                let wins = self.user_wins.read(user) + 1;
-                self.user_wins.write(user, wins);
-            } else {
-                let losses = self.user_losses.read(user) + 1;
-                self.user_losses.write(user, losses);
-            }
-
-            // Calculate and update rewards
-            let reward = self.calculate_reward(pool_id, user);
-            let pending = self.user_pending_rewards.read(user) + reward;
-            self.user_pending_rewards.write(user, pending);
-        }
-
-        /// Calculates reward for a user in a specific pool
-        fn calculate_reward(self: @ContractState, pool_id: u256, user: ContractAddress) -> u256 {
-            let pool = self.pools.read(pool_id);
-            let total_bet_amount = pool.totalBetAmountStrk;
-            let stake = self.user_stakes.read((pool_id, user));
-            let total_winning_stakes = if self.pool_outcomes.read(pool_id) {
-                pool.totalStakeOption2
-            } else {
-                pool.totalStakeOption1
-            };
-
-            if total_winning_stakes == 0 {
-                return 0;
-            }
-
-            // Calculate reward based on share of winning pool
-            (stake.amount * total_bet_amount) / total_winning_stakes
-        }
-
-        /// Called by validators to set the outcome of a pool
-        fn resolve_pool(
-            ref self: ContractState,
-            pool_id: u256,
-            winning_option: bool // true = option2 won, false = option1 won
-        ) {
-            let caller = get_caller_address();
-            assert(self.accesscontrol.has_role(VALIDATOR_ROLE, caller), 'Caller is not validator');
-
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, 'Pool does not exist');
-            assert(
-                pool.status == Status::Locked || pool.status == Status::Settled,
-                'Pool must be locked or settled',
-            );
-
-            // Set the outcome
-            self.pool_outcomes.write(pool_id, winning_option);
-            self.pool_resolved.write(pool_id, true);
-
-            // Update pool status
-            let mut updated_pool = self.pools.read(pool_id);
-            let stake1 = updated_pool.totalStakeOption1;
-            let stake2 = updated_pool.totalStakeOption2;
-            updated_pool.status = Status::Settled;
-            self.pools.write(pool_id, updated_pool);
-
-            // Emit event
-            let total_payout = if winning_option {
-                stake2
-            } else {
-                stake1
-            };
-
-            self.emit(Event::PoolResolved(PoolResolved { pool_id, winning_option, total_payout }));
-        }
-
-        /// View function to check pool outcome
-        fn get_pool_outcome(self: @ContractState, pool_id: u256) -> (bool, bool) {
-            let resolved = self.pool_resolved.read(pool_id);
-            let outcome = self.pool_outcomes.read(pool_id);
-            return (resolved, outcome);
-        }
-
-
-        fn grant_validator_role(ref self: ContractState, address: ContractAddress) {
-            // Grant validator role
-            self.accesscontrol._grant_role(VALIDATOR_ROLE, address);
-        }
-        fn revoke_validator_role(ref self: ContractState, address: ContractAddress) {
-            // Revoke validator role
-            self.accesscontrol._revoke_role(VALIDATOR_ROLE, address);
-        }
-        fn is_validator(self: @ContractState, address: ContractAddress) -> bool {
-            return self.accesscontrol.has_role(VALIDATOR_ROLE, address);
-        }
         // Get active pools
         fn get_active_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Active)
