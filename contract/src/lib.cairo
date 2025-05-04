@@ -17,3 +17,4 @@ pub mod STRK;
 pub mod predifi;
 pub mod predifi_token;
 pub mod utils;
+pub mod PredifiProxy;

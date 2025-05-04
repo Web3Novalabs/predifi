@@ -7,6 +7,8 @@ pub mod Predifi {
     // oz imports
     use openzeppelin::access::accesscontrol::AccessControlComponent;
     use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::upgrades::UpgradeableComponent;
+    use openzeppelin::upgrades::interface::IUpgradeable;
     use openzeppelin::token::erc20::interface::{
         ERC20ABIDispatcher, ERC20ABIDispatcherTrait, IERC20Dispatcher, IERC20DispatcherTrait,
         IERC20MetadataDispatcher, IERC20MetadataDispatcherTrait,
@@ -16,7 +18,7 @@ pub mod Predifi {
         StoragePointerWriteAccess, Vec, VecTrait,
     };
     use starknet::{
-        ContractAddress, contract_address_const, get_block_timestamp, get_caller_address,
+        ContractAddress, contract_address_const, get_block_timestamp, get_caller_address, ClassHash,
         get_contract_address,
     };
     use crate::base::errors::Errors::{
@@ -40,6 +42,7 @@ pub mod Predifi {
     // components definition
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
+    component!(path: UpgradeableComponent, storage: upgradeable, event: UpgradeableEvent);
 
     // AccessControl
     #[abi(embed_v0)]
@@ -50,6 +53,11 @@ pub mod Predifi {
     // SRC5
     #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
+
+     // Upgradeable
+     impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
+
+
 
     #[storage]
     pub struct Storage {
@@ -65,6 +73,8 @@ pub mod Predifi {
         pub accesscontrol: AccessControlComponent::Storage,
         #[substorage(v0)]
         src5: SRC5Component::Storage,
+        #[substorage(v0)]
+        upgradeable: UpgradeableComponent::Storage,
         validators: Vec<ContractAddress>,
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
@@ -94,6 +104,7 @@ pub mod Predifi {
         >, // Tracks how many pool IDs are stored for each user
         // Mapping to track which validators are assigned to which pools
         pool_validator_assignments: Map<u256, (ContractAddress, ContractAddress)>,
+        implementation_hash: ClassHash,
     }
 
     // Events
@@ -107,10 +118,13 @@ pub mod Predifi {
         PoolResolved: PoolResolved,
         FeeWithdrawn: FeeWithdrawn,
         ValidatorsAssigned: ValidatorsAssigned,
+        Upgraded: Upgraded,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
+        #[flat]
+        UpgradeableEvent: UpgradeableComponent::Event,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -148,6 +162,11 @@ pub mod Predifi {
         pool_id: u256,
         winning_option: bool,
         total_payout: u256,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct Upgraded{
+        implementation: ClassHash,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -189,6 +208,30 @@ pub mod Predifi {
         self.accesscontrol._grant_role(ADMIN_ROLE, admin);
         self.accesscontrol._grant_role(VALIDATOR_ROLE, validator)
     }
+    
+       // Upgradeable implementation
+       #[abi(embed_v0)]
+       #[external(v0)]
+    impl UpgradeableImpl of IUpgradeable<ContractState> {
+        fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
+                // Only admin can upgrade the contract
+                let caller = get_caller_address();
+                assert(self.accesscontrol.has_role(ADMIN_ROLE, caller), 'Caller is not admin');
+                
+                // Get the previous implementation hash
+                let previous_implementation = self.implementation_hash.read();
+                
+                // Perform the upgrade
+                self.upgradeable.upgrade(new_class_hash);
+                
+                // Update stored implementation hash
+                self.implementation_hash.write(new_class_hash);
+                
+                // Emit an event for the upgrade
+                self.emit(Event::Upgraded(Upgraded { implementation: new_class_hash }));
+                
+           }
+       }
 
     #[abi(embed_v0)]
     impl predifi of IPredifi<ContractState> {
@@ -908,6 +951,7 @@ pub mod Predifi {
             }
         }
 
+
         fn get_pools_by_status(self: @ContractState, status: Status) -> Array<PoolDetails> {
             let mut result = array![];
             let len = self.pool_ids.len();
@@ -926,5 +970,10 @@ pub mod Predifi {
             }
             result
         }
+
+        
+
+    
     }
+    
 }
