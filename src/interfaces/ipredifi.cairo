@@ -91,4 +91,14 @@ pub trait IPredifi<TContractState> {
     fn get_suspended_pools(self: @TContractState) -> Array<PoolDetails>;
     fn validate_outcome(ref self: TContractState, pool_id: u256, outcome: bool);
     fn claim_reward(ref self: TContractState, pool_id: u256) -> u256;
+
+    // Pool Validation functionality
+    fn validate_pool_result(ref self: TContractState, pool_id: u256, selected_option: bool);
+    fn get_pool_validation_status(
+        self: @TContractState, pool_id: u256,
+    ) -> (u256, bool, bool); // (validation_count, is_settled, final_outcome)
+    fn get_validator_confirmation(
+        self: @TContractState, pool_id: u256, validator: ContractAddress,
+    ) -> (bool, bool); // (has_validated, selected_option)
+    fn set_required_validator_confirmations(ref self: TContractState, count: u256);
 }

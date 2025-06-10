@@ -3628,3 +3628,325 @@ fn test_claim_reward_suspended_pool() {
     contract.claim_reward(pool_id);
 }
 
+#[test]
+fn test_validate_pool_result_success() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup ERC20 approval
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create pool
+    let current_time = get_block_timestamp();
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = contract
+        .create_pool(
+            'Test Pool',
+            Pool::WinBet,
+            "A test pool for validation",
+            "image.png",
+            "event.com/details",
+            current_time + 100, // Start time
+            current_time + 200, // Lock time  
+            current_time + 300, // End time
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Move time to lock the pool
+    start_cheat_block_timestamp(contract.contract_address, current_time + 250);
+    contract.update_pool_state(pool_id);
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    // Verify pool is locked
+    let locked_pool = contract.get_pool(pool_id);
+    assert(locked_pool.status == Status::Locked, 'Pool should be locked');
+
+    // Add validators
+    let admin = contract_address_const::<'admin'>();
+    let validator1 = contract_address_const::<'validator1'>();
+    let validator2 = contract_address_const::<'validator2'>();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(validator1);
+    contract.add_validator(validator2);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // First validator validates - pool should remain locked
+    start_cheat_caller_address(contract.contract_address, validator1);
+    contract.validate_pool_result(pool_id, true); // Vote for option2
+    stop_cheat_caller_address(contract.contract_address);
+
+    let pool_after_first_validation = contract.get_pool(pool_id);
+    assert(pool_after_first_validation.status == Status::Locked, 'Pool should still be locked');
+
+    // Check validation status
+    let (validation_count, is_settled, _) = contract.get_pool_validation_status(pool_id);
+    assert(validation_count == 1, 'Should have 1 validation');
+    assert(!is_settled, 'Pool should not be settled yet');
+
+    // Second validator validates - pool should be settled
+    start_cheat_caller_address(contract.contract_address, validator2);
+    contract.validate_pool_result(pool_id, true); // Vote for option2
+    stop_cheat_caller_address(contract.contract_address);
+
+    let pool_after_second_validation = contract.get_pool(pool_id);
+    assert(pool_after_second_validation.status == Status::Settled, 'Pool should be settled');
+
+    // Check final validation status
+    let (final_validation_count, final_is_settled, final_outcome) = contract
+        .get_pool_validation_status(pool_id);
+    assert(final_validation_count == 2, 'Should have 2 validations');
+    assert(final_is_settled, 'Pool should be settled');
+    assert(final_outcome, 'Option2 should win');
+}
+
+#[test]
+#[should_panic(expected: 'Validator not authorized')]
+fn test_validate_pool_result_unauthorized() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup and create pool
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Lock the pool
+    let current_time = get_block_timestamp();
+    start_cheat_block_timestamp(contract.contract_address, current_time + 250);
+    contract.update_pool_state(pool_id);
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    // Try to validate without being a validator
+    let unauthorized_user = contract_address_const::<'unauthorized'>();
+    start_cheat_caller_address(contract.contract_address, unauthorized_user);
+    contract.validate_pool_result(pool_id, true);
+}
+
+#[test]
+#[should_panic(expected: 'Validator already validated')]
+fn test_validate_pool_result_double_validation() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create and lock pool
+    let current_time = get_block_timestamp();
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = contract
+        .create_pool(
+            'Test Pool',
+            Pool::WinBet,
+            "A test pool",
+            "image.png",
+            "event.com/details",
+            current_time + 100,
+            current_time + 200,
+            current_time + 300,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    start_cheat_block_timestamp(contract.contract_address, current_time + 250);
+    contract.update_pool_state(pool_id);
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    // Add validator
+    let admin = contract_address_const::<'admin'>();
+    let validator = contract_address_const::<'validator'>();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // First validation
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.validate_pool_result(pool_id, true);
+
+    // Try to validate again - should panic
+    contract.validate_pool_result(pool_id, false);
+}
+
+#[test]
+#[should_panic(expected: 'Pool not ready for validation')]
+fn test_validate_pool_result_wrong_status() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create pool but don't lock it
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Add validator
+    let admin = contract_address_const::<'admin'>();
+    let validator = contract_address_const::<'validator'>();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Try to validate active pool - should panic
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.validate_pool_result(pool_id, true);
+}
+
+#[test]
+fn test_validation_consensus_majority_option1() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Create and lock pool
+    let current_time = get_block_timestamp();
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = contract
+        .create_pool(
+            'Test Pool',
+            Pool::WinBet,
+            "A test pool",
+            "image.png",
+            "event.com/details",
+            current_time + 100,
+            current_time + 200,
+            current_time + 300,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    start_cheat_block_timestamp(contract.contract_address, current_time + 250);
+    contract.update_pool_state(pool_id);
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    // Add 3 validators and set required confirmations to 3
+    let admin = contract_address_const::<'admin'>();
+    let validator1 = contract_address_const::<'validator1'>();
+    let validator2 = contract_address_const::<'validator2'>();
+    let validator3 = contract_address_const::<'validator3'>();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(validator1);
+    contract.add_validator(validator2);
+    contract.add_validator(validator3);
+    contract.set_required_validator_confirmations(3);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Validators vote: 2 for option1 (false), 1 for option2 (true)
+    start_cheat_caller_address(contract.contract_address, validator1);
+    contract.validate_pool_result(pool_id, false); // Option1
+    stop_cheat_caller_address(contract.contract_address);
+
+    start_cheat_caller_address(contract.contract_address, validator2);
+    contract.validate_pool_result(pool_id, false); // Option1
+    stop_cheat_caller_address(contract.contract_address);
+
+    start_cheat_caller_address(contract.contract_address, validator3);
+    contract.validate_pool_result(pool_id, true); // Option2 - this triggers settlement
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Check final outcome - should be option1 (false) since it got majority
+    let (_, is_settled, final_outcome) = contract.get_pool_validation_status(pool_id);
+    assert(is_settled, 'Pool should be settled');
+    assert(!final_outcome, 'Option1 should win majority');
+
+    let pool = contract.get_pool(pool_id);
+    assert(pool.status == Status::Settled, 'Pool should be settled');
+}
+
+#[test]
+fn test_get_validator_confirmation() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup and create locked pool
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    let current_time = get_block_timestamp();
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = contract
+        .create_pool(
+            'Test Pool',
+            Pool::WinBet,
+            "A test pool",
+            "image.png",
+            "event.com/details",
+            current_time + 100,
+            current_time + 200,
+            current_time + 300,
+            'Team A',
+            'Team B',
+            100,
+            10000,
+            5,
+            false,
+            Category::Sports,
+        );
+    stop_cheat_caller_address(contract.contract_address);
+
+    start_cheat_block_timestamp(contract.contract_address, current_time + 250);
+    contract.update_pool_state(pool_id);
+    stop_cheat_block_timestamp(contract.contract_address);
+
+    // Add validator
+    let admin = contract_address_const::<'admin'>();
+    let validator = contract_address_const::<'validator'>();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.add_validator(validator);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Check before validation
+    let (has_validated, _) = contract.get_validator_confirmation(pool_id, validator);
+    assert(!has_validated, 'Should not have validated yet');
+
+    // Validate
+    start_cheat_caller_address(contract.contract_address, validator);
+    contract.validate_pool_result(pool_id, true);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Check after validation
+    let (has_validated_after, selected_option) = contract
+        .get_validator_confirmation(pool_id, validator);
+    assert(has_validated_after, 'Should have validated');
+    assert(selected_option, 'Should have selected option2');
+}

@@ -22,8 +22,9 @@ pub mod Predifi {
     };
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, DISPUTE_ALREADY_RAISED, INACTIVE_POOL,
-        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED,
+        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED, POOL_NOT_READY_FOR_VALIDATION,
         POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED, POOL_SUSPENDED,
+        VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
     };
 
     // package imports
@@ -101,6 +102,18 @@ pub mod Predifi {
         pool_dispute_count: Map<u256, u256>,
         pool_previous_status: Map<u256, Status>,
         dispute_threshold: u256,
+        // strg strc for Validator confirmation and validation results
+        pool_validator_confirmations: Map<
+            (u256, ContractAddress), bool,
+        >, // (pool_id, validator) -> has_validated
+        pool_validation_results: Map<
+            (u256, ContractAddress), bool,
+        >, // (pool_id, validator) -> selected_option
+        pool_validation_count: Map<u256, u256>, // pool_id -> number_of_validations
+        pool_final_outcome: Map<
+            u256, bool,
+        >, // pool_id -> final_outcome (true = option2, false = option1)
+        required_validator_confirmations: u256 // Number of validators needed to settle a pool
     }
 
     // Events
@@ -121,6 +134,9 @@ pub mod Predifi {
         DisputeResolved: DisputeResolved,
         PoolSuspended: PoolSuspended,
         PoolCancelled: PoolCancelled,
+        // Validator events
+        ValidatorResultSubmitted: ValidatorResultSubmitted,
+        PoolAutomaticallySettled: PoolAutomaticallySettled,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -222,6 +238,23 @@ pub mod Predifi {
     pub struct PoolCancelled {
         pub pool_id: u256,
         pub timestamp: u64,
+    }    
+    
+    // Validator event structs
+    #[derive(Drop, starknet::Event)]
+    struct ValidatorResultSubmitted {
+        pool_id: u256,
+        validator: ContractAddress,
+        selected_option: bool,
+        timestamp: u64,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct PoolAutomaticallySettled {
+        pool_id: u256,
+        final_outcome: bool,
+        total_validations: u256,
+        timestamp: u64,
     }
 
     #[derive(Drop, Hash)]
@@ -241,6 +274,9 @@ pub mod Predifi {
         self.token_addr.write(token_addr);
         self.accesscontrol._grant_role(DEFAULT_ADMIN_ROLE, admin);
         self.dispute_threshold.write(3);
+        self
+            .required_validator_confirmations
+            .write(2); // Require at least 2 validator confirmations to settle
     }
 
     #[abi(embed_v0)]
@@ -1021,6 +1057,144 @@ pub mod Predifi {
         fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
             self.pool_dispute_users.read((pool_id, user))
         }
+
+        fn validate_pool_result(ref self: ContractState, pool_id: u256, selected_option: bool) {
+            let pool = self.pools.read(pool_id);
+            let caller = get_caller_address();
+
+            // Validation checks
+            assert(pool.exists, INVALID_POOL_DETAILS);
+            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
+
+            // Check if caller is an authorized validator
+            let is_validator = self.accesscontrol.has_role(VALIDATOR_ROLE, caller);
+            assert(is_validator, VALIDATOR_NOT_AUTHORIZED);
+
+            // Check if pool is in a state that can be validated (Locked status)
+            assert(pool.status == Status::Locked, POOL_NOT_READY_FOR_VALIDATION);
+
+            // Check if validator has already validated this pool
+            let has_already_validated = self.pool_validator_confirmations.read((pool_id, caller));
+            assert(!has_already_validated, VALIDATOR_ALREADY_VALIDATED);
+
+            // Check if the selected option is valid (must be true for option2 or false for option1)
+            // Since selected_option is boolean, it's inherently valid
+
+            // Record the validator's confirmation and selection
+            self.pool_validator_confirmations.write((pool_id, caller), true);
+            self.pool_validation_results.write((pool_id, caller), selected_option);
+
+            // Increment validation count
+            let current_count = self.pool_validation_count.read(pool_id);
+            let new_count = current_count + 1;
+            self.pool_validation_count.write(pool_id, new_count);
+
+            // Emit validator result submitted event
+            self
+                .emit(
+                    Event::ValidatorResultSubmitted(
+                        ValidatorResultSubmitted {
+                            pool_id,
+                            validator: caller,
+                            selected_option,
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+
+            // Check if we have reached the required number of confirmations
+            let required_confirmations = self.required_validator_confirmations.read();
+
+            if new_count >= required_confirmations {
+                // Calculate the final outcome based on majority vote
+                let final_outcome = self.calculate_validation_consensus(pool_id, new_count);
+
+                // Store the final outcome
+                self.pool_final_outcome.write(pool_id, final_outcome);
+
+                // Update pool status to Settled
+                let mut updated_pool = pool;
+                updated_pool.status = Status::Settled;
+                self.pools.write(pool_id, updated_pool);
+
+                // Emit pool state transition event
+                self
+                    .emit(
+                        Event::PoolStateTransition(
+                            PoolStateTransition {
+                                pool_id,
+                                previous_status: Status::Locked,
+                                new_status: Status::Settled,
+                                timestamp: get_block_timestamp(),
+                            },
+                        ),
+                    );
+
+                // Emit pool automatically settled event
+                self
+                    .emit(
+                        Event::PoolAutomaticallySettled(
+                            PoolAutomaticallySettled {
+                                pool_id,
+                                final_outcome,
+                                total_validations: new_count,
+                                timestamp: get_block_timestamp(),
+                            },
+                        ),
+                    );
+
+                // Emit pool resolved event for compatibility
+                let total_payout = self.calculate_total_payout(pool_id, final_outcome);
+                self
+                    .emit(
+                        Event::PoolResolved(
+                            PoolResolved { pool_id, winning_option: final_outcome, total_payout },
+                        ),
+                    );
+            }
+        }
+
+        // @notice gets pool validation status
+        // @param pool_id The ID of the pool to check
+        // @return A tuple containing the validation count, whether the pool is settled, and the
+        // final outcome @dev This function checks the number of validations, whether the pool is
+        // settled, and the final outcome @dev It is used to determine if the pool has reached the
+        // required number of confirmations for settlement
+        fn get_pool_validation_status(self: @ContractState, pool_id: u256) -> (u256, bool, bool) {
+            let validation_count = self.pool_validation_count.read(pool_id);
+            let required_confirmations = self.required_validator_confirmations.read();
+            let is_settled = validation_count >= required_confirmations;
+            let final_outcome = self.pool_final_outcome.read(pool_id);
+
+            (validation_count, is_settled, final_outcome)
+        }
+
+        // @notice gets validator confirmation status
+        // @param pool_id The ID of the pool to check
+        // @param validator The address of the validator to check
+        // @return A tuple containing whether the validator has confirmed and their selected option
+        // @dev This function checks if a specific validator has confirmed their validation for a
+        // pool @dev It is used to track individual validator confirmations and their selected
+        // options
+        fn get_validator_confirmation(
+            self: @ContractState, pool_id: u256, validator: ContractAddress,
+        ) -> (bool, bool) {
+            let has_validated = self.pool_validator_confirmations.read((pool_id, validator));
+            let selected_option = self.pool_validation_results.read((pool_id, validator));
+
+            (has_validated, selected_option)
+        }
+
+        // @notice sets the required number of validator confirmations for a pool
+        // @param count The number of confirmations required
+        // @dev This function allows the admin to set the number of required confirmations for a
+        // pool
+        fn set_required_validator_confirmations(ref self: ContractState, count: u256) {
+            // Only admin can set this
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+            assert(count > 0, 'Count must be greater than 0');
+            self.required_validator_confirmations.write(count);
+        }
     }
 
     #[generate_trait]
@@ -1185,6 +1359,55 @@ pub mod Predifi {
                 i += 1;
             }
             result
+        }
+
+        // Helper functions to calculate the validation consensus
+        fn calculate_validation_consensus(
+            self: @ContractState, pool_id: u256, total_validations: u256,
+        ) -> bool {
+            let mut option1_votes = 0_u256;
+            let mut option2_votes = 0_u256;
+
+            // Get all validators and count their votes
+            let validators = self.get_all_validators();
+            let mut i = 0;
+
+            while i < validators.len() {
+                let validator = *validators.at(i);
+                let has_validated = self.pool_validator_confirmations.read((pool_id, validator));
+
+                if has_validated {
+                    let selected_option = self.pool_validation_results.read((pool_id, validator));
+                    if selected_option {
+                        option2_votes += 1;
+                    } else {
+                        option1_votes += 1;
+                    }
+                }
+                i += 1;
+            }
+
+            // Return true (option2) if option2 has more votes, false (option1) otherwise
+            // In case of tie, default to option1 (false)
+            option2_votes > option1_votes
+        }
+
+        fn calculate_total_payout(
+            self: @ContractState, pool_id: u256, winning_option: bool,
+        ) -> u256 {
+            let pool = self.pools.read(pool_id);
+
+            // Calculate fees
+            let creator_fee_amount = (pool.totalBetAmountStrk * pool.creatorFee.into()) / 100_u256;
+            let validator_fee_amount = self.validator_fee.read(pool_id);
+            let protocol_fee_amount = (pool.totalBetAmountStrk * 5_u256)
+                / 100_u256; // 5% protocol fee
+
+            // Total payout is total bet amount minus all fees
+            let total_fees = creator_fee_amount + validator_fee_amount + protocol_fee_amount;
+            let total_payout = pool.totalBetAmountStrk - total_fees;
+
+            total_payout
         }
     }
 }
