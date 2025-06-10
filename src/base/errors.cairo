@@ -15,6 +15,7 @@ pub mod Errors {
     pub const DISPUTE_ALREADY_RAISED: felt252 = 'User already raised dispute';
     pub const POOL_NOT_SUSPENDED: felt252 = 'Pool is not suspended';
     pub const POOL_NOT_LOCKED: felt252 = 'Pool is not locked';
+    pub const POOL_NOT_CLOSED: felt252 = 'Pool is not closed';
     pub const POOL_NOT_SETTLED: felt252 = 'Pool is not settled';
     pub const POOL_NOT_RESOLVED: felt252 = 'Pool is not resolved';
 }

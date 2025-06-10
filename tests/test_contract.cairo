@@ -27,6 +27,8 @@ const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
 // Pool creator address constant
 const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
 
+const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
+
 fn deploy_predifi() -> (IPredifiDispatcher, ContractAddress, ContractAddress) {
     let owner: ContractAddress = contract_address_const::<'owner'>();
     let admin: ContractAddress = contract_address_const::<'admin'>();
@@ -81,6 +83,70 @@ fn test_create_pool() {
     start_cheat_caller_address(contract.contract_address, pool_creator);
     let pool_id = create_default_pool(contract);
     assert!(pool_id != 0, "not created");
+}
+
+#[test]
+fn test_cancel_pool() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    assert!(pool_id != 0, "not created");
+
+    contract.cancel_pool(pool_id);
+
+    let fetched_pool = contract.get_pool(pool_id);
+
+    assert(fetched_pool.status == Status::Closed, 'Pool not closed');
+}
+
+#[test]
+fn test_cancel_pool_event_emission() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let mut spy = spy_events();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    assert!(pool_id != 0, "not created");
+
+    contract.cancel_pool(pool_id);
+
+    let fetched_pool = contract.get_pool(pool_id);
+
+    assert(fetched_pool.status == Status::Closed, 'Pool not closed');
+
+    let expected_event = Predifi::Event::PoolCancelled(
+        Predifi::PoolCancelled { pool_id, timestamp: get_block_timestamp() },
+    );
+    spy.assert_emitted(@array![(contract.contract_address, expected_event)]);
+}
+
+#[test]
+#[should_panic(expected: 'Unauthorized Caller')]
+fn test_cancel_pool_by_unauthorized_caller() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    assert!(pool_id != 0, "not created");
+
+    start_cheat_caller_address(contract.contract_address, USER_ONE);
+    contract.cancel_pool(pool_id);
 }
 
 #[test]
@@ -3325,6 +3391,105 @@ fn test_stake_on_suspended_pool() {
     start_cheat_caller_address(contract.contract_address, pool_creator);
     contract.stake(pool_id, 200_000_000_000_000_000_000);
 }
+
+#[test]
+fn test_refund_stake_successful() {
+    let (contract, caller, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, caller);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, caller);
+    let pool_id = create_default_pool(contract);
+    let stake_amount: u256 = 200_000_000_000_000_000_000;
+
+    contract.stake(pool_id, stake_amount);
+    contract.cancel_pool(pool_id);
+
+    contract.refund_stake(pool_id);
+    assert(contract.get_user_stake(pool_id, caller).amount == 0, 'Invalid stake amount');
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+fn test_refund_stake_event_emission() {
+    let (contract, caller, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let mut spy = spy_events();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, caller);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, caller);
+    let pool_id = create_default_pool(contract);
+    let stake_amount: u256 = 200_000_000_000_000_000_000;
+
+    contract.stake(pool_id, stake_amount);
+    contract.cancel_pool(pool_id);
+
+    contract.refund_stake(pool_id);
+    assert(contract.get_user_stake(pool_id, caller).amount == 0, 'Invalid stake amount');
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Assert event emitted
+    let expected_event = Predifi::Event::StakeRefunded(
+        Predifi::StakeRefunded { pool_id, address: caller, amount: stake_amount },
+    );
+    spy.assert_emitted(@array![(contract.contract_address, expected_event)]);
+}
+
+#[test]
+#[should_panic(expected: 'Pool is not closed')]
+fn test_refund_stake_on_open_pool() {
+    let (contract, caller, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, caller);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, caller);
+    let pool_id = create_default_pool(contract);
+    let stake_amount: u256 = 200_000_000_000_000_000_000;
+
+    contract.stake(pool_id, stake_amount);
+    stop_cheat_caller_address(contract.contract_address);
+
+    contract.refund_stake(pool_id);
+    assert(contract.get_user_stake(pool_id, caller).amount == 0, 'Invalid stake amount');
+}
+
+#[test]
+#[should_panic(expected: 'Zero user stake')]
+fn test_refund_zero_stake() {
+    let (contract, caller, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, caller);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, caller);
+    let pool_id = create_default_pool(contract);
+    let stake_amount: u256 = 200_000_000_000_000_000_000;
+    contract.cancel_pool(pool_id);
+
+    contract.refund_stake(pool_id);
+    assert(contract.get_user_stake(pool_id, caller).amount == 0, 'Invalid stake amount');
+    stop_cheat_caller_address(contract.contract_address);
+}
+
 
 #[test]
 fn test_validate_outcome_success() {

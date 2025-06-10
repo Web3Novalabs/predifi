@@ -22,8 +22,8 @@ pub mod Predifi {
     };
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, DISPUTE_ALREADY_RAISED, INACTIVE_POOL,
-        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_LOCKED, POOL_NOT_RESOLVED,
-        POOL_NOT_SETTLED, POOL_NOT_SUSPENDED, POOL_SUSPENDED,
+        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED,
+        POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED, POOL_SUSPENDED,
     };
 
     // package imports
@@ -109,6 +109,7 @@ pub mod Predifi {
     pub enum Event {
         BetPlaced: BetPlaced,
         UserStaked: UserStaked,
+        StakeRefunded: StakeRefunded,
         FeesCollected: FeesCollected,
         PoolStateTransition: PoolStateTransition,
         PoolResolved: PoolResolved,
@@ -119,6 +120,7 @@ pub mod Predifi {
         DisputeRaised: DisputeRaised,
         DisputeResolved: DisputeResolved,
         PoolSuspended: PoolSuspended,
+        PoolCancelled: PoolCancelled,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -138,6 +140,12 @@ pub mod Predifi {
         pool_id: u256,
         address: ContractAddress,
         amount: u256,
+    }
+    #[derive(Drop, starknet::Event)]
+    pub struct StakeRefunded {
+        pub pool_id: u256,
+        pub address: ContractAddress,
+        pub amount: u256,
     }
     #[derive(Drop, starknet::Event)]
     struct FeesCollected {
@@ -208,6 +216,12 @@ pub mod Predifi {
     struct PoolSuspended {
         pool_id: u256,
         timestamp: u64,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    pub struct PoolCancelled {
+        pub pool_id: u256,
+        pub timestamp: u64,
     }
 
     #[derive(Drop, Hash)]
@@ -325,6 +339,25 @@ pub mod Predifi {
 
             pool_id
         }
+
+        fn cancel_pool(ref self: ContractState, pool_id: u256) {
+            let caller = get_caller_address();
+            let pool = self.get_pool(pool_id);
+
+            assert(caller == pool.address, 'Unauthorized Caller');
+            let mut updated_pool = pool;
+            updated_pool.status = Status::Closed;
+
+            self.pools.write(pool_id, updated_pool);
+
+            self
+                .emit(
+                    Event::PoolCancelled(
+                        PoolCancelled { pool_id, timestamp: get_block_timestamp() },
+                    ),
+                );
+        }
+
 
         fn pool_count(self: @ContractState) -> u256 {
             self.pool_count.read()
@@ -541,6 +574,38 @@ pub mod Predifi {
         }
 
 
+        fn refund_stake(ref self: ContractState, pool_id: u256) {
+            let caller = get_caller_address();
+            let pool = self.get_pool(pool_id);
+            assert(pool.status == Status::Closed, POOL_NOT_CLOSED);
+            let user_stake = self.get_user_stake(pool_id, caller);
+            assert(user_stake.amount > 0, 'Zero user stake');
+
+            let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
+
+            dispatcher.transfer(caller, user_stake.amount);
+
+            self
+                .user_stakes
+                .write(
+                    (pool_id, caller),
+                    UserStake {
+                        option: user_stake.option,
+                        amount: 0,
+                        shares: user_stake.shares,
+                        timestamp: user_stake.timestamp,
+                    },
+                );
+
+            self
+                .emit(
+                    Event::StakeRefunded(
+                        StakeRefunded { pool_id, address: caller, amount: user_stake.amount },
+                    ),
+                );
+        }
+
+
         /// Returns whether a user has participated in a specific pool
         fn has_user_participated_in_pool(
             self: @ContractState, user: ContractAddress, pool_id: u256,
@@ -611,7 +676,6 @@ pub mod Predifi {
         ) -> bool {
             self.user_pools.read((user, pool_id))
         }
-
 
         fn get_user_stake(
             self: @ContractState, pool_id: u256, address: ContractAddress,
