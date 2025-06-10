@@ -22,9 +22,9 @@ pub mod Predifi {
     };
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, DISPUTE_ALREADY_RAISED, INACTIVE_POOL,
-        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED, POOL_NOT_READY_FOR_VALIDATION,
-        POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED, POOL_SUSPENDED,
-        VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
+        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED,
+        POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED,
+        POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
     };
 
     // package imports
@@ -238,8 +238,8 @@ pub mod Predifi {
     pub struct PoolCancelled {
         pub pool_id: u256,
         pub timestamp: u64,
-    }    
-    
+    }
+
     // Validator event structs
     #[derive(Drop, starknet::Event)]
     struct ValidatorResultSubmitted {
