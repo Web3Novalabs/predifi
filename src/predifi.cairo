@@ -15,7 +15,7 @@ pub mod Predifi {
         StoragePointerWriteAccess, Vec, VecTrait,
     };
     use starknet::{
-        ContractAddress, contract_address_const, get_block_timestamp, get_caller_address,
+        ContractAddress, get_block_timestamp, get_caller_address,
         get_contract_address,
     };
     use crate::base::errors::Errors::{
@@ -23,6 +23,13 @@ pub mod Predifi {
         INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED,
         POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED,
         POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
+    };
+
+    use crate::base::types::Events::{
+        BetPlaced, UserStaked, StakeRefunded, FeesCollected, PoolStateTransition, PoolResolved, 
+        FeeWithdrawn, ValidatorsAssigned, ValidatorAdded, ValidatorRemoved, DisputeRaised, 
+        DisputeResolved, PoolSuspended, PoolCancelled, ValidatorResultSubmitted, 
+        PoolAutomaticallySettled,
     };
 
     // package imports
@@ -139,120 +146,6 @@ pub mod Predifi {
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct BetPlaced {
-        pool_id: u256,
-        address: ContractAddress,
-        option: felt252,
-        amount: u256,
-        shares: u256,
-    }
-    #[derive(Drop, starknet::Event)]
-    struct UserStaked {
-        pool_id: u256,
-        address: ContractAddress,
-        amount: u256,
-    }
-    #[derive(Drop, starknet::Event)]
-    pub struct StakeRefunded {
-        pub pool_id: u256,
-        pub address: ContractAddress,
-        pub amount: u256,
-    }
-    #[derive(Drop, starknet::Event)]
-    struct FeesCollected {
-        fee_type: felt252,
-        pool_id: u256,
-        recipient: ContractAddress,
-        amount: u256,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct PoolStateTransition {
-        pool_id: u256,
-        previous_status: Status,
-        new_status: Status,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct PoolResolved {
-        pool_id: u256,
-        winning_option: bool,
-        total_payout: u256,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct FeeWithdrawn {
-        fee_type: felt252,
-        recipient: ContractAddress,
-        amount: u256,
-    }
-
-
-    #[derive(Drop, starknet::Event)]
-    struct ValidatorsAssigned {
-        pool_id: u256,
-        validator1: ContractAddress,
-        validator2: ContractAddress,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    pub struct ValidatorAdded {
-        pub account: ContractAddress,
-        pub caller: ContractAddress,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    pub struct ValidatorRemoved {
-        pub account: ContractAddress,
-        pub caller: ContractAddress,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct DisputeRaised {
-        pool_id: u256,
-        user: ContractAddress,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct DisputeResolved {
-        pool_id: u256,
-        winning_option: bool,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct PoolSuspended {
-        pool_id: u256,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    pub struct PoolCancelled {
-        pub pool_id: u256,
-        pub timestamp: u64,
-    }
-
-    // Validator event structs
-    #[derive(Drop, starknet::Event)]
-    struct ValidatorResultSubmitted {
-        pool_id: u256,
-        validator: ContractAddress,
-        selected_option: bool,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct PoolAutomaticallySettled {
-        pool_id: u256,
-        final_outcome: bool,
-        total_validations: u256,
-        timestamp: u64,
     }
 
     #[derive(Drop, Hash)]
