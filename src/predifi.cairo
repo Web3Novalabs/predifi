@@ -7,29 +7,23 @@ pub mod Predifi {
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
-    use openzeppelin::token::erc20::interface::{
-       IERC20Dispatcher, IERC20DispatcherTrait,
-    };
+    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::storage::{
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
     };
-    use starknet::{
-        ContractAddress, get_block_timestamp, get_caller_address,
-        get_contract_address,
-    };
+    use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, DISPUTE_ALREADY_RAISED, INACTIVE_POOL,
         INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED,
         POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED,
         POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
     };
-
-    use crate::base::types::Events::{
-        BetPlaced, UserStaked, StakeRefunded, FeesCollected, PoolStateTransition, PoolResolved, 
-        FeeWithdrawn, ValidatorsAssigned, ValidatorAdded, ValidatorRemoved, DisputeRaised, 
-        DisputeResolved, PoolSuspended, PoolCancelled, ValidatorResultSubmitted, 
-        PoolAutomaticallySettled,
+    use crate::base::events::Events::{
+        BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
+        PoolAutomaticallySettled, PoolCancelled, PoolResolved, PoolStateTransition, PoolSuspended,
+        StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved, ValidatorResultSubmitted,
+        ValidatorsAssigned,
     };
 
     // package imports

@@ -1,10 +1,10 @@
-use contract::base::types::{Category, Pool, PoolDetails, Status};
-use contract::base::types::Events::{
-    BetPlaced, UserStaked, StakeRefunded, FeesCollected, PoolStateTransition, PoolResolved, 
-    FeeWithdrawn, ValidatorsAssigned, ValidatorAdded, ValidatorRemoved, DisputeRaised, 
-    DisputeResolved, PoolSuspended, PoolCancelled, ValidatorResultSubmitted, 
-    PoolAutomaticallySettled
+use contract::base::events::Events::{
+    BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
+    PoolAutomaticallySettled, PoolCancelled, PoolResolved, PoolStateTransition, PoolSuspended,
+    StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved, ValidatorResultSubmitted,
+    ValidatorsAssigned,
 };
+use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
 use contract::interfaces::ipredifi::{IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait};
 use contract::predifi::Predifi;
