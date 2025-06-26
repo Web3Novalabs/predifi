@@ -4,13 +4,11 @@ pub mod Predifi {
     use core::hash::{HashStateExTrait, HashStateTrait};
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
-    use core::traits::Copy;
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
     use openzeppelin::token::erc20::interface::{
-        ERC20ABIDispatcher, ERC20ABIDispatcherTrait, IERC20Dispatcher, IERC20DispatcherTrait,
-        IERC20MetadataDispatcher, IERC20MetadataDispatcherTrait,
+       IERC20Dispatcher, IERC20DispatcherTrait,
     };
     use starknet::storage::{
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
