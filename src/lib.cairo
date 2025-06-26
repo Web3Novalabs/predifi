@@ -9,11 +9,7 @@ pub mod interfaces {
     pub mod ipredifi;
 }
 
-pub mod presets {
-    pub mod ERC20;
-}
 pub mod STRK;
 
 pub mod predifi;
-pub mod predifi_token;
 pub mod utils;
