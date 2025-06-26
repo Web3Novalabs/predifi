@@ -147,4 +147,3 @@ pub struct PoolDetails {
     pub initial_share_price: u16,
     pub exists: bool,
 }
-

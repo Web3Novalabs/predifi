@@ -1,3 +1,9 @@
+use contract::base::events::Events::{
+    BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
+    PoolAutomaticallySettled, PoolCancelled, PoolResolved, PoolStateTransition, PoolSuspended,
+    StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved, ValidatorResultSubmitted,
+    ValidatorsAssigned,
+};
 use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
 use contract::interfaces::ipredifi::{IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait};
@@ -21,6 +27,7 @@ use starknet::{
     ClassHash, ContractAddress, contract_address_const, get_block_timestamp, get_caller_address,
     get_contract_address,
 };
+
 
 // Validator role
 const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
@@ -126,7 +133,7 @@ fn test_cancel_pool_event_emission() {
     assert(fetched_pool.status == Status::Closed, 'Pool not closed');
 
     let expected_event = Predifi::Event::PoolCancelled(
-        Predifi::PoolCancelled { pool_id, timestamp: get_block_timestamp() },
+        PoolCancelled { pool_id, timestamp: get_block_timestamp() },
     );
     spy.assert_emitted(@array![(contract.contract_address, expected_event)]);
 }
@@ -2600,7 +2607,7 @@ fn test_add_validator() {
 
     // Assert event emitted
     let expected_event = Predifi::Event::ValidatorAdded(
-        Predifi::ValidatorAdded { account: validator, caller: admin },
+        ValidatorAdded { account: validator, caller: admin },
     );
     spy.assert_emitted(@array![(test_address, expected_event)]);
 }
@@ -2656,7 +2663,7 @@ fn test_remove_validator_role() {
 
     // Assert correct event was emitted
     let expected_event = Predifi::Event::ValidatorRemoved(
-        Predifi::ValidatorRemoved { account: validator1, caller: admin },
+        ValidatorRemoved { account: validator1, caller: admin },
     );
     spy.assert_emitted(@array![(test_address, expected_event)]);
 
@@ -3440,7 +3447,7 @@ fn test_refund_stake_event_emission() {
 
     // Assert event emitted
     let expected_event = Predifi::Event::StakeRefunded(
-        Predifi::StakeRefunded { pool_id, address: caller, amount: stake_amount },
+        StakeRefunded { pool_id, address: caller, amount: stake_amount },
     );
     spy.assert_emitted(@array![(contract.contract_address, expected_event)]);
 }
