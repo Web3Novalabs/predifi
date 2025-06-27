@@ -56,6 +56,16 @@ fn PoolType(PoolType: Pool) -> felt252 {
     }
 }
 
+pub fn u8_to_pool(pool_type: u8) -> Pool {
+    match pool_type {
+        0 => Pool::WinBet,
+        1 => Pool::VoteBet,
+        2 => Pool::OverUnderBet,
+        3 => Pool::ParlayPool,
+        _ => panic!("Invalid pool type: must be 0-3"),
+    }
+}
+
 
 #[derive(Copy, Drop, Serde, PartialEq, Debug, starknet::Store)]
 pub enum Category {

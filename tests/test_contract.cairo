@@ -59,7 +59,7 @@ fn create_default_pool(contract: IPredifiDispatcher) -> u256 {
     contract
         .create_pool(
             'Example Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A simple betting pool",
             "image.png",
             "event.com/details",
@@ -312,9 +312,186 @@ fn test_excessive_creator_fee() {
         );
 }
 
+#[test]
+#[should_panic(expected: "Invalid pool type: must be 0-3")]
+fn test_invalid_pool_type() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    let (
+        poolName,
+        _,
+        poolDescription,
+        poolImage,
+        poolEventSourceUrl,
+        poolStartTime,
+        poolLockTime,
+        poolEndTime,
+        option1,
+        option2,
+        minBetAmount,
+        maxBetAmount,
+        creatorFee,
+        isPrivate,
+        category,
+    ) =
+        get_default_pool_params();
+
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    contract
+        .create_pool(
+            poolName,
+            99, // Invalid pool type
+            poolDescription,
+            poolImage,
+            poolEventSourceUrl,
+            poolStartTime,
+            poolLockTime,
+            poolEndTime,
+            option1,
+            option2,
+            minBetAmount,
+            maxBetAmount,
+            creatorFee,
+            isPrivate,
+            category,
+        );
+}
+
+#[test]
+fn test_valid_pool_types() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the DISPATCHER contract to spend tokens
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    let (
+        poolName,
+        _,
+        poolDescription,
+        poolImage,
+        poolEventSourceUrl,
+        poolStartTime,
+        poolLockTime,
+        poolEndTime,
+        option1,
+        option2,
+        minBetAmount,
+        maxBetAmount,
+        creatorFee,
+        isPrivate,
+        category,
+    ) =
+        get_default_pool_params();
+
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    
+    // Test all valid pool types (0-3)
+    let pool_id_0 = contract
+        .create_pool(
+            'WinBet Pool',
+            0, // WinBet
+            poolDescription.clone(),
+            poolImage.clone(),
+            poolEventSourceUrl.clone(),
+            poolStartTime,
+            poolLockTime,
+            poolEndTime,
+            option1,
+            option2,
+            minBetAmount,
+            maxBetAmount,
+            creatorFee,
+            isPrivate,
+            category,
+        );
+    
+    let pool_id_1 = contract
+        .create_pool(
+            'VoteBet Pool',
+            1, // VoteBet
+            poolDescription.clone(),
+            poolImage.clone(),
+            poolEventSourceUrl.clone(),
+            poolStartTime + 1,
+            poolLockTime + 1,
+            poolEndTime + 1,
+            option1,
+            option2,
+            minBetAmount,
+            maxBetAmount,
+            creatorFee,
+            isPrivate,
+            category,
+        );
+    
+    let pool_id_2 = contract
+        .create_pool(
+            'OverUnderBet Pool',
+            2, // OverUnderBet
+            poolDescription.clone(),
+            poolImage.clone(),
+            poolEventSourceUrl.clone(),
+            poolStartTime + 2,
+            poolLockTime + 2,
+            poolEndTime + 2,
+            option1,
+            option2,
+            minBetAmount,
+            maxBetAmount,
+            creatorFee,
+            isPrivate,
+            category,
+        );
+    
+    let pool_id_3 = contract
+        .create_pool(
+            'ParlayPool Pool',
+            3, // ParlayPool
+            poolDescription,
+            poolImage,
+            poolEventSourceUrl,
+            poolStartTime + 3,
+            poolLockTime + 3,
+            poolEndTime + 3,
+            option1,
+            option2,
+            minBetAmount,
+            maxBetAmount,
+            creatorFee,
+            isPrivate,
+            category,
+        );
+
+    // Verify all pools were created successfully
+    assert!(pool_id_0 != 0, "WinBet pool not created");
+    assert!(pool_id_1 != 0, "VoteBet pool not created");
+    assert!(pool_id_2 != 0, "OverUnderBet pool not created");
+    assert!(pool_id_3 != 0, "ParlayPool pool not created");
+    
+    // Verify the pool types are correctly stored
+    let pool_0 = contract.get_pool(pool_id_0);
+    let pool_1 = contract.get_pool(pool_id_1);
+    let pool_2 = contract.get_pool(pool_id_2);
+    let pool_3 = contract.get_pool(pool_id_3);
+    
+    assert(pool_0.poolType == Pool::WinBet, 'Wrong type for pool 0');
+    assert(pool_1.poolType == Pool::VoteBet, 'Wrong type for pool 1');
+    assert(pool_2.poolType == Pool::OverUnderBet, 'Wrong type for pool 2');
+    assert(pool_3.poolType == Pool::ParlayPool, 'Wrong type for pool 3');
+}
+
 fn get_default_pool_params() -> (
     felt252,
-    Pool,
+    u8,
     ByteArray,
     ByteArray,
     ByteArray,
@@ -332,7 +509,7 @@ fn get_default_pool_params() -> (
     let current_time = get_block_timestamp();
     (
         'Default Pool',
-        Pool::WinBet,
+        0, // 0 = WinBet
         "Default Description",
         "default_image.jpg",
         "https://example.com",
@@ -753,7 +930,7 @@ fn test_get_creator_fee_percentage() {
     let pool_id = contract
         .create_pool(
             'Example Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A simple betting pool",
             "image.png",
             "event.com/details",
@@ -788,7 +965,7 @@ fn test_get_validator_fee_percentage() {
     let pool_id = contract
         .create_pool(
             'Example Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A simple betting pool",
             "image.png",
             "event.com/details",
@@ -823,7 +1000,7 @@ fn test_creator_fee_multiple_pools() {
     let pool_id1 = contract
         .create_pool(
             'Pool One',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "First betting pool",
             "image1.png",
             "event.com/details1",
@@ -842,7 +1019,7 @@ fn test_creator_fee_multiple_pools() {
     let pool_id2 = contract
         .create_pool(
             'Pool Two',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "Second betting pool",
             "image2.png",
             "event.com/details2",
@@ -880,7 +1057,7 @@ fn test_creator_and_validator_fee_for_same_pool() {
     let pool_id = contract
         .create_pool(
             'Example Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A simple betting pool",
             "image.png",
             "event.com/details",
@@ -1089,7 +1266,7 @@ fn test_automatic_pool_state_transitions() {
     let active_pool_id = contract
         .create_pool(
             'Active Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "Pool in active state",
             "image.png",
             "event.com/details",
@@ -1189,7 +1366,7 @@ fn test_manual_pool_state_update() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A pool for testing manual updates",
             "image.png",
             "event.com/details",
@@ -1265,7 +1442,7 @@ fn test_unauthorized_manual_update() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A pool for testing unauthorized updates",
             "image.png",
             "event.com/details",
@@ -1308,7 +1485,7 @@ fn test_invalid_state_transition() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A pool for testing invalid transitions",
             "image.png",
             "event.com/details",
@@ -1352,7 +1529,7 @@ fn test_no_change_on_same_state() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A pool for testing same state updates",
             "image.png",
             "event.com/details",
@@ -1418,7 +1595,7 @@ fn test_validator_can_update_state() {
     let pool_id = contract
         .create_pool(
             'Validator Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A pool for testing validator updates",
             "image.png",
             "event.com/details",
@@ -1808,7 +1985,7 @@ fn test_user_pools_with_time_based_transitions() {
     let pool_id1 = contract
         .create_pool(
             'Pool 1',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "First pool",
             "image1.jpg",
             "https://example.com/source1",
@@ -1828,7 +2005,7 @@ fn test_user_pools_with_time_based_transitions() {
     let pool_id2 = contract
         .create_pool(
             'Pool 2',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "Second pool",
             "image2.jpg",
             "https://example.com/source2",
@@ -1967,7 +2144,7 @@ fn test_multiple_users_with_status_transitions() {
     let pool_id1 = contract
         .create_pool(
             'Soccer Championship',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "Finals match",
             "soccer.jpg",
             "https://example.com/soccer",
@@ -1987,7 +2164,7 @@ fn test_multiple_users_with_status_transitions() {
     let pool_id2 = contract
         .create_pool(
             'ETH Price Prediction',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "Price above or below $5000",
             "eth.jpg",
             "https://example.com/eth",
@@ -2341,7 +2518,7 @@ fn test_assign_multiple_validators() {
         let pool_id = contract
             .create_pool(
                 'Test Pool', // poolName
-                Pool::WinBet, // poolType
+                0, // 0 = WinBet // poolType
                 "Test pool description", // poolDescription
                 "image.jpg", // poolImage
                 "https://example.com", // poolEventSourceUrl
@@ -2456,7 +2633,7 @@ fn test_limited_validators_assignment() {
         let pool_id = contract
             .create_pool(
                 'Limited Test Pool', // poolName
-                Pool::WinBet, // poolType
+                0, // 0 = WinBet // poolType
                 "Testing limited validators", // poolDescription
                 "image.jpg", // poolImage
                 "https://example.com", // poolEventSourceUrl
@@ -2511,7 +2688,7 @@ fn test_limited_validators_assignment() {
     let new_pool_id = contract
         .create_pool(
             'New Pool', // poolName
-            Pool::WinBet, // poolType
+            0, // 0 = WinBet // poolType
             "Testing with two validators", // poolDescription
             "image.jpg", // poolImage
             "https://example.com", // poolEventSourceUrl
@@ -2700,7 +2877,7 @@ fn create_test_pool(
     dispatcher
         .create_pool(
             poolName,
-            Pool::WinBet,
+            0, // 0 = WinBet
             "Test Description",
             "Test Image",
             "Test URL",
@@ -3314,7 +3491,7 @@ fn test_vote_on_suspended_pool() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A test pool for suspension",
             "image.png",
             "event.com/details",
@@ -3514,7 +3691,7 @@ fn test_validate_outcome_success() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A test pool for validation",
             "image.png",
             "event.com/details",
@@ -3651,7 +3828,7 @@ fn test_validate_pool_result_success() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A test pool for validation",
             "image.png",
             "event.com/details",
@@ -3760,7 +3937,7 @@ fn test_validate_pool_result_double_validation() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A test pool",
             "image.png",
             "event.com/details",
@@ -3842,7 +4019,7 @@ fn test_validation_consensus_majority_option1() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A test pool",
             "image.png",
             "event.com/details",
@@ -3913,7 +4090,7 @@ fn test_get_validator_confirmation() {
     let pool_id = contract
         .create_pool(
             'Test Pool',
-            Pool::WinBet,
+            0, // 0 = WinBet
             "A test pool",
             "image.png",
             "event.com/details",
