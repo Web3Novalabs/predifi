@@ -393,7 +393,7 @@ fn test_valid_pool_types() {
         get_default_pool_params();
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
-    
+
     // Test all valid pool types (0-3)
     let pool_id_0 = contract
         .create_pool(
@@ -413,7 +413,7 @@ fn test_valid_pool_types() {
             isPrivate,
             category,
         );
-    
+
     let pool_id_1 = contract
         .create_pool(
             'VoteBet Pool',
@@ -432,7 +432,7 @@ fn test_valid_pool_types() {
             isPrivate,
             category,
         );
-    
+
     let pool_id_2 = contract
         .create_pool(
             'OverUnderBet Pool',
@@ -451,7 +451,7 @@ fn test_valid_pool_types() {
             isPrivate,
             category,
         );
-    
+
     let pool_id_3 = contract
         .create_pool(
             'ParlayPool Pool',
@@ -476,13 +476,13 @@ fn test_valid_pool_types() {
     assert!(pool_id_1 != 0, "VoteBet pool not created");
     assert!(pool_id_2 != 0, "OverUnderBet pool not created");
     assert!(pool_id_3 != 0, "ParlayPool pool not created");
-    
+
     // Verify the pool types are correctly stored
     let pool_0 = contract.get_pool(pool_id_0);
     let pool_1 = contract.get_pool(pool_id_1);
     let pool_2 = contract.get_pool(pool_id_2);
     let pool_3 = contract.get_pool(pool_id_3);
-    
+
     assert(pool_0.poolType == Pool::WinBet, 'Wrong type for pool 0');
     assert(pool_1.poolType == Pool::VoteBet, 'Wrong type for pool 1');
     assert(pool_2.poolType == Pool::OverUnderBet, 'Wrong type for pool 2');
