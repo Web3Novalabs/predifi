@@ -27,7 +27,7 @@ pub mod Predifi {
     };
 
     // package imports
-    use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
+    use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake, u8_to_pool};
     use crate::interfaces::ipredifi::IPredifi;
 
     // 1 STRK in WEI
@@ -169,7 +169,7 @@ pub mod Predifi {
         fn create_pool(
             ref self: ContractState,
             poolName: felt252,
-            poolType: Pool,
+            poolType: u8,
             poolDescription: ByteArray,
             poolImage: ByteArray,
             poolEventSourceUrl: ByteArray,
@@ -184,6 +184,9 @@ pub mod Predifi {
             isPrivate: bool,
             category: Category,
         ) -> u256 {
+            // Convert u8 to Pool enum with validation
+            let pool_type_enum = u8_to_pool(poolType);
+
             // Validation checks
             assert!(poolStartTime < poolLockTime, "Start time must be before lock time");
             assert!(poolLockTime < poolEndTime, "Lock time must be before end time");
@@ -212,7 +215,7 @@ pub mod Predifi {
                 pool_id: pool_id,
                 address: creator_address,
                 poolName,
-                poolType,
+                poolType: pool_type_enum,
                 poolDescription,
                 poolImage,
                 poolEventSourceUrl,
