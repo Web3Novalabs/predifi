@@ -467,7 +467,7 @@ pub mod Predifi {
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
             let pool = self.pools.read(pool_id);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-            assert(amount >= MIN_STAKE_AMOUNT, 'stake amount too low');
+            assert(amount >= MIN_STAKE_AMOUNT, Errors::STAKE_AMOUNT_TOO_LOW);
             let address: ContractAddress = get_caller_address();
 
             // Transfer stake amount from user to contract
@@ -475,11 +475,11 @@ pub mod Predifi {
 
             // Check balance and allowance
             let user_balance = dispatcher.balance_of(address);
-            assert(user_balance >= amount, 'Insufficient balance');
+            assert(user_balance >= amount, Errors::INSUFFICIENT_BALANCE);
 
             let contract_address = get_contract_address();
             let allowed_amount = dispatcher.allowance(address, contract_address);
-            assert(allowed_amount >= amount, 'Insufficient allowance');
+            assert(allowed_amount >= amount, Errors::INSUFFICIENT_ALLOWANCE);
 
             // Transfer the tokens
             dispatcher.transfer_from(address, contract_address, amount);
