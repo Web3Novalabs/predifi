@@ -1,3 +1,4 @@
+/// @notice Error messages and codes used throughout the PrediFi protocol.
 pub mod Errors {
     pub const REQUIRED_PAYMENT: u128 = 1000;
     pub const INVALID_POOL_OPTION: felt252 = 'Invalid Pool Option';

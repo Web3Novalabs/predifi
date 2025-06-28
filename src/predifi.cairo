@@ -166,6 +166,23 @@ pub mod Predifi {
 
     #[abi(embed_v0)]
     impl predifi of IPredifi<ContractState> {
+        /// @notice Creates a new prediction pool.
+        /// @param poolName The name of the pool.
+        /// @param poolType The type of the pool as a u8.
+        /// @param poolDescription The description of the pool.
+        /// @param poolImage The image associated with the pool.
+        /// @param poolEventSourceUrl The event source URL for the pool.
+        /// @param poolStartTime The start time of the pool.
+        /// @param poolLockTime The lock time of the pool.
+        /// @param poolEndTime The end time of the pool.
+        /// @param option1 The first option for the pool.
+        /// @param option2 The second option for the pool.
+        /// @param minBetAmount The minimum bet amount.
+        /// @param maxBetAmount The maximum bet amount.
+        /// @param creatorFee The fee percentage for the pool creator.
+        /// @param isPrivate Whether the pool is private.
+        /// @param category The category of the pool.
+        /// @return pool_id The ID of the created pool.
         fn create_pool(
             ref self: ContractState,
             poolName: felt252,
