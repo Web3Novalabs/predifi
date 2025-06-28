@@ -19,8 +19,9 @@ pub mod Predifi {
         INVALID_POOL_DETAILS, INVALID_POOL_OPTION, INVALID_START_TIME, POOL_NOT_CLOSED,
         POOL_NOT_LOCKED, POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED,
         POOL_NOT_SUSPENDED, POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
-        ZERO_MINIMUM_BET,
+        ZERO_MINIMUM_BET
     };
+    use crate::base::errors::Errors;
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
         PoolAutomaticallySettled, PoolCancelled, PoolResolved, PoolStateTransition, PoolSuspended,
@@ -268,7 +269,7 @@ pub mod Predifi {
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
 
-            assert(caller == pool.address, 'Unauthorized Caller');
+            assert(caller == pool.address, Errors::UNAUTHORIZED_CALLER);
             let mut updated_pool = pool;
             updated_pool.status = Status::Closed;
 

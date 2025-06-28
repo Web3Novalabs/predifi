@@ -30,4 +30,6 @@ pub mod Errors {
     pub const INVALID_MAXIMUM_BET: felt252 = 'Invalid Maximum Bet';
     pub const INVALID_START_TIME: felt252 = 'Invalid Start Time';
     pub const CREATOR_FEE_TOO_HIGH: felt252 = 'Creator fee cannot exceed 5%';
+    
+    pub const UNAUTHORIZED_CALLER: felt252 = 'Unauthorized Caller';
 }
