@@ -349,13 +349,13 @@ pub mod Predifi {
             ref self: ContractState, pool_id: u256, new_status: Status,
         ) -> Status {
             let pool = self.pools.read(pool_id);
-            assert(pool.exists, 'Pool does not exist');
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
 
             // Check if caller has appropriate role (admin or validator)
             let caller = get_caller_address();
             let is_admin = self.accesscontrol.has_role(DEFAULT_ADMIN_ROLE, caller);
             let is_validator = self.accesscontrol.has_role(VALIDATOR_ROLE, caller);
-            assert(is_admin || is_validator, 'Caller not authorized');
+            assert(is_admin || is_validator, Errors::UNAUTHORIZED_CALLER);
 
             // Enforce status transition rules
             let current_status = pool.status;
@@ -378,7 +378,7 @@ pub mod Predifi {
                     || (current_status == Status::Settled && new_status == Status::Closed)
             };
 
-            assert(is_valid_transition, 'Invalid state transition');
+            assert(is_valid_transition, Errors::INVALID_STATE_TRANSITION);
 
             // Update the pool status
             let mut updated_pool = pool;
