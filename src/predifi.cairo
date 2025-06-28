@@ -13,15 +13,15 @@ pub mod Predifi {
         StoragePointerWriteAccess, Vec, VecTrait,
     };
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
+    use crate::base::errors::Errors;
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, CREATOR_FEE_TOO_HIGH, DISPUTE_ALREADY_RAISED,
         INACTIVE_POOL, INVALID_LOCK_TIME, INVALID_LOCK_TIME_TO_END_TIME, INVALID_MAXIMUM_BET,
         INVALID_POOL_DETAILS, INVALID_POOL_OPTION, INVALID_START_TIME, POOL_NOT_CLOSED,
         POOL_NOT_LOCKED, POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED,
         POOL_NOT_SUSPENDED, POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
-        ZERO_MINIMUM_BET
+        ZERO_MINIMUM_BET,
     };
-    use crate::base::errors::Errors;
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
         PoolAutomaticallySettled, PoolCancelled, PoolResolved, PoolStateTransition, PoolSuspended,

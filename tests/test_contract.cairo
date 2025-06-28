@@ -1421,7 +1421,7 @@ fn test_manual_pool_state_update() {
 }
 
 #[test]
-#[should_panic(expected: 'Caller not authorized')]
+#[should_panic(expected: 'Unauthorized Caller')]
 fn test_unauthorized_manual_update() {
     let (contract, admin, erc20_address) = deploy_predifi();
 
