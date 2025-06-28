@@ -411,11 +411,11 @@ pub mod Predifi {
 
             // Check balance and allowance
             let user_balance = dispatcher.balance_of(caller);
-            assert(user_balance >= amount, 'Insufficient balance');
+            assert(user_balance >= amount, Errors::INSUFFICIENT_BALANCE);
 
             let contract_address = get_contract_address();
             let allowed_amount = dispatcher.allowance(caller, contract_address);
-            assert(allowed_amount >= amount, 'Insufficient allowance');
+            assert(allowed_amount >= amount, Errors::INSUFFICIENT_ALLOWANCE);
 
             // Transfer the tokens
             dispatcher.transfer_from(caller, contract_address, amount);
