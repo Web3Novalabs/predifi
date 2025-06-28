@@ -4,31 +4,30 @@ pub mod Predifi {
     use core::hash::{HashStateExTrait, HashStateTrait};
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
-    use core::traits::Copy;
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
-    use openzeppelin::token::erc20::interface::{
-        ERC20ABIDispatcher, ERC20ABIDispatcherTrait, IERC20Dispatcher, IERC20DispatcherTrait,
-        IERC20MetadataDispatcher, IERC20MetadataDispatcherTrait,
-    };
+    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::storage::{
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
     };
-    use starknet::{
-        ContractAddress, contract_address_const, get_block_timestamp, get_caller_address,
-        get_contract_address,
-    };
+    use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, DISPUTE_ALREADY_RAISED, INACTIVE_POOL,
         INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED,
         POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED,
         POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
     };
+    use crate::base::events::Events::{
+        BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
+        PoolAutomaticallySettled, PoolCancelled, PoolResolved, PoolStateTransition, PoolSuspended,
+        StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved, ValidatorResultSubmitted,
+        ValidatorsAssigned,
+    };
 
     // package imports
-    use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
+    use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake, u8_to_pool};
     use crate::interfaces::ipredifi::IPredifi;
 
     // 1 STRK in WEI
@@ -143,120 +142,6 @@ pub mod Predifi {
         SRC5Event: SRC5Component::Event,
     }
 
-    #[derive(Drop, starknet::Event)]
-    struct BetPlaced {
-        pool_id: u256,
-        address: ContractAddress,
-        option: felt252,
-        amount: u256,
-        shares: u256,
-    }
-    #[derive(Drop, starknet::Event)]
-    struct UserStaked {
-        pool_id: u256,
-        address: ContractAddress,
-        amount: u256,
-    }
-    #[derive(Drop, starknet::Event)]
-    pub struct StakeRefunded {
-        pub pool_id: u256,
-        pub address: ContractAddress,
-        pub amount: u256,
-    }
-    #[derive(Drop, starknet::Event)]
-    struct FeesCollected {
-        fee_type: felt252,
-        pool_id: u256,
-        recipient: ContractAddress,
-        amount: u256,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct PoolStateTransition {
-        pool_id: u256,
-        previous_status: Status,
-        new_status: Status,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct PoolResolved {
-        pool_id: u256,
-        winning_option: bool,
-        total_payout: u256,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct FeeWithdrawn {
-        fee_type: felt252,
-        recipient: ContractAddress,
-        amount: u256,
-    }
-
-
-    #[derive(Drop, starknet::Event)]
-    struct ValidatorsAssigned {
-        pool_id: u256,
-        validator1: ContractAddress,
-        validator2: ContractAddress,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    pub struct ValidatorAdded {
-        pub account: ContractAddress,
-        pub caller: ContractAddress,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    pub struct ValidatorRemoved {
-        pub account: ContractAddress,
-        pub caller: ContractAddress,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct DisputeRaised {
-        pool_id: u256,
-        user: ContractAddress,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct DisputeResolved {
-        pool_id: u256,
-        winning_option: bool,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct PoolSuspended {
-        pool_id: u256,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    pub struct PoolCancelled {
-        pub pool_id: u256,
-        pub timestamp: u64,
-    }
-
-    // Validator event structs
-    #[derive(Drop, starknet::Event)]
-    struct ValidatorResultSubmitted {
-        pool_id: u256,
-        validator: ContractAddress,
-        selected_option: bool,
-        timestamp: u64,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct PoolAutomaticallySettled {
-        pool_id: u256,
-        final_outcome: bool,
-        total_validations: u256,
-        timestamp: u64,
-    }
-
     #[derive(Drop, Hash)]
     struct HashingProperties {
         username: felt252,
@@ -284,7 +169,7 @@ pub mod Predifi {
         fn create_pool(
             ref self: ContractState,
             poolName: felt252,
-            poolType: Pool,
+            poolType: u8,
             poolDescription: ByteArray,
             poolImage: ByteArray,
             poolEventSourceUrl: ByteArray,
@@ -299,6 +184,9 @@ pub mod Predifi {
             isPrivate: bool,
             category: Category,
         ) -> u256 {
+            // Convert u8 to Pool enum with validation
+            let pool_type_enum = u8_to_pool(poolType);
+
             // Validation checks
             assert!(poolStartTime < poolLockTime, "Start time must be before lock time");
             assert!(poolLockTime < poolEndTime, "Lock time must be before end time");
@@ -327,7 +215,7 @@ pub mod Predifi {
                 pool_id: pool_id,
                 address: creator_address,
                 poolName,
-                poolType,
+                poolType: pool_type_enum,
                 poolDescription,
                 poolImage,
                 poolEventSourceUrl,

@@ -1,6 +1,7 @@
 pub mod Errors {
     pub const REQUIRED_PAYMENT: u128 = 1000;
     pub const INVALID_POOL_OPTION: felt252 = 'Invalid Pool Option';
+    pub const INVALID_POOL_TYPE: felt252 = 'Invalid Pool Type';
     pub const INACTIVE_POOL: felt252 = 'Pool is inactive';
     pub const AMOUNT_BELOW_MINIMUM: felt252 = 'Amount is below minimum';
     pub const AMOUNT_ABOVE_MAXIMUM: felt252 = 'Amount is above maximum';

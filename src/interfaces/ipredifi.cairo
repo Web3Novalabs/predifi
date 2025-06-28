@@ -6,7 +6,7 @@ pub trait IPredifi<TContractState> {
     fn create_pool(
         ref self: TContractState,
         poolName: felt252,
-        poolType: Pool,
+        poolType: u8,
         poolDescription: ByteArray,
         poolImage: ByteArray,
         poolEventSourceUrl: ByteArray,

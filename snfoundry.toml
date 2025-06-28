@@ -18,3 +18,16 @@ url = "https://free-rpc.nethermind.io/sepolia-juno/"
 account = "predifi2"
 accounts-file = "/home/codespace/.starknet_accounts/starknet_open_zeppelin_accounts.json"
 url = "https://free-rpc.nethermind.io/sepolia-juno/"
+
+[sncast.account-2]
+account = "account-2"
+accounts-file = "/Users/admin/.starknet_accounts/starknet_open_zeppelin_accounts.json"
+url = "https://starknet-sepolia.public.blastapi.io"
+
+[sncast.default]
+account = "account-2"
+
+
+# SEPOLIA CONTRACT ADDRESS OF PREDIFI
+# contract_address: 0x06ff646a722404885793669af5270d4285a8acbb6e7193332ad390844f300121
+# contract: https://sepolia.starkscan.co/contract/0x06ff646a722404885793669af5270d4285a8acbb6e7193332ad390844f300121
