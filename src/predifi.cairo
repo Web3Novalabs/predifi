@@ -504,7 +504,7 @@ pub mod Predifi {
             let pool = self.get_pool(pool_id);
             assert(pool.status == Status::Closed, POOL_NOT_CLOSED);
             let user_stake = self.get_user_stake(pool_id, caller);
-            assert(user_stake.amount > 0, 'Zero user stake');
+            assert(user_stake.amount > 0, Errors::ZERO_USER_STAKE);
 
             let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
 

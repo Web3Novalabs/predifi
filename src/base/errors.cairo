@@ -24,6 +24,7 @@ pub mod Errors {
     pub const INSUFFICIENT_BALANCE: felt252 = 'Insufficient balance';
     pub const INSUFFICIENT_ALLOWANCE: felt252 = 'Insufficient allowance';
     pub const STAKE_AMOUNT_TOO_LOW: felt252 = 'stake amount too low';
+    pub const ZERO_USER_STAKE: felt252 = 'Zero user stake';
 
     // Validation Errors
     pub const VALIDATOR_NOT_AUTHORIZED: felt252 = 'Validator not authorized';
