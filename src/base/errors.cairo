@@ -26,6 +26,7 @@ pub mod Errors {
     pub const STAKE_AMOUNT_TOO_LOW: felt252 = 'stake amount too low';
     pub const ZERO_USER_STAKE: felt252 = 'Zero user stake';
     pub const INSUFFICIENT_STRK_BALANCE: felt252 = 'Insufficient STRK balance';
+    pub const COUNT_MUST_BE_GREATER_THAN_ZERO: felt252 = 'Count must be greater than 0';
 
     // Validation Errors
     pub const VALIDATOR_NOT_AUTHORIZED: felt252 = 'Validator not authorized';

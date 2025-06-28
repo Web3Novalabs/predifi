@@ -1081,7 +1081,7 @@ pub mod Predifi {
         fn set_required_validator_confirmations(ref self: ContractState, count: u256) {
             // Only admin can set this
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
-            assert(count > 0, 'Count must be greater than 0');
+            assert(count > 0, Errors::COUNT_MUST_BE_GREATER_THAN_ZERO);
             self.required_validator_confirmations.write(count);
         }
     }
