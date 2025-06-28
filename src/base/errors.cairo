@@ -24,4 +24,10 @@ pub mod Errors {
     pub const VALIDATOR_NOT_AUTHORIZED: felt252 = 'Validator not authorized';
     pub const VALIDATOR_ALREADY_VALIDATED: felt252 = 'Validator already validated';
     pub const POOL_NOT_READY_FOR_VALIDATION: felt252 = 'Pool not ready for validation';
+    pub const INVALID_LOCK_TIME: felt252 = 'Invalid lock time';
+    pub const INVALID_LOCK_TIME_TO_END_TIME: felt252 = 'lock time greater than end time';
+    pub const ZERO_MINIMUM_BET: felt252 = 'Minimum bet cannot be zero';
+    pub const INVALID_MAXIMUM_BET: felt252 = 'Invalid Maximum Bet';
+    pub const INVALID_START_TIME: felt252 = 'Invalid Start Time';
+    pub const CREATOR_FEE_TOO_HIGH: felt252 = 'Creator fee cannot exceed 5%';
 }

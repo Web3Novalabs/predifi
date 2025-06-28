@@ -14,10 +14,12 @@ pub mod Predifi {
     };
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
     use crate::base::errors::Errors::{
-        AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, DISPUTE_ALREADY_RAISED, INACTIVE_POOL,
-        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED,
-        POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED,
-        POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
+        AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, CREATOR_FEE_TOO_HIGH, DISPUTE_ALREADY_RAISED,
+        INACTIVE_POOL, INVALID_LOCK_TIME, INVALID_LOCK_TIME_TO_END_TIME, INVALID_MAXIMUM_BET,
+        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, INVALID_START_TIME, POOL_NOT_CLOSED,
+        POOL_NOT_LOCKED, POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED,
+        POOL_NOT_SUSPENDED, POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
+        ZERO_MINIMUM_BET,
     };
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
@@ -188,15 +190,13 @@ pub mod Predifi {
             let pool_type_enum = u8_to_pool(poolType);
 
             // Validation checks
-            assert!(poolStartTime < poolLockTime, "Start time must be before lock time");
-            assert!(poolLockTime < poolEndTime, "Lock time must be before end time");
-            assert!(minBetAmount > 0, "Minimum bet must be greater than 0");
-            assert!(
-                maxBetAmount >= minBetAmount, "Max bet must be greater than or equal to min bet",
-            );
+            assert(poolStartTime < poolLockTime, INVALID_LOCK_TIME);
+            assert(poolLockTime < poolEndTime, INVALID_LOCK_TIME_TO_END_TIME);
+            assert(minBetAmount > 0, ZERO_MINIMUM_BET);
+            assert(maxBetAmount >= minBetAmount, INVALID_MAXIMUM_BET);
             let current_time = get_block_timestamp();
-            assert!(current_time < poolStartTime, "Start time must be in the future");
-            assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
+            assert(current_time < poolStartTime, INVALID_START_TIME);
+            assert(creatorFee <= 5, CREATOR_FEE_TOO_HIGH);
 
             let creator_address = get_caller_address();
 
