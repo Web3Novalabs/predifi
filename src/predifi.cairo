@@ -304,7 +304,7 @@ pub mod Predifi {
         /// This can be called by anyone to update the state of a pool
         fn update_pool_state(ref self: ContractState, pool_id: u256) -> Status {
             let pool = self.pools.read(pool_id);
-            assert(pool.exists, 'Pool does not exist');
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
 
             let current_status = pool.status;
             let current_time = get_block_timestamp();

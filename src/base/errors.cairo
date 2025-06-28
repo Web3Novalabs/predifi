@@ -19,6 +19,7 @@ pub mod Errors {
     pub const POOL_NOT_CLOSED: felt252 = 'Pool is not closed';
     pub const POOL_NOT_SETTLED: felt252 = 'Pool is not settled';
     pub const POOL_NOT_RESOLVED: felt252 = 'Pool is not resolved';
+    pub const POOL_DOES_NOT_EXIST: felt252 = 'Pool does not exist';
 
     // Validation Errors
     pub const VALIDATOR_NOT_AUTHORIZED: felt252 = 'Validator not authorized';
