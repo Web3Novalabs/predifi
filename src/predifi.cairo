@@ -13,11 +13,14 @@ pub mod Predifi {
         StoragePointerWriteAccess, Vec, VecTrait,
     };
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
+    use crate::base::errors::Errors;
     use crate::base::errors::Errors::{
-        AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, DISPUTE_ALREADY_RAISED, INACTIVE_POOL,
-        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, POOL_NOT_CLOSED, POOL_NOT_LOCKED,
-        POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED, POOL_NOT_SUSPENDED,
-        POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
+        AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, CREATOR_FEE_TOO_HIGH, DISPUTE_ALREADY_RAISED,
+        INACTIVE_POOL, INVALID_LOCK_TIME, INVALID_LOCK_TIME_TO_END_TIME, INVALID_MAXIMUM_BET,
+        INVALID_POOL_DETAILS, INVALID_POOL_OPTION, INVALID_START_TIME, POOL_NOT_CLOSED,
+        POOL_NOT_LOCKED, POOL_NOT_READY_FOR_VALIDATION, POOL_NOT_RESOLVED, POOL_NOT_SETTLED,
+        POOL_NOT_SUSPENDED, POOL_SUSPENDED, VALIDATOR_ALREADY_VALIDATED, VALIDATOR_NOT_AUTHORIZED,
+        ZERO_MINIMUM_BET,
     };
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
@@ -188,15 +191,13 @@ pub mod Predifi {
             let pool_type_enum = u8_to_pool(poolType);
 
             // Validation checks
-            assert!(poolStartTime < poolLockTime, "Start time must be before lock time");
-            assert!(poolLockTime < poolEndTime, "Lock time must be before end time");
-            assert!(minBetAmount > 0, "Minimum bet must be greater than 0");
-            assert!(
-                maxBetAmount >= minBetAmount, "Max bet must be greater than or equal to min bet",
-            );
+            assert(poolStartTime < poolLockTime, INVALID_LOCK_TIME);
+            assert(poolLockTime < poolEndTime, INVALID_LOCK_TIME_TO_END_TIME);
+            assert(minBetAmount > 0, ZERO_MINIMUM_BET);
+            assert(maxBetAmount >= minBetAmount, INVALID_MAXIMUM_BET);
             let current_time = get_block_timestamp();
-            assert!(current_time < poolStartTime, "Start time must be in the future");
-            assert!(creatorFee <= 5, "Creator fee cannot exceed 5%");
+            assert(current_time < poolStartTime, INVALID_START_TIME);
+            assert(creatorFee <= 5, CREATOR_FEE_TOO_HIGH);
 
             let creator_address = get_caller_address();
 
@@ -268,7 +269,7 @@ pub mod Predifi {
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
 
-            assert(caller == pool.address, 'Unauthorized Caller');
+            assert(caller == pool.address, Errors::UNAUTHORIZED_CALLER);
             let mut updated_pool = pool;
             updated_pool.status = Status::Closed;
 
@@ -303,7 +304,7 @@ pub mod Predifi {
         /// This can be called by anyone to update the state of a pool
         fn update_pool_state(ref self: ContractState, pool_id: u256) -> Status {
             let pool = self.pools.read(pool_id);
-            assert(pool.exists, 'Pool does not exist');
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
 
             let current_status = pool.status;
             let current_time = get_block_timestamp();
@@ -348,13 +349,13 @@ pub mod Predifi {
             ref self: ContractState, pool_id: u256, new_status: Status,
         ) -> Status {
             let pool = self.pools.read(pool_id);
-            assert(pool.exists, 'Pool does not exist');
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
 
             // Check if caller has appropriate role (admin or validator)
             let caller = get_caller_address();
             let is_admin = self.accesscontrol.has_role(DEFAULT_ADMIN_ROLE, caller);
             let is_validator = self.accesscontrol.has_role(VALIDATOR_ROLE, caller);
-            assert(is_admin || is_validator, 'Caller not authorized');
+            assert(is_admin || is_validator, Errors::UNAUTHORIZED_CALLER);
 
             // Enforce status transition rules
             let current_status = pool.status;
@@ -377,7 +378,7 @@ pub mod Predifi {
                     || (current_status == Status::Settled && new_status == Status::Closed)
             };
 
-            assert(is_valid_transition, 'Invalid state transition');
+            assert(is_valid_transition, Errors::INVALID_STATE_TRANSITION);
 
             // Update the pool status
             let mut updated_pool = pool;
@@ -410,11 +411,11 @@ pub mod Predifi {
 
             // Check balance and allowance
             let user_balance = dispatcher.balance_of(caller);
-            assert(user_balance >= amount, 'Insufficient balance');
+            assert(user_balance >= amount, Errors::INSUFFICIENT_BALANCE);
 
             let contract_address = get_contract_address();
             let allowed_amount = dispatcher.allowance(caller, contract_address);
-            assert(allowed_amount >= amount, 'Insufficient allowance');
+            assert(allowed_amount >= amount, Errors::INSUFFICIENT_ALLOWANCE);
 
             // Transfer the tokens
             dispatcher.transfer_from(caller, contract_address, amount);
@@ -466,7 +467,7 @@ pub mod Predifi {
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
             let pool = self.pools.read(pool_id);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-            assert(amount >= MIN_STAKE_AMOUNT, 'stake amount too low');
+            assert(amount >= MIN_STAKE_AMOUNT, Errors::STAKE_AMOUNT_TOO_LOW);
             let address: ContractAddress = get_caller_address();
 
             // Transfer stake amount from user to contract
@@ -474,11 +475,11 @@ pub mod Predifi {
 
             // Check balance and allowance
             let user_balance = dispatcher.balance_of(address);
-            assert(user_balance >= amount, 'Insufficient balance');
+            assert(user_balance >= amount, Errors::INSUFFICIENT_BALANCE);
 
             let contract_address = get_contract_address();
             let allowed_amount = dispatcher.allowance(address, contract_address);
-            assert(allowed_amount >= amount, 'Insufficient allowance');
+            assert(allowed_amount >= amount, Errors::INSUFFICIENT_ALLOWANCE);
 
             // Transfer the tokens
             dispatcher.transfer_from(address, contract_address, amount);
@@ -503,7 +504,7 @@ pub mod Predifi {
             let pool = self.get_pool(pool_id);
             assert(pool.status == Status::Closed, POOL_NOT_CLOSED);
             let user_stake = self.get_user_stake(pool_id, caller);
-            assert(user_stake.amount > 0, 'Zero user stake');
+            assert(user_stake.amount > 0, Errors::ZERO_USER_STAKE);
 
             let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
 
@@ -635,7 +636,61 @@ pub mod Predifi {
             10_u8
         }
 
+        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
+            // Retrieve the STRK token contract
+            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
 
+            // Check if the creator has sufficient balance for pool creation fee
+            let creator_balance = strk_token.balance_of(creator);
+            assert(creator_balance >= ONE_STRK, Errors::INSUFFICIENT_STRK_BALANCE);
+
+            // Check allowance to ensure the contract can transfer tokens
+            let contract_address = get_contract_address();
+            let allowed_amount = strk_token.allowance(creator, contract_address);
+            assert(allowed_amount >= ONE_STRK, Errors::INSUFFICIENT_ALLOWANCE);
+
+            // Transfer the pool creation fee from creator to the contract
+            strk_token.transfer_from(creator, contract_address, ONE_STRK);
+        }
+
+        fn calculate_validator_fee(
+            ref self: ContractState, pool_id: u256, total_amount: u256,
+        ) -> u256 {
+            // Validator fee is fixed at 10%
+            let validator_fee_percentage = 5_u8;
+            let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
+
+            self.validator_fee.write(pool_id, validator_fee);
+            validator_fee
+        }
+
+        // Helper function to distribute validator fees evenly
+        fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
+            let total_validator_fee = self.validator_fee.read(pool_id);
+
+            let validator_count = self.validators.len();
+
+            // Convert validator_count to u256 for the division
+            let validator_count_u256: u256 = validator_count.into();
+            let fee_per_validator = total_validator_fee / validator_count_u256;
+
+            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+
+            // Distribute to each validator
+            let mut i: u64 = 0;
+            while i < validator_count {
+                // Add debug info to trace the exact point of failure
+
+                // Safe access to validator - check bounds first
+                if i < self.validators.len() {
+                    let validator_address = self.validators.at(i).read();
+                    strk_token.transfer(validator_address, fee_per_validator);
+                } else {}
+                i += 1;
+            }
+            // Reset the validator fee for this pool after distribution
+            self.validator_fee.write(pool_id, 0);
+        }
 
         fn get_pool_validators(
             self: @ContractState, pool_id: u256,
@@ -1026,7 +1081,7 @@ pub mod Predifi {
         fn set_required_validator_confirmations(ref self: ContractState, count: u256) {
             // Only admin can set this
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
-            assert(count > 0, 'Count must be greater than 0');
+            assert(count > 0, Errors::COUNT_MUST_BE_GREATER_THAN_ZERO);
             self.required_validator_confirmations.write(count);
         }
     }

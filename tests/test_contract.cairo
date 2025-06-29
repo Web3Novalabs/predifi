@@ -157,7 +157,7 @@ fn test_cancel_pool_by_unauthorized_caller() {
 }
 
 #[test]
-#[should_panic(expected: "Start time must be before lock time")]
+#[should_panic(expected: 'Invalid lock time')]
 fn test_invalid_time_sequence_start_after_lock() {
     let (contract, pool_creator, erc20_address) = deploy_predifi();
 
@@ -212,7 +212,7 @@ fn test_invalid_time_sequence_start_after_lock() {
 }
 
 #[test]
-#[should_panic(expected: "Minimum bet must be greater than 0")]
+#[should_panic(expected: 'Minimum bet cannot be zero')]
 fn test_zero_min_bet() {
     let (contract, pool_creator, erc20_address) = deploy_predifi();
 
@@ -262,7 +262,7 @@ fn test_zero_min_bet() {
 }
 
 #[test]
-#[should_panic(expected: "Creator fee cannot exceed 5%")]
+#[should_panic(expected: 'Creator fee cannot exceed 5%')]
 fn test_excessive_creator_fee() {
     let (contract, pool_creator, erc20_address) = deploy_predifi();
 
@@ -1421,7 +1421,7 @@ fn test_manual_pool_state_update() {
 }
 
 #[test]
-#[should_panic(expected: 'Caller not authorized')]
+#[should_panic(expected: 'Unauthorized Caller')]
 fn test_unauthorized_manual_update() {
     let (contract, admin, erc20_address) = deploy_predifi();
 
