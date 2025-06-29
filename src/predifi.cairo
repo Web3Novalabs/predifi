@@ -28,7 +28,7 @@ pub mod Predifi {
 
     // package imports
     use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake, u8_to_pool};
-    use crate::interfaces::ipredifi::IPredifi;
+    use crate::interfaces::ipredifi::{IPredifi, IPredifiDispute, IPredifiValidator};
 
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -822,130 +822,6 @@ pub mod Predifi {
             self.get_pools_by_status(Status::Closed)
         }
 
-        // dispute functions
-        fn raise_dispute(ref self: ContractState, pool_id: u256) {
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, INACTIVE_POOL);
-
-            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-
-            let caller = get_caller_address();
-
-            let already_disputed = self.pool_dispute_users.read((pool_id, caller));
-            assert(!already_disputed, DISPUTE_ALREADY_RAISED);
-
-            self.pool_dispute_users.write((pool_id, caller), true);
-
-            let current_count = self.pool_dispute_count.read(pool_id);
-            let new_count = current_count + 1;
-            self.pool_dispute_count.write(pool_id, new_count);
-
-            self
-                .emit(
-                    Event::DisputeRaised(
-                        DisputeRaised { pool_id, user: caller, timestamp: get_block_timestamp() },
-                    ),
-                );
-
-            // check if threshold > 3 and suspend pool
-            let threshold = self.dispute_threshold.read();
-            if new_count >= threshold {
-                self.pool_previous_status.write(pool_id, pool.status);
-
-                let mut updated_pool = pool.clone();
-                updated_pool.status = Status::Suspended;
-                self.pools.write(pool_id, updated_pool);
-
-                self
-                    .emit(
-                        Event::PoolSuspended(
-                            PoolSuspended { pool_id, timestamp: get_block_timestamp() },
-                        ),
-                    );
-
-                self
-                    .emit(
-                        Event::PoolStateTransition(
-                            PoolStateTransition {
-                                pool_id,
-                                previous_status: pool.status,
-                                new_status: Status::Suspended,
-                                timestamp: get_block_timestamp(),
-                            },
-                        ),
-                    );
-            }
-        }
-
-        fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
-            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, INVALID_POOL_DETAILS);
-            assert(pool.status == Status::Suspended, POOL_NOT_SUSPENDED);
-
-            let previous_status = self.pool_previous_status.read(pool_id);
-            let mut updated_pool = pool;
-            updated_pool.status = previous_status;
-            self.pools.write(pool_id, updated_pool);
-
-            self.pool_dispute_count.write(pool_id, 0);
-
-            self
-                .emit(
-                    Event::DisputeResolved(
-                        DisputeResolved {
-                            pool_id, winning_option, timestamp: get_block_timestamp(),
-                        },
-                    ),
-                );
-
-            self
-                .emit(
-                    Event::PoolStateTransition(
-                        PoolStateTransition {
-                            pool_id,
-                            previous_status: Status::Suspended,
-                            new_status: previous_status,
-                            timestamp: get_block_timestamp(),
-                        },
-                    ),
-                );
-        }
-
-        fn get_dispute_count(self: @ContractState, pool_id: u256) -> u256 {
-            self.pool_dispute_count.read(pool_id)
-        }
-
-        fn get_dispute_threshold(self: @ContractState) -> u256 {
-            self.dispute_threshold.read()
-        }
-
-        fn is_pool_suspended(self: @ContractState, pool_id: u256) -> bool {
-            let pool = self.pools.read(pool_id);
-            pool.status == Status::Suspended
-        }
-
-        fn get_suspended_pools(self: @ContractState) -> Array<PoolDetails> {
-            self.get_pools_by_status(Status::Suspended)
-        }
-
-        fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, INVALID_POOL_DETAILS);
-            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-        }
-
-        fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, INVALID_POOL_DETAILS);
-            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-            0
-        }
-
-        fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
-            self.pool_dispute_users.read((pool_id, user))
-        }
-
         fn validate_pool_result(ref self: ContractState, pool_id: u256, selected_option: bool) {
             let pool = self.pools.read(pool_id);
             let caller = get_caller_address();
@@ -1084,6 +960,138 @@ pub mod Predifi {
             self.required_validator_confirmations.write(count);
         }
     }
+
+    #[abi(embed_v0)]
+    impl dispute of IPredifiDispute<ContractState> {
+        // dispute functions
+        fn raise_dispute(ref self: ContractState, pool_id: u256) {
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, INACTIVE_POOL);
+
+            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
+
+            let caller = get_caller_address();
+
+            let already_disputed = self.pool_dispute_users.read((pool_id, caller));
+            assert(!already_disputed, DISPUTE_ALREADY_RAISED);
+
+            self.pool_dispute_users.write((pool_id, caller), true);
+
+            let current_count = self.pool_dispute_count.read(pool_id);
+            let new_count = current_count + 1;
+            self.pool_dispute_count.write(pool_id, new_count);
+
+            self
+                .emit(
+                    Event::DisputeRaised(
+                        DisputeRaised { pool_id, user: caller, timestamp: get_block_timestamp() },
+                    ),
+                );
+
+            // check if threshold > 3 and suspend pool
+            let threshold = self.dispute_threshold.read();
+            if new_count >= threshold {
+                self.pool_previous_status.write(pool_id, pool.status);
+
+                let mut updated_pool = pool.clone();
+                updated_pool.status = Status::Suspended;
+                self.pools.write(pool_id, updated_pool);
+
+                self
+                    .emit(
+                        Event::PoolSuspended(
+                            PoolSuspended { pool_id, timestamp: get_block_timestamp() },
+                        ),
+                    );
+
+                self
+                    .emit(
+                        Event::PoolStateTransition(
+                            PoolStateTransition {
+                                pool_id,
+                                previous_status: pool.status,
+                                new_status: Status::Suspended,
+                                timestamp: get_block_timestamp(),
+                            },
+                        ),
+                    );
+            }
+        }
+
+        fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, INVALID_POOL_DETAILS);
+            assert(pool.status == Status::Suspended, POOL_NOT_SUSPENDED);
+
+            let previous_status = self.pool_previous_status.read(pool_id);
+            let mut updated_pool = pool;
+            updated_pool.status = previous_status;
+            self.pools.write(pool_id, updated_pool);
+
+            self.pool_dispute_count.write(pool_id, 0);
+
+            self
+                .emit(
+                    Event::DisputeResolved(
+                        DisputeResolved {
+                            pool_id, winning_option, timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+
+            self
+                .emit(
+                    Event::PoolStateTransition(
+                        PoolStateTransition {
+                            pool_id,
+                            previous_status: Status::Suspended,
+                            new_status: previous_status,
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+        }
+        
+        fn get_dispute_count(self: @ContractState, pool_id: u256) -> u256 {
+            self.pool_dispute_count.read(pool_id)
+        }
+
+        fn get_dispute_threshold(self: @ContractState) -> u256 {
+            self.dispute_threshold.read()
+        }
+
+        fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
+            self.pool_dispute_users.read((pool_id, user))
+        }
+
+        fn is_pool_suspended(self: @ContractState, pool_id: u256) -> bool {
+            let pool = self.pools.read(pool_id);
+            pool.status == Status::Suspended
+        }
+
+        fn get_suspended_pools(self: @ContractState) -> Array<PoolDetails> {
+            self.get_pools_by_status(Status::Suspended)
+        }
+
+        fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, INVALID_POOL_DETAILS);
+            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
+        }
+
+        fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, INVALID_POOL_DETAILS);
+            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
+            0
+        }
+    }
+
+    // #[abi(embed_v0)]
+    // impl validator of IPredifiValidator<ContractState> {
+
+    // }
 
     #[generate_trait]
     impl Private of PrivateTrait {
