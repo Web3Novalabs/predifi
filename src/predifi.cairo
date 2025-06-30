@@ -1076,7 +1076,7 @@ pub mod Predifi {
         // pool
         fn set_required_validator_confirmations(ref self: ContractState, count: u256) {
             self.pausable.assert_not_paused();
-            
+
             // Only admin can set this
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             assert(count > 0, Errors::COUNT_MUST_BE_GREATER_THAN_ZERO);
@@ -1097,6 +1097,7 @@ pub mod Predifi {
         }
 
         fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {    
+            self.pausable.assert_not_paused();
             // This function can only be called by the admin
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 

@@ -18,10 +18,13 @@ use core::traits::{Into, TryInto};
 use openzeppelin::access::accesscontrol::AccessControlComponent::InternalTrait as AccessControlInternalTrait;
 use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+use openzeppelin::upgrades::upgradeable::UpgradeableComponent::{
+        Event as UpgradeEvent, Upgraded,
+    };
 use snforge_std::{
     ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait, declare, spy_events,
     start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
-    stop_cheat_caller_address, test_address,
+    stop_cheat_caller_address, test_address, get_class_hash, EventSpyTrait,
 };
 use starknet::storage::{MutableVecTrait, StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{
@@ -76,6 +79,13 @@ fn create_default_pool(contract: IPredifiDispatcher) -> u256 {
             Category::Sports,
         )
 }
+
+    // Helper function to declare Contract Class and return the Class Hash
+    fn declare_contract(name: ByteArray) -> ClassHash {
+        let declare_result = declare(name);
+        let declared_contract = declare_result.unwrap().contract_class();
+        *declared_contract.class_hash
+    }
 
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
 
@@ -4238,3 +4248,64 @@ fn test_multiple_functions_panic_when_paused() {
         },
     };
 }
+
+    #[test]
+    fn test_upgrade_by_admin() {
+        let (contract, _, _) = deploy_predifi();
+        let admin = contract_address_const::<'admin'>();
+        let new_class_hash = declare_contract("STARKTOKEN");
+        let mut spy = spy_events();
+
+        // Set caller address to admin
+        start_cheat_caller_address(contract.contract_address, admin);
+
+        // Call the upgrade function as the admin
+        contract.upgrade(new_class_hash);
+
+        stop_cheat_caller_address(contract.contract_address);
+
+        // Verify the upgrade was successful by checking the class hash
+        let current_class_hash = get_class_hash(contract.contract_address);
+        assert(current_class_hash == new_class_hash, 'Contract upgrade failed');
+
+        // Get emitted events
+        let events = spy.get_events();
+        assert(events.events.len() == 1, 'Upgrade event not emitted');
+        // Verify upgrade event
+        let expected_upgrade_event = UpgradeEvent::Upgraded(
+            Upgraded { class_hash: new_class_hash },
+        );
+
+        // Assert that the event was emitted
+        let expected_events = array![
+            (contract.contract_address, expected_upgrade_event),
+        ];
+        spy.assert_emitted(@expected_events);
+    }
+
+    #[test]
+    #[should_panic(expected: 'Caller is missing role')]
+    fn test_upgrade_by_non_admin_should_panic() {
+        let (contract, pool_creator, _) = deploy_predifi();
+        let new_class_hash = declare_contract("STARKTOKEN");
+
+        // Set caller address to non-owner
+        start_cheat_caller_address(contract.contract_address, pool_creator);
+
+        // Attempt to call the upgrade function as a non-owner
+        contract.upgrade(new_class_hash);
+    }
+
+    #[test]
+    #[should_panic(expected: 'Pausable: paused')]
+    fn test_upgrade_fails_when_paused() {
+        let (contract, pool_creator, _) = deploy_predifi();
+        let admin: ContractAddress = contract_address_const::<'admin'>();
+        let new_class_hash = declare_contract("STARKTOKEN");
+
+        start_cheat_caller_address(contract.contract_address, admin);
+        // Pause the contract
+        contract.pause();
+
+        contract.upgrade(new_class_hash);
+    }
