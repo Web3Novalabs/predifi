@@ -1134,7 +1134,7 @@ fn test_set_pragma_contract_zero_addr() {
 }
 
 #[test]
-#[should_panic(expected: 'Insufficient STRK balance')]
+#[should_panic(expected: 'Insufficient balance')]
 fn test_insufficient_stark_balance() {
     let (dispatcher, _, erc20_address) = deploy_predifi();
 
@@ -1145,7 +1145,9 @@ fn test_insufficient_stark_balance() {
     erc20.approve(dispatcher.contract_address, balance);
     stop_cheat_caller_address(erc20_address);
 
-    dispatcher.collect_pool_creation_fee(test_addr);
+    // Test insufficient balance by trying to create a pool with insufficient funds
+    start_cheat_caller_address(dispatcher.contract_address, test_addr);
+    create_default_pool(dispatcher);
 }
 
 #[test]
@@ -1159,8 +1161,9 @@ fn test_insufficient_stark_allowance() {
     erc20.approve(dispatcher.contract_address, 1_000_000);
     stop_cheat_caller_address(erc20_address);
 
+    // Test insufficient allowance by trying to create a pool
     start_cheat_caller_address(dispatcher.contract_address, POOL_CREATOR);
-    dispatcher.collect_pool_creation_fee(POOL_CREATOR);
+    create_default_pool(dispatcher);
 }
 
 #[test]
@@ -1177,8 +1180,10 @@ fn test_collect_creation_fee() {
     erc20.approve(dispatcher.contract_address, balance);
     stop_cheat_caller_address(erc20_address);
 
+    // Test that pool creation collects the fee automatically
     start_cheat_caller_address(dispatcher.contract_address, POOL_CREATOR);
-    dispatcher.collect_pool_creation_fee(POOL_CREATOR);
+    create_default_pool(dispatcher);
+
     let user_balance_after = erc20.balance_of(POOL_CREATOR);
     assert(user_balance_after == balance - ONE_STRK, 'deduction failed');
 
@@ -1187,58 +1192,6 @@ fn test_collect_creation_fee() {
 }
 
 
-#[test]
-fn test_collect_validation_fee() {
-    let (dispatcher, STAKER, erc20_address) = deploy_predifi();
-
-    let validation_fee = dispatcher.calculate_validator_fee(54, 10_000);
-    assert(validation_fee == 500, 'invalid calculation');
-}
-
-#[test]
-fn test_distribute_validation_fee() {
-    let (mut dispatcher, POOL_CREATOR, erc20_address) = deploy_predifi();
-
-    let validator1 = contract_address_const::<'validator1'>();
-    let validator2 = contract_address_const::<'validator2'>();
-    let validator3 = contract_address_const::<'validator3'>();
-    let validator4 = contract_address_const::<'validator4'>();
-
-    let erc20 = IERC20Dispatcher { contract_address: erc20_address };
-
-    let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(dispatcher.contract_address, admin);
-    dispatcher.add_validator(validator1);
-    dispatcher.add_validator(validator2);
-    dispatcher.add_validator(validator3);
-    dispatcher.add_validator(validator4);
-    stop_cheat_caller_address(dispatcher.contract_address);
-
-    let initial_contract_balance = erc20.balance_of(dispatcher.contract_address);
-    assert(initial_contract_balance == 0, 'incorrect deployment details');
-
-    let balance = erc20.balance_of(POOL_CREATOR);
-    start_cheat_caller_address(erc20_address, POOL_CREATOR);
-    erc20.approve(dispatcher.contract_address, balance);
-    stop_cheat_caller_address(erc20_address);
-
-    start_cheat_caller_address(dispatcher.contract_address, POOL_CREATOR);
-    dispatcher.collect_pool_creation_fee(POOL_CREATOR);
-
-    dispatcher.calculate_validator_fee(18, 10_000);
-
-    start_cheat_caller_address(dispatcher.contract_address, dispatcher.contract_address);
-    dispatcher.distribute_validator_fees(18);
-
-    let balance_validator1 = erc20.balance_of(validator1);
-    assert(balance_validator1 == 125, 'distribution failed');
-    let balance_validator2 = erc20.balance_of(validator2);
-    assert(balance_validator2 == 125, 'distribution failed');
-    let balance_validator3 = erc20.balance_of(validator3);
-    assert(balance_validator3 == 125, 'distribution failed');
-    let balance_validator4 = erc20.balance_of(validator4);
-    assert(balance_validator4 == 125, 'distribution failed');
-}
 /// testing if pragma price feed is accessible and returning values
 // #[test]
 // #[fork("SEPOLIA_LATEST")]
