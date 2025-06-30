@@ -19,9 +19,25 @@ pub mod Errors {
     pub const POOL_NOT_CLOSED: felt252 = 'Pool is not closed';
     pub const POOL_NOT_SETTLED: felt252 = 'Pool is not settled';
     pub const POOL_NOT_RESOLVED: felt252 = 'Pool is not resolved';
+    pub const POOL_DOES_NOT_EXIST: felt252 = 'Pool does not exist';
+    pub const INVALID_STATE_TRANSITION: felt252 = 'Invalid state transition';
+    pub const INSUFFICIENT_BALANCE: felt252 = 'Insufficient balance';
+    pub const INSUFFICIENT_ALLOWANCE: felt252 = 'Insufficient allowance';
+    pub const STAKE_AMOUNT_TOO_LOW: felt252 = 'stake amount too low';
+    pub const ZERO_USER_STAKE: felt252 = 'Zero user stake';
+    pub const INSUFFICIENT_STRK_BALANCE: felt252 = 'Insufficient STRK balance';
+    pub const COUNT_MUST_BE_GREATER_THAN_ZERO: felt252 = 'Count must be greater than 0';
 
     // Validation Errors
     pub const VALIDATOR_NOT_AUTHORIZED: felt252 = 'Validator not authorized';
     pub const VALIDATOR_ALREADY_VALIDATED: felt252 = 'Validator already validated';
     pub const POOL_NOT_READY_FOR_VALIDATION: felt252 = 'Pool not ready for validation';
+    pub const INVALID_LOCK_TIME: felt252 = 'Invalid lock time';
+    pub const INVALID_LOCK_TIME_TO_END_TIME: felt252 = 'lock time greater than end time';
+    pub const ZERO_MINIMUM_BET: felt252 = 'Minimum bet cannot be zero';
+    pub const INVALID_MAXIMUM_BET: felt252 = 'Invalid Maximum Bet';
+    pub const INVALID_START_TIME: felt252 = 'Invalid Start Time';
+    pub const CREATOR_FEE_TOO_HIGH: felt252 = 'Creator fee cannot exceed 5%';
+
+    pub const UNAUTHORIZED_CALLER: felt252 = 'Unauthorized Caller';
 }
