@@ -6,7 +6,12 @@ use contract::base::events::Events::{
 };
 use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
-use contract::interfaces::ipredifi::{IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait};
+use contract::interfaces::ipredifi::{
+    IPredifi, IPredifiDispute, IPredifiValidator,
+    IPredifiDispatcher, IPredifiDispatcherTrait,
+    IPredifiDisputeDispatcher, IPredifiDisputeDispatcherTrait,
+    IPredifiValidatorDispatcher, IPredifiValidatorDispatcherTrait,
+};
 use contract::predifi::Predifi;
 use contract::utils::Utils;
 use contract::utils::Utils::InternalFunctionsTrait;
@@ -36,7 +41,13 @@ const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
 
 const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
 
-fn deploy_predifi() -> (IPredifiDispatcher, ContractAddress, ContractAddress) {
+fn deploy_predifi() -> (
+    IPredifiDispatcher,
+    IPredifiDisputeDispatcher,
+    IPredifiValidatorDispatcher,
+    ContractAddress,
+    ContractAddress
+) {
     let owner: ContractAddress = contract_address_const::<'owner'>();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
@@ -50,8 +61,18 @@ fn deploy_predifi() -> (IPredifiDispatcher, ContractAddress, ContractAddress) {
     let (contract_address, _) = contract_class
         .deploy(@array![erc20_address.into(), admin.into()])
         .unwrap();
+
+    // Dispatchers
     let dispatcher = IPredifiDispatcher { contract_address };
-    (dispatcher, POOL_CREATOR, erc20_address)
+    let dispute_dispatcher = IPredifiDisputeDispatcher { contract_address };
+    let validator_dispatcher = IPredifiValidatorDispatcher { contract_address };
+    (
+        dispatcher,
+        dispute_dispatcher,
+        validator_dispatcher,
+        POOL_CREATOR,
+        erc20_address
+    )
 }
 
 // Helper function for creating pools with default parameters
@@ -80,7 +101,7 @@ const ONE_STRK: u256 = 1_000_000_000_000_000_000;
 
 #[test]
 fn test_create_pool() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -94,7 +115,7 @@ fn test_create_pool() {
 
 #[test]
 fn test_cancel_pool() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -114,7 +135,7 @@ fn test_cancel_pool() {
 
 #[test]
 fn test_cancel_pool_event_emission() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
     let mut spy = spy_events();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -141,7 +162,7 @@ fn test_cancel_pool_event_emission() {
 #[test]
 #[should_panic(expected: 'Unauthorized Caller')]
 fn test_cancel_pool_by_unauthorized_caller() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -159,7 +180,7 @@ fn test_cancel_pool_by_unauthorized_caller() {
 #[test]
 #[should_panic(expected: 'Invalid lock time')]
 fn test_invalid_time_sequence_start_after_lock() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -214,7 +235,7 @@ fn test_invalid_time_sequence_start_after_lock() {
 #[test]
 #[should_panic(expected: 'Minimum bet cannot be zero')]
 fn test_zero_min_bet() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -264,7 +285,7 @@ fn test_zero_min_bet() {
 #[test]
 #[should_panic(expected: 'Creator fee cannot exceed 5%')]
 fn test_excessive_creator_fee() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -315,7 +336,7 @@ fn test_excessive_creator_fee() {
 #[test]
 #[should_panic(expected: "Invalid pool type: must be 0-3")]
 fn test_invalid_pool_type() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -365,7 +386,7 @@ fn test_invalid_pool_type() {
 
 #[test]
 fn test_valid_pool_types() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -528,7 +549,7 @@ fn get_default_pool_params() -> (
 
 #[test]
 fn test_vote() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -550,7 +571,7 @@ fn test_vote() {
 
 #[test]
 fn test_vote_with_user_stake() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -573,7 +594,7 @@ fn test_vote_with_user_stake() {
 
 #[test]
 fn test_successful_get_pool() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -590,7 +611,7 @@ fn test_successful_get_pool() {
 #[test]
 #[should_panic(expected: 'Invalid Pool Option')]
 fn test_when_invalid_option_is_pass() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -606,7 +627,7 @@ fn test_when_invalid_option_is_pass() {
 #[test]
 #[should_panic(expected: 'Amount is below minimum')]
 fn test_when_min_bet_amount_less_than_required() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -622,7 +643,7 @@ fn test_when_min_bet_amount_less_than_required() {
 #[test]
 #[should_panic(expected: 'Amount is above maximum')]
 fn test_when_max_bet_amount_greater_than_required() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -637,7 +658,7 @@ fn test_when_max_bet_amount_greater_than_required() {
 
 #[test]
 fn test_get_pool_odds() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -656,7 +677,7 @@ fn test_get_pool_odds() {
 
 #[test]
 fn test_get_pool_stakes() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -676,7 +697,7 @@ fn test_get_pool_stakes() {
 
 #[test]
 fn test_unique_pool_id() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -691,7 +712,7 @@ fn test_unique_pool_id() {
 
 #[test]
 fn test_unique_pool_id_when_called_twice_in_the_same_execution() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -709,7 +730,7 @@ fn test_unique_pool_id_when_called_twice_in_the_same_execution() {
 
 #[test]
 fn test_get_pool_vote() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -727,7 +748,7 @@ fn test_get_pool_vote() {
 
 #[test]
 fn test_get_pool_count() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -743,7 +764,7 @@ fn test_get_pool_count() {
 
 #[test]
 fn test_stake_successful() {
-    let (contract, caller, erc20_address) = deploy_predifi();
+    let (contract, _, _, caller, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -764,7 +785,7 @@ fn test_stake_successful() {
 
 #[test]
 fn test_get_pool_creator() {
-    let (contract, POOL_CREATOR, erc20_address) = deploy_predifi();
+    let (contract, _, _, POOL_CREATOR, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -918,7 +939,7 @@ fn test_set_pragma_contract() {
 
 #[test]
 fn test_get_creator_fee_percentage() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -953,7 +974,7 @@ fn test_get_creator_fee_percentage() {
 
 #[test]
 fn test_get_validator_fee_percentage() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -981,14 +1002,14 @@ fn test_get_validator_fee_percentage() {
             Category::Sports,
         );
 
-    let validator_fee = contract.get_validator_fee_percentage(pool_id);
+    let validator_fee = validator_contract.get_validator_fee_percentage(pool_id);
 
     assert(validator_fee == 10, 'Validator fee should be 10%');
 }
 
 #[test]
 fn test_creator_fee_multiple_pools() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -1045,7 +1066,7 @@ fn test_creator_fee_multiple_pools() {
 
 #[test]
 fn test_creator_and_validator_fee_for_same_pool() {
-    let (contract, voter, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, voter, erc20_address) = deploy_predifi();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
@@ -1074,7 +1095,7 @@ fn test_creator_and_validator_fee_for_same_pool() {
         );
 
     let creator_fee = contract.get_creator_fee_percentage(pool_id);
-    let validator_fee = contract.get_validator_fee_percentage(pool_id);
+    let validator_fee = validator_contract.get_validator_fee_percentage(pool_id);
 
     assert(creator_fee == 5, 'Creator fee should be 5%');
     assert(validator_fee == 10, 'Validator fee should be 10%');
@@ -1136,7 +1157,7 @@ fn test_set_pragma_contract_zero_addr() {
 #[test]
 #[should_panic(expected: 'Insufficient STRK balance')]
 fn test_insufficient_stark_balance() {
-    let (dispatcher, _, erc20_address) = deploy_predifi();
+    let (dispatcher, _, _, _, erc20_address) = deploy_predifi();
 
     let test_addr: ContractAddress = contract_address_const::<'test'>();
     let erc20 = IERC20Dispatcher { contract_address: erc20_address };
@@ -1151,7 +1172,7 @@ fn test_insufficient_stark_balance() {
 #[test]
 #[should_panic(expected: 'Insufficient allowance')]
 fn test_insufficient_stark_allowance() {
-    let (dispatcher, POOL_CREATOR, erc20_address) = deploy_predifi();
+    let (dispatcher, _, _, POOL_CREATOR, erc20_address) = deploy_predifi();
 
     let erc20 = IERC20Dispatcher { contract_address: erc20_address };
 
@@ -1165,7 +1186,7 @@ fn test_insufficient_stark_allowance() {
 
 #[test]
 fn test_collect_creation_fee() {
-    let (dispatcher, POOL_CREATOR, erc20_address) = deploy_predifi();
+    let (dispatcher, _, _, POOL_CREATOR, erc20_address) = deploy_predifi();
 
     let erc20 = IERC20Dispatcher { contract_address: erc20_address };
 
@@ -1189,15 +1210,15 @@ fn test_collect_creation_fee() {
 
 #[test]
 fn test_collect_validation_fee() {
-    let (dispatcher, STAKER, erc20_address) = deploy_predifi();
+    let (_, _, validator_dispatcher, STAKER, erc20_address) = deploy_predifi();
 
-    let validation_fee = dispatcher.calculate_validator_fee(54, 10_000);
+    let validation_fee = validator_dispatcher.calculate_validator_fee(54, 10_000);
     assert(validation_fee == 500, 'invalid calculation');
 }
 
 #[test]
 fn test_distribute_validation_fee() {
-    let (mut dispatcher, POOL_CREATOR, erc20_address) = deploy_predifi();
+    let (mut dispatcher, _, mut validator_dispatcher, POOL_CREATOR, erc20_address) = deploy_predifi();
 
     let validator1 = contract_address_const::<'validator1'>();
     let validator2 = contract_address_const::<'validator2'>();
@@ -1207,12 +1228,12 @@ fn test_distribute_validation_fee() {
     let erc20 = IERC20Dispatcher { contract_address: erc20_address };
 
     let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(dispatcher.contract_address, admin);
-    dispatcher.add_validator(validator1);
-    dispatcher.add_validator(validator2);
-    dispatcher.add_validator(validator3);
-    dispatcher.add_validator(validator4);
-    stop_cheat_caller_address(dispatcher.contract_address);
+    start_cheat_caller_address(validator_dispatcher.contract_address, admin);
+    validator_dispatcher.add_validator(validator1);
+    validator_dispatcher.add_validator(validator2);
+    validator_dispatcher.add_validator(validator3);
+    validator_dispatcher.add_validator(validator4);
+    stop_cheat_caller_address(validator_dispatcher.contract_address);
 
     let initial_contract_balance = erc20.balance_of(dispatcher.contract_address);
     assert(initial_contract_balance == 0, 'incorrect deployment details');
@@ -1225,10 +1246,10 @@ fn test_distribute_validation_fee() {
     start_cheat_caller_address(dispatcher.contract_address, POOL_CREATOR);
     dispatcher.collect_pool_creation_fee(POOL_CREATOR);
 
-    dispatcher.calculate_validator_fee(18, 10_000);
+    validator_dispatcher.calculate_validator_fee(18, 10_000);
 
     start_cheat_caller_address(dispatcher.contract_address, dispatcher.contract_address);
-    dispatcher.distribute_validator_fees(18);
+    validator_dispatcher.distribute_validator_fees(18);
 
     let balance_validator1 = erc20.balance_of(validator1);
     assert(balance_validator1 == 125, 'distribution failed');
@@ -1250,7 +1271,7 @@ fn test_distribute_validation_fee() {
 
 #[test]
 fn test_automatic_pool_state_transitions() {
-    let (contract, admin, erc20_address) = deploy_predifi();
+    let (contract, _, _, admin, erc20_address) = deploy_predifi();
 
     // Get current time
     let current_time = get_block_timestamp();
@@ -1343,7 +1364,7 @@ fn test_automatic_pool_state_transitions() {
 #[test]
 #[should_panic(expected: 'Pool does not exist')]
 fn test_nonexistent_pool_state_update() {
-    let (contract, _, _) = deploy_predifi();
+    let (contract, _, _, _, _) = deploy_predifi();
 
     // Attempt to update a pool that doesn't exist - should panic
     contract.update_pool_state(999);
@@ -1351,7 +1372,7 @@ fn test_nonexistent_pool_state_update() {
 
 #[test]
 fn test_manual_pool_state_update() {
-    let (contract, user, erc20_address) = deploy_predifi();
+    let (contract, _, _, user, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
     // Get current time
@@ -1423,7 +1444,7 @@ fn test_manual_pool_state_update() {
 #[test]
 #[should_panic(expected: 'Unauthorized Caller')]
 fn test_unauthorized_manual_update() {
-    let (contract, admin, erc20_address) = deploy_predifi();
+    let (contract, _, _, admin, erc20_address) = deploy_predifi();
 
     // Random unauthorized address
     let unauthorized = contract_address_const::<'unauthorized'>();
@@ -1468,7 +1489,7 @@ fn test_unauthorized_manual_update() {
 #[test]
 #[should_panic(expected: 'Invalid state transition')]
 fn test_invalid_state_transition() {
-    let (contract, user, erc20_address) = deploy_predifi();
+    let (contract, _, _, user, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
     // Get current time
@@ -1512,7 +1533,7 @@ fn test_invalid_state_transition() {
 
 #[test]
 fn test_no_change_on_same_state() {
-    let (contract, user, erc20_address) = deploy_predifi();
+    let (contract, _, _, user, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
     // Get current time
@@ -1560,7 +1581,7 @@ fn test_no_change_on_same_state() {
 #[test]
 #[should_panic(expected: 'Pool does not exist')]
 fn test_manual_update_nonexistent_pool() {
-    let (contract, admin, _) = deploy_predifi();
+    let (contract, _, _, admin, _) = deploy_predifi();
 
     // Try to update a nonexistent pool
     start_cheat_caller_address(contract.contract_address, admin);
@@ -1570,7 +1591,7 @@ fn test_manual_update_nonexistent_pool() {
 
 #[test]
 fn test_validator_can_update_state() {
-    let (mut contract, admin, erc20_address) = deploy_predifi();
+    let (mut contract, _, mut validator_contract, admin, erc20_address) = deploy_predifi();
 
     // Create a validator
     let validator = contract_address_const::<'validator'>();
@@ -1583,9 +1604,9 @@ fn test_validator_can_update_state() {
 
     // Add validators
     let admin_role = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin_role);
-    contract.add_validator(validator);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin_role);
+    validator_contract.add_validator(validator);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // Get current time
     let current_time = get_block_timestamp();
@@ -1628,7 +1649,7 @@ fn test_validator_can_update_state() {
 #[test]
 fn test_track_user_participation() {
     // Deploy contracts
-    let (contract, user1, erc20_address) = deploy_predifi();
+    let (contract, _, _, user1, erc20_address) = deploy_predifi();
 
     // Approve token spending for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -1667,7 +1688,7 @@ fn test_track_user_participation() {
 
 #[test]
 fn test_get_user_pools() {
-    let (contract, user, erc20_address) = deploy_predifi();
+    let (contract, _, _, user, erc20_address) = deploy_predifi();
 
     // Approve token spending for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -1723,7 +1744,7 @@ fn test_get_user_pools() {
 #[test]
 fn test_stake_updates_participation() {
     // Deploy contracts
-    let (contract, user, erc20_address) = deploy_predifi();
+    let (contract, _, _, user, erc20_address) = deploy_predifi();
 
     // Approve token spending for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -1753,7 +1774,7 @@ fn test_stake_updates_participation() {
 #[test]
 fn test_multiple_actions_single_pool() {
     // Deploy contracts
-    let (contract, user1, erc20_address) = deploy_predifi();
+    let (contract, _, _, user1, erc20_address) = deploy_predifi();
 
     // Approve token spending for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -1785,7 +1806,7 @@ fn test_multiple_actions_single_pool() {
 
 #[test]
 fn test_multiple_users_pool_tracking() {
-    let (contract, admin, erc20_address) = deploy_predifi();
+    let (contract, _, _, admin, erc20_address) = deploy_predifi();
 
     // Create two additional users
     let user1 = contract_address_const::<1>();
@@ -1879,7 +1900,7 @@ fn test_multiple_users_pool_tracking() {
 
 #[test]
 fn test_get_user_pools_by_status() {
-    let (contract, user, erc20_address) = deploy_predifi();
+    let (contract, _, _, user, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
     // Approve token spending for pool creation and betting
@@ -1967,7 +1988,7 @@ fn test_get_user_pools_by_status() {
 
 #[test]
 fn test_user_pools_with_time_based_transitions() {
-    let (contract, user, erc20_address) = deploy_predifi();
+    let (contract, _, _, user, erc20_address) = deploy_predifi();
 
     // Approve token spending
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -2102,7 +2123,7 @@ fn test_user_pools_with_time_based_transitions() {
 #[test]
 fn test_multiple_users_with_status_transitions() {
     // Deploy contract and deploy_predifi users
-    let (contract, admin, erc20_address) = deploy_predifi();
+    let (contract, _, _, admin, erc20_address) = deploy_predifi();
     let user1 = contract_address_const::<1>();
     let user2 = contract_address_const::<2>();
     let user3 = contract_address_const::<3>();
@@ -2328,7 +2349,7 @@ fn test_multiple_users_with_status_transitions() {
 #[test]
 fn test_assign_random_validators() {
     // Deploy the contract
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Create validators
     let validator1 = contract_address_const::<'validator1'>();
@@ -2339,12 +2360,12 @@ fn test_assign_random_validators() {
 
     // Add validators to the contract
     let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator1);
-    contract.add_validator(validator2);
-    contract.add_validator(validator3);
-    contract.add_validator(validator4);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator1);
+    validator_contract.add_validator(validator2);
+    validator_contract.add_validator(validator3);
+    validator_contract.add_validator(validator4);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // Set up token approval for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -2358,10 +2379,10 @@ fn test_assign_random_validators() {
     stop_cheat_caller_address(contract.contract_address);
 
     // Assign random validators to the pool
-    contract.assign_random_validators(pool_id);
+    validator_contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
 
     // Verify that validators were assigned
     assert(assigned_validator1 != zero_address, 'Validator1 should be assigned');
@@ -2385,7 +2406,7 @@ fn test_assign_random_validators() {
 #[test]
 fn test_assign_exactly_two_validators() {
     // Deploy the contract
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Create exactly two validators with different addresses
     let validator1 = contract_address_const::<'validator1'>();
@@ -2394,9 +2415,9 @@ fn test_assign_exactly_two_validators() {
 
     // Add validators to the contract (overriding any existing validators)
     let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator1);
-    contract.add_validator(validator2);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator1);
+    validator_contract.add_validator(validator2);
     stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
@@ -2411,10 +2432,10 @@ fn test_assign_exactly_two_validators() {
     stop_cheat_caller_address(contract.contract_address);
 
     // Assign random validators to the pool
-    contract.assign_random_validators(pool_id);
+    validator_contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
 
     // Verify that validators were assigned
     assert(assigned_validator1 != zero_address, 'Validator1 should be assigned');
@@ -2449,7 +2470,7 @@ fn test_assign_exactly_two_validators() {
     let mut j: u8 = 0;
     while j < num_pools {
         let pool_id = *pool_ids.at(j.into());
-        contract.assign_random_validators(pool_id);
+        validator_contract.assign_random_validators(pool_id);
         j += 1;
     }
 
@@ -2457,7 +2478,7 @@ fn test_assign_exactly_two_validators() {
     let mut k: u8 = 0;
     while k < num_pools {
         let pool_id = *pool_ids.at(k.into());
-        let (pool_validator1, pool_validator2) = contract.get_pool_validators(pool_id);
+        let (pool_validator1, pool_validator2) = validator_contract.get_pool_validators(pool_id);
 
         // Verify validators are assigned
         assert(pool_validator1 != zero_address, 'Pool validator1 not assigned');
@@ -2480,7 +2501,7 @@ fn test_assign_exactly_two_validators() {
 #[test]
 fn test_assign_multiple_validators() {
     // Deploy the contract
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Create multiple validators with different addresses
     let validator1 = contract_address_const::<'validator1'>();
@@ -2490,11 +2511,11 @@ fn test_assign_multiple_validators() {
 
     // Add validators to the contract
     let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator1);
-    contract.add_validator(validator2);
-    contract.add_validator(validator3);
-    contract.add_validator(validator4);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator1);
+    validator_contract.add_validator(validator2);
+    validator_contract.add_validator(validator3);
+    validator_contract.add_validator(validator4);
     stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
@@ -2542,7 +2563,7 @@ fn test_assign_multiple_validators() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        contract.assign_random_validators(pool_id);
+        validator_contract.assign_random_validators(pool_id);
         i += 1;
     }
 
@@ -2556,7 +2577,7 @@ fn test_assign_multiple_validators() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+        let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
 
         // Count how many times each validator is assigned
         if assigned_validator1 == validator1 || assigned_validator2 == validator1 {
@@ -2601,15 +2622,15 @@ fn test_assign_multiple_validators() {
 #[test]
 fn test_limited_validators_assignment() {
     // Deploy the contract
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Create just one validator
     let single_validator = contract_address_const::<'single_validator'>();
 
     // Add only one validator to the contract
     let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(single_validator);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(single_validator);
     stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
@@ -2657,7 +2678,7 @@ fn test_limited_validators_assignment() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        contract.assign_random_validators(pool_id);
+        validator_contract.assign_random_validators(pool_id);
         i += 1;
     }
 
@@ -2666,7 +2687,7 @@ fn test_limited_validators_assignment() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+        let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
 
         // Both validator1 and validator2 should be the single validator we added
         assert(assigned_validator1 == single_validator, 'Wrong validator1 assigned');
@@ -2679,9 +2700,9 @@ fn test_limited_validators_assignment() {
     let second_validator = contract_address_const::<'second_validator'>();
 
     // Add second validator to the contract
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(second_validator);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(second_validator);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // Create one more pool
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -2706,10 +2727,10 @@ fn test_limited_validators_assignment() {
     stop_cheat_caller_address(contract.contract_address);
 
     // Assign validators to the new pool
-    contract.assign_random_validators(new_pool_id);
+    validator_contract.assign_random_validators(new_pool_id);
 
     // Check that the new pool has different validators assigned
-    let (new_assigned_validator1, new_assigned_validator2) = contract
+    let (new_assigned_validator1, new_assigned_validator2) = validator_contract
         .get_pool_validators(new_pool_id);
 
     // At least one of the validators should be the second validator
@@ -2723,16 +2744,16 @@ fn test_limited_validators_assignment() {
 #[test]
 fn test_assign_random_validators_initial_validator() {
     // Deploy the contract
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Get the validator that was added during deployment
     let expected_validator = contract_address_const::<'validator'>();
 
     // Explicitly add the validator to the validators list
     let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(expected_validator);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(expected_validator);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // Set up token approval for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -2746,10 +2767,10 @@ fn test_assign_random_validators_initial_validator() {
     stop_cheat_caller_address(contract.contract_address);
 
     // Assign random validators to the pool
-    contract.assign_random_validators(pool_id);
+    validator_contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2) = contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
 
     // Verify that both assigned validators are the expected validator
     assert(assigned_validator1 == expected_validator, 'Should assign initial valdator');
@@ -2771,7 +2792,7 @@ fn test_add_validator() {
     // Act as admin to add a validator
     start_cheat_caller_address(test_address, admin);
     let mut spy = spy_events();
-    IPredifi::add_validator(ref state, validator);
+    IPredifiValidator::add_validator(ref state, validator);
     stop_cheat_caller_address(test_address);
 
     // Assert validator is added to the list
@@ -2779,7 +2800,7 @@ fn test_add_validator() {
     assert(added_validator == validator, 'Validator not added');
 
     // Assert validator role is set
-    let is_validator = IPredifi::is_validator(@state, validator);
+    let is_validator = IPredifiValidator::is_validator(@state, validator);
     assert(is_validator, 'Validator role not set');
 
     // Assert event emitted
@@ -2798,7 +2819,7 @@ fn test_add_validator_unauthorized() {
     AccessControlInternalTrait::initializer(ref state.accesscontrol);
 
     // Unauthorized caller attempt to add a new validator
-    IPredifi::add_validator(ref state, validator);
+    IPredifiValidator::add_validator(ref state, validator);
 }
 
 #[test]
@@ -2816,14 +2837,14 @@ fn test_remove_validator_role() {
 
     // Act as admin to add two validators
     start_cheat_caller_address(test_address, admin);
-    IPredifi::add_validator(ref state, validator1);
-    IPredifi::add_validator(ref state, validator2);
+    IPredifiValidator::add_validator(ref state, validator1);
+    IPredifiValidator::add_validator(ref state, validator2);
     stop_cheat_caller_address(test_address);
 
     // Act as admin to remove validator1
     start_cheat_caller_address(test_address, admin);
     let mut spy = spy_events();
-    IPredifi::remove_validator(ref state, validator1);
+    IPredifiValidator::remove_validator(ref state, validator1);
     stop_cheat_caller_address(test_address);
 
     // Assert only one validator remains
@@ -2835,7 +2856,7 @@ fn test_remove_validator_role() {
     assert(remaining_validator == validator2, 'Validator2 should remain');
 
     // Assert validator1 role is revoked
-    let is_validator = IPredifi::is_validator(@state, validator1);
+    let is_validator = IPredifiValidator::is_validator(@state, validator1);
     assert(!is_validator, 'Validator1 was not revoked');
 
     // Assert correct event was emitted
@@ -2846,7 +2867,7 @@ fn test_remove_validator_role() {
 
     // Act as admin to remove the second validator
     start_cheat_caller_address(test_address, admin);
-    IPredifi::remove_validator(ref state, validator2);
+    IPredifiValidator::remove_validator(ref state, validator2);
     stop_cheat_caller_address(test_address);
 
     // Assert no validators remain
@@ -2863,7 +2884,7 @@ fn test_remove_validator_unauthorized() {
     AccessControlInternalTrait::initializer(ref state.accesscontrol);
 
     // Unauthorized caller attempt to remove the validator role
-    IPredifi::remove_validator(ref state, validator);
+    IPredifiValidator::remove_validator(ref state, validator);
 }
 
 // Helper function to create a test pool
@@ -2916,7 +2937,7 @@ fn pool_exists_in_array(pools: Array<PoolDetails>, pool_id: u256) -> bool {
 
 #[test]
 fn test_minimal_timing() {
-    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+    let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
 
@@ -2939,7 +2960,7 @@ fn test_minimal_timing() {
 #[test]
 fn test_get_active_pools() {
     // Deploy the contract
-    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+    let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
 
@@ -2998,7 +3019,7 @@ fn test_get_active_pools() {
 
 #[test]
 fn test_get_locked_pools() {
-    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+    let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
 
@@ -3056,7 +3077,7 @@ fn test_get_locked_pools() {
 
 #[test]
 fn test_get_settled_pools() {
-    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+    let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
 
@@ -3113,7 +3134,7 @@ fn test_get_settled_pools() {
 
 #[test]
 fn test_get_closed_pools() {
-    let (dispatcher, pool_creator, erc20_address) = deploy_predifi();
+    let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
 
     let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
 
@@ -3197,15 +3218,15 @@ fn setup_user_with_tokens(user: ContractAddress, erc20_address: ContractAddress,
 
 #[test]
 fn test_dispute_threshold_initial_value() {
-    let (contract, _pool_creator, _erc20_address) = deploy_predifi();
+    let (_, dispute_contract, _, pool_creator, _erc20_address) = deploy_predifi();
 
-    let threshold = contract.get_dispute_threshold();
+    let threshold = dispute_contract.get_dispute_threshold();
     assert(threshold == 3, 'Default threshold should be 3');
 }
 
 #[test]
 fn test_raise_dispute_success() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3220,15 +3241,15 @@ fn test_raise_dispute_success() {
     // Create a user and raise dispute
     let user1 = contract_address_const::<'user1'>();
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Verify dispute was raised
-    let dispute_count = contract.get_dispute_count(pool_id);
+    let dispute_count = dispute_contract.get_dispute_count(pool_id);
     assert(dispute_count == 1, 'Dispute count should be 1');
 
-    let has_disputed = contract.has_user_disputed(pool_id, user1);
+    let has_disputed = dispute_contract.has_user_disputed(pool_id, user1);
     assert(has_disputed, 'User should have disputed');
 
     // Pool should still be active (threshold not reached)
@@ -3238,7 +3259,7 @@ fn test_raise_dispute_success() {
 
 #[test]
 fn test_raise_dispute_threshold_reached() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3256,35 +3277,35 @@ fn test_raise_dispute_threshold_reached() {
     let user3 = contract_address_const::<'user3'>();
 
     // First dispute
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Second dispute
-    start_cheat_caller_address(contract.contract_address, user2);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user2);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Third dispute - should trigger suspension
-    start_cheat_caller_address(contract.contract_address, user3);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user3);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Verify pool is suspended
     let pool = contract.get_pool(pool_id);
     assert(pool.status == Status::Suspended, 'Pool should be suspended');
 
-    let dispute_count = contract.get_dispute_count(pool_id);
+    let dispute_count = dispute_contract.get_dispute_count(pool_id);
     assert(dispute_count == 3, 'Dispute count should be 3');
 
-    let is_suspended = contract.is_pool_suspended(pool_id);
+    let is_suspended = dispute_contract.is_pool_suspended(pool_id);
     assert(is_suspended, 'Pool should be suspended');
 }
 
 #[test]
 #[should_panic(expected: 'User already raised dispute')]
 fn test_raise_dispute_already_disputed() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3299,29 +3320,29 @@ fn test_raise_dispute_already_disputed() {
     let user1 = contract_address_const::<'user1'>();
 
     // Raise dispute first time
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
 
     // Try to raise dispute again (should panic)
-    contract.raise_dispute(pool_id);
+    dispute_contract.raise_dispute(pool_id);
 }
 
 #[test]
 #[should_panic(expected: 'Pool is inactive')]
 fn test_raise_dispute_nonexistent_pool() {
-    let (contract, _pool_creator, _erc20_address) = deploy_predifi();
+    let (_, dispute_contract, _, pool_creator, _erc20_address) = deploy_predifi();
 
     let user1 = contract_address_const::<'user1'>();
     let nonexistent_pool_id = 999999;
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(nonexistent_pool_id);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(nonexistent_pool_id);
 }
 
 #[test]
 #[should_panic(expected: 'Pool is suspended')]
 fn test_raise_dispute_already_suspended() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup and create pool
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3339,26 +3360,26 @@ fn test_raise_dispute_already_suspended() {
     let user3 = contract_address_const::<'user3'>();
     let user4 = contract_address_const::<'user4'>();
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user2);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user2);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user3);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user3);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Try to raise dispute on suspended pool
-    start_cheat_caller_address(contract.contract_address, user4);
-    contract.raise_dispute(pool_id);
+    start_cheat_caller_address(dispute_contract.contract_address, user4);
+    dispute_contract.raise_dispute(pool_id);
 }
 
 #[test]
 fn test_resolve_dispute_success() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3379,17 +3400,17 @@ fn test_resolve_dispute_success() {
     let user2 = contract_address_const::<'user2'>();
     let user3 = contract_address_const::<'user3'>();
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user2);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user2);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user3);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user3);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Verify suspension
     let suspended_pool = contract.get_pool(pool_id);
@@ -3397,25 +3418,25 @@ fn test_resolve_dispute_success() {
 
     // Admin resolves dispute
     let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.resolve_dispute(pool_id, true);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, admin);
+    dispute_contract.resolve_dispute(pool_id, true);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Verify resolution
     let resolved_pool = contract.get_pool(pool_id);
     assert(resolved_pool.status == initial_status, 'Status should be restored');
 
-    let dispute_count = contract.get_dispute_count(pool_id);
+    let dispute_count = dispute_contract.get_dispute_count(pool_id);
     assert(dispute_count == 0, 'Dispute count should be reset');
 
-    let is_suspended = contract.is_pool_suspended(pool_id);
+    let is_suspended = dispute_contract.is_pool_suspended(pool_id);
     assert(!is_suspended, 'Pool should not be suspended');
 }
 
 #[test]
 #[should_panic(expected: 'Pool is not suspended')]
 fn test_resolve_dispute_not_suspended() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3429,13 +3450,13 @@ fn test_resolve_dispute_not_suspended() {
 
     // Try to resolve dispute on non-suspended pool
     let admin = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.resolve_dispute(pool_id, true);
+    start_cheat_caller_address(dispute_contract.contract_address, admin);
+    dispute_contract.resolve_dispute(pool_id, true);
 }
 
 #[test]
 fn test_get_suspended_pools() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3454,20 +3475,20 @@ fn test_get_suspended_pools() {
     let user2 = contract_address_const::<'user2'>();
     let user3 = contract_address_const::<'user3'>();
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool1_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool1_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user2);
-    contract.raise_dispute(pool1_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user2);
+    dispute_contract.raise_dispute(pool1_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user3);
-    contract.raise_dispute(pool1_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user3);
+    dispute_contract.raise_dispute(pool1_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Check suspended pools
-    let suspended_pools = contract.get_suspended_pools();
+    let suspended_pools = dispute_contract.get_suspended_pools();
     assert(suspended_pools.len() == 1, 'Should have 1 suspended pool');
 
     let suspended_pool = suspended_pools.at(0);
@@ -3477,7 +3498,7 @@ fn test_get_suspended_pools() {
 #[test]
 #[should_panic(expected: 'Pool is suspended')]
 fn test_vote_on_suspended_pool() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3518,17 +3539,17 @@ fn test_vote_on_suspended_pool() {
     let user2 = contract_address_const::<'user2'>();
     let user3 = contract_address_const::<'user3'>();
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user2);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user2);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user3);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user3);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Verify pool is suspended
     let suspended_pool = contract.get_pool(pool_id);
@@ -3542,7 +3563,7 @@ fn test_vote_on_suspended_pool() {
 #[test]
 #[should_panic(expected: 'Pool is suspended')]
 fn test_stake_on_suspended_pool() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3559,17 +3580,17 @@ fn test_stake_on_suspended_pool() {
     let user2 = contract_address_const::<'user2'>();
     let user3 = contract_address_const::<'user3'>();
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user2);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user2);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user3);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user3);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Try to stake on suspended pool
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -3578,7 +3599,7 @@ fn test_stake_on_suspended_pool() {
 
 #[test]
 fn test_refund_stake_successful() {
-    let (contract, caller, erc20_address) = deploy_predifi();
+    let (contract, _, _, caller, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3601,7 +3622,7 @@ fn test_refund_stake_successful() {
 
 #[test]
 fn test_refund_stake_event_emission() {
-    let (contract, caller, erc20_address) = deploy_predifi();
+    let (contract, _, _, caller, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
     let mut spy = spy_events();
 
@@ -3632,7 +3653,7 @@ fn test_refund_stake_event_emission() {
 #[test]
 #[should_panic(expected: 'Pool is not closed')]
 fn test_refund_stake_on_open_pool() {
-    let (contract, caller, erc20_address) = deploy_predifi();
+    let (contract, _, _, caller, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3655,7 +3676,7 @@ fn test_refund_stake_on_open_pool() {
 #[test]
 #[should_panic(expected: 'Zero user stake')]
 fn test_refund_zero_stake() {
-    let (contract, caller, erc20_address) = deploy_predifi();
+    let (contract, _, _, caller, erc20_address) = deploy_predifi();
     let admin: ContractAddress = contract_address_const::<'admin'>();
 
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3677,7 +3698,7 @@ fn test_refund_zero_stake() {
 
 #[test]
 fn test_validate_outcome_success() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3720,13 +3741,13 @@ fn test_validate_outcome_success() {
     // Add a validator and validate outcome
     let admin = contract_address_const::<'admin'>();
     let validator = contract_address_const::<'validator'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, validator);
-    contract.validate_outcome(pool_id, true);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, validator);
+    dispute_contract.validate_outcome(pool_id, true);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     let pool = contract.get_pool(pool_id);
     assert(pool.status == Status::Locked, 'Pool should remain locked');
@@ -3735,7 +3756,7 @@ fn test_validate_outcome_success() {
 #[test]
 #[should_panic(expected: 'Pool is suspended')]
 fn test_validate_outcome_suspended_pool() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3752,33 +3773,33 @@ fn test_validate_outcome_suspended_pool() {
     let user2 = contract_address_const::<'user2'>();
     let user3 = contract_address_const::<'user3'>();
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user2);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user2);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user3);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user3);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Try to validate suspended pool
     let admin = contract_address_const::<'admin'>();
     let validator = contract_address_const::<'admin'>();
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, validator);
-    contract.validate_outcome(pool_id, true);
+    start_cheat_caller_address(dispute_contract.contract_address, validator);
+    dispute_contract.validate_outcome(pool_id, true);
 }
 
 #[test]
 #[should_panic(expected: 'Pool is suspended')]
 fn test_claim_reward_suspended_pool() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3795,26 +3816,26 @@ fn test_claim_reward_suspended_pool() {
     let user2 = contract_address_const::<'user2'>();
     let user3 = contract_address_const::<'user3'>();
 
-    start_cheat_caller_address(contract.contract_address, user1);
-    contract.raise_dispute(pool_id);
+    start_cheat_caller_address(dispute_contract.contract_address, user1);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
+
+    start_cheat_caller_address(dispute_contract.contract_address, user2);
+    dispute_contract.raise_dispute(pool_id);
     stop_cheat_caller_address(contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, user2);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
-
-    start_cheat_caller_address(contract.contract_address, user3);
-    contract.raise_dispute(pool_id);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(dispute_contract.contract_address, user3);
+    dispute_contract.raise_dispute(pool_id);
+    stop_cheat_caller_address(dispute_contract.contract_address);
 
     // Try to claim reward on suspended pool
-    start_cheat_caller_address(contract.contract_address, pool_creator);
-    contract.claim_reward(pool_id);
+    start_cheat_caller_address(dispute_contract.contract_address, pool_creator);
+    dispute_contract.claim_reward(pool_id);
 }
 
 #[test]
 fn test_validate_pool_result_success() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup ERC20 approval
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3859,34 +3880,34 @@ fn test_validate_pool_result_success() {
     let validator1 = contract_address_const::<'validator1'>();
     let validator2 = contract_address_const::<'validator2'>();
 
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator1);
-    contract.add_validator(validator2);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator1);
+    validator_contract.add_validator(validator2);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // First validator validates - pool should remain locked
-    start_cheat_caller_address(contract.contract_address, validator1);
-    contract.validate_pool_result(pool_id, true); // Vote for option2
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, validator1);
+    validator_contract.validate_pool_result(pool_id, true); // Vote for option2
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     let pool_after_first_validation = contract.get_pool(pool_id);
     assert(pool_after_first_validation.status == Status::Locked, 'Pool should still be locked');
 
     // Check validation status
-    let (validation_count, is_settled, _) = contract.get_pool_validation_status(pool_id);
+    let (validation_count, is_settled, _) = validator_contract.get_pool_validation_status(pool_id);
     assert(validation_count == 1, 'Should have 1 validation');
     assert(!is_settled, 'Pool should not be settled yet');
 
     // Second validator validates - pool should be settled
-    start_cheat_caller_address(contract.contract_address, validator2);
-    contract.validate_pool_result(pool_id, true); // Vote for option2
+    start_cheat_caller_address(validator_contract.contract_address, validator2);
+    validator_contract.validate_pool_result(pool_id, true); // Vote for option2
     stop_cheat_caller_address(contract.contract_address);
 
     let pool_after_second_validation = contract.get_pool(pool_id);
     assert(pool_after_second_validation.status == Status::Settled, 'Pool should be settled');
 
     // Check final validation status
-    let (final_validation_count, final_is_settled, final_outcome) = contract
+    let (final_validation_count, final_is_settled, final_outcome) = validator_contract
         .get_pool_validation_status(pool_id);
     assert(final_validation_count == 2, 'Should have 2 validations');
     assert(final_is_settled, 'Pool should be settled');
@@ -3896,7 +3917,7 @@ fn test_validate_pool_result_success() {
 #[test]
 #[should_panic(expected: 'Validator not authorized')]
 fn test_validate_pool_result_unauthorized() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup and create pool
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3916,14 +3937,14 @@ fn test_validate_pool_result_unauthorized() {
 
     // Try to validate without being a validator
     let unauthorized_user = contract_address_const::<'unauthorized'>();
-    start_cheat_caller_address(contract.contract_address, unauthorized_user);
-    contract.validate_pool_result(pool_id, true);
+    start_cheat_caller_address(validator_contract.contract_address, unauthorized_user);
+    validator_contract.validate_pool_result(pool_id, true);
 }
 
 #[test]
 #[should_panic(expected: 'Validator already validated')]
 fn test_validate_pool_result_double_validation() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3962,22 +3983,22 @@ fn test_validate_pool_result_double_validation() {
     let admin = contract_address_const::<'admin'>();
     let validator = contract_address_const::<'validator'>();
 
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // First validation
-    start_cheat_caller_address(contract.contract_address, validator);
-    contract.validate_pool_result(pool_id, true);
+    start_cheat_caller_address(validator_contract.contract_address, validator);
+    validator_contract.validate_pool_result(pool_id, true);
 
     // Try to validate again - should panic
-    contract.validate_pool_result(pool_id, false);
+    validator_contract.validate_pool_result(pool_id, false);
 }
 
 #[test]
 #[should_panic(expected: 'Pool not ready for validation')]
 fn test_validate_pool_result_wrong_status() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3994,18 +4015,18 @@ fn test_validate_pool_result_wrong_status() {
     let admin = contract_address_const::<'admin'>();
     let validator = contract_address_const::<'validator'>();
 
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // Try to validate active pool - should panic
-    start_cheat_caller_address(contract.contract_address, validator);
-    contract.validate_pool_result(pool_id, true);
+    start_cheat_caller_address(validator_contract.contract_address, validator);
+    validator_contract.validate_pool_result(pool_id, true);
 }
 
 #[test]
 fn test_validation_consensus_majority_option1() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -4046,28 +4067,28 @@ fn test_validation_consensus_majority_option1() {
     let validator2 = contract_address_const::<'validator2'>();
     let validator3 = contract_address_const::<'validator3'>();
 
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator1);
-    contract.add_validator(validator2);
-    contract.add_validator(validator3);
-    contract.set_required_validator_confirmations(3);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator1);
+    validator_contract.add_validator(validator2);
+    validator_contract.add_validator(validator3);
+    validator_contract.set_required_validator_confirmations(3);
     stop_cheat_caller_address(contract.contract_address);
 
     // Validators vote: 2 for option1 (false), 1 for option2 (true)
-    start_cheat_caller_address(contract.contract_address, validator1);
-    contract.validate_pool_result(pool_id, false); // Option1
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, validator1);
+    validator_contract.validate_pool_result(pool_id, false); // Option1
+    stop_cheat_caller_address(validator_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, validator2);
-    contract.validate_pool_result(pool_id, false); // Option1
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, validator2);
+    validator_contract.validate_pool_result(pool_id, false); // Option1
+    stop_cheat_caller_address(validator_contract.contract_address);
 
-    start_cheat_caller_address(contract.contract_address, validator3);
-    contract.validate_pool_result(pool_id, true); // Option2 - this triggers settlement
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, validator3);
+    validator_contract.validate_pool_result(pool_id, true); // Option2 - this triggers settlement
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // Check final outcome - should be option1 (false) since it got majority
-    let (_, is_settled, final_outcome) = contract.get_pool_validation_status(pool_id);
+    let (_, is_settled, final_outcome) = validator_contract.get_pool_validation_status(pool_id);
     assert(is_settled, 'Pool should be settled');
     assert(!final_outcome, 'Option1 should win majority');
 
@@ -4077,7 +4098,7 @@ fn test_validation_consensus_majority_option1() {
 
 #[test]
 fn test_get_validator_confirmation() {
-    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup and create locked pool
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -4115,21 +4136,21 @@ fn test_get_validator_confirmation() {
     let admin = contract_address_const::<'admin'>();
     let validator = contract_address_const::<'validator'>();
 
-    start_cheat_caller_address(contract.contract_address, admin);
-    contract.add_validator(validator);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // Check before validation
-    let (has_validated, _) = contract.get_validator_confirmation(pool_id, validator);
+    let (has_validated, _) = validator_contract.get_validator_confirmation(pool_id, validator);
     assert(!has_validated, 'Should not have validated yet');
 
     // Validate
-    start_cheat_caller_address(contract.contract_address, validator);
-    contract.validate_pool_result(pool_id, true);
-    stop_cheat_caller_address(contract.contract_address);
+    start_cheat_caller_address(validator_contract.contract_address, validator);
+    validator_contract.validate_pool_result(pool_id, true);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
     // Check after validation
-    let (has_validated_after, selected_option) = contract
+    let (has_validated_after, selected_option) = validator_contract
         .get_validator_confirmation(pool_id, validator);
     assert(has_validated_after, 'Should have validated');
     assert(selected_option, 'Should have selected option2');
