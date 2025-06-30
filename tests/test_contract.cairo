@@ -1183,7 +1183,7 @@ fn test_collect_creation_fee() {
     // Test that pool creation collects the fee automatically
     start_cheat_caller_address(dispatcher.contract_address, POOL_CREATOR);
     create_default_pool(dispatcher);
-    
+
     let user_balance_after = erc20.balance_of(POOL_CREATOR);
     assert(user_balance_after == balance - ONE_STRK, 'deduction failed');
 
