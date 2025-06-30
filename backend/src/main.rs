@@ -1,6 +1,5 @@
 use axum::{Router, extract::State, http::StatusCode, response::IntoResponse, routing::get};
 use std::net::SocketAddr;
-use tracing_subscriber;
 
 mod config;
 mod db;
@@ -37,8 +36,8 @@ async fn main() {
 
 async fn ping_handler(State(state): State<AppState>) -> impl IntoResponse {
     match state.db.ping().await {
-        Ok(val) => format!("pong: {}", val),
-        Err(e) => format!("db error: {}", e),
+        Ok(val) => format!("pong: {val}"),
+        Err(e) => format!("db error: {e}"),
     }
 }
 
