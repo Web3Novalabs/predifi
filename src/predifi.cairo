@@ -208,6 +208,7 @@ pub mod Predifi {
             isPrivate: bool,
             category: Category,
         ) -> u256 {
+            self.pausable.assert_not_paused();
             // Convert u8 to Pool enum with validation
             let pool_type_enum = u8_to_pool(poolType);
 
@@ -287,6 +288,8 @@ pub mod Predifi {
         }
 
         fn cancel_pool(ref self: ContractState, pool_id: u256) {
+            self.pausable.assert_not_paused();
+
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
 
@@ -324,6 +327,9 @@ pub mod Predifi {
 
         /// This can be called by anyone to update the state of a pool
         fn update_pool_state(ref self: ContractState, pool_id: u256) -> Status {
+            // Check if the contract is paused
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
 
@@ -369,6 +375,8 @@ pub mod Predifi {
         fn manually_update_pool_state(
             ref self: ContractState, pool_id: u256, new_status: Status,
         ) -> Status {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
 
@@ -417,6 +425,8 @@ pub mod Predifi {
         }
 
         fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             let option1: felt252 = pool.option1;
             let option2: felt252 = pool.option2;
@@ -486,6 +496,8 @@ pub mod Predifi {
         }
 
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
             assert(amount >= MIN_STAKE_AMOUNT, Errors::STAKE_AMOUNT_TOO_LOW);
@@ -521,6 +533,8 @@ pub mod Predifi {
 
 
         fn refund_stake(ref self: ContractState, pool_id: u256) {
+            self.pausable.assert_not_paused();
+
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
             assert(pool.status == Status::Closed, POOL_NOT_CLOSED);
@@ -664,6 +678,8 @@ pub mod Predifi {
         }
 
         fn assign_random_validators(ref self: ContractState, pool_id: u256) {
+            self.pausable.assert_not_paused();
+
             // Get the number of available validators
             let validator_count = self.validators.len();
 
@@ -706,6 +722,9 @@ pub mod Predifi {
             validator1: ContractAddress,
             validator2: ContractAddress,
         ) {
+            // Ensure contract is not paused
+            self.pausable.assert_not_paused();
+
             self.pool_validator_assignments.write(pool_id, (validator1, validator2));
             let timestamp = get_block_timestamp();
             self
@@ -717,6 +736,8 @@ pub mod Predifi {
         }
 
         fn add_validator(ref self: ContractState, address: ContractAddress) {
+            self.pausable.assert_not_paused();
+
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             if (self.is_validator(address)) {
@@ -729,6 +750,8 @@ pub mod Predifi {
         }
 
         fn remove_validator(ref self: ContractState, address: ContractAddress) {
+            self.pausable.assert_not_paused();
+
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             if (!self.is_validator(address)) {
@@ -790,6 +813,8 @@ pub mod Predifi {
 
         // dispute functions
         fn raise_dispute(ref self: ContractState, pool_id: u256) {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INACTIVE_POOL);
 
@@ -844,6 +869,8 @@ pub mod Predifi {
         }
 
         fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
+            self.pausable.assert_not_paused();
+
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INVALID_POOL_DETAILS);
@@ -896,12 +923,14 @@ pub mod Predifi {
         }
 
         fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
+            self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INVALID_POOL_DETAILS);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
         }
 
         fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
+            self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INVALID_POOL_DETAILS);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
@@ -913,6 +942,8 @@ pub mod Predifi {
         }
 
         fn validate_pool_result(ref self: ContractState, pool_id: u256, selected_option: bool) {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             let caller = get_caller_address();
 
@@ -1044,6 +1075,8 @@ pub mod Predifi {
         // @dev This function allows the admin to set the number of required confirmations for a
         // pool
         fn set_required_validator_confirmations(ref self: ContractState, count: u256) {
+            self.pausable.assert_not_paused();
+            
             // Only admin can set this
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             assert(count > 0, Errors::COUNT_MUST_BE_GREATER_THAN_ZERO);
