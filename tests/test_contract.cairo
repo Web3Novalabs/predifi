@@ -1192,9 +1192,6 @@ fn test_collect_creation_fee() {
 }
 
 
-// Test removed - calculate_validator_fee is now a private method
-
-// Test removed - distribute_validator_fees is now a private method
 /// testing if pragma price feed is accessible and returning values
 // #[test]
 // #[fork("SEPOLIA_LATEST")]
