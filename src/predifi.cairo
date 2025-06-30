@@ -636,62 +636,6 @@ pub mod Predifi {
             10_u8
         }
 
-        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
-            // Retrieve the STRK token contract
-            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
-
-            // Check if the creator has sufficient balance for pool creation fee
-            let creator_balance = strk_token.balance_of(creator);
-            assert(creator_balance >= ONE_STRK, Errors::INSUFFICIENT_STRK_BALANCE);
-
-            // Check allowance to ensure the contract can transfer tokens
-            let contract_address = get_contract_address();
-            let allowed_amount = strk_token.allowance(creator, contract_address);
-            assert(allowed_amount >= ONE_STRK, Errors::INSUFFICIENT_ALLOWANCE);
-
-            // Transfer the pool creation fee from creator to the contract
-            strk_token.transfer_from(creator, contract_address, ONE_STRK);
-        }
-
-        fn calculate_validator_fee(
-            ref self: ContractState, pool_id: u256, total_amount: u256,
-        ) -> u256 {
-            // Validator fee is fixed at 10%
-            let validator_fee_percentage = 5_u8;
-            let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
-
-            self.validator_fee.write(pool_id, validator_fee);
-            validator_fee
-        }
-
-        // Helper function to distribute validator fees evenly
-        fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
-            let total_validator_fee = self.validator_fee.read(pool_id);
-
-            let validator_count = self.validators.len();
-
-            // Convert validator_count to u256 for the division
-            let validator_count_u256: u256 = validator_count.into();
-            let fee_per_validator = total_validator_fee / validator_count_u256;
-
-            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
-
-            // Distribute to each validator
-            let mut i: u64 = 0;
-            while i < validator_count {
-                // Add debug info to trace the exact point of failure
-
-                // Safe access to validator - check bounds first
-                if i < self.validators.len() {
-                    let validator_address = self.validators.at(i).read();
-                    strk_token.transfer(validator_address, fee_per_validator);
-                } else {}
-                i += 1;
-            }
-            // Reset the validator fee for this pool after distribution
-            self.validator_fee.write(pool_id, 0);
-        }
-
         fn get_pool_validators(
             self: @ContractState, pool_id: u256,
         ) -> (ContractAddress, ContractAddress) {
