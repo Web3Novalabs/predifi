@@ -8,14 +8,16 @@ pub mod Predifi {
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
     use openzeppelin::security::PausableComponent;
+    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use openzeppelin::upgrades::UpgradeableComponent;
     use openzeppelin::upgrades::interface::IUpgradeable;
-    use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::storage::{
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
     };
-    use starknet::{ContractAddress, ClassHash, get_block_timestamp, get_caller_address, get_contract_address};
+    use starknet::{
+        ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
+    };
     use crate::base::errors::Errors;
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, CREATOR_FEE_TOO_HIGH, DISPUTE_ALREADY_RAISED,
@@ -1096,7 +1098,7 @@ pub mod Predifi {
             self.pausable.unpause();
         }
 
-        fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {    
+        fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
             self.pausable.assert_not_paused();
             // This function can only be called by the admin
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);

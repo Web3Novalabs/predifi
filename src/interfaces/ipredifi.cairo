@@ -1,4 +1,4 @@
-use starknet::{ContractAddress, ClassHash};
+use starknet::{ClassHash, ContractAddress};
 use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
 #[starknet::interface]
 pub trait IPredifi<TContractState> {
@@ -103,6 +103,6 @@ pub trait IPredifi<TContractState> {
     fn upgrade(ref self: TContractState, new_class_hash: ClassHash);
 
     // Pausable functionality
-    fn pause(ref self:TContractState);
+    fn pause(ref self: TContractState);
     fn unpause(ref self: TContractState);
 }
