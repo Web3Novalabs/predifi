@@ -7,12 +7,15 @@ pub mod Predifi {
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::security::PausableComponent;
+    use openzeppelin::upgrades::UpgradeableComponent;
+    use openzeppelin::upgrades::interface::IUpgradeable;
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use starknet::storage::{
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
     };
-    use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
+    use starknet::{ContractAddress, ClassHash, get_block_timestamp, get_caller_address, get_contract_address};
     use crate::base::errors::Errors;
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, CREATOR_FEE_TOO_HIGH, DISPUTE_ALREADY_RAISED,
@@ -45,6 +48,8 @@ pub mod Predifi {
     // components definition
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
+    component!(path: PausableComponent, storage: pausable, event: PausableEvent);
+    component!(path: UpgradeableComponent, storage: upgradeable, event: UpgradeableEvent);
 
     // AccessControl
     #[abi(embed_v0)]
@@ -55,6 +60,14 @@ pub mod Predifi {
     // SRC5
     #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
+
+    // Pausable
+    #[abi(embed_v0)]
+    impl PausableImpl = PausableComponent::PausableImpl<ContractState>;
+    impl PausableInternalImpl = PausableComponent::InternalImpl<ContractState>;
+
+    // Upgradeable
+    impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
 
     #[storage]
     pub struct Storage {
@@ -115,7 +128,11 @@ pub mod Predifi {
         pool_final_outcome: Map<
             u256, bool,
         >, // pool_id -> final_outcome (true = option2, false = option1)
-        required_validator_confirmations: u256 // Number of validators needed to settle a pool
+        required_validator_confirmations: u256, // Number of validators needed to settle a pool
+        #[substorage(v0)]
+        pausable: PausableComponent::Storage,
+        #[substorage(v0)]
+        upgradeable: UpgradeableComponent::Storage,
     }
 
     // Events
@@ -143,6 +160,10 @@ pub mod Predifi {
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
+        #[flat]
+        PausableEvent: PausableComponent::Event,
+        #[flat]
+        UpgradeableEvent: UpgradeableComponent::Event,
     }
 
     #[derive(Drop, Hash)]
@@ -1027,6 +1048,27 @@ pub mod Predifi {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             assert(count > 0, Errors::COUNT_MUST_BE_GREATER_THAN_ZERO);
             self.required_validator_confirmations.write(count);
+        }
+
+        fn pause(ref self: ContractState) {
+            // Check if caller has appropriate role (admin)
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            self.pausable.pause();
+        }
+        fn unpause(ref self: ContractState) {
+            // Check if caller has appropriate role (admin)
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            self.pausable.unpause();
+        }
+
+        fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {    
+            // This function can only be called by the admin
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            // Replace the class hash, hence upgrading the contract
+            self.upgradeable.upgrade(new_class_hash);
         }
     }
 
