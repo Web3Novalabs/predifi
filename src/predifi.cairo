@@ -1085,12 +1085,17 @@ pub mod Predifi {
             self.required_validator_confirmations.write(count);
         }
 
+        /// @notice Pauses all state-changing operations in the contract
+        /// @dev Can only be called by admin. Emits Paused event on success.
         fn pause(ref self: ContractState) {
             // Check if caller has appropriate role (admin)
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             self.pausable.pause();
         }
+
+        /// @notice Unpauses the contract and resumes normal operations
+        /// @dev Can only be called by admin. Emits Unpaused event on success.
         fn unpause(ref self: ContractState) {
             // Check if caller has appropriate role (admin)
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
@@ -1098,6 +1103,9 @@ pub mod Predifi {
             self.pausable.unpause();
         }
 
+        /// @notice Upgrades the contract implementation
+        /// @param new_class_hash The class hash of the new implementation
+        /// @dev Can only be called by admin when contract is not paused
         fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
             self.pausable.assert_not_paused();
             // This function can only be called by the admin
