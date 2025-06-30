@@ -18,6 +18,6 @@ impl DbConfig {
     }
 
     fn get_env_var(key: &str) -> String {
-        env::var(key).unwrap_or_else(|_| panic!("{} must be set", key))
+        env::var(key).unwrap_or_else(|_| panic!("{key} must be set"))
     }
 }
