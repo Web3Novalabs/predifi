@@ -627,13 +627,6 @@ pub mod Predifi {
             let pool = self.pools.read(pool_id);
             pool.creatorFee
         }
-        fn retrieve_validator_fee(self: @ContractState, pool_id: u256) -> u256 {
-            self.validator_fee.read(pool_id)
-        }
-
-        fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
-            10_u8
-        }
 
         fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
             // Retrieve the STRK token contract
@@ -650,45 +643,6 @@ pub mod Predifi {
 
             // Transfer the pool creation fee from creator to the contract
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
-        }
-
-        fn calculate_validator_fee(
-            ref self: ContractState, pool_id: u256, total_amount: u256,
-        ) -> u256 {
-            // Validator fee is fixed at 10%
-            let validator_fee_percentage = 5_u8;
-            let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
-
-            self.validator_fee.write(pool_id, validator_fee);
-            validator_fee
-        }
-
-        // Helper function to distribute validator fees evenly
-        fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
-            let total_validator_fee = self.validator_fee.read(pool_id);
-
-            let validator_count = self.validators.len();
-
-            // Convert validator_count to u256 for the division
-            let validator_count_u256: u256 = validator_count.into();
-            let fee_per_validator = total_validator_fee / validator_count_u256;
-
-            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
-
-            // Distribute to each validator
-            let mut i: u64 = 0;
-            while i < validator_count {
-                // Add debug info to trace the exact point of failure
-
-                // Safe access to validator - check bounds first
-                if i < self.validators.len() {
-                    let validator_address = self.validators.at(i).read();
-                    strk_token.transfer(validator_address, fee_per_validator);
-                } else {}
-                i += 1;
-            }
-            // Reset the validator fee for this pool after distribution
-            self.validator_fee.write(pool_id, 0);
         }
 
         // Get active pools
@@ -1089,6 +1043,53 @@ pub mod Predifi {
                 validators.append(validator);
             }
             validators
+        }
+
+        fn calculate_validator_fee(
+            ref self: ContractState, pool_id: u256, total_amount: u256,
+        ) -> u256 {
+            // Validator fee is fixed at 10%
+            let validator_fee_percentage = 5_u8;
+            let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
+
+            self.validator_fee.write(pool_id, validator_fee);
+            validator_fee
+        }
+
+        // Helper function to distribute validator fees evenly
+        fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
+            let total_validator_fee = self.validator_fee.read(pool_id);
+
+            let validator_count = self.validators.len();
+
+            // Convert validator_count to u256 for the division
+            let validator_count_u256: u256 = validator_count.into();
+            let fee_per_validator = total_validator_fee / validator_count_u256;
+
+            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+
+            // Distribute to each validator
+            let mut i: u64 = 0;
+            while i < validator_count {
+                // Add debug info to trace the exact point of failure
+
+                // Safe access to validator - check bounds first
+                if i < self.validators.len() {
+                    let validator_address = self.validators.at(i).read();
+                    strk_token.transfer(validator_address, fee_per_validator);
+                } else {}
+                i += 1;
+            }
+            // Reset the validator fee for this pool after distribution
+            self.validator_fee.write(pool_id, 0);
+        }
+
+        fn retrieve_validator_fee(self: @ContractState, pool_id: u256) -> u256 {
+            self.validator_fee.read(pool_id)
+        }
+
+        fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
+            10_u8
         }
     }
 
