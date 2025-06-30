@@ -6,7 +6,8 @@ use contract::base::events::Events::{
 };
 use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
-use contract::interfaces::ipredifi::{IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait};
+use contract::interfaces::ipredifi::{IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait,
+     IPredifiSafeDispatcher, IPredifiSafeDispatcherTrait};
 use contract::predifi::Predifi;
 use contract::utils::Utils;
 use contract::utils::Utils::InternalFunctionsTrait;
@@ -4086,4 +4087,154 @@ fn test_get_validator_confirmation() {
         .get_validator_confirmation(pool_id, validator);
     assert(has_validated_after, 'Should have validated');
     assert(selected_option, 'Should have selected option2');
+}
+
+#[test]
+#[should_panic(expected: 'Pausable: paused')]
+fn test_predify_contract_pause_success() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract (by admin)
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.pause();
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Try to create a pool while paused
+    let pool1_id = create_default_pool(contract);
+}
+
+#[test]
+#[should_panic(expected: 'Caller is missing role')]
+fn test_non_admin_pause_predify_contract() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract by non-admin
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    contract.pause();
+    stop_cheat_caller_address(contract.contract_address);    
+}
+
+
+#[test]
+#[should_panic(expected: 'Pausable: not paused')]
+fn test_unpause_not_paused_predify_contract() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.unpause();
+}
+
+#[test]
+#[should_panic(expected: 'Pausable: paused')]
+fn test_pause_paused_predify_contract() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.pause();
+    contract.pause();
+}
+
+#[test]
+fn test_predify_contract_unpause_success() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.pause();
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Unpause the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.unpause();
+
+    // Create a pool after unpausing
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    assert!(pool_id != 0, "Pool not created successfully");
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_multiple_functions_panic_when_paused() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let safe_dispatcher = IPredifiSafeDispatcher { contract_address: contract.contract_address };
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    match safe_dispatcher.pause() {
+        Result::Ok(_) => {}, // Expected: Pausing should succeed without panicking
+        Result::Err(_) => { panic!("Pause function unexpectedly panicked"); } // Unexpected: Pausing should not panic
+    };
+
+    // Test first paused function
+    let result1 = safe_dispatcher.validate_pool_result(1, true);
+    match result1 {
+        Result::Ok(_) => panic!("Not panic when paused"), // Test fails if it didn't panic
+        Result::Err(panic_data) => {
+            let expected_panic_message = 'Pausable: paused';
+            assert(*panic_data.at(0) == expected_panic_message, 'Wrong panic message');
+        },
+    };
+
+    // Test second paused function
+    let result2 = safe_dispatcher.claim_reward(1);
+    match result2 {
+        Result::Ok(_) => panic!("Not panic when paused"), // Test fails if it didn't panic
+        Result::Err(panic_data) => {
+            let expected_panic_message = 'Pausable: paused';
+            assert(*panic_data.at(0) == expected_panic_message, 'Wrong panic message');
+        },
+    };
+
+    // Test third paused function
+    let result3 = safe_dispatcher.refund_stake(1);
+    match result3 {
+        Result::Ok(_) => panic!("Not panic when paused"), // Test fails if it didn't panic
+        Result::Err(panic_data) => {
+            let expected_panic_message = 'Pausable: paused';
+            assert(*panic_data.at(0) == expected_panic_message, 'Wrong panic message');
+        },
+    };
 }
