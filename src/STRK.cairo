@@ -3,6 +3,9 @@ use starknet::ContractAddress;
 
 #[starknet::interface]
 trait IExternal<ContractState> {
+    /// @notice Mints new tokens to a recipient.
+    /// @param recipient The recipient address.
+    /// @param amount The amount to mint.
     fn mint(ref self: ContractState, recipient: ContractAddress, amount: u256);
 }
 #[starknet::contract]
@@ -37,6 +40,10 @@ pub mod STARKTOKEN {
         OwnableEvent: OwnableComponent::Event,
     }
 
+    /// @notice Initializes the token contract.
+    /// @param recipient The initial recipient of tokens.
+    /// @param owner The contract owner.
+    /// @param decimals The number of decimals.
     #[constructor]
     fn constructor(
         ref self: ContractState, recipient: ContractAddress, owner: ContractAddress, decimals: u8,
@@ -52,14 +59,21 @@ pub mod STARKTOKEN {
 
     #[abi(embed_v0)]
     impl CustomERC20MetadataImpl of IERC20Metadata<ContractState> {
+
+        /// @notice Returns the token name.
+        /// @return name The name of the token.
         fn name(self: @ContractState) -> ByteArray {
             self.token_name.read()
         }
 
+        /// @notice Returns the token symbol.
+        /// @return symbol The symbol of the token.
         fn symbol(self: @ContractState) -> ByteArray {
             self.token_symbol.read()
         }
 
+        /// @notice Returns the number of decimals used by the token.
+        /// @return decimals The number of decimals.
         fn decimals(self: @ContractState) -> u8 {
             self.custom_decimals.read() // Return custom value
         }
@@ -75,6 +89,10 @@ pub mod STARKTOKEN {
 
     #[abi(embed_v0)]
     impl ExternalImpl of super::IExternal<ContractState> {
+
+        /// @notice Mints new tokens to a recipient.
+        /// @param recipient The recipient address.
+        /// @param amount The amount to mint.
         fn mint(ref self: ContractState, recipient: ContractAddress, amount: u256) {
             self.erc20.mint(recipient, amount);
         }

@@ -16,6 +16,9 @@ pub mod Utils {
         pub pragma_contract: ContractAddress //contract address of the pragma contract on respective networks
     }
 
+    /// @notice Initializes the Utils contract.
+    /// @param owner The address of the contract owner.
+    /// @param pragma_contract The address of the Pragma oracle contract.
     #[constructor]
     fn constructor(
         ref self: ContractState, owner: ContractAddress, pragma_contract: ContractAddress,
@@ -49,10 +52,9 @@ pub mod Utils {
 
     #[abi(embed_v0)]
     impl UtilsImpl of IUtility<ContractState> {
-        //  PRAGMA PRICE FEED INTEGRATION
-        //   @inputs - Contract State to reterieve the contract address of the pragma contract
-        //   @output - STRK/USD price
-
+        ///   @notice Returns the STRK/USD price from the Pragma oracle.
+        ///   @dev Calls the Pragma oracle contract using the stored pragma contract address.
+        ///   @return price The current STRK/USD price as u128.
         fn get_strk_usd_price(self: @ContractState) -> u128 {
             /// Retrieve the oracle dispatcher
             let oracle_dispatcher = IPragmaABIDispatcher {
@@ -69,12 +71,14 @@ pub mod Utils {
 
     #[generate_trait]
     pub impl InternalFunctions of InternalFunctionsTrait {
-        // CONTRACT OWNER SPECIFICS
-
+        /// @notice Returns the current contract owner.
+        /// @return owner The address of the contract owner.
         fn get_owner(self: @ContractState) -> ContractAddress {
             self.owner.read()
         }
-
+        /// @notice Sets a new contract owner.
+        /// @dev Only callable by the current owner. Emits OwnerUpdate event.
+        /// @param new_owner The address of the new owner.
         fn set_owner(ref self: ContractState, new_owner: ContractAddress) {
             let caller: ContractAddress = get_caller_address();
             let zero_addr: ContractAddress = 0x0.try_into().unwrap();
@@ -95,12 +99,15 @@ pub mod Utils {
 
         // PRAGMA PRICE FEED INTERNAL FUNCTIONS
 
-        /// reading pragma contract address
+        /// @notice Returns the current Pragma contract address.
+        /// @return pragma_contract The address of the Pragma contract.
         fn get_pragma_contract_address(self: @ContractState) -> ContractAddress {
             self.pragma_contract.read()
         }
 
-        /// updating pragma contract address
+        /// @notice Updates the Pragma contract address.
+        /// @dev Only callable by the owner. Emits ContractAddressUpdate event.
+        /// @param pragma_contract The new Pragma contract address.
         fn set_pragma_contract_address(ref self: ContractState, pragma_contract: ContractAddress) {
             let caller: ContractAddress = get_caller_address();
             let zero_addr: ContractAddress = 0x0.try_into().unwrap();

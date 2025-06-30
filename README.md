@@ -10,6 +10,47 @@ In our fast-paced digital age, conversations about predictions are captivating; 
 
 PrediFi makes it easy to create prediction pools for a wide range of cultural and local events. You can set up pools for major sports championships and awards shows, but that's just the beginning. It's also perfect for engaging with the latest viral trends, community events, environmental happenings, and anything else that sparks buzz in your area. Whether it’s predicting the outcome of a local music festival or the next viral sensation.
 
+---
+
+## Contract Structure
+
+- **src/lib.cairo**: Main entry point, imports all modules.
+- **src/predifi.cairo**: Core protocol logic (pool creation, voting, validation, disputes, etc.).
+- **src/STRK.cairo**: STRK ERC20 token implementation.
+- **src/utils.cairo**: Utility contract for price feeds and admin controls.
+- **src/base/**
+  - **errors.cairo**: Error messages/constants.
+  - **events.cairo**: Event definitions.
+  - **types.cairo**: Structs and enums for pools, status, categories, etc.
+- **src/interfaces/**
+  - **IERC20.cairo**: ERC20 interface.
+  - **iUtils.cairo**: Utility contract interface.
+  - **ipredifi.cairo**: PrediFi protocol interface.
+
+**Relationships:**  
+- `Predifi` uses `STRK` for staking and rewards.  
+- `Utils` provides price feeds and admin utilities.  
+- All contracts use shared types, errors, and events from the `base` module.
+
+---
+
+## Developer Guide
+
+- All public and external functions must have NatSpec comments (`@notice`, `@param`, `@return`).
+- To add new pool types, extend the `Pool` enum and update logic in `predifi.cairo`.
+- To add new events, define them in `base/events.cairo` and emit from relevant contract logic.
+- To add new utility functions, implement in `utils.cairo` and expose via `iUtils.cairo`.
+- Run tests with `snforge test` and build with `scarb build`.
+
+---
+
+## Documentation Policy
+
+All public and external functions are documented using NatSpec comments for clarity and auditability.  
+Please ensure new code follows this standard.
+
+---
+
 ## Development:
 
 Requirements:
@@ -105,6 +146,11 @@ Before submitting your PR:
 - Write clean, readable, and maintainable code
 - Include comments for complex logic
 - Keep commits focused and atomic
+
+## Definition of Done
+
+- [x] Every public and external function has a NatSpec comment.
+- [x] README includes contract structure, developer usage, and build/test instructions.
 
 ## Support
 
