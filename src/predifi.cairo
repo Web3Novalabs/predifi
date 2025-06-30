@@ -577,7 +577,6 @@ pub mod Predifi {
             result
         }
 
-
         /// Returns a list of active pools the user has participated in
         fn get_user_active_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
             self.get_user_pools(user, Option::Some(Status::Active))
@@ -691,117 +690,6 @@ pub mod Predifi {
             self.validator_fee.write(pool_id, 0);
         }
 
-        fn get_pool_validators(
-            self: @ContractState, pool_id: u256,
-        ) -> (ContractAddress, ContractAddress) {
-            self.pool_validator_assignments.read(pool_id)
-        }
-
-        fn assign_random_validators(ref self: ContractState, pool_id: u256) {
-            // Get the number of available validators
-            let validator_count = self.validators.len();
-
-            // If we have fewer than 2 validators, handle the edge case
-            if validator_count == 0 {
-                // No validators available, don't assign any
-                return;
-            } else if validator_count == 1 {
-                // Only one validator available, assign the same validator twice
-                let validator = self.validators.at(0).read();
-                self.assign_validators(pool_id, validator, validator);
-                return;
-            }
-
-            // Generate two random indices for validator selection
-            // Use the pool_id and timestamp to create randomness
-            let timestamp = get_block_timestamp();
-            let seed1 = pool_id + timestamp.into();
-            let seed2 = pool_id + (timestamp * 2).into();
-
-            // Use modulo to get indices within the range of available validators
-            let index1 = seed1 % validator_count.into();
-            // Ensure the second index is different from the first
-            let mut index2 = seed2 % validator_count.into();
-            if index1 == index2 && validator_count > 1 {
-                index2 = (index2 + 1) % validator_count.into();
-            }
-
-            // Get the selected validators
-            let validator1 = self.validators.at(index1.try_into().unwrap()).read();
-            let validator2 = self.validators.at(index2.try_into().unwrap()).read();
-
-            // Assign the selected validators to the pool
-            self.assign_validators(pool_id, validator1, validator2);
-        }
-
-        fn assign_validators(
-            ref self: ContractState,
-            pool_id: u256,
-            validator1: ContractAddress,
-            validator2: ContractAddress,
-        ) {
-            self.pool_validator_assignments.write(pool_id, (validator1, validator2));
-            let timestamp = get_block_timestamp();
-            self
-                .emit(
-                    Event::ValidatorsAssigned(
-                        ValidatorsAssigned { pool_id, validator1, validator2, timestamp },
-                    ),
-                );
-        }
-
-        fn add_validator(ref self: ContractState, address: ContractAddress) {
-            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
-
-            if (self.is_validator(address)) {
-                return;
-            }
-            self.accesscontrol.grant_role(VALIDATOR_ROLE, address);
-            self.validators.push(address);
-
-            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
-        }
-
-        fn remove_validator(ref self: ContractState, address: ContractAddress) {
-            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
-
-            if (!self.is_validator(address)) {
-                return;
-            }
-
-            self.accesscontrol.revoke_role(VALIDATOR_ROLE, address);
-
-            let num_validators = self.validators.len();
-            for i in 0..num_validators {
-                if (self.validators.at(i).read() == address) {
-                    // Pop last element from validators list
-                    let last_validator = self.validators.pop().unwrap();
-
-                    // If revoked address isn't last element, overwrite with popped element
-                    if (i < (num_validators - 1)) {
-                        self.validators.at(i).write(last_validator);
-                    }
-
-                    self.emit(ValidatorRemoved { account: address, caller: get_caller_address() });
-                    return;
-                }
-            }
-        }
-
-        fn is_validator(self: @ContractState, address: ContractAddress) -> bool {
-            self.accesscontrol.has_role(VALIDATOR_ROLE, address)
-        }
-
-        fn get_all_validators(self: @ContractState) -> Array<ContractAddress> {
-            let mut validators = array![];
-
-            for i in 0..self.validators.len() {
-                let validator = self.validators.at(i).read();
-                validators.append(validator);
-            }
-            validators
-        }
-
         // Get active pools
         fn get_active_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Active)
@@ -821,7 +709,138 @@ pub mod Predifi {
         fn get_closed_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Closed)
         }
+    }
 
+    #[abi(embed_v0)]
+    impl dispute of IPredifiDispute<ContractState> {
+        // dispute functions
+        fn raise_dispute(ref self: ContractState, pool_id: u256) {
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, INACTIVE_POOL);
+
+            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
+
+            let caller = get_caller_address();
+
+            let already_disputed = self.pool_dispute_users.read((pool_id, caller));
+            assert(!already_disputed, DISPUTE_ALREADY_RAISED);
+
+            self.pool_dispute_users.write((pool_id, caller), true);
+
+            let current_count = self.pool_dispute_count.read(pool_id);
+            let new_count = current_count + 1;
+            self.pool_dispute_count.write(pool_id, new_count);
+
+            self
+                .emit(
+                    Event::DisputeRaised(
+                        DisputeRaised { pool_id, user: caller, timestamp: get_block_timestamp() },
+                    ),
+                );
+
+            // check if threshold > 3 and suspend pool
+            let threshold = self.dispute_threshold.read();
+            if new_count >= threshold {
+                self.pool_previous_status.write(pool_id, pool.status);
+
+                let mut updated_pool = pool.clone();
+                updated_pool.status = Status::Suspended;
+                self.pools.write(pool_id, updated_pool);
+
+                self
+                    .emit(
+                        Event::PoolSuspended(
+                            PoolSuspended { pool_id, timestamp: get_block_timestamp() },
+                        ),
+                    );
+
+                self
+                    .emit(
+                        Event::PoolStateTransition(
+                            PoolStateTransition {
+                                pool_id,
+                                previous_status: pool.status,
+                                new_status: Status::Suspended,
+                                timestamp: get_block_timestamp(),
+                            },
+                        ),
+                    );
+            }
+        }
+
+        fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, INVALID_POOL_DETAILS);
+            assert(pool.status == Status::Suspended, POOL_NOT_SUSPENDED);
+
+            let previous_status = self.pool_previous_status.read(pool_id);
+            let mut updated_pool = pool;
+            updated_pool.status = previous_status;
+            self.pools.write(pool_id, updated_pool);
+
+            self.pool_dispute_count.write(pool_id, 0);
+
+            self
+                .emit(
+                    Event::DisputeResolved(
+                        DisputeResolved {
+                            pool_id, winning_option, timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+
+            self
+                .emit(
+                    Event::PoolStateTransition(
+                        PoolStateTransition {
+                            pool_id,
+                            previous_status: Status::Suspended,
+                            new_status: previous_status,
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+        }
+        
+        fn get_dispute_count(self: @ContractState, pool_id: u256) -> u256 {
+            self.pool_dispute_count.read(pool_id)
+        }
+
+        fn get_dispute_threshold(self: @ContractState) -> u256 {
+            self.dispute_threshold.read()
+        }
+
+        fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
+            self.pool_dispute_users.read((pool_id, user))
+        }
+
+        fn is_pool_suspended(self: @ContractState, pool_id: u256) -> bool {
+            let pool = self.pools.read(pool_id);
+            pool.status == Status::Suspended
+        }
+
+        fn get_suspended_pools(self: @ContractState) -> Array<PoolDetails> {
+            self.get_pools_by_status(Status::Suspended)
+        }
+
+        fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, INVALID_POOL_DETAILS);
+            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
+        }
+
+        fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, INVALID_POOL_DETAILS);
+            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
+            0
+        }
+    }
+
+    #[abi(embed_v0)]
+    impl validator of IPredifiValidator<ContractState> {
+        // Pool validation functionality
         fn validate_pool_result(ref self: ContractState, pool_id: u256, selected_option: bool) {
             let pool = self.pools.read(pool_id);
             let caller = get_caller_address();
@@ -959,139 +978,118 @@ pub mod Predifi {
             assert(count > 0, 'Count must be greater than 0');
             self.required_validator_confirmations.write(count);
         }
-    }
 
-    #[abi(embed_v0)]
-    impl dispute of IPredifiDispute<ContractState> {
-        // dispute functions
-        fn raise_dispute(ref self: ContractState, pool_id: u256) {
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, INACTIVE_POOL);
+        fn get_pool_validators(
+            self: @ContractState, pool_id: u256,
+        ) -> (ContractAddress, ContractAddress) {
+            self.pool_validator_assignments.read(pool_id)
+        }
 
-            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
+        fn assign_random_validators(ref self: ContractState, pool_id: u256) {
+            // Get the number of available validators
+            let validator_count = self.validators.len();
 
-            let caller = get_caller_address();
+            // If we have fewer than 2 validators, handle the edge case
+            if validator_count == 0 {
+                // No validators available, don't assign any
+                return;
+            } else if validator_count == 1 {
+                // Only one validator available, assign the same validator twice
+                let validator = self.validators.at(0).read();
+                self.assign_validators(pool_id, validator, validator);
+                return;
+            }
 
-            let already_disputed = self.pool_dispute_users.read((pool_id, caller));
-            assert(!already_disputed, DISPUTE_ALREADY_RAISED);
+            // Generate two random indices for validator selection
+            // Use the pool_id and timestamp to create randomness
+            let timestamp = get_block_timestamp();
+            let seed1 = pool_id + timestamp.into();
+            let seed2 = pool_id + (timestamp * 2).into();
 
-            self.pool_dispute_users.write((pool_id, caller), true);
+            // Use modulo to get indices within the range of available validators
+            let index1 = seed1 % validator_count.into();
+            // Ensure the second index is different from the first
+            let mut index2 = seed2 % validator_count.into();
+            if index1 == index2 && validator_count > 1 {
+                index2 = (index2 + 1) % validator_count.into();
+            }
 
-            let current_count = self.pool_dispute_count.read(pool_id);
-            let new_count = current_count + 1;
-            self.pool_dispute_count.write(pool_id, new_count);
+            // Get the selected validators
+            let validator1 = self.validators.at(index1.try_into().unwrap()).read();
+            let validator2 = self.validators.at(index2.try_into().unwrap()).read();
 
+            // Assign the selected validators to the pool
+            self.assign_validators(pool_id, validator1, validator2);
+        }
+
+        fn assign_validators(
+            ref self: ContractState,
+            pool_id: u256,
+            validator1: ContractAddress,
+            validator2: ContractAddress,
+        ) {
+            self.pool_validator_assignments.write(pool_id, (validator1, validator2));
+            let timestamp = get_block_timestamp();
             self
                 .emit(
-                    Event::DisputeRaised(
-                        DisputeRaised { pool_id, user: caller, timestamp: get_block_timestamp() },
+                    Event::ValidatorsAssigned(
+                        ValidatorsAssigned { pool_id, validator1, validator2, timestamp },
                     ),
                 );
+        }
 
-            // check if threshold > 3 and suspend pool
-            let threshold = self.dispute_threshold.read();
-            if new_count >= threshold {
-                self.pool_previous_status.write(pool_id, pool.status);
+        fn add_validator(ref self: ContractState, address: ContractAddress) {
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
-                let mut updated_pool = pool.clone();
-                updated_pool.status = Status::Suspended;
-                self.pools.write(pool_id, updated_pool);
+            if (self.is_validator(address)) {
+                return;
+            }
+            self.accesscontrol.grant_role(VALIDATOR_ROLE, address);
+            self.validators.push(address);
 
-                self
-                    .emit(
-                        Event::PoolSuspended(
-                            PoolSuspended { pool_id, timestamp: get_block_timestamp() },
-                        ),
-                    );
+            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
+        }
 
-                self
-                    .emit(
-                        Event::PoolStateTransition(
-                            PoolStateTransition {
-                                pool_id,
-                                previous_status: pool.status,
-                                new_status: Status::Suspended,
-                                timestamp: get_block_timestamp(),
-                            },
-                        ),
-                    );
+        fn remove_validator(ref self: ContractState, address: ContractAddress) {
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            if (!self.is_validator(address)) {
+                return;
+            }
+
+            self.accesscontrol.revoke_role(VALIDATOR_ROLE, address);
+
+            let num_validators = self.validators.len();
+            for i in 0..num_validators {
+                if (self.validators.at(i).read() == address) {
+                    // Pop last element from validators list
+                    let last_validator = self.validators.pop().unwrap();
+
+                    // If revoked address isn't last element, overwrite with popped element
+                    if (i < (num_validators - 1)) {
+                        self.validators.at(i).write(last_validator);
+                    }
+
+                    self.emit(ValidatorRemoved { account: address, caller: get_caller_address() });
+                    return;
+                }
             }
         }
 
-        fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
-            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, INVALID_POOL_DETAILS);
-            assert(pool.status == Status::Suspended, POOL_NOT_SUSPENDED);
-
-            let previous_status = self.pool_previous_status.read(pool_id);
-            let mut updated_pool = pool;
-            updated_pool.status = previous_status;
-            self.pools.write(pool_id, updated_pool);
-
-            self.pool_dispute_count.write(pool_id, 0);
-
-            self
-                .emit(
-                    Event::DisputeResolved(
-                        DisputeResolved {
-                            pool_id, winning_option, timestamp: get_block_timestamp(),
-                        },
-                    ),
-                );
-
-            self
-                .emit(
-                    Event::PoolStateTransition(
-                        PoolStateTransition {
-                            pool_id,
-                            previous_status: Status::Suspended,
-                            new_status: previous_status,
-                            timestamp: get_block_timestamp(),
-                        },
-                    ),
-                );
-        }
-        
-        fn get_dispute_count(self: @ContractState, pool_id: u256) -> u256 {
-            self.pool_dispute_count.read(pool_id)
+        fn is_validator(self: @ContractState, address: ContractAddress) -> bool {
+            self.accesscontrol.has_role(VALIDATOR_ROLE, address)
         }
 
-        fn get_dispute_threshold(self: @ContractState) -> u256 {
-            self.dispute_threshold.read()
-        }
+        fn get_all_validators(self: @ContractState) -> Array<ContractAddress> {
+            let mut validators = array![];
 
-        fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
-            self.pool_dispute_users.read((pool_id, user))
-        }
-
-        fn is_pool_suspended(self: @ContractState, pool_id: u256) -> bool {
-            let pool = self.pools.read(pool_id);
-            pool.status == Status::Suspended
-        }
-
-        fn get_suspended_pools(self: @ContractState) -> Array<PoolDetails> {
-            self.get_pools_by_status(Status::Suspended)
-        }
-
-        fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, INVALID_POOL_DETAILS);
-            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-        }
-
-        fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, INVALID_POOL_DETAILS);
-            assert(pool.status != Status::Suspended, POOL_SUSPENDED);
-            0
+            for i in 0..self.validators.len() {
+                let validator = self.validators.at(i).read();
+                validators.append(validator);
+            }
+            validators
         }
     }
-
-    // #[abi(embed_v0)]
-    // impl validator of IPredifiValidator<ContractState> {
-
-    // }
 
     #[generate_trait]
     impl Private of PrivateTrait {
