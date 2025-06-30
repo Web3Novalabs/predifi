@@ -1249,12 +1249,12 @@ pub mod Predifi {
 
             // Check if the creator has sufficient balance for pool creation fee
             let creator_balance = strk_token.balance_of(creator);
-            assert(creator_balance >= ONE_STRK, 'Insufficient STRK balance');
+            assert(creator_balance >= ONE_STRK, Errors::INSUFFICIENT_BALANCE);
 
             // Check allowance to ensure the contract can transfer tokens
             let contract_address = get_contract_address();
             let allowed_amount = strk_token.allowance(creator, contract_address);
-            assert(allowed_amount >= ONE_STRK, 'Insufficient allowance');
+            assert(allowed_amount >= ONE_STRK, Errors::INSUFFICIENT_ALLOWANCE);
 
             // Transfer the pool creation fee from creator to the contract
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
