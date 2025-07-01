@@ -1155,7 +1155,7 @@ fn test_set_pragma_contract_zero_addr() {
 }
 
 #[test]
-#[should_panic(expected: 'Insufficient STRK balance')]
+#[should_panic(expected: 'Insufficient balance')]
 fn test_insufficient_stark_balance() {
     let (dispatcher, _, _, _, erc20_address) = deploy_predifi();
 
@@ -1166,7 +1166,9 @@ fn test_insufficient_stark_balance() {
     erc20.approve(dispatcher.contract_address, balance);
     stop_cheat_caller_address(erc20_address);
 
-    dispatcher.collect_pool_creation_fee(test_addr);
+    // Test insufficient balance by trying to create a pool with insufficient funds
+    start_cheat_caller_address(dispatcher.contract_address, test_addr);
+    create_default_pool(dispatcher);
 }
 
 #[test]
@@ -1180,8 +1182,9 @@ fn test_insufficient_stark_allowance() {
     erc20.approve(dispatcher.contract_address, 1_000_000);
     stop_cheat_caller_address(erc20_address);
 
+    // Test insufficient allowance by trying to create a pool
     start_cheat_caller_address(dispatcher.contract_address, POOL_CREATOR);
-    dispatcher.collect_pool_creation_fee(POOL_CREATOR);
+    create_default_pool(dispatcher);
 }
 
 #[test]
@@ -1198,15 +1201,16 @@ fn test_collect_creation_fee() {
     erc20.approve(dispatcher.contract_address, balance);
     stop_cheat_caller_address(erc20_address);
 
+    // Test that pool creation collects the fee automatically
     start_cheat_caller_address(dispatcher.contract_address, POOL_CREATOR);
-    dispatcher.collect_pool_creation_fee(POOL_CREATOR);
+    create_default_pool(dispatcher);
+
     let user_balance_after = erc20.balance_of(POOL_CREATOR);
     assert(user_balance_after == balance - ONE_STRK, 'deduction failed');
 
     let contract_balance_after_collection = erc20.balance_of(dispatcher.contract_address);
     assert(contract_balance_after_collection == ONE_STRK, 'fee collection failed');
 }
-
 
 #[test]
 fn test_collect_validation_fee() {
@@ -1260,6 +1264,7 @@ fn test_distribute_validation_fee() {
     let balance_validator4 = erc20.balance_of(validator4);
     assert(balance_validator4 == 125, 'distribution failed');
 }
+
 /// testing if pragma price feed is accessible and returning values
 // #[test]
 // #[fork("SEPOLIA_LATEST")]
