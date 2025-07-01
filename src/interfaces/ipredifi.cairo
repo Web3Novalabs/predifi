@@ -1,4 +1,4 @@
-use starknet::ContractAddress;
+use starknet::{ClassHash, ContractAddress};
 use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
 #[starknet::interface]
 pub trait IPredifi<TContractState> {
@@ -107,4 +107,11 @@ pub trait IPredifiValidator<TContractState> {
     fn distribute_validator_fees(ref self: TContractState, pool_id: u256);
     fn retrieve_validator_fee(self: @TContractState, pool_id: u256) -> u256;
     fn get_validator_fee_percentage(self: @TContractState, pool_id: u256) -> u8;
+
+    // Upgradeability
+    fn upgrade(ref self: TContractState, new_class_hash: ClassHash);
+
+    // Pausable functionality
+    fn pause(ref self: TContractState);
+    fn unpause(ref self: TContractState);
 }
