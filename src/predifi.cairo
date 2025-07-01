@@ -202,7 +202,7 @@ pub mod Predifi {
             let creator_address = get_caller_address();
 
             // Collect pool creation fee (1 STRK)
-            self.collect_pool_creation_fee(creator_address);
+            IPredifi::collect_pool_creation_fee(ref self, creator_address);
 
             let mut pool_id = self.generate_deterministic_number();
 
@@ -757,7 +757,7 @@ pub mod Predifi {
                     ),
                 );
         }
-        
+
         fn get_dispute_count(self: @ContractState, pool_id: u256) -> u256 {
             self.pool_dispute_count.read(pool_id)
         }
