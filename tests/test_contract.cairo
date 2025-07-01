@@ -822,8 +822,7 @@ fn test_get_utils_owner() {
     let owner: ContractAddress = contract_address_const::<'owner'>();
     state.owner.write(owner); // setting the current owner's addrees
 
-    let retrieved_owner = state
-        .get_owner(); // retrieving the owner's address from contract storage
+    let retrieved_owner = state.get_owner(); // retrieving the owner's address from contract storage
     assert_eq!(retrieved_owner, owner);
 }
 
