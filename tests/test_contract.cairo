@@ -7,9 +7,8 @@ use contract::base::events::Events::{
 use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
 use contract::interfaces::ipredifi::{
-    IPredifi, IPredifiDispute, IPredifiValidator,
-    IPredifiDispatcher, IPredifiDispatcherTrait,
-    IPredifiDisputeDispatcher, IPredifiDisputeDispatcherTrait,
+    IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait, IPredifiDispute,
+    IPredifiDisputeDispatcher, IPredifiDisputeDispatcherTrait, IPredifiValidator,
     IPredifiValidatorDispatcher, IPredifiValidatorDispatcherTrait,
 };
 use contract::predifi::Predifi;
@@ -46,7 +45,7 @@ fn deploy_predifi() -> (
     IPredifiDisputeDispatcher,
     IPredifiValidatorDispatcher,
     ContractAddress,
-    ContractAddress
+    ContractAddress,
 ) {
     let owner: ContractAddress = contract_address_const::<'owner'>();
     let admin: ContractAddress = contract_address_const::<'admin'>();
@@ -66,13 +65,7 @@ fn deploy_predifi() -> (
     let dispatcher = IPredifiDispatcher { contract_address };
     let dispute_dispatcher = IPredifiDisputeDispatcher { contract_address };
     let validator_dispatcher = IPredifiValidatorDispatcher { contract_address };
-    (
-        dispatcher,
-        dispute_dispatcher,
-        validator_dispatcher,
-        POOL_CREATOR,
-        erc20_address
-    )
+    (dispatcher, dispute_dispatcher, validator_dispatcher, POOL_CREATOR, erc20_address)
 }
 
 // Helper function for creating pools with default parameters
@@ -1155,7 +1148,7 @@ fn test_set_pragma_contract_zero_addr() {
 }
 
 #[test]
-#[should_panic(expected: 'Insufficient balance')]
+#[should_panic(expected: 'Insufficient STRK balance')]
 fn test_insufficient_stark_balance() {
     let (dispatcher, _, _, _, erc20_address) = deploy_predifi();
 
@@ -1222,7 +1215,8 @@ fn test_collect_validation_fee() {
 
 #[test]
 fn test_distribute_validation_fee() {
-    let (mut dispatcher, _, mut validator_dispatcher, POOL_CREATOR, erc20_address) = deploy_predifi();
+    let (mut dispatcher, _, mut validator_dispatcher, POOL_CREATOR, erc20_address) =
+        deploy_predifi();
 
     let validator1 = contract_address_const::<'validator1'>();
     let validator2 = contract_address_const::<'validator2'>();
@@ -2387,7 +2381,8 @@ fn test_assign_random_validators() {
     validator_contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2) = validator_contract
+        .get_pool_validators(pool_id);
 
     // Verify that validators were assigned
     assert(assigned_validator1 != zero_address, 'Validator1 should be assigned');
@@ -2440,7 +2435,8 @@ fn test_assign_exactly_two_validators() {
     validator_contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2) = validator_contract
+        .get_pool_validators(pool_id);
 
     // Verify that validators were assigned
     assert(assigned_validator1 != zero_address, 'Validator1 should be assigned');
@@ -2582,7 +2578,8 @@ fn test_assign_multiple_validators() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
+        let (assigned_validator1, assigned_validator2) = validator_contract
+            .get_pool_validators(pool_id);
 
         // Count how many times each validator is assigned
         if assigned_validator1 == validator1 || assigned_validator2 == validator1 {
@@ -2692,7 +2689,8 @@ fn test_limited_validators_assignment() {
     let mut i: u32 = 0;
     while i < pool_ids.len() {
         let pool_id = *pool_ids.at(i);
-        let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
+        let (assigned_validator1, assigned_validator2) = validator_contract
+            .get_pool_validators(pool_id);
 
         // Both validator1 and validator2 should be the single validator we added
         assert(assigned_validator1 == single_validator, 'Wrong validator1 assigned');
@@ -2775,7 +2773,8 @@ fn test_assign_random_validators_initial_validator() {
     validator_contract.assign_random_validators(pool_id);
 
     // Get the assigned validators
-    let (assigned_validator1, assigned_validator2) = validator_contract.get_pool_validators(pool_id);
+    let (assigned_validator1, assigned_validator2) = validator_contract
+        .get_pool_validators(pool_id);
 
     // Verify that both assigned validators are the expected validator
     assert(assigned_validator1 == expected_validator, 'Should assign initial valdator');
@@ -3703,7 +3702,8 @@ fn test_refund_zero_stake() {
 
 #[test]
 fn test_validate_outcome_success() {
-    let (contract, dispute_contract, validator_contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, validator_contract, pool_creator, erc20_address) =
+        deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
@@ -3761,7 +3761,8 @@ fn test_validate_outcome_success() {
 #[test]
 #[should_panic(expected: 'Pool is suspended')]
 fn test_validate_outcome_suspended_pool() {
-    let (contract, dispute_contract, validator_contract, pool_creator, erc20_address) = deploy_predifi();
+    let (contract, dispute_contract, validator_contract, pool_creator, erc20_address) =
+        deploy_predifi();
 
     // Setup
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
