@@ -6,7 +6,10 @@ use contract::base::events::Events::{
 };
 use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::iUtils::{IUtilityDispatcher, IUtilityDispatcherTrait};
-use contract::interfaces::ipredifi::{IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait};
+use contract::interfaces::ipredifi::{
+    IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait, IPredifiSafeDispatcher,
+    IPredifiSafeDispatcherTrait,
+};
 use contract::predifi::Predifi;
 use contract::utils::Utils;
 use contract::utils::Utils::InternalFunctionsTrait;
@@ -17,10 +20,11 @@ use core::traits::{Into, TryInto};
 use openzeppelin::access::accesscontrol::AccessControlComponent::InternalTrait as AccessControlInternalTrait;
 use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+use openzeppelin::upgrades::upgradeable::UpgradeableComponent::{Event as UpgradeEvent, Upgraded};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait, declare, spy_events,
-    start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
-    stop_cheat_caller_address, test_address,
+    ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait, EventSpyTrait, declare,
+    get_class_hash, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
+    stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{MutableVecTrait, StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{
@@ -74,6 +78,13 @@ fn create_default_pool(contract: IPredifiDispatcher) -> u256 {
             false,
             Category::Sports,
         )
+}
+
+// Helper function to declare Contract Class and return the Class Hash
+fn declare_contract(name: ByteArray) -> ClassHash {
+    let declare_result = declare(name);
+    let declared_contract = declare_result.unwrap().contract_class();
+    *declared_contract.class_hash
 }
 
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -4086,4 +4097,213 @@ fn test_get_validator_confirmation() {
         .get_validator_confirmation(pool_id, validator);
     assert(has_validated_after, 'Should have validated');
     assert(selected_option, 'Should have selected option2');
+}
+
+#[test]
+#[should_panic(expected: 'Pausable: paused')]
+fn test_predify_contract_pause_success() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract (by admin)
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.pause();
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Try to create a pool while paused
+    let pool1_id = create_default_pool(contract);
+}
+
+#[test]
+#[should_panic(expected: 'Caller is missing role')]
+fn test_non_admin_pause_predify_contract() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract by non-admin
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    contract.pause();
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+
+#[test]
+#[should_panic(expected: 'Pausable: not paused')]
+fn test_unpause_not_paused_predify_contract() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.unpause();
+}
+
+#[test]
+#[should_panic(expected: 'Pausable: paused')]
+fn test_pause_paused_predify_contract() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.pause();
+    contract.pause();
+}
+
+#[test]
+fn test_predify_contract_unpause_success() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Pause the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.pause();
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Unpause the contract
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.unpause();
+
+    // Create a pool after unpausing
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    assert!(pool_id != 0, "Pool not created successfully");
+}
+
+#[test]
+#[feature("safe_dispatcher")]
+fn test_multiple_functions_panic_when_paused() {
+    let (contract, pool_creator, erc20_address) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let safe_dispatcher = IPredifiSafeDispatcher { contract_address: contract.contract_address };
+
+    // Setup
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, pool_creator);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    match safe_dispatcher.pause() {
+        Result::Ok(_) => {}, // Expected: Pausing should succeed without panicking
+        Result::Err(_) => {
+            panic!("Pause function unexpectedly panicked");
+        } // Unexpected: Pausing should not panic
+    }
+
+    // Test first paused function
+    let result1 = safe_dispatcher.validate_pool_result(1, true);
+    match result1 {
+        Result::Ok(_) => panic!("Not panic when paused"), // Test fails if it didn't panic
+        Result::Err(panic_data) => {
+            let expected_panic_message = 'Pausable: paused';
+            assert(*panic_data.at(0) == expected_panic_message, 'Wrong panic message');
+        },
+    }
+
+    // Test second paused function
+    let result2 = safe_dispatcher.claim_reward(1);
+    match result2 {
+        Result::Ok(_) => panic!("Not panic when paused"), // Test fails if it didn't panic
+        Result::Err(panic_data) => {
+            let expected_panic_message = 'Pausable: paused';
+            assert(*panic_data.at(0) == expected_panic_message, 'Wrong panic message');
+        },
+    }
+
+    // Test third paused function
+    let result3 = safe_dispatcher.refund_stake(1);
+    match result3 {
+        Result::Ok(_) => panic!("Not panic when paused"), // Test fails if it didn't panic
+        Result::Err(panic_data) => {
+            let expected_panic_message = 'Pausable: paused';
+            assert(*panic_data.at(0) == expected_panic_message, 'Wrong panic message');
+        },
+    };
+}
+
+#[test]
+fn test_upgrade_by_admin() {
+    let (contract, _, _) = deploy_predifi();
+    let admin = contract_address_const::<'admin'>();
+    let new_class_hash = declare_contract("STARKTOKEN");
+    let mut spy = spy_events();
+
+    // Set caller address to admin
+    start_cheat_caller_address(contract.contract_address, admin);
+
+    // Call the upgrade function as the admin
+    contract.upgrade(new_class_hash);
+
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Verify the upgrade was successful by checking the class hash
+    let current_class_hash = get_class_hash(contract.contract_address);
+    assert(current_class_hash == new_class_hash, 'Contract upgrade failed');
+
+    // Get emitted events
+    let events = spy.get_events();
+    assert(events.events.len() == 1, 'Upgrade event not emitted');
+    // Verify upgrade event
+    let expected_upgrade_event = UpgradeEvent::Upgraded(Upgraded { class_hash: new_class_hash });
+
+    // Assert that the event was emitted
+    let expected_events = array![(contract.contract_address, expected_upgrade_event)];
+    spy.assert_emitted(@expected_events);
+}
+
+#[test]
+#[should_panic(expected: 'Caller is missing role')]
+fn test_upgrade_by_non_admin_should_panic() {
+    let (contract, pool_creator, _) = deploy_predifi();
+    let new_class_hash = declare_contract("STARKTOKEN");
+
+    // Set caller address to non-owner
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+
+    // Attempt to call the upgrade function as a non-owner
+    contract.upgrade(new_class_hash);
+}
+
+#[test]
+#[should_panic(expected: 'Pausable: paused')]
+fn test_upgrade_fails_when_paused() {
+    let (contract, pool_creator, _) = deploy_predifi();
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let new_class_hash = declare_contract("STARKTOKEN");
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    // Pause the contract
+    contract.pause();
+
+    contract.upgrade(new_class_hash);
 }

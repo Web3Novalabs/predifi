@@ -7,12 +7,17 @@ pub mod Predifi {
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
+    use openzeppelin::security::PausableComponent;
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+    use openzeppelin::upgrades::UpgradeableComponent;
+    use openzeppelin::upgrades::interface::IUpgradeable;
     use starknet::storage::{
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
     };
-    use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
+    use starknet::{
+        ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
+    };
     use crate::base::errors::Errors;
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, CREATOR_FEE_TOO_HIGH, DISPUTE_ALREADY_RAISED,
@@ -45,6 +50,8 @@ pub mod Predifi {
     // components definition
     component!(path: AccessControlComponent, storage: accesscontrol, event: AccessControlEvent);
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
+    component!(path: PausableComponent, storage: pausable, event: PausableEvent);
+    component!(path: UpgradeableComponent, storage: upgradeable, event: UpgradeableEvent);
 
     // AccessControl
     #[abi(embed_v0)]
@@ -55,6 +62,14 @@ pub mod Predifi {
     // SRC5
     #[abi(embed_v0)]
     impl SRC5Impl = SRC5Component::SRC5Impl<ContractState>;
+
+    // Pausable
+    #[abi(embed_v0)]
+    impl PausableImpl = PausableComponent::PausableImpl<ContractState>;
+    impl PausableInternalImpl = PausableComponent::InternalImpl<ContractState>;
+
+    // Upgradeable
+    impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
 
     #[storage]
     pub struct Storage {
@@ -115,7 +130,11 @@ pub mod Predifi {
         pool_final_outcome: Map<
             u256, bool,
         >, // pool_id -> final_outcome (true = option2, false = option1)
-        required_validator_confirmations: u256 // Number of validators needed to settle a pool
+        required_validator_confirmations: u256, // Number of validators needed to settle a pool
+        #[substorage(v0)]
+        pausable: PausableComponent::Storage,
+        #[substorage(v0)]
+        upgradeable: UpgradeableComponent::Storage,
     }
 
     // Events
@@ -143,6 +162,10 @@ pub mod Predifi {
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
         SRC5Event: SRC5Component::Event,
+        #[flat]
+        PausableEvent: PausableComponent::Event,
+        #[flat]
+        UpgradeableEvent: UpgradeableComponent::Event,
     }
 
     #[derive(Drop, Hash)]
@@ -187,6 +210,7 @@ pub mod Predifi {
             isPrivate: bool,
             category: Category,
         ) -> u256 {
+            self.pausable.assert_not_paused();
             // Convert u8 to Pool enum with validation
             let pool_type_enum = u8_to_pool(poolType);
 
@@ -266,6 +290,8 @@ pub mod Predifi {
         }
 
         fn cancel_pool(ref self: ContractState, pool_id: u256) {
+            self.pausable.assert_not_paused();
+
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
 
@@ -303,6 +329,9 @@ pub mod Predifi {
 
         /// This can be called by anyone to update the state of a pool
         fn update_pool_state(ref self: ContractState, pool_id: u256) -> Status {
+            // Check if the contract is paused
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
 
@@ -348,6 +377,8 @@ pub mod Predifi {
         fn manually_update_pool_state(
             ref self: ContractState, pool_id: u256, new_status: Status,
         ) -> Status {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
 
@@ -396,6 +427,8 @@ pub mod Predifi {
         }
 
         fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             let option1: felt252 = pool.option1;
             let option2: felt252 = pool.option2;
@@ -465,6 +498,8 @@ pub mod Predifi {
         }
 
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
             assert(amount >= MIN_STAKE_AMOUNT, Errors::STAKE_AMOUNT_TOO_LOW);
@@ -500,6 +535,8 @@ pub mod Predifi {
 
 
         fn refund_stake(ref self: ContractState, pool_id: u256) {
+            self.pausable.assert_not_paused();
+
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
             assert(pool.status == Status::Closed, POOL_NOT_CLOSED);
@@ -643,6 +680,8 @@ pub mod Predifi {
         }
 
         fn assign_random_validators(ref self: ContractState, pool_id: u256) {
+            self.pausable.assert_not_paused();
+
             // Get the number of available validators
             let validator_count = self.validators.len();
 
@@ -685,6 +724,9 @@ pub mod Predifi {
             validator1: ContractAddress,
             validator2: ContractAddress,
         ) {
+            // Ensure contract is not paused
+            self.pausable.assert_not_paused();
+
             self.pool_validator_assignments.write(pool_id, (validator1, validator2));
             let timestamp = get_block_timestamp();
             self
@@ -696,6 +738,8 @@ pub mod Predifi {
         }
 
         fn add_validator(ref self: ContractState, address: ContractAddress) {
+            self.pausable.assert_not_paused();
+
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             if (self.is_validator(address)) {
@@ -708,6 +752,8 @@ pub mod Predifi {
         }
 
         fn remove_validator(ref self: ContractState, address: ContractAddress) {
+            self.pausable.assert_not_paused();
+
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             if (!self.is_validator(address)) {
@@ -769,6 +815,8 @@ pub mod Predifi {
 
         // dispute functions
         fn raise_dispute(ref self: ContractState, pool_id: u256) {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INACTIVE_POOL);
 
@@ -823,6 +871,8 @@ pub mod Predifi {
         }
 
         fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
+            self.pausable.assert_not_paused();
+
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INVALID_POOL_DETAILS);
@@ -875,12 +925,14 @@ pub mod Predifi {
         }
 
         fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
+            self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INVALID_POOL_DETAILS);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
         }
 
         fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
+            self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
             assert(pool.exists, INVALID_POOL_DETAILS);
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
@@ -892,6 +944,8 @@ pub mod Predifi {
         }
 
         fn validate_pool_result(ref self: ContractState, pool_id: u256, selected_option: bool) {
+            self.pausable.assert_not_paused();
+
             let pool = self.pools.read(pool_id);
             let caller = get_caller_address();
 
@@ -1023,10 +1077,42 @@ pub mod Predifi {
         // @dev This function allows the admin to set the number of required confirmations for a
         // pool
         fn set_required_validator_confirmations(ref self: ContractState, count: u256) {
+            self.pausable.assert_not_paused();
+
             // Only admin can set this
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             assert(count > 0, Errors::COUNT_MUST_BE_GREATER_THAN_ZERO);
             self.required_validator_confirmations.write(count);
+        }
+
+        /// @notice Pauses all state-changing operations in the contract
+        /// @dev Can only be called by admin. Emits Paused event on success.
+        fn pause(ref self: ContractState) {
+            // Check if caller has appropriate role (admin)
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            self.pausable.pause();
+        }
+
+        /// @notice Unpauses the contract and resumes normal operations
+        /// @dev Can only be called by admin. Emits Unpaused event on success.
+        fn unpause(ref self: ContractState) {
+            // Check if caller has appropriate role (admin)
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            self.pausable.unpause();
+        }
+
+        /// @notice Upgrades the contract implementation
+        /// @param new_class_hash The class hash of the new implementation
+        /// @dev Can only be called by admin when contract is not paused
+        fn upgrade(ref self: ContractState, new_class_hash: ClassHash) {
+            self.pausable.assert_not_paused();
+            // This function can only be called by the admin
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            // Replace the class hash, hence upgrading the contract
+            self.upgradeable.upgrade(new_class_hash);
         }
     }
 

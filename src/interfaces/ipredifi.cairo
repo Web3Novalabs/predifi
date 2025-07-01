@@ -1,4 +1,4 @@
-use starknet::ContractAddress;
+use starknet::{ClassHash, ContractAddress};
 use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
 #[starknet::interface]
 pub trait IPredifi<TContractState> {
@@ -98,4 +98,11 @@ pub trait IPredifi<TContractState> {
         self: @TContractState, pool_id: u256, validator: ContractAddress,
     ) -> (bool, bool); // (has_validated, selected_option)
     fn set_required_validator_confirmations(ref self: TContractState, count: u256);
+
+    // Upgradeability
+    fn upgrade(ref self: TContractState, new_class_hash: ClassHash);
+
+    // Pausable functionality
+    fn pause(ref self: TContractState);
+    fn unpause(ref self: TContractState);
 }
