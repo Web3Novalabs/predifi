@@ -36,7 +36,7 @@ pub mod Predifi {
 
     // package imports
     use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake, u8_to_pool};
-    use crate::interfaces::ipredifi::IPredifi;
+    use crate::interfaces::ipredifi::{IPredifi, IPredifiDispute, IPredifiValidator};
 
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -226,7 +226,7 @@ pub mod Predifi {
             let creator_address = get_caller_address();
 
             // Collect pool creation fee (1 STRK)
-            self.collect_pool_creation_fee(creator_address);
+            IPredifi::collect_pool_creation_fee(ref self, creator_address);
 
             let mut pool_id = self.generate_deterministic_number();
 
@@ -615,7 +615,6 @@ pub mod Predifi {
             result
         }
 
-
         /// Returns a list of active pools the user has participated in
         fn get_user_active_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
             self.get_user_pools(user, Option::Some(Status::Active))
@@ -665,132 +664,22 @@ pub mod Predifi {
             let pool = self.pools.read(pool_id);
             pool.creatorFee
         }
-        fn retrieve_validator_fee(self: @ContractState, pool_id: u256) -> u256 {
-            self.validator_fee.read(pool_id)
-        }
 
-        fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
-            10_u8
-        }
+        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
+            // Retrieve the STRK token contract
+            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
 
-        fn get_pool_validators(
-            self: @ContractState, pool_id: u256,
-        ) -> (ContractAddress, ContractAddress) {
-            self.pool_validator_assignments.read(pool_id)
-        }
+            // Check if the creator has sufficient balance for pool creation fee
+            let creator_balance = strk_token.balance_of(creator);
+            assert(creator_balance >= ONE_STRK, Errors::INSUFFICIENT_STRK_BALANCE);
 
-        fn assign_random_validators(ref self: ContractState, pool_id: u256) {
-            self.pausable.assert_not_paused();
+            // Check allowance to ensure the contract can transfer tokens
+            let contract_address = get_contract_address();
+            let allowed_amount = strk_token.allowance(creator, contract_address);
+            assert(allowed_amount >= ONE_STRK, Errors::INSUFFICIENT_ALLOWANCE);
 
-            // Get the number of available validators
-            let validator_count = self.validators.len();
-
-            // If we have fewer than 2 validators, handle the edge case
-            if validator_count == 0 {
-                // No validators available, don't assign any
-                return;
-            } else if validator_count == 1 {
-                // Only one validator available, assign the same validator twice
-                let validator = self.validators.at(0).read();
-                self.assign_validators(pool_id, validator, validator);
-                return;
-            }
-
-            // Generate two random indices for validator selection
-            // Use the pool_id and timestamp to create randomness
-            let timestamp = get_block_timestamp();
-            let seed1 = pool_id + timestamp.into();
-            let seed2 = pool_id + (timestamp * 2).into();
-
-            // Use modulo to get indices within the range of available validators
-            let index1 = seed1 % validator_count.into();
-            // Ensure the second index is different from the first
-            let mut index2 = seed2 % validator_count.into();
-            if index1 == index2 && validator_count > 1 {
-                index2 = (index2 + 1) % validator_count.into();
-            }
-
-            // Get the selected validators
-            let validator1 = self.validators.at(index1.try_into().unwrap()).read();
-            let validator2 = self.validators.at(index2.try_into().unwrap()).read();
-
-            // Assign the selected validators to the pool
-            self.assign_validators(pool_id, validator1, validator2);
-        }
-
-        fn assign_validators(
-            ref self: ContractState,
-            pool_id: u256,
-            validator1: ContractAddress,
-            validator2: ContractAddress,
-        ) {
-            // Ensure contract is not paused
-            self.pausable.assert_not_paused();
-
-            self.pool_validator_assignments.write(pool_id, (validator1, validator2));
-            let timestamp = get_block_timestamp();
-            self
-                .emit(
-                    Event::ValidatorsAssigned(
-                        ValidatorsAssigned { pool_id, validator1, validator2, timestamp },
-                    ),
-                );
-        }
-
-        fn add_validator(ref self: ContractState, address: ContractAddress) {
-            self.pausable.assert_not_paused();
-
-            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
-
-            if (self.is_validator(address)) {
-                return;
-            }
-            self.accesscontrol.grant_role(VALIDATOR_ROLE, address);
-            self.validators.push(address);
-
-            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
-        }
-
-        fn remove_validator(ref self: ContractState, address: ContractAddress) {
-            self.pausable.assert_not_paused();
-
-            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
-
-            if (!self.is_validator(address)) {
-                return;
-            }
-
-            self.accesscontrol.revoke_role(VALIDATOR_ROLE, address);
-
-            let num_validators = self.validators.len();
-            for i in 0..num_validators {
-                if (self.validators.at(i).read() == address) {
-                    // Pop last element from validators list
-                    let last_validator = self.validators.pop().unwrap();
-
-                    // If revoked address isn't last element, overwrite with popped element
-                    if (i < (num_validators - 1)) {
-                        self.validators.at(i).write(last_validator);
-                    }
-
-                    self.emit(ValidatorRemoved { account: address, caller: get_caller_address() });
-                    return;
-                }
-            }
-        }
-
-        fn is_validator(self: @ContractState, address: ContractAddress) -> bool {
-            self.accesscontrol.has_role(VALIDATOR_ROLE, address)
-        }
-
-        fn get_all_validators(self: @ContractState) -> Array<ContractAddress> {
-            let mut validators = array![];
-
-            for i in 0..self.validators.len() {
-                let validator = self.validators.at(i).read();
-                validators.append(validator);
-            }
-            validators
+            // Transfer the pool creation fee from creator to the contract
+            strk_token.transfer_from(creator, contract_address, ONE_STRK);
         }
 
         // Get active pools
@@ -812,7 +701,10 @@ pub mod Predifi {
         fn get_closed_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Closed)
         }
+    }
 
+    #[abi(embed_v0)]
+    impl dispute of IPredifiDispute<ContractState> {
         // dispute functions
         fn raise_dispute(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
@@ -915,6 +807,10 @@ pub mod Predifi {
             self.dispute_threshold.read()
         }
 
+        fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
+            self.pool_dispute_users.read((pool_id, user))
+        }
+
         fn is_pool_suspended(self: @ContractState, pool_id: u256) -> bool {
             let pool = self.pools.read(pool_id);
             pool.status == Status::Suspended
@@ -938,11 +834,11 @@ pub mod Predifi {
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
             0
         }
+    }
 
-        fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
-            self.pool_dispute_users.read((pool_id, user))
-        }
-
+    #[abi(embed_v0)]
+    impl validator of IPredifiValidator<ContractState> {
+        // Pool validation functionality
         fn validate_pool_result(ref self: ContractState, pool_id: u256, selected_option: bool) {
             self.pausable.assert_not_paused();
 
@@ -1083,6 +979,164 @@ pub mod Predifi {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             assert(count > 0, Errors::COUNT_MUST_BE_GREATER_THAN_ZERO);
             self.required_validator_confirmations.write(count);
+        }
+
+        fn get_pool_validators(
+            self: @ContractState, pool_id: u256,
+        ) -> (ContractAddress, ContractAddress) {
+            self.pool_validator_assignments.read(pool_id)
+        }
+
+        fn assign_random_validators(ref self: ContractState, pool_id: u256) {
+            // Get the number of available validators
+            let validator_count = self.validators.len();
+
+            // If we have fewer than 2 validators, handle the edge case
+            if validator_count == 0 {
+                // No validators available, don't assign any
+                return;
+            } else if validator_count == 1 {
+                // Only one validator available, assign the same validator twice
+                let validator = self.validators.at(0).read();
+                self.assign_validators(pool_id, validator, validator);
+                return;
+            }
+
+            // Generate two random indices for validator selection
+            // Use the pool_id and timestamp to create randomness
+            let timestamp = get_block_timestamp();
+            let seed1 = pool_id + timestamp.into();
+            let seed2 = pool_id + (timestamp * 2).into();
+
+            // Use modulo to get indices within the range of available validators
+            let index1 = seed1 % validator_count.into();
+            // Ensure the second index is different from the first
+            let mut index2 = seed2 % validator_count.into();
+            if index1 == index2 && validator_count > 1 {
+                index2 = (index2 + 1) % validator_count.into();
+            }
+
+            // Get the selected validators
+            let validator1 = self.validators.at(index1.try_into().unwrap()).read();
+            let validator2 = self.validators.at(index2.try_into().unwrap()).read();
+
+            // Assign the selected validators to the pool
+            self.assign_validators(pool_id, validator1, validator2);
+        }
+
+        fn assign_validators(
+            ref self: ContractState,
+            pool_id: u256,
+            validator1: ContractAddress,
+            validator2: ContractAddress,
+        ) {
+            self.pool_validator_assignments.write(pool_id, (validator1, validator2));
+            let timestamp = get_block_timestamp();
+            self
+                .emit(
+                    Event::ValidatorsAssigned(
+                        ValidatorsAssigned { pool_id, validator1, validator2, timestamp },
+                    ),
+                );
+        }
+
+        fn add_validator(ref self: ContractState, address: ContractAddress) {
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            if (self.is_validator(address)) {
+                return;
+            }
+            self.accesscontrol.grant_role(VALIDATOR_ROLE, address);
+            self.validators.push(address);
+
+            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
+        }
+
+        fn remove_validator(ref self: ContractState, address: ContractAddress) {
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            if (!self.is_validator(address)) {
+                return;
+            }
+
+            self.accesscontrol.revoke_role(VALIDATOR_ROLE, address);
+
+            let num_validators = self.validators.len();
+            for i in 0..num_validators {
+                if (self.validators.at(i).read() == address) {
+                    // Pop last element from validators list
+                    let last_validator = self.validators.pop().unwrap();
+
+                    // If revoked address isn't last element, overwrite with popped element
+                    if (i < (num_validators - 1)) {
+                        self.validators.at(i).write(last_validator);
+                    }
+
+                    self.emit(ValidatorRemoved { account: address, caller: get_caller_address() });
+                    return;
+                }
+            }
+        }
+
+        fn is_validator(self: @ContractState, address: ContractAddress) -> bool {
+            self.accesscontrol.has_role(VALIDATOR_ROLE, address)
+        }
+
+        fn get_all_validators(self: @ContractState) -> Array<ContractAddress> {
+            let mut validators = array![];
+
+            for i in 0..self.validators.len() {
+                let validator = self.validators.at(i).read();
+                validators.append(validator);
+            }
+            validators
+        }
+
+        fn calculate_validator_fee(
+            ref self: ContractState, pool_id: u256, total_amount: u256,
+        ) -> u256 {
+            // Validator fee is fixed at 10%
+            let validator_fee_percentage = 5_u8;
+            let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
+
+            self.validator_fee.write(pool_id, validator_fee);
+            validator_fee
+        }
+
+        // Helper function to distribute validator fees evenly
+        fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
+            let total_validator_fee = self.validator_fee.read(pool_id);
+
+            let validator_count = self.validators.len();
+
+            // Convert validator_count to u256 for the division
+            let validator_count_u256: u256 = validator_count.into();
+            let fee_per_validator = total_validator_fee / validator_count_u256;
+
+            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+
+            // Distribute to each validator
+            let mut i: u64 = 0;
+            while i < validator_count {
+                // Add debug info to trace the exact point of failure
+
+                // Safe access to validator - check bounds first
+                if i < self.validators.len() {
+                    let validator_address = self.validators.at(i).read();
+                    strk_token.transfer(validator_address, fee_per_validator);
+                } else {}
+                i += 1;
+            }
+            // Reset the validator fee for this pool after distribution
+            self.validator_fee.write(pool_id, 0);
+        }
+
+        fn retrieve_validator_fee(self: @ContractState, pool_id: u256) -> u256 {
+            self.validator_fee.read(pool_id)
+        }
+
+        fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
+            10_u8
         }
 
         /// @notice Pauses all state-changing operations in the contract
