@@ -1,11 +1,10 @@
-
 // Integration tests for multi-step flows in the Predifi contract
-use contract::base::events::Events::{ DisputeResolved,
-    PoolAutomaticallySettled, PoolCancelled, PoolSuspended,
-    StakeRefunded, UserStaked,
+use contract::base::events::Events::{
+    DisputeResolved, PoolAutomaticallySettled, PoolCancelled, PoolSuspended, StakeRefunded,
+    UserStaked,
 };
 use contract::base::types::{Category, Status};
-use contract::interfaces::ipredifi::{ IPredifiDispatcher, IPredifiDispatcherTrait};
+use contract::interfaces::ipredifi::{IPredifiDispatcher, IPredifiDispatcherTrait};
 use contract::predifi::Predifi;
 use core::array::ArrayTrait;
 use core::felt252;
@@ -127,7 +126,7 @@ fn setup_tokens_and_approvals(
         stop_cheat_caller_address(erc20_address);
 
         start_cheat_caller_address(erc20_address, user);
-        erc20.approve(contract.contract_address, 1000 * ONE_STRK); 
+        erc20.approve(contract.contract_address, 1000 * ONE_STRK);
         stop_cheat_caller_address(erc20_address);
         i += 1;
     };
@@ -668,7 +667,8 @@ fn test_pool_cancellation_and_stake_refund() {
 }
 
 //  Pool creation > Multiple users vote > Time progression > Settlement
-// This tests the natural settlement flow where multiple users vote and the pool is automatically settled
+// This tests the natural settlement flow where multiple users vote and the pool is automatically
+// settled
 #[test]
 fn test_multiple_users_voting_and_natural_settlement() {
     let (contract, pool_creator, erc20_address) = deploy_predifi();
