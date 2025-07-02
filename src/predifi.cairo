@@ -1138,7 +1138,7 @@ pub mod Predifi {
         fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
             10_u8
         }
-        
+
         /// @notice Pauses all state-changing operations in the contract
         /// @dev Can only be called by admin. Emits Paused event on success.
         fn pause(ref self: ContractState) {
