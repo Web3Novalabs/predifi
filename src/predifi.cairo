@@ -327,52 +327,6 @@ pub mod Predifi {
             self.pools.read(pool_id)
         }
 
-        /// This can be called by anyone to update the state of a pool
-        fn update_pool_state(ref self: ContractState, pool_id: u256) -> Status {
-            // Check if the contract is paused
-            self.pausable.assert_not_paused();
-
-            let pool = self.pools.read(pool_id);
-            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
-
-            let current_status = pool.status;
-            let current_time = get_block_timestamp();
-            let mut new_status = current_status;
-
-            // Determine the new status based on current time and pool timestamps
-            if current_time >= pool.poolEndTime {
-                if current_status == Status::Active || current_status == Status::Locked {
-                    new_status = Status::Settled;
-                } else if current_status == Status::Settled
-                    && current_time >= (pool.poolEndTime + 86400) {
-                    new_status = Status::Closed;
-                }
-            } else if current_time >= pool.poolLockTime && current_status == Status::Active {
-                new_status = Status::Locked;
-            }
-
-            // Only update if there's a change in status
-            if new_status != current_status {
-                // Update the pool status
-                let mut updated_pool = pool;
-                updated_pool.status = new_status;
-                self.pools.write(pool_id, updated_pool);
-
-                // Emit event for the state transition
-                let transition_event = PoolStateTransition {
-                    pool_id, previous_status: current_status, new_status, timestamp: current_time,
-                };
-                self.emit(Event::PoolStateTransition(transition_event));
-            }
-
-            // Return the (potentially updated) status
-            if new_status != current_status {
-                new_status
-            } else {
-                current_status
-            }
-        }
-
         /// Manually update the state of a pool - can only be called by admin or validator
         fn manually_update_pool_state(
             ref self: ContractState, pool_id: u256, new_status: Status,
@@ -544,8 +498,7 @@ pub mod Predifi {
             assert(user_stake.amount > 0, Errors::ZERO_USER_STAKE);
 
             let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
-
-            dispatcher.transfer(caller, user_stake.amount);
+            let refund_amount = user_stake.amount;
 
             self
                 .user_stakes
@@ -558,6 +511,8 @@ pub mod Predifi {
                         timestamp: user_stake.timestamp,
                     },
                 );
+
+            dispatcher.transfer(caller, refund_amount);
 
             self
                 .emit(

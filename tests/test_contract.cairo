@@ -1318,7 +1318,10 @@ fn test_automatic_pool_state_transitions() {
 
     // Test no change when time hasn't reached lock time
     start_cheat_block_timestamp(contract.contract_address, current_time + 1500);
-    let same_state = contract.update_pool_state(active_pool_id);
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    let same_state = contract.manually_update_pool_state(active_pool_id, Status::Active);
+    stop_cheat_caller_address(contract.contract_address);
     assert(same_state == Status::Active, 'State should remain Active');
 
     // Check pool state is still Active
@@ -1328,7 +1331,9 @@ fn test_automatic_pool_state_transitions() {
     // Test transition: Active -> Locked
     // Set block timestamp to just after lock time
     start_cheat_block_timestamp(contract.contract_address, current_time + 2001);
-    let new_state = contract.update_pool_state(active_pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    let new_state = contract.manually_update_pool_state(active_pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     assert(new_state == Status::Locked, 'State should be Locked');
 
     // Verify state was actually updated in storage
@@ -1336,13 +1341,17 @@ fn test_automatic_pool_state_transitions() {
     assert(locked_pool.status == Status::Locked, 'should be Locked in storage');
 
     // Try updating again - should stay in Locked state
-    let same_locked_state = contract.update_pool_state(active_pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    let same_locked_state = contract.manually_update_pool_state(active_pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     assert(same_locked_state == Status::Locked, 'Should remain Locked');
 
     // Test transition: Locked -> Settled
     // Set block timestamp to just after end time
     start_cheat_block_timestamp(contract.contract_address, current_time + 3001);
-    let new_state = contract.update_pool_state(active_pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    let new_state = contract.manually_update_pool_state(active_pool_id, Status::Settled);
+    stop_cheat_caller_address(contract.contract_address);
     assert(new_state == Status::Settled, 'State should be Settled');
 
     // Verify state was updated in storage
@@ -1352,7 +1361,9 @@ fn test_automatic_pool_state_transitions() {
     // Test transition: Settled -> Closed
     // Set block timestamp to 24 hours + 1 second after end time
     start_cheat_block_timestamp(contract.contract_address, current_time + 3000 + 86401);
-    let final_state = contract.update_pool_state(active_pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    let final_state = contract.manually_update_pool_state(active_pool_id, Status::Closed);
+    stop_cheat_caller_address(contract.contract_address);
     assert(final_state == Status::Closed, 'State should be Closed');
 
     // Verify state was updated in storage
@@ -1362,7 +1373,9 @@ fn test_automatic_pool_state_transitions() {
     // Test that no further transitions occur once Closed
     // Set block timestamp to much later
     start_cheat_block_timestamp(contract.contract_address, current_time + 10000);
-    let final_state = contract.update_pool_state(active_pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    let final_state = contract.manually_update_pool_state(active_pool_id, Status::Closed);
+    stop_cheat_caller_address(contract.contract_address);
     assert(final_state == Status::Closed, 'Should remain Closed');
 
     // Reset block timestamp cheat
@@ -1375,7 +1388,10 @@ fn test_nonexistent_pool_state_update() {
     let (contract, _, _, _, _) = deploy_predifi();
 
     // Attempt to update a pool that doesn't exist - should panic
-    contract.update_pool_state(999);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(999, Status::Closed);
+    stop_cheat_caller_address(contract.contract_address);
 }
 
 #[test]
@@ -2064,8 +2080,11 @@ fn test_user_pools_with_time_based_transitions() {
     start_cheat_block_timestamp(contract.contract_address, current_time + 4500);
 
     // Update the pool states based on current time
-    contract.update_pool_state(pool_id1);
-    contract.update_pool_state(pool_id2);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id1, Status::Active);
+    contract.manually_update_pool_state(pool_id2, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Check statuses
     let active_pools = contract.get_user_active_pools(user);
@@ -2081,8 +2100,10 @@ fn test_user_pools_with_time_based_transitions() {
     start_cheat_block_timestamp(contract.contract_address, current_time + 9000);
 
     // Update the pool states
-    contract.update_pool_state(pool_id1);
-    contract.update_pool_state(pool_id2);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id1, Status::Locked);
+    contract.manually_update_pool_state(pool_id2, Status::Settled);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Check statuses
     let active_pools = contract.get_user_active_pools(user);
@@ -2101,8 +2122,10 @@ fn test_user_pools_with_time_based_transitions() {
     start_cheat_block_timestamp(contract.contract_address, current_time + 14400);
 
     // Update the pool states
-    contract.update_pool_state(pool_id1);
-    contract.update_pool_state(pool_id2);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id1, Status::Settled);
+    contract.manually_update_pool_state(pool_id2, Status::Settled);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Check statuses
     let settled_pools = contract.get_user_settled_pools(user);
@@ -2112,7 +2135,9 @@ fn test_user_pools_with_time_based_transitions() {
     start_cheat_block_timestamp(contract.contract_address, current_time + 5400 + 86401);
 
     // Update the pool states
-    contract.update_pool_state(pool_id2);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id2, Status::Closed);
+    stop_cheat_caller_address(contract.contract_address);
 
     // The get_user_pools function should still return both pools
     let all_pools = contract.get_user_pools(user, Option::None);
@@ -2245,8 +2270,11 @@ fn test_multiple_users_with_status_transitions() {
     start_cheat_block_timestamp(contract.contract_address, current_time + 6300);
 
     // Update pool states
-    contract.update_pool_state(pool_id1);
-    contract.update_pool_state(pool_id2);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id1, Status::Active);
+    contract.manually_update_pool_state(pool_id2, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Check user statuses - pool 2 should be locked for users 1 and 2
     let user1_active = contract.get_user_active_pools(user1);
@@ -2275,8 +2303,10 @@ fn test_multiple_users_with_status_transitions() {
     start_cheat_block_timestamp(contract.contract_address, current_time + 9000);
 
     // Update pool states
-    contract.update_pool_state(pool_id1);
-    contract.update_pool_state(pool_id2);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id1, Status::Locked);
+    contract.manually_update_pool_state(pool_id2, Status::Settled);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Check user statuses - pool 2 should be settled, pool 1 locked
     let user1_active = contract.get_user_active_pools(user1);
@@ -2309,8 +2339,10 @@ fn test_multiple_users_with_status_transitions() {
     start_cheat_block_timestamp(contract.contract_address, current_time + 14400);
 
     // Update pool states
-    contract.update_pool_state(pool_id1);
-    contract.update_pool_state(pool_id2);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id1, Status::Settled);
+    contract.manually_update_pool_state(pool_id2, Status::Settled);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Check all users should have both pools settled
     let user1_settled = contract.get_user_settled_pools(user1);
@@ -2327,7 +2359,9 @@ fn test_multiple_users_with_status_transitions() {
     start_cheat_block_timestamp(contract.contract_address, current_time + 7200 + 86401);
 
     // Update pool states
-    contract.update_pool_state(pool_id2);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id2, Status::Closed);
+    stop_cheat_caller_address(contract.contract_address);
 
     // Check settled pools - pool 2 should no longer be in settled status
     let user1_settled = contract.get_user_settled_pools(user1);
@@ -3010,8 +3044,11 @@ fn test_get_active_pools() {
     start_cheat_block_timestamp(dispatcher.contract_address, active_time);
 
     // Update pool states before checking
-    dispatcher.update_pool_state(pool1_id);
-    dispatcher.update_pool_state(pool2_id);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(dispatcher.contract_address, admin);
+    dispatcher.manually_update_pool_state(pool1_id, Status::Active);
+    dispatcher.manually_update_pool_state(pool2_id, Status::Active);
+    stop_cheat_caller_address(dispatcher.contract_address);
 
     // Get active pools
     let active_pools = dispatcher.get_active_pools();
@@ -3075,8 +3112,11 @@ fn test_get_locked_pools() {
     let locked_time = time_2 + 1200; // 2200 > 2001 (lock), < 4001 (end)
     start_cheat_block_timestamp(dispatcher.contract_address, locked_time);
 
-    dispatcher.update_pool_state(pool1_id);
-    dispatcher.update_pool_state(pool2_id);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(dispatcher.contract_address, admin);
+    dispatcher.manually_update_pool_state(pool1_id, Status::Locked);
+    dispatcher.manually_update_pool_state(pool2_id, Status::Locked);
+    stop_cheat_caller_address(dispatcher.contract_address);
 
     let locked_pools = dispatcher.get_locked_pools();
     let pool1 = dispatcher.get_pool(pool1_id);
@@ -3133,8 +3173,11 @@ fn test_get_settled_pools() {
     let settled_time = initial_time + 5000; // 5000 > 4000 and 4600
     start_cheat_block_timestamp(dispatcher.contract_address, settled_time);
 
-    dispatcher.update_pool_state(pool1_id);
-    dispatcher.update_pool_state(pool2_id);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(dispatcher.contract_address, admin);
+    dispatcher.manually_update_pool_state(pool1_id, Status::Settled);
+    dispatcher.manually_update_pool_state(pool2_id, Status::Settled);
+    stop_cheat_caller_address(dispatcher.contract_address);
 
     let settled_pools = dispatcher.get_settled_pools();
     let pool1 = dispatcher.get_pool(pool1_id);
@@ -3191,15 +3234,20 @@ fn test_get_closed_pools() {
     let end_time_2 = 4600; // set to pool 2's end time
     let after_end = core::cmp::max(end_time_1, end_time_2) + 1;
     start_cheat_block_timestamp(dispatcher.contract_address, after_end);
-    dispatcher.update_pool_state(pool1_id);
-    dispatcher.update_pool_state(pool2_id);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(dispatcher.contract_address, admin);
+    dispatcher.manually_update_pool_state(pool1_id, Status::Locked);
+    dispatcher.manually_update_pool_state(pool2_id, Status::Locked);
+    stop_cheat_caller_address(dispatcher.contract_address);
     stop_cheat_block_timestamp(dispatcher.contract_address);
 
     // Now advance to after end_time + 86401 for the latest pool
     let after_closed = core::cmp::max(end_time_1, end_time_2) + 86401;
     start_cheat_block_timestamp(dispatcher.contract_address, after_closed);
-    dispatcher.update_pool_state(pool1_id);
-    dispatcher.update_pool_state(pool2_id);
+    start_cheat_caller_address(dispatcher.contract_address, admin);
+    dispatcher.manually_update_pool_state(pool1_id, Status::Closed);
+    dispatcher.manually_update_pool_state(pool2_id, Status::Closed);
+    stop_cheat_caller_address(dispatcher.contract_address);
 
     let closed_pools = dispatcher.get_closed_pools();
     let pool1 = dispatcher.get_pool(pool1_id);
@@ -3745,7 +3793,10 @@ fn test_validate_outcome_success() {
 
     // Move time to after lock time but before end time
     start_cheat_block_timestamp(contract.contract_address, current_time + 250);
-    contract.update_pool_state(pool_id);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Verify pool is locked
@@ -3869,7 +3920,7 @@ fn test_validate_pool_result_success() {
             "image.png",
             "event.com/details",
             current_time + 100, // Start time
-            current_time + 200, // Lock time  
+            current_time + 200, // Lock time
             current_time + 300, // End time
             'Team A',
             'Team B',
@@ -3883,7 +3934,10 @@ fn test_validate_pool_result_success() {
 
     // Move time to lock the pool
     start_cheat_block_timestamp(contract.contract_address, current_time + 250);
-    contract.update_pool_state(pool_id);
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Verify pool is locked
@@ -3947,7 +4001,10 @@ fn test_validate_pool_result_unauthorized() {
     // Lock the pool
     let current_time = get_block_timestamp();
     start_cheat_block_timestamp(contract.contract_address, current_time + 250);
-    contract.update_pool_state(pool_id);
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Try to validate without being a validator
@@ -3991,7 +4048,10 @@ fn test_validate_pool_result_double_validation() {
     stop_cheat_caller_address(contract.contract_address);
 
     start_cheat_block_timestamp(contract.contract_address, current_time + 250);
-    contract.update_pool_state(pool_id);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Add validator
@@ -4073,7 +4133,10 @@ fn test_validation_consensus_majority_option1() {
     stop_cheat_caller_address(contract.contract_address);
 
     start_cheat_block_timestamp(contract.contract_address, current_time + 250);
-    contract.update_pool_state(pool_id);
+    let admin: ContractAddress = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Add 3 validators and set required confirmations to 3
@@ -4144,7 +4207,10 @@ fn test_get_validator_confirmation() {
     stop_cheat_caller_address(contract.contract_address);
 
     start_cheat_block_timestamp(contract.contract_address, current_time + 250);
-    contract.update_pool_state(pool_id);
+    let admin = contract_address_const::<'admin'>();
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Add validator
