@@ -247,7 +247,9 @@ fn test_pool_creation_staking_dispute_resolution_flow() {
 
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
-    contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Verify pool is locked
@@ -329,7 +331,9 @@ fn test_pool_voting_validation_settlement_flow() {
 
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
-    contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Verify pool is locked
@@ -400,7 +404,9 @@ fn test_full_lifecycle_with_dispute_and_settlement() {
 
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
-    contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Raise disputes to reach threshold
@@ -424,7 +430,9 @@ fn test_full_lifecycle_with_dispute_and_settlement() {
 
     // Advance time to end time for settlement
     start_cheat_block_timestamp(contract.contract_address, 1710007201);
-    contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Settled);
+    stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Claim rewards
@@ -494,7 +502,8 @@ fn test_validator_consensus_with_conflicting_votes() {
 
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
-    let new_status = contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    let new_status = contract.manually_update_pool_state(pool_id, Status::Locked);
     assert(new_status == Status::Locked, 'Should return Locked status');
 
     // First validator votes for Team B (true)
@@ -589,7 +598,9 @@ fn test_validator_consensus_with_default_confirmations() {
 
     // Advance time and lock pool
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
-    contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
 
     // First validator votes for Team B
     start_cheat_caller_address(validator_contract.contract_address, VALIDATOR_ONE);
@@ -672,7 +683,9 @@ fn test_validator_conflict_with_two_confirmations() {
 
     // Lock pool
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
-    contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
 
     // First validator votes Team B
     start_cheat_caller_address(validator_contract.contract_address, VALIDATOR_ONE);
@@ -814,7 +827,9 @@ fn test_multiple_users_voting_and_natural_settlement() {
 
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
-    let status = contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    let status = contract.manually_update_pool_state(pool_id, Status::Locked);
+    stop_cheat_caller_address(contract.contract_address);
     assert(status == Status::Locked, 'Should be locked');
     stop_cheat_block_timestamp(contract.contract_address);
 
@@ -837,7 +852,9 @@ fn test_multiple_users_voting_and_natural_settlement() {
 
     // Advance to settlement time
     start_cheat_block_timestamp(contract.contract_address, 1710007201);
-    let final_status = contract.update_pool_state(pool_id);
+    start_cheat_caller_address(contract.contract_address, admin);
+    let final_status = contract.manually_update_pool_state(pool_id, Status::Settled);
+    stop_cheat_caller_address(contract.contract_address);
     assert(final_status == Status::Settled, 'Should be settled');
     stop_cheat_block_timestamp(contract.contract_address);
 
