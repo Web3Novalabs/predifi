@@ -72,6 +72,8 @@ pub mod Predifi {
     impl UpgradeableInternalImpl = UpgradeableComponent::InternalImpl<ContractState>;
 
     #[storage]
+    /// @notice Storage struct for the Predifi contract.
+    /// @dev Holds all pools, user stakes, odds, roles, and protocol parameters.
     pub struct Storage {
         pools: Map<u256, PoolDetails>, // pool id to pool details struct
         pool_ids: Vec<u256>,
@@ -137,26 +139,41 @@ pub mod Predifi {
         upgradeable: UpgradeableComponent::Storage,
     }
 
-    // Events
+    /// @notice Events emitted by the Predifi contract.
     #[event]
     #[derive(Drop, starknet::Event)]
     pub enum Event {
+        /// @notice Emitted when a bet is placed.
         BetPlaced: BetPlaced,
+        /// @notice Emitted when a user stakes tokens.
         UserStaked: UserStaked,
+        /// @notice Emitted when a user's stake is refunded.
         StakeRefunded: StakeRefunded,
+        /// @notice Emitted when protocol or creator fees are collected.
         FeesCollected: FeesCollected,
+        /// @notice Emitted when a pool changes state.
         PoolStateTransition: PoolStateTransition,
+        /// @notice Emitted when a pool is resolved.
         PoolResolved: PoolResolved,
+        /// @notice Emitted when a fee is withdrawn.
         FeeWithdrawn: FeeWithdrawn,
+        /// @notice Emitted when validators are assigned to a pool.
         ValidatorsAssigned: ValidatorsAssigned,
+        /// @notice Emitted when a validator is added.
         ValidatorAdded: ValidatorAdded,
+        /// @notice Emitted when a validator is removed.
         ValidatorRemoved: ValidatorRemoved,
+        /// @notice Emitted when a dispute is raised.
         DisputeRaised: DisputeRaised,
+        /// @notice Emitted when a dispute is resolved.
         DisputeResolved: DisputeResolved,
+        /// @notice Emitted when a pool is suspended.
         PoolSuspended: PoolSuspended,
+        /// @notice Emitted when a pool is cancelled.
         PoolCancelled: PoolCancelled,
-        // Validator events
+        /// @notice Emitted when a validator submits a result.
         ValidatorResultSubmitted: ValidatorResultSubmitted,
+        /// @notice Emitted when a pool is automatically settled.
         PoolAutomaticallySettled: PoolAutomaticallySettled,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
@@ -180,6 +197,10 @@ pub mod Predifi {
         login: HashingProperties,
     }
 
+    /// @notice Initializes the Predifi contract.
+    /// @param self The contract state.
+    /// @param token_addr The address of the STRK token contract.
+    /// @param admin The address to be set as the admin (DEFAULT_ADMIN_ROLE).
     #[constructor]
     fn constructor(ref self: ContractState, token_addr: ContractAddress, admin: ContractAddress) {
         self.token_addr.write(token_addr);
@@ -192,6 +213,24 @@ pub mod Predifi {
 
     #[abi(embed_v0)]
     impl predifi of IPredifi<ContractState> {
+        /// @notice Creates a new prediction pool.
+        /// @dev Validates parameters, collects pool creation fee, and assigns validators.
+        /// @param poolName The name of the pool.
+        /// @param poolType The type of the pool (as u8).
+        /// @param poolDescription The description of the pool.
+        /// @param poolImage The image URL for the pool.
+        /// @param poolEventSourceUrl The event source URL.
+        /// @param poolStartTime The start time of the pool.
+        /// @param poolLockTime The lock time of the pool.
+        /// @param poolEndTime The end time of the pool.
+        /// @param option1 The first option for the pool.
+        /// @param option2 The second option for the pool.
+        /// @param minBetAmount The minimum bet amount.
+        /// @param maxBetAmount The maximum bet amount.
+        /// @param creatorFee The fee percentage for the pool creator.
+        /// @param isPrivate Whether the pool is private.
+        /// @param category The category of the pool.
+        /// @return The unique pool ID.
         fn create_pool(
             ref self: ContractState,
             poolName: felt252,
@@ -289,6 +328,8 @@ pub mod Predifi {
             pool_id
         }
 
+        /// @notice Cancels a pool. Only the pool creator can cancel.
+        /// @param pool_id The ID of the pool to cancel.
         fn cancel_pool(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
 
@@ -309,25 +350,39 @@ pub mod Predifi {
                 );
         }
 
-
+        /// @notice Returns the total number of pools.
+        /// @return The pool count.
         fn pool_count(self: @ContractState) -> u256 {
             self.pool_count.read()
         }
 
+        /// @notice Returns the creator address of a given pool.
+        /// @param pool_id The pool ID.
+        /// @return The creator's contract address.
         fn get_pool_creator(self: @ContractState, pool_id: u256) -> ContractAddress {
             let pool = self.pools.read(pool_id);
             pool.address
         }
 
+        /// @notice Returns the odds for a given pool.
+        /// @param pool_id The pool ID.
+        /// @return The PoolOdds struct.
         fn pool_odds(self: @ContractState, pool_id: u256) -> PoolOdds {
             self.pool_odds.read(pool_id)
         }
 
+        /// @notice Returns the details of a given pool.
+        /// @param pool_id The pool ID.
+        /// @return The PoolDetails struct.
         fn get_pool(self: @ContractState, pool_id: u256) -> PoolDetails {
             self.pools.read(pool_id)
         }
 
-        /// Manually update the state of a pool - can only be called by admin or validator
+        /// @notice Manually updates the state of a pool.
+        /// @dev Only callable by admin or validator. Enforces valid state transitions.
+        /// @param pool_id The pool ID.
+        /// @param new_status The new status to set.
+        /// @return The updated status.
         fn manually_update_pool_state(
             ref self: ContractState, pool_id: u256, new_status: Status,
         ) -> Status {
@@ -380,6 +435,10 @@ pub mod Predifi {
             new_status
         }
 
+        /// @notice Places a bet on a pool.
+        /// @param pool_id The pool ID.
+        /// @param option The option to bet on.
+        /// @param amount The amount to bet.
         fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) {
             self.pausable.assert_not_paused();
 
@@ -451,6 +510,9 @@ pub mod Predifi {
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
 
+        /// @notice Stakes tokens to become a validator for a pool.
+        /// @param pool_id The pool ID.
+        /// @param amount The amount to stake.
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
             self.pausable.assert_not_paused();
 
@@ -488,6 +550,8 @@ pub mod Predifi {
         }
 
 
+        /// @notice Refunds the user's stake for a closed pool.
+        /// @param pool_id The pool ID.
         fn refund_stake(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
 
@@ -523,18 +587,27 @@ pub mod Predifi {
         }
 
 
-        /// Returns whether a user has participated in a specific pool
+        /// @notice Returns whether a user has participated in a specific pool.
+        /// @param user The user's address.
+        /// @param pool_id The pool ID.
+        /// @return True if the user has participated, false otherwise.
         fn has_user_participated_in_pool(
             self: @ContractState, user: ContractAddress, pool_id: u256,
         ) -> bool {
             self.user_participated_pools.read((user, pool_id))
         }
 
-        /// Returns the number of pools a user has participated in
+        /// @notice Returns the number of pools a user has participated in.
+        /// @param user The user's address.
+        /// @return The number of pools.
         fn get_user_pool_count(self: @ContractState, user: ContractAddress) -> u256 {
             self.user_pool_count.read(user)
         }
 
+        /// @notice Returns a list of pool IDs the user has participated in, filtered by status.
+        /// @param user The user's address.
+        /// @param status_filter Optional status filter.
+        /// @return Array of pool IDs.
         fn get_user_pools(
             self: @ContractState, user: ContractAddress, status_filter: Option<Status>,
         ) -> Array<u256> {
@@ -570,56 +643,86 @@ pub mod Predifi {
             result
         }
 
-        /// Returns a list of active pools the user has participated in
+        /// @notice Returns a list of active pools the user has participated in.
+        /// @param user The user's address.
+        /// @return Array of pool IDs.
         fn get_user_active_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
             self.get_user_pools(user, Option::Some(Status::Active))
         }
 
-        /// Returns a list of locked pools the user has participated in
+        /// @notice Returns a list of locked pools the user has participated in.
+        /// @param user The user's address.
+        /// @return Array of pool IDs.
         fn get_user_locked_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
             self.get_user_pools(user, Option::Some(Status::Locked))
         }
 
-        /// Returns a list of settled pools the user has participated in
+        /// @notice Returns a list of settled pools the user has participated in.
+        /// @param user The user's address.
+        /// @return Array of pool IDs.
         fn get_user_settled_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
             self.get_user_pools(user, Option::Some(Status::Settled))
         }
 
 
-        // Check if a user has participated in a specific pool
+        /// @notice Checks if a user has participated in a specific pool.
+        /// @param user The user's address.
+        /// @param pool_id The pool ID.
+        /// @return True if participated, false otherwise.
         fn check_user_participated(
             self: @ContractState, user: ContractAddress, pool_id: u256,
         ) -> bool {
             self.user_pools.read((user, pool_id))
         }
 
+        /// @notice Returns the user's stake for a given pool.
+        /// @param pool_id The pool ID.
+        /// @param address The user's address.
+        /// @return The UserStake struct.
         fn get_user_stake(
             self: @ContractState, pool_id: u256, address: ContractAddress,
         ) -> UserStake {
             self.user_stakes.read((pool_id, address))
         }
+
+        /// @notice Returns the stake for a given pool.
+        /// @param pool_id The pool ID.
+        /// @return The UserStake struct.
         fn get_pool_stakes(self: @ContractState, pool_id: u256) -> UserStake {
             self.pool_stakes.read(pool_id)
         }
 
+        /// @notice Returns the vote for a given pool.
+        /// @param pool_id The pool ID.
+        /// @return True if option2, false if option1.
         fn get_pool_vote(self: @ContractState, pool_id: u256) -> bool {
             self.pool_vote.read(pool_id)
         }
+
+        /// @notice Returns the total pool count.
+        /// @return The pool count.
         fn get_pool_count(self: @ContractState) -> u256 {
             self.pool_count.read()
         }
 
-
+        /// @notice Returns true if the pool exists.
+        /// @param pool_id The pool ID.
+        /// @return True if the pool exists.
         fn retrieve_pool(self: @ContractState, pool_id: u256) -> bool {
             let pool = self.pools.read(pool_id);
             pool.exists
         }
 
+        /// @notice Returns the creator fee percentage for a pool.
+        /// @param pool_id The pool ID.
+        /// @return The creator fee percentage.
         fn get_creator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
             let pool = self.pools.read(pool_id);
             pool.creatorFee
         }
 
+        /// @notice Collects the pool creation fee from the creator.
+        /// @param creator The creator's address.
         fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
             // Retrieve the STRK token contract
             let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
@@ -637,22 +740,26 @@ pub mod Predifi {
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
         }
 
-        // Get active pools
+        /// @notice Returns all active pools.
+        /// @return Array of PoolDetails.
         fn get_active_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Active)
         }
 
-        // Get locked pools
+        /// @notice Returns all locked pools.
+        /// @return Array of PoolDetails.
         fn get_locked_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Locked)
         }
 
-        // Get settled pools
+        /// @notice Returns all settled pools.
+        /// @return Array of PoolDetails.
         fn get_settled_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Settled)
         }
 
-        // Get closed pools
+        /// @notice Returns all closed pools.
+        /// @return Array of PoolDetails.
         fn get_closed_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Closed)
         }
@@ -660,7 +767,9 @@ pub mod Predifi {
 
     #[abi(embed_v0)]
     impl dispute of IPredifiDispute<ContractState> {
-        // dispute functions
+        /// @notice Raises a dispute for a pool.
+        /// @dev Emits DisputeRaised and may suspend the pool if threshold is met.
+        /// @param pool_id The pool ID.
         fn raise_dispute(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
 
@@ -717,6 +826,10 @@ pub mod Predifi {
             }
         }
 
+        /// @notice Resolves a dispute and restores pool status.
+        /// @dev Only callable by admin. Emits DisputeResolved and PoolStateTransition.
+        /// @param pool_id The pool ID.
+        /// @param winning_option The winning option (true = option2, false = option1).
         fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
             self.pausable.assert_not_paused();
 
@@ -754,27 +867,44 @@ pub mod Predifi {
                 );
         }
 
+        /// @notice Returns the dispute count for a pool.
+        /// @param pool_id The pool ID.
+        /// @return The dispute count.
         fn get_dispute_count(self: @ContractState, pool_id: u256) -> u256 {
             self.pool_dispute_count.read(pool_id)
         }
 
+        /// @notice Returns the dispute threshold.
+        /// @return The dispute threshold.
         fn get_dispute_threshold(self: @ContractState) -> u256 {
             self.dispute_threshold.read()
         }
 
+        /// @notice Returns whether a user has disputed a pool.
+        /// @param pool_id The pool ID.
+        /// @param user The user's address.
+        /// @return True if user has disputed, false otherwise.
         fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
             self.pool_dispute_users.read((pool_id, user))
         }
 
+        /// @notice Returns whether a pool is suspended.
+        /// @param pool_id The pool ID.
+        /// @return True if suspended, false otherwise.
         fn is_pool_suspended(self: @ContractState, pool_id: u256) -> bool {
             let pool = self.pools.read(pool_id);
             pool.status == Status::Suspended
         }
 
+        /// @notice Returns all suspended pools.
+        /// @return Array of PoolDetails.
         fn get_suspended_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Suspended)
         }
 
+        /// @notice Validates an outcome for a pool.
+        /// @param pool_id The pool ID.
+        /// @param outcome The outcome to validate.
         fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
             self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
@@ -782,6 +912,9 @@ pub mod Predifi {
             assert(pool.status != Status::Suspended, POOL_SUSPENDED);
         }
 
+        /// @notice Claims reward for a pool.
+        /// @param pool_id The pool ID.
+        /// @return The claimed reward amount.
         fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
             self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
@@ -793,7 +926,11 @@ pub mod Predifi {
 
     #[abi(embed_v0)]
     impl validator of IPredifiValidator<ContractState> {
-        // Pool validation functionality
+        /// @notice Validates the result of a pool.
+        /// @dev Only callable by validators. Emits ValidatorResultSubmitted and may settle the
+        /// pool.
+        /// @param pool_id The pool ID.
+        /// @param selected_option The selected option (true = option2, false = option1).
         fn validate_pool_result(ref self: ContractState, pool_id: u256, selected_option: bool) {
             self.pausable.assert_not_paused();
 
@@ -892,12 +1029,9 @@ pub mod Predifi {
             }
         }
 
-        // @notice gets pool validation status
-        // @param pool_id The ID of the pool to check
-        // @return A tuple containing the validation count, whether the pool is settled, and the
-        // final outcome @dev This function checks the number of validations, whether the pool is
-        // settled, and the final outcome @dev It is used to determine if the pool has reached the
-        // required number of confirmations for settlement
+        /// @notice Gets pool validation status.
+        /// @param pool_id The ID of the pool to check.
+        /// @return (validation count, is settled, final outcome).
         fn get_pool_validation_status(self: @ContractState, pool_id: u256) -> (u256, bool, bool) {
             let validation_count = self.pool_validation_count.read(pool_id);
             let required_confirmations = self.required_validator_confirmations.read();
@@ -907,13 +1041,10 @@ pub mod Predifi {
             (validation_count, is_settled, final_outcome)
         }
 
-        // @notice gets validator confirmation status
-        // @param pool_id The ID of the pool to check
-        // @param validator The address of the validator to check
-        // @return A tuple containing whether the validator has confirmed and their selected option
-        // @dev This function checks if a specific validator has confirmed their validation for a
-        // pool @dev It is used to track individual validator confirmations and their selected
-        // options
+        /// @notice Gets validator confirmation status.
+        /// @param pool_id The ID of the pool to check.
+        /// @param validator The address of the validator to check.
+        /// @return (has confirmed, selected option).
         fn get_validator_confirmation(
             self: @ContractState, pool_id: u256, validator: ContractAddress,
         ) -> (bool, bool) {
@@ -923,10 +1054,9 @@ pub mod Predifi {
             (has_validated, selected_option)
         }
 
-        // @notice sets the required number of validator confirmations for a pool
-        // @param count The number of confirmations required
-        // @dev This function allows the admin to set the number of required confirmations for a
-        // pool
+        /// @notice Sets the required number of validator confirmations for a pool.
+        /// @dev Only callable by admin.
+        /// @param count The number of confirmations required.
         fn set_required_validator_confirmations(ref self: ContractState, count: u256) {
             self.pausable.assert_not_paused();
 
@@ -936,12 +1066,18 @@ pub mod Predifi {
             self.required_validator_confirmations.write(count);
         }
 
+        /// @notice Gets the validators assigned to a pool.
+        /// @param pool_id The pool ID.
+        /// @return (validator1, validator2).
         fn get_pool_validators(
             self: @ContractState, pool_id: u256,
         ) -> (ContractAddress, ContractAddress) {
             self.pool_validator_assignments.read(pool_id)
         }
 
+        /// @notice Assigns random validators to a pool.
+        /// @dev Internal function.
+        /// @param pool_id The pool ID.
         fn assign_random_validators(ref self: ContractState, pool_id: u256) {
             // Get the number of available validators
             let validator_count = self.validators.len();
@@ -979,6 +1115,11 @@ pub mod Predifi {
             self.assign_validators(pool_id, validator1, validator2);
         }
 
+        /// @notice Assigns specific validators to a pool.
+        /// @dev Internal function.
+        /// @param pool_id The pool ID.
+        /// @param validator1 The first validator.
+        /// @param validator2 The second validator.
         fn assign_validators(
             ref self: ContractState,
             pool_id: u256,
@@ -995,6 +1136,9 @@ pub mod Predifi {
                 );
         }
 
+        /// @notice Adds a validator.
+        /// @dev Only callable by admin.
+        /// @param address The validator's address.
         fn add_validator(ref self: ContractState, address: ContractAddress) {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
@@ -1007,6 +1151,9 @@ pub mod Predifi {
             self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
         }
 
+        /// @notice Removes a validator.
+        /// @dev Only callable by admin.
+        /// @param address The validator's address.
         fn remove_validator(ref self: ContractState, address: ContractAddress) {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
@@ -1033,10 +1180,15 @@ pub mod Predifi {
             }
         }
 
+        /// @notice Checks if an address is a validator.
+        /// @param address The address to check.
+        /// @return True if validator, false otherwise.
         fn is_validator(self: @ContractState, address: ContractAddress) -> bool {
             self.accesscontrol.has_role(VALIDATOR_ROLE, address)
         }
 
+        /// @notice Returns all validators.
+        /// @return Array of validator addresses.
         fn get_all_validators(self: @ContractState) -> Array<ContractAddress> {
             let mut validators = array![];
 
@@ -1047,6 +1199,10 @@ pub mod Predifi {
             validators
         }
 
+        /// @notice Calculates the validator fee for a pool.
+        /// @param pool_id The pool ID.
+        /// @param total_amount The total amount to calculate fee from.
+        /// @return The validator fee.
         fn calculate_validator_fee(
             ref self: ContractState, pool_id: u256, total_amount: u256,
         ) -> u256 {
@@ -1058,7 +1214,8 @@ pub mod Predifi {
             validator_fee
         }
 
-        // Helper function to distribute validator fees evenly
+        /// @notice Distributes validator fees for a pool.
+        /// @param pool_id The pool ID.
         fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
             let total_validator_fee = self.validator_fee.read(pool_id);
 
@@ -1086,15 +1243,21 @@ pub mod Predifi {
             self.validator_fee.write(pool_id, 0);
         }
 
+        /// @notice Retrieves the validator fee for a pool.
+        /// @param pool_id The pool ID.
+        /// @return The validator fee.
         fn retrieve_validator_fee(self: @ContractState, pool_id: u256) -> u256 {
             self.validator_fee.read(pool_id)
         }
 
+        /// @notice Gets the validator fee percentage for a pool.
+        /// @param pool_id The pool ID.
+        /// @return The validator fee percentage.
         fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
             10_u8
         }
 
-        /// @notice Pauses all state-changing operations in the contract
+        /// @notice Pauses all state-changing operations in the contract.
         /// @dev Can only be called by admin. Emits Paused event on success.
         fn pause(ref self: ContractState) {
             // Check if caller has appropriate role (admin)
@@ -1127,9 +1290,9 @@ pub mod Predifi {
 
     #[generate_trait]
     impl Private of PrivateTrait {
-        /// Generates a deterministic `u256` with 6 decimal places.
-        /// Combines block number, timestamp, and sender address for uniqueness.
-
+        /// @notice Generates a deterministic `u256` with 6 decimal places.
+        /// @dev Combines block number, timestamp, and sender address for uniqueness.
+        /// @return A deterministic u256 value.
         fn generate_deterministic_number(ref self: ContractState) -> u256 {
             let nonce: felt252 = self.nonce.read();
             let nonci: felt252 = self.save_user_with_pedersen(nonce);
@@ -1158,7 +1321,9 @@ pub mod Predifi {
             remainder
         }
 
-
+        /// @notice Saves user data using Pedersen hash.
+        /// @param salt The salt value.
+        /// @return The Pedersen hash.
         fn save_user_with_pedersen(ref self: ContractState, salt: felt252) -> felt252 {
             let username: felt252 = salt;
             let id: felt252 = get_caller_address().into();
@@ -1171,6 +1336,12 @@ pub mod Predifi {
             self.user_hash_pedersen.write(pedersen_hash);
             pedersen_hash
         }
+
+        /// @notice Calculates shares for a bet.
+        /// @param amount The bet amount.
+        /// @param total_stake_selected_option Total stake for selected option.
+        /// @param total_stake_other_option Total stake for other option.
+        /// @return The calculated shares.
         fn calculate_shares(
             ref self: ContractState,
             amount: u256,
@@ -1187,6 +1358,11 @@ pub mod Predifi {
             shares
         }
 
+        /// @notice Calculates odds for a pool.
+        /// @param pool_id The pool ID.
+        /// @param total_stake_option1 Total stake for option 1.
+        /// @param total_stake_option2 Total stake for option 2.
+        /// @return The PoolOdds struct.
         fn calculate_odds(
             ref self: ContractState,
             pool_id: u256,
@@ -1251,8 +1427,10 @@ pub mod Predifi {
             }
         }
 
-        /// Tracks user participation in a pool
-        /// This function is called when a user votes or stakes in a pool
+        /// @notice Tracks user participation in a pool.
+        /// @dev Called when a user votes or stakes in a pool.
+        /// @param user The user's address.
+        /// @param pool_id The pool ID.
         fn track_user_participation(ref self: ContractState, user: ContractAddress, pool_id: u256) {
             // Check if this is a new participation
             if !self.user_participated_pools.read((user, pool_id)) {
@@ -1270,6 +1448,9 @@ pub mod Predifi {
             }
         }
 
+        /// @notice Returns pools by status.
+        /// @param status The pool status.
+        /// @return Array of PoolDetails.
         fn get_pools_by_status(self: @ContractState, status: Status) -> Array<PoolDetails> {
             let mut result = array![];
             let len = self.pool_ids.len();
@@ -1289,7 +1470,10 @@ pub mod Predifi {
             result
         }
 
-        // Helper functions to calculate the validation consensus
+        /// @notice Calculates the validation consensus for a pool.
+        /// @param pool_id The pool ID.
+        /// @param total_validations The total number of validations.
+        /// @return True if option2 wins, false if option1 wins.
         fn calculate_validation_consensus(
             self: @ContractState, pool_id: u256, total_validations: u256,
         ) -> bool {
@@ -1320,6 +1504,10 @@ pub mod Predifi {
             option2_votes > option1_votes
         }
 
+        /// @notice Calculates the total payout for a pool.
+        /// @param pool_id The pool ID.
+        /// @param winning_option The winning option.
+        /// @return The total payout amount.
         fn calculate_total_payout(
             self: @ContractState, pool_id: u256, winning_option: bool,
         ) -> u256 {
@@ -1338,6 +1526,9 @@ pub mod Predifi {
             total_payout
         }
 
+        /// @notice Collects the pool creation fee from the creator.
+        /// @dev Transfers 1 STRK from creator to contract.
+        /// @param creator The creator's address.
         fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
             // Retrieve the STRK token contract
             let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
@@ -1355,6 +1546,10 @@ pub mod Predifi {
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
         }
 
+        /// @notice Calculates the validator fee for a pool.
+        /// @param pool_id The pool ID.
+        /// @param total_amount The total amount to calculate fee from.
+        /// @return The validator fee.
         fn calculate_validator_fee(
             ref self: ContractState, pool_id: u256, total_amount: u256,
         ) -> u256 {
@@ -1366,6 +1561,8 @@ pub mod Predifi {
             validator_fee
         }
 
+        /// @notice Distributes validator fees for a pool.
+        /// @param pool_id The pool ID.
         fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
             let total_validator_fee = self.validator_fee.read(pool_id);
 

@@ -10,6 +10,39 @@ In our fast-paced digital age, conversations about predictions are captivating; 
 
 PrediFi makes it easy to create prediction pools for a wide range of cultural and local events. You can set up pools for major sports championships and awards shows, but that's just the beginning. It's also perfect for engaging with the latest viral trends, community events, environmental happenings, and anything else that sparks buzz in your area. Whether it’s predicting the outcome of a local music festival or the next viral sensation.
 
+## Contract Structure
+
+The PrediFi protocol is modular and organized for clarity, security, and extensibility. Below is an overview of the main contract files and their purposes:
+
+- `src/predifi.cairo`: Main contract logic, including pool management, staking, validation, and dispute resolution.
+- `src/interfaces/IERC20.cairo`: ERC20 token interface for STRK and other tokens.
+- `src/interfaces/ipredifi.cairo`: Main protocol interface, including pool management, dispute, and validator traits.
+- `src/interfaces/iUtils.cairo`: Utility interface (e.g., for price feeds).
+- `src/base/types.cairo`: Enums and structs for pools, statuses, categories, odds, stakes, and validators.
+- `src/base/events.cairo`: All protocol events (e.g., BetPlaced, UserStaked, PoolResolved).
+- `src/base/errors.cairo`: Centralized error messages and codes for all protocol operations.
+
+## Developer Documentation & NatSpec
+
+All public and external functions, types, and events are documented using Cairo NatSpec comments for auditability and developer clarity.
+
+**Example:**
+```cairo
+/// @notice Places a bet on a pool.
+/// @dev Transfers tokens from user, updates odds, and emits BetPlaced event.
+/// @param pool_id The pool ID.
+/// @param option The option to bet on.
+/// @param amount The amount to bet.
+fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) { ... }
+```
+
+**Guidelines:**
+- Use `@notice` for a summary of the function/type/event.
+- Use `@dev` for developer/auditor notes.
+- Use `@param` and `@return` for all parameters and return values.
+- All new public/external functions must include NatSpec comments.
+
+
 ## Development:
 
 Requirements:
@@ -105,6 +138,7 @@ Before submitting your PR:
 - Write clean, readable, and maintainable code
 - Include comments for complex logic
 - Keep commits focused and atomic
+- **All new public/external functions must include NatSpec comments**
 
 ## Support
 
@@ -114,3 +148,10 @@ Need help with your contribution? You can:
 - Check existing documentation and discussions
 
 We aim to review all contributions promptly and appreciate your efforts to improve the project!
+
+## Security & Auditing
+
+- All critical logic is documented with NatSpec.
+- Please report vulnerabilities responsibly.
+
+**For more details, see the inline NatSpec documentation in each contract file.**
