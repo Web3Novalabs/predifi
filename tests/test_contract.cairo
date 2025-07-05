@@ -3389,7 +3389,7 @@ fn test_raise_dispute_already_disputed() {
 }
 
 #[test]
-#[should_panic(expected: 'Pool is inactive')]
+#[should_panic(expected: 'Pool does not exist')]
 fn test_raise_dispute_nonexistent_pool() {
     let (_, dispute_contract, _, pool_creator, _erc20_address) = deploy_predifi();
 
