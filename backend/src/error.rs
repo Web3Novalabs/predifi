@@ -24,14 +24,14 @@ pub enum AppError {
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            AppError::Database(e) => write!(f, "Database error: {}", e),
-            AppError::Configuration(msg) => write!(f, "Configuration error: {}", msg),
-            AppError::Internal(msg) => write!(f, "Internal error: {}", msg),
-            AppError::BadRequest(msg) => write!(f, "Bad request: {}", msg),
-            AppError::NotFound(msg) => write!(f, "Not found: {}", msg),
-            AppError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
-            AppError::Forbidden(msg) => write!(f, "Forbidden: {}", msg),
-            AppError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {}", msg),
+            AppError::Database(e) => write!(f, "Database error: {e}"),
+            AppError::Configuration(msg) => write!(f, "Configuration error: {msg}"),
+            AppError::Internal(msg) => write!(f, "Internal error: {msg}"),
+            AppError::BadRequest(msg) => write!(f, "Bad request: {msg}"),
+            AppError::NotFound(msg) => write!(f, "Not found: {msg}"),
+            AppError::Unauthorized(msg) => write!(f, "Unauthorized: {msg}"),
+            AppError::Forbidden(msg) => write!(f, "Forbidden: {msg}"),
+            AppError::ServiceUnavailable(msg) => write!(f, "Service unavailable: {msg}"),
         }
     }
 }
@@ -176,7 +176,7 @@ impl AppError {
             "Creating internal error with context"
         );
 
-        AppError::Internal(format!("{}: {}", context, message))
+        AppError::Internal(format!("{context}: {message}"))
     }
 
     #[allow(dead_code)]
@@ -189,6 +189,6 @@ impl AppError {
             "Creating configuration error with context"
         );
 
-        AppError::Configuration(format!("{}: {}", context, message))
+        AppError::Configuration(format!("{context}: {message}"))
     }
 }

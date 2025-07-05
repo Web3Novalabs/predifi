@@ -21,7 +21,7 @@ async fn main() {
     // Initialize structured logging with OpenTelemetry
     let tracing_config = TracingConfig::from_env();
     if let Err(e) = init_tracing(&tracing_config) {
-        eprintln!("Failed to initialize tracing: {}", e);
+        eprintln!("Failed to initialize tracing: {e}");
         std::process::exit(1);
     }
 
@@ -128,7 +128,7 @@ async fn ping_handler(State(state): State<AppState>, headers: HeaderMap) -> AppR
 
         let start_time = std::time::Instant::now();
 
-        let result = match state.db.ping().await {
+        match state.db.ping().await {
             Ok(val) => {
                 let response = format!("pong: {val}");
                 let (success_trace_id, success_span_id) =
@@ -167,9 +167,7 @@ async fn ping_handler(State(state): State<AppState>, headers: HeaderMap) -> AppR
                 let app_error = AppError::database_with_context(e, "ping request");
                 Err(app_error)
             }
-        };
-
-        result
+        }
     }
     .instrument(span)
     .await
@@ -210,7 +208,7 @@ async fn health_handler(
 
         let start_time = std::time::Instant::now();
 
-        let result = match state.db.ping().await {
+        match state.db.ping().await {
             Ok(_) => {
                 let (success_trace_id, success_span_id) =
                     get_trace_context().unwrap_or(("unknown".to_string(), "unknown".to_string()));
@@ -249,9 +247,7 @@ async fn health_handler(
                 let app_error = AppError::database_with_context(e, "health check");
                 Err(app_error)
             }
-        };
-
-        result
+        }
     }
     .instrument(span)
     .await
