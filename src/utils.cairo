@@ -1,6 +1,5 @@
 #[starknet::contract]
 pub mod Utils {
-
     use core::traits::TryInto;
     use pragma_lib::abi::{IPragmaABIDispatcher, IPragmaABIDispatcherTrait};
     use pragma_lib::types::{DataType, PragmaPricesResponse};

@@ -10,7 +10,6 @@ pub mod Predifi {
     use openzeppelin::security::PausableComponent;
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use openzeppelin::upgrades::UpgradeableComponent;
-
     use starknet::storage::{
         Map, MutableVecTrait, StorageMapReadAccess, StorageMapWriteAccess, StoragePointerReadAccess,
         StoragePointerWriteAccess, Vec, VecTrait,
@@ -25,11 +24,11 @@ pub mod Predifi {
         StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved, ValidatorResultSubmitted,
         ValidatorsAssigned,
     };
+    use crate::base::security::{Security, SecurityTrait};
 
     // package imports
     use crate::base::types::{Category, PoolDetails, PoolOdds, Status, UserStake, u8_to_pool};
     use crate::interfaces::ipredifi::{IPredifi, IPredifiDispute, IPredifiValidator};
-    use crate::base::security::{SecurityTrait, Security};
 
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -383,7 +382,7 @@ pub mod Predifi {
             self.pausable.assert_not_paused();
 
             let pool = self.pools.read(pool_id);
-            
+
             // Validation checks using SecurityTrait
             self.assert_pool_exists(@pool);
 
@@ -429,7 +428,7 @@ pub mod Predifi {
             let pool = self.pools.read(pool_id);
             let option1: felt252 = pool.option1;
             let option2: felt252 = pool.option2;
-            
+
             // Validation checks using SecurityTrait
             self.assert_valid_pool_option(option, option1, option2);
             self.assert_pool_not_suspended(@pool);
@@ -499,11 +498,11 @@ pub mod Predifi {
             self.pausable.assert_not_paused();
 
             let pool = self.pools.read(pool_id);
-            
+
             // Validation checks using SecurityTrait
             self.assert_pool_not_suspended(@pool);
             self.assert_min_stake_amount(amount);
-            
+
             let address: ContractAddress = get_caller_address();
 
             // Transfer stake amount from user to contract
@@ -539,10 +538,10 @@ pub mod Predifi {
 
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
-            
+
             // Validation checks using SecurityTrait
             self.assert_pool_closed(@pool);
-            
+
             let user_stake = self.get_user_stake(pool_id, caller);
             self.assert_non_zero_stake(user_stake.amount);
 
@@ -754,7 +753,7 @@ pub mod Predifi {
             self.pausable.assert_not_paused();
 
             let pool = self.pools.read(pool_id);
-            
+
             // Validation checks using SecurityTrait
             self.assert_pool_exists(@pool);
             self.assert_pool_not_suspended(@pool);
@@ -816,7 +815,7 @@ pub mod Predifi {
 
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             let pool = self.pools.read(pool_id);
-            
+
             // Validation checks using SecurityTrait
             self.assert_pool_exists(@pool);
             self.assert_pool_suspended(@pool);
@@ -891,7 +890,7 @@ pub mod Predifi {
         fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
             self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
-            
+
             // Validation checks using SecurityTrait
             self.assert_pool_exists(@pool);
             self.assert_pool_not_suspended(@pool);
@@ -903,7 +902,7 @@ pub mod Predifi {
         fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
             self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
-            
+
             // Validation checks using SecurityTrait
             self.assert_pool_exists(@pool);
             self.assert_pool_not_suspended(@pool);
