@@ -2,6 +2,10 @@ use axum::{Router, extract::State, http::HeaderMap, routing::get};
 use std::net::SocketAddr;
 use tower_http::request_id::MakeRequestUuid;
 use tracing::Instrument;
+use tokio::signal;
+#[cfg(unix)]
+use tokio::signal::unix::{SignalKind, signal as unix_signal};
+
 
 mod config;
 mod db;

@@ -1,5 +1,5 @@
 use starknet::{ClassHash, ContractAddress};
-use crate::base::types::{Category, Pool, PoolDetails, PoolOdds, Status, UserStake};
+use crate::base::types::{Category, PoolDetails, PoolOdds, Status, UserStake};
 
 #[starknet::interface]
 pub trait IPredifi<TContractState> {
