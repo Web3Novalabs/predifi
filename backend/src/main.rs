@@ -1,11 +1,18 @@
-use axum::{Router, extract::State, http::HeaderMap, routing::get};
+pub mod error;
+
+use axum::{
+    extract::State, 
+    http::{HeaderMap, StatusCode}, 
+    response::IntoResponse,
+    routing::get, 
+    Router
+};
 use std::net::SocketAddr;
 use tower_http::request_id::MakeRequestUuid;
 use tracing::Instrument;
 
 mod config;
 mod db;
-mod error;
 use config::db_config::DbConfig;
 use config::tracing::{TracingConfig, get_trace_context, init_tracing, shutdown_tracing};
 use db::database::Database;
@@ -17,13 +24,13 @@ struct AppState {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), AppError> {
     // Initialize structured logging with OpenTelemetry
     let tracing_config = TracingConfig::from_env();
-    if let Err(e) = init_tracing(&tracing_config) {
-        eprintln!("Failed to initialize tracing: {e}");
-        std::process::exit(1);
-    }
+    init_tracing(&tracing_config).map_err(|e| {
+        eprintln!("Failed to initialize tracing: {}", e);
+        AppError::Internal(format!("Tracing initialization failed: {}", e))
+    })?;
 
     let config = DbConfig::from_env();
     let db = Database::connect(&config).await;
@@ -45,7 +52,7 @@ async fn main() {
                 "Failed to connect to database"
             );
             shutdown_tracing();
-            std::process::exit(1);
+            return Err(AppError::Internal(format!("Database connection failed: {}", e)));
         }
     }
 
@@ -94,6 +101,7 @@ async fn main() {
 
     tracing::info!(event = "server_shutdown", "Server shutdown complete");
     shutdown_tracing();
+    Ok(())
 }
 
 async fn ping_handler(State(state): State<AppState>, headers: HeaderMap) -> AppResult<String> {
@@ -176,7 +184,7 @@ async fn ping_handler(State(state): State<AppState>, headers: HeaderMap) -> AppR
 async fn health_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
-) -> AppResult<&'static str> {
+) -> AppResult<impl IntoResponse> {
     let request_id = headers
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
@@ -225,7 +233,7 @@ async fn health_handler(
                     otel.span_id = success_span_id,
                     "Health check passed with OpenTelemetry correlation"
                 );
-                Ok("ok")
+                Ok((StatusCode::OK, "ok"))
             }
             Err(e) => {
                 let (error_trace_id, error_span_id) =
