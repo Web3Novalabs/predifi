@@ -28,8 +28,8 @@ async fn main() -> Result<(), AppError> {
     // Initialize structured logging with OpenTelemetry
     let tracing_config = TracingConfig::from_env();
     init_tracing(&tracing_config).map_err(|e| {
-        eprintln!("Failed to initialize tracing: {}", e);
-        AppError::Internal(format!("Tracing initialization failed: {}", e))
+        eprintln!("Failed to initialize tracing: {e}");
+        AppError::Internal(format!("Tracing initialization failed: {e}"))
     })?;
 
     let config = DbConfig::from_env();
@@ -53,8 +53,7 @@ async fn main() -> Result<(), AppError> {
             );
             shutdown_tracing();
             return Err(AppError::Internal(format!(
-                "Database connection failed: {}",
-                e
+                "Database connection failed: {e}"
             )));
         }
     }
