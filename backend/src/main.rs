@@ -1,11 +1,11 @@
 pub mod error;
 
 use axum::{
-    extract::State, 
-    http::{HeaderMap, StatusCode}, 
+    Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::get, 
-    Router
+    routing::get,
 };
 use std::net::SocketAddr;
 use tower_http::request_id::MakeRequestUuid;
@@ -52,7 +52,10 @@ async fn main() -> Result<(), AppError> {
                 "Failed to connect to database"
             );
             shutdown_tracing();
-            return Err(AppError::Internal(format!("Database connection failed: {}", e)));
+            return Err(AppError::Internal(format!(
+                "Database connection failed: {}",
+                e
+            )));
         }
     }
 
