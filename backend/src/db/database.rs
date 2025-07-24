@@ -10,6 +10,13 @@ pub struct Database {
 }
 
 impl Database {
+    /// Expose a reference to the connection pool for migrations and queries
+    pub fn pool(&self) -> &Pool<Postgres> {
+        &self.pool
+    }
+}
+
+impl Database {
     pub async fn connect(config: &DbConfig) -> Self {
         let connect_span = tracing::info_span!(
             "database_connect",

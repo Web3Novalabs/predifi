@@ -34,6 +34,11 @@ async fn main() -> Result<(), AppError> {
 
     let config = DbConfig::from_env();
     let db = Database::connect(&config).await;
+    // Run SQLX migrations after connecting to the database
+    sqlx::migrate!("./migrations")
+        .run(db.pool())
+        .await
+        .expect("Failed to run migrations");
 
     // Check DB connection at startup with structured logging
     match db.ping().await {
