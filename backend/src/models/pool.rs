@@ -1,3 +1,7 @@
+use bigdecimal::BigDecimal;
+use serde::{Deserialize, Serialize};
+use sqlx::Type;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct NewPool {
     pub market_id: i32,
@@ -17,8 +21,15 @@ pub struct NewPool {
     pub is_private: Option<bool>,
     pub category_id: Option<i32>,
 }
-use bigdecimal::BigDecimal;
-use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, Type, PartialEq, Eq, Clone, Copy)]
+#[sqlx(type_name = "pool_status")]
+pub enum PoolStatus {
+    Active,
+    Locked,
+    Settled,
+    Closed,
+}
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Pool {
@@ -39,6 +50,7 @@ pub struct Pool {
     pub creator_fee: Option<i16>,
     pub is_private: Option<bool>,
     pub category_id: Option<i32>,
+    pub status: PoolStatus,
 }
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]

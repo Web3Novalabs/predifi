@@ -2,6 +2,7 @@ use crate::models::pool::{NewPool, Pool, UserPool};
 use bigdecimal::BigDecimal;
 use sqlx::{Pool as SqlxPool, Postgres};
 
+#[allow(dead_code)]
 pub async fn create_pool(
     pool: &SqlxPool<Postgres>,
     new_pool: &NewPool,
@@ -30,6 +31,55 @@ pub async fn create_pool(
     .await
 }
 
+pub async fn get_pools_by_status(
+    pool: &SqlxPool<Postgres>,
+    status: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Pool>, sqlx::Error> {
+    sqlx::query_as::<_, Pool>(
+        "SELECT * FROM pool WHERE status = $1::pool_status ORDER BY id LIMIT $2 OFFSET $3",
+    )
+    .bind(status)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+}
+
+pub async fn get_active_pools(
+    pool: &SqlxPool<Postgres>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Pool>, sqlx::Error> {
+    get_pools_by_status(pool, "Active", limit, offset).await
+}
+
+pub async fn get_locked_pools(
+    pool: &SqlxPool<Postgres>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Pool>, sqlx::Error> {
+    get_pools_by_status(pool, "Locked", limit, offset).await
+}
+
+pub async fn get_settled_pools(
+    pool: &SqlxPool<Postgres>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Pool>, sqlx::Error> {
+    get_pools_by_status(pool, "Settled", limit, offset).await
+}
+
+pub async fn get_closed_pools(
+    pool: &SqlxPool<Postgres>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Pool>, sqlx::Error> {
+    get_pools_by_status(pool, "Closed", limit, offset).await
+}
+
+#[allow(dead_code)]
 pub async fn get_pool(pool: &SqlxPool<Postgres>, id: i32) -> Result<Pool, sqlx::Error> {
     sqlx::query_as::<_, Pool>("SELECT * FROM pool WHERE id = $1")
         .bind(id)
@@ -37,6 +87,7 @@ pub async fn get_pool(pool: &SqlxPool<Postgres>, id: i32) -> Result<Pool, sqlx::
         .await
 }
 
+#[allow(dead_code)]
 pub async fn create_user_pool(
     pool: &SqlxPool<Postgres>,
     user_id: &str,
@@ -53,6 +104,7 @@ pub async fn create_user_pool(
     .await
 }
 
+#[allow(dead_code)]
 pub async fn get_user_pool(pool: &SqlxPool<Postgres>, id: i32) -> Result<UserPool, sqlx::Error> {
     sqlx::query_as::<_, UserPool>("SELECT * FROM user_pool WHERE id = $1")
         .bind(id)

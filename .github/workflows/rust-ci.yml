@@ -39,9 +39,25 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     defaults:
       run:
         working-directory: ./backend
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost/testdb
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -63,5 +79,9 @@ jobs:
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-build-
+      - name: Run migrations
+        run: |
+          cargo install sqlx-cli --version 0.7.3
+          sqlx migrate run
       - name: Run tests
-        run: cargo test --all --release --locked 
+        run: cargo test --all --release --locked
