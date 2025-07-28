@@ -1,5 +1,5 @@
 use starknet::{ClassHash, ContractAddress};
-use crate::base::types::{Category, PoolDetails, PoolOdds, Status, UserStake};
+use crate::base::types::{PoolDetails, PoolOdds, Status, UserStake};
 
 #[starknet::interface]
 pub trait IPredifi<TContractState> {
@@ -39,7 +39,7 @@ pub trait IPredifi<TContractState> {
         maxBetAmount: u256,
         creatorFee: u8,
         isPrivate: bool,
-        category: Category,
+        category: u8,
     ) -> u256;
 
     /// @notice Cancels a pool. Only the pool creator can cancel.
@@ -125,7 +125,7 @@ pub trait IPredifi<TContractState> {
     /// @param new_status The new status to set.
     /// @return The updated status.
     fn manually_update_pool_state(
-        ref self: TContractState, pool_id: u256, new_status: Status,
+        ref self: TContractState, pool_id: u256, new_status: u8,
     ) -> Status;
 
     /// @notice Returns the number of pools a user has participated in.

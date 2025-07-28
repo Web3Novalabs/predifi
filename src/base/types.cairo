@@ -96,6 +96,46 @@ pub fn u8_to_pool(pool_type: u8) -> Pool {
     }
 }
 
+/// @notice Converts a u8 to a ValidateOptions enum.
+/// @param validate_option The validate option as u8.
+/// @return The ValidateOptions enum value.
+pub fn u8_to_validate_option(validate_option: u8) -> ValidateOptions {
+    match validate_option {
+        0 => ValidateOptions::Win,
+        1 => ValidateOptions::Loss,
+        2 => ValidateOptions::Void,
+        _ => panic!("Invalid validate option: must be 0-2"),
+    }
+}
+
+/// @notice Converts a u8 to a Category enum.
+/// @param category The category type as u8.
+/// @return The Category enum value.
+pub fn u8_to_category(category: u8) -> Category {
+    match category {
+        0 => Category::Sports,
+        1 => Category::Politics,
+        2 => Category::Entertainment,
+        3 => Category::Crypto,
+        4 => Category::Other,
+        _ => panic!("Invalid category: must be 0-4"),
+    }
+}
+
+/// @notice Converts a u8 to a Status enum.
+/// @param status The status type as u8.
+/// @return The Status enum value.
+pub fn u8_to_status(status: u8) -> Status {
+    match status {
+        0 => Status::Active,
+        1 => Status::Locked,
+        2 => Status::Settled,
+        3 => Status::Closed,
+        4 => Status::Suspended,
+        _ => panic!("Invalid status: must be 0-4"),
+    }
+}
+
 /// @notice Enum representing the category of a pool.
 #[derive(Copy, Drop, Serde, PartialEq, Debug, starknet::Store)]
 pub enum Category {

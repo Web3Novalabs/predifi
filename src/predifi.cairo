@@ -27,7 +27,9 @@ pub mod Predifi {
     use crate::base::security::{Security, SecurityTrait};
 
     // package imports
-    use crate::base::types::{Category, PoolDetails, PoolOdds, Status, UserStake, u8_to_pool};
+    use crate::base::types::{
+        PoolDetails, PoolOdds, Status, UserStake, u8_to_category, u8_to_pool, u8_to_status,
+    };
     use crate::interfaces::ipredifi::{IPredifi, IPredifiDispute, IPredifiValidator};
 
     // 1 STRK in WEI
@@ -242,7 +244,7 @@ pub mod Predifi {
             maxBetAmount: u256,
             creatorFee: u8,
             isPrivate: bool,
-            category: Category,
+            category: u8,
         ) -> u256 {
             self.pausable.assert_not_paused();
             // Convert u8 to Pool enum with validation
@@ -286,7 +288,7 @@ pub mod Predifi {
                 creatorFee,
                 status: Status::Active,
                 isPrivate,
-                category,
+                category: u8_to_category(category),
                 totalBetAmountStrk: 0_u256,
                 totalBetCount: 0_u8,
                 totalStakeOption1: 0_u256,
@@ -377,7 +379,7 @@ pub mod Predifi {
         /// @param new_status The new status to set.
         /// @return The updated status.
         fn manually_update_pool_state(
-            ref self: ContractState, pool_id: u256, new_status: Status,
+            ref self: ContractState, pool_id: u256, new_status: u8,
         ) -> Status {
             self.pausable.assert_not_paused();
 
@@ -396,26 +398,29 @@ pub mod Predifi {
             let current_status = pool.status;
 
             // Don't update if status is the same
-            if new_status == current_status {
+            if u8_to_status(new_status) == current_status {
                 return current_status;
             }
 
             // Check for invalid transitions using SecurityTrait
-            self.assert_valid_state_transition(current_status, new_status, is_admin);
+            self.assert_valid_state_transition(current_status, u8_to_status(new_status), is_admin);
 
             // Update the pool status
             let mut updated_pool = pool;
-            updated_pool.status = new_status;
+            updated_pool.status = u8_to_status(new_status);
             self.pools.write(pool_id, updated_pool);
 
             // Emit event for the manual state transition
             let current_time = get_block_timestamp();
             let transition_event = PoolStateTransition {
-                pool_id, previous_status: current_status, new_status, timestamp: current_time,
+                pool_id,
+                previous_status: current_status,
+                new_status: u8_to_status(new_status),
+                timestamp: current_time,
             };
             self.emit(Event::PoolStateTransition(transition_event));
 
-            new_status
+            u8_to_status(new_status)
         }
 
         /// @notice Places a bet on a pool.
