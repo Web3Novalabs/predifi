@@ -1,27 +1,22 @@
-pub mod error;
-
 use axum::{
     Router,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
 use std::net::SocketAddr;
 use tower_http::request_id::MakeRequestUuid;
 use tracing::Instrument;
 
-mod config;
-mod db;
-use config::db_config::DbConfig;
-use config::tracing::{TracingConfig, get_trace_context, init_tracing, shutdown_tracing};
-use db::database::Database;
-use error::{AppError, AppResult};
-
-#[derive(Clone)]
-struct AppState {
-    db: Database,
-}
+use backend::{
+    AppState,
+    config::db_config::DbConfig,
+    config::tracing::{TracingConfig, get_trace_context, init_tracing, shutdown_tracing},
+    db::database::Database,
+    error::{AppError, AppResult},
+    routes::market::{create_market_handler, get_market_handler},
+};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -68,6 +63,8 @@ async fn main() -> Result<(), AppError> {
     let app = Router::new()
         .route("/ping", get(ping_handler))
         .route("/health", get(health_handler))
+        .route("/markets", post(create_market_handler))
+        .route("/markets/:id", get(get_market_handler))
         .with_state(state)
         .layer(tower_http::request_id::SetRequestIdLayer::new(
             axum::http::header::HeaderName::from_static("x-request-id"),
