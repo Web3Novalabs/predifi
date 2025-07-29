@@ -20,9 +20,9 @@ use tracing::Instrument;
 
 use config::db_config::DbConfig;
 use config::tracing::{TracingConfig, get_trace_context, init_tracing, shutdown_tracing};
+use db::database::AppState;
 use db::database::Database;
 use error::{AppError, AppResult};
-use db::database::AppState;
 use routes::market::{create_market_handler, get_market_handler};
 
 #[tokio::main]
