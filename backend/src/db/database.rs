@@ -1,3 +1,7 @@
+#[derive(Clone)]
+pub struct AppState {
+    pub db: Database,
+}
 use crate::config::db_config::DbConfig;
 
 use sqlx::{Pool, Postgres};
@@ -6,7 +10,7 @@ use tracing::Instrument;
 
 #[derive(Clone)]
 pub struct Database {
-    pool: Pool<Postgres>,
+    pub pool: Pool<Postgres>,
 }
 
 impl Database {

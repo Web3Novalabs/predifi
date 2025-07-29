@@ -59,6 +59,16 @@ CREATE TABLE pool (
     category_id INTEGER REFERENCES market_category(id)
 );
 
+-- Add pool_status enum type
+DO $$ BEGIN
+    CREATE TYPE pool_status AS ENUM ('Active', 'Locked', 'Settled', 'Closed');
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
+ALTER TABLE pool ADD COLUMN status pool_status NOT NULL DEFAULT 'Active';
+CREATE INDEX idx_pool_status ON pool(status);
+
 CREATE TABLE user_pool (
     id SERIAL PRIMARY KEY,
     user_id TEXT NOT NULL,

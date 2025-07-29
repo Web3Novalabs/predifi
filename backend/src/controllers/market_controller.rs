@@ -1,6 +1,7 @@
 use crate::models::market::{Market, MarketCategory, MarketTag, MarketWithTags, NewMarket, Tag};
 use sqlx::{Pool, Postgres};
 
+#[allow(dead_code)]
 pub async fn create_market(
     pool: &Pool<Postgres>,
     name: &str,
@@ -94,6 +95,7 @@ pub async fn create_market_with_tags(
     Ok(MarketWithTags { market, tags })
 }
 
+#[allow(dead_code)]
 pub async fn get_market(pool: &Pool<Postgres>, id: i32) -> Result<Market, sqlx::Error> {
     sqlx::query_as::<_, Market>("SELECT * FROM market WHERE id = $1")
         .bind(id)
@@ -121,6 +123,7 @@ pub async fn get_market_with_tags(
     Ok(MarketWithTags { market, tags })
 }
 
+#[allow(dead_code)]
 pub async fn create_market_category(
     pool: &Pool<Postgres>,
     name: &str,
@@ -133,6 +136,7 @@ pub async fn create_market_category(
     .await
 }
 
+#[allow(dead_code)]
 pub async fn get_market_category(
     pool: &Pool<Postgres>,
     id: i32,
