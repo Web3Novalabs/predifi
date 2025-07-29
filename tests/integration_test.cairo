@@ -5,10 +5,8 @@ use contract::base::events::Events::{
 };
 use contract::base::types::{Category, Status};
 use contract::interfaces::ipredifi::{
-    IPredifi, IPredifiDispatcher, IPredifiDispatcherTrait, IPredifiDispute,
-    IPredifiDisputeDispatcher, IPredifiDisputeDispatcherTrait, IPredifiSafeDispatcher,
-    IPredifiSafeDispatcherTrait, IPredifiValidator, IPredifiValidatorDispatcher,
-    IPredifiValidatorDispatcherTrait,
+    IPredifiDispatcher, IPredifiDispatcherTrait, IPredifiDisputeDispatcher,
+    IPredifiDisputeDispatcherTrait, IPredifiValidatorDispatcher, IPredifiValidatorDispatcherTrait,
 };
 use contract::predifi::Predifi;
 use core::array::ArrayTrait;
@@ -20,10 +18,7 @@ use snforge_std::{
     start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
     stop_cheat_caller_address,
 };
-use starknet::{
-    ClassHash, ContractAddress, contract_address_const, get_block_timestamp, get_caller_address,
-    get_contract_address,
-};
+use starknet::{ContractAddress, get_block_timestamp};
 
 // Validator role
 const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
@@ -46,8 +41,8 @@ fn deploy_predifi() -> (
     ContractAddress,
     ContractAddress,
 ) {
-    let owner: ContractAddress = contract_address_const::<'owner'>();
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let owner: ContractAddress = 'owner'.try_into().unwrap();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // Deploy mock ERC20
     let erc20_class = declare("STARKTOKEN").unwrap().contract_class();
@@ -84,7 +79,7 @@ fn create_default_pool(contract: IPredifiDispatcher) -> u256 {
             10000,
             5,
             false,
-            Category::Sports,
+            0,
         )
 }
 
@@ -131,7 +126,7 @@ fn setup_tokens_and_approvals(
 
     // Distribute tokens and approve contract
     let mut i = 0;
-    while i < users.len() {
+    while i != users.len() {
         let user = *users.at(i);
         start_cheat_caller_address(erc20_address, POOL_CREATOR);
 
@@ -176,7 +171,7 @@ fn setup_pool_with_validators(erc20_address: ContractAddress) -> u256 {
         USER_ONE, USER_TWO, USER_THREE, VALIDATOR_ONE, VALIDATOR_TWO, VALIDATOR_THREE,
     ]
         .span();
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // Setup tokens first
     setup_tokens_and_approvals(erc20_address, contract.contract_address, users);
@@ -227,7 +222,7 @@ fn test_pool_creation_staking_dispute_resolution_flow() {
     let pool_id = create_default_pool(contract);
     stop_cheat_caller_address(contract.contract_address);
 
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // USER_ONE stakes to become validator
     start_cheat_caller_address(contract.contract_address, USER_ONE);
@@ -248,7 +243,7 @@ fn test_pool_creation_staking_dispute_resolution_flow() {
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
     start_cheat_caller_address(contract.contract_address, admin);
-    contract.manually_update_pool_state(pool_id, Status::Locked);
+    contract.manually_update_pool_state(pool_id, 1);
     stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
@@ -259,7 +254,7 @@ fn test_pool_creation_staking_dispute_resolution_flow() {
     // Raise disputes from multiple users
     let disputers = array![USER_ONE, USER_TWO, USER_THREE];
     let mut i = 0;
-    while i < disputers.len() {
+    while i != disputers.len() {
         let user = *disputers.at(i);
         start_cheat_caller_address(dispute_contract.contract_address, user);
         dispute_contract.raise_dispute(pool_id);
@@ -301,7 +296,7 @@ fn test_pool_voting_validation_settlement_flow() {
         USER_ONE, USER_TWO, USER_THREE, VALIDATOR_ONE, VALIDATOR_TWO, VALIDATOR_THREE,
     ]
         .span();
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // Setup tokens first
     setup_tokens_and_approvals(erc20_address, contract.contract_address, users);
@@ -332,7 +327,7 @@ fn test_pool_voting_validation_settlement_flow() {
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
     start_cheat_caller_address(contract.contract_address, admin);
-    contract.manually_update_pool_state(pool_id, Status::Locked);
+    contract.manually_update_pool_state(pool_id, 1);
     stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
@@ -395,7 +390,7 @@ fn test_full_lifecycle_with_dispute_and_settlement() {
     let pool_id = create_default_pool(contract);
     stop_cheat_caller_address(contract.contract_address);
 
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // User votes
     start_cheat_caller_address(contract.contract_address, USER_ONE);
@@ -405,14 +400,14 @@ fn test_full_lifecycle_with_dispute_and_settlement() {
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
     start_cheat_caller_address(contract.contract_address, admin);
-    contract.manually_update_pool_state(pool_id, Status::Locked);
+    contract.manually_update_pool_state(pool_id, 1);
     stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
     // Raise disputes to reach threshold
     let disputers = array![USER_ONE, USER_TWO, USER_THREE];
     let mut i = 0;
-    while i < disputers.len() {
+    while i != disputers.len() {
         let user = *disputers.at(i);
         start_cheat_caller_address(dispute_contract.contract_address, user);
         dispute_contract.raise_dispute(pool_id);
@@ -431,7 +426,7 @@ fn test_full_lifecycle_with_dispute_and_settlement() {
     // Advance time to end time for settlement
     start_cheat_block_timestamp(contract.contract_address, 1710007201);
     start_cheat_caller_address(contract.contract_address, admin);
-    contract.manually_update_pool_state(pool_id, Status::Settled);
+    contract.manually_update_pool_state(pool_id, 2);
     stop_cheat_caller_address(contract.contract_address);
     stop_cheat_block_timestamp(contract.contract_address);
 
@@ -450,7 +445,7 @@ fn test_full_lifecycle_with_dispute_and_settlement() {
 fn test_validator_consensus_with_conflicting_votes() {
     let (contract, _, validator_contract, _, erc20_address) = deploy_predifi();
     let mut spy = spy_events();
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // Set required confirmations to 3 so to test tie-breaking scenario
     start_cheat_caller_address(validator_contract.contract_address, admin);
@@ -491,7 +486,7 @@ fn test_validator_consensus_with_conflicting_votes() {
             10000,
             5,
             false,
-            Category::Sports,
+            0,
         );
     stop_cheat_caller_address(contract.contract_address);
 
@@ -503,7 +498,7 @@ fn test_validator_consensus_with_conflicting_votes() {
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
     start_cheat_caller_address(contract.contract_address, admin);
-    let new_status = contract.manually_update_pool_state(pool_id, Status::Locked);
+    let new_status = contract.manually_update_pool_state(pool_id, 1);
     assert(new_status == Status::Locked, 'Should return Locked status');
 
     // First validator votes for Team B (true)
@@ -551,7 +546,7 @@ fn test_validator_consensus_with_conflicting_votes() {
 fn test_validator_consensus_with_default_confirmations() {
     let (contract, _, validator_contract, _, erc20_address) = deploy_predifi();
     let mut spy = spy_events();
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // Setup tokens and approvals
     let users = array![USER_ONE, USER_TWO, VALIDATOR_ONE, VALIDATOR_TWO].span();
@@ -587,7 +582,7 @@ fn test_validator_consensus_with_default_confirmations() {
             10000,
             5,
             false,
-            Category::Sports,
+            0,
         );
     stop_cheat_caller_address(contract.contract_address);
 
@@ -599,7 +594,7 @@ fn test_validator_consensus_with_default_confirmations() {
     // Advance time and lock pool
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
     start_cheat_caller_address(contract.contract_address, admin);
-    contract.manually_update_pool_state(pool_id, Status::Locked);
+    contract.manually_update_pool_state(pool_id, 1);
     stop_cheat_caller_address(contract.contract_address);
 
     // First validator votes for Team B
@@ -637,7 +632,7 @@ fn test_validator_consensus_with_default_confirmations() {
 #[test]
 fn test_validator_conflict_with_two_confirmations() {
     let (contract, _, validator_contract, _, erc20_address) = deploy_predifi();
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // Setup tokens and approvals
     let users = array![USER_ONE, VALIDATOR_ONE, VALIDATOR_TWO].span();
@@ -672,7 +667,7 @@ fn test_validator_conflict_with_two_confirmations() {
             10000,
             5,
             false,
-            Category::Sports,
+            0,
         );
     stop_cheat_caller_address(contract.contract_address);
 
@@ -684,7 +679,7 @@ fn test_validator_conflict_with_two_confirmations() {
     // Lock pool
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
     start_cheat_caller_address(contract.contract_address, admin);
-    contract.manually_update_pool_state(pool_id, Status::Locked);
+    contract.manually_update_pool_state(pool_id, 1);
     stop_cheat_caller_address(contract.contract_address);
 
     // First validator votes Team B
@@ -789,7 +784,7 @@ fn test_multiple_users_voting_and_natural_settlement() {
         USER_ONE, USER_TWO, USER_THREE, VALIDATOR_ONE, VALIDATOR_TWO, VALIDATOR_THREE,
     ]
         .span();
-    let admin: ContractAddress = contract_address_const::<'admin'>();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
 
     // Setup tokens first
     setup_tokens_and_approvals(erc20_address, contract.contract_address, users);
@@ -828,7 +823,7 @@ fn test_multiple_users_voting_and_natural_settlement() {
     // Advance time to locked state
     start_cheat_block_timestamp(contract.contract_address, 1710003601);
     start_cheat_caller_address(contract.contract_address, admin);
-    let status = contract.manually_update_pool_state(pool_id, Status::Locked);
+    let status = contract.manually_update_pool_state(pool_id, 1);
     stop_cheat_caller_address(contract.contract_address);
     assert(status == Status::Locked, 'Should be locked');
     stop_cheat_block_timestamp(contract.contract_address);
@@ -853,7 +848,7 @@ fn test_multiple_users_voting_and_natural_settlement() {
     // Advance to settlement time
     start_cheat_block_timestamp(contract.contract_address, 1710007201);
     start_cheat_caller_address(contract.contract_address, admin);
-    let final_status = contract.manually_update_pool_state(pool_id, Status::Settled);
+    let final_status = contract.manually_update_pool_state(pool_id, 2);
     stop_cheat_caller_address(contract.contract_address);
     assert(final_status == Status::Settled, 'Should be settled');
     stop_cheat_block_timestamp(contract.contract_address);
