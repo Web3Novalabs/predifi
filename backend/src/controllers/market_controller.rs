@@ -147,12 +147,14 @@ pub async fn get_market_category(
         .await
 }
 
+#[allow(dead_code)]
 pub async fn get_all_tags(pool: &Pool<Postgres>) -> Result<Vec<Tag>, sqlx::Error> {
     sqlx::query_as::<_, Tag>("SELECT * FROM tags ORDER BY name")
         .fetch_all(pool)
         .await
 }
 
+#[allow(dead_code)]
 pub async fn get_tags_by_market_id(
     pool: &Pool<Postgres>,
     market_id: i32,

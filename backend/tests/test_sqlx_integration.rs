@@ -1,4 +1,4 @@
-use sqlx::{Executor, PgPool};
+use sqlx::PgPool;
 use std::env;
 
 #[tokio::test]
