@@ -1,4 +1,3 @@
-use dotenvy;
 use sqlx::{Executor, PgPool};
 use std::env;
 

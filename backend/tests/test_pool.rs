@@ -7,7 +7,6 @@ use backend::controllers::pool_controller::*;
 use backend::models::pool::{NewPool, Pool, PoolStatus};
 use backend::routes::pool_route::pool_routes;
 use bigdecimal::BigDecimal;
-use dotenvy;
 use sqlx::{PgPool, Row};
 use sqlx::{Pool as SqlxPool, Postgres};
 use std::env;
@@ -68,9 +67,9 @@ async fn test_pool_controller_functions() {
     for status in statuses.iter() {
         let row = sqlx::query("INSERT INTO pool (market_id, name, type, status) VALUES ($1, $2, $3, $4::pool_status) RETURNING id")
             .bind(market_id)
-            .bind(format!("Pool-{:?}", status))
+            .bind(format!("Pool-{status:?}"))
             .bind(1)
-            .bind(format!("{:?}", status))
+            .bind(format!("{status:?}"))
             .fetch_one(&pool)
             .await
             .expect("Insert pool failed");
@@ -162,7 +161,7 @@ async fn test_pools_routes() {
     for status in statuses.iter() {
         let row = sqlx::query("INSERT INTO pool (market_id, name, type, status) VALUES ($1, $2, $3, $4::pool_status) RETURNING id")
             .bind(market_id)
-            .bind(format!("Pool-{}", status))
+            .bind(format!("Pool-{status}"))
             .bind(1)
             .bind(*status)
             .fetch_one(&pool)
@@ -191,9 +190,7 @@ async fn test_pools_routes() {
         let body_str = std::str::from_utf8(&body).unwrap();
         assert!(
             body_str.contains(expected_status),
-            "Response for {} should contain status {}",
-            route,
-            expected_status
+            "Response for {route} should contain status {expected_status}"
         );
     }
 
