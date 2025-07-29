@@ -1,4 +1,9 @@
+mod config;
+mod controllers;
+mod db;
 pub mod error;
+mod models;
+mod routes;
 
 use axum::{
     Router,
@@ -7,21 +12,18 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+
+use routes::pool_route::pool_routes;
 use std::net::SocketAddr;
 use tower_http::request_id::MakeRequestUuid;
 use tracing::Instrument;
 
-mod config;
-mod db;
 use config::db_config::DbConfig;
 use config::tracing::{TracingConfig, get_trace_context, init_tracing, shutdown_tracing};
 use db::database::Database;
 use error::{AppError, AppResult};
 
-#[derive(Clone)]
-struct AppState {
-    db: Database,
-}
+use db::database::AppState;
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -68,6 +70,7 @@ async fn main() -> Result<(), AppError> {
     let app = Router::new()
         .route("/ping", get(ping_handler))
         .route("/health", get(health_handler))
+        .merge(pool_routes()) // Merge the new pool routes
         .with_state(state)
         .layer(tower_http::request_id::SetRequestIdLayer::new(
             axum::http::header::HeaderName::from_static("x-request-id"),
