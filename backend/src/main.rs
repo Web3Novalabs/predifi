@@ -10,7 +10,7 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
 };
 
 use routes::pool_route::pool_routes;
@@ -20,10 +20,10 @@ use tracing::Instrument;
 
 use config::db_config::DbConfig;
 use config::tracing::{TracingConfig, get_trace_context, init_tracing, shutdown_tracing};
+use db::database::AppState;
 use db::database::Database;
 use error::{AppError, AppResult};
-
-use db::database::AppState;
+use routes::market::{create_market_handler, get_market_handler};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -70,6 +70,8 @@ async fn main() -> Result<(), AppError> {
     let app = Router::new()
         .route("/ping", get(ping_handler))
         .route("/health", get(health_handler))
+        .route("/markets", post(create_market_handler))
+        .route("/markets/:id", get(get_market_handler))
         .merge(pool_routes()) // Merge the new pool routes
         .with_state(state)
         .layer(tower_http::request_id::SetRequestIdLayer::new(
