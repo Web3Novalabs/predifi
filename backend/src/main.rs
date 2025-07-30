@@ -71,6 +71,7 @@ async fn main() -> Result<(), AppError> {
         .route("/ping", get(ping_handler))
         .route("/health", get(health_handler))
         .merge(pool_routes()) // Merge the new pool routes
+        .merge(validator_routes())
         .with_state(state)
         .layer(tower_http::request_id::SetRequestIdLayer::new(
             axum::http::header::HeaderName::from_static("x-request-id"),
