@@ -1,13 +1,20 @@
-use axum::{extract::{Path, State}, routing::get, Router, Json};
-use crate::db::database::AppState;
 use crate::controllers::validator_controller::*;
+use crate::db::database::AppState;
 use crate::error::AppResult;
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    routing::get,
+};
 
 pub fn validator_routes() -> Router<AppState> {
     Router::new()
         .route("/validator/:address", get(get_validator_handler))
         .route("/validators", get(get_validators_handler))
-        .route("/validator/:address/status", get(get_validator_status_handler))
+        .route(
+            "/validator/:address/status",
+            get(get_validator_status_handler),
+        )
 }
 
 async fn get_validator_handler(

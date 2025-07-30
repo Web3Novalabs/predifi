@@ -12,8 +12,8 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-
 use routes::pool_route::pool_routes;
+use routes::validator_route::validator_routes;
 use std::net::SocketAddr;
 use tower_http::request_id::MakeRequestUuid;
 use tracing::Instrument;
