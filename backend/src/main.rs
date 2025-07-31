@@ -12,8 +12,8 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-
 use routes::pool_route::pool_routes;
+use routes::validator_route::validator_routes;
 use std::net::SocketAddr;
 use tower_http::request_id::MakeRequestUuid;
 use tracing::Instrument;
@@ -73,6 +73,7 @@ async fn main() -> Result<(), AppError> {
         .route("/markets", post(create_market_handler))
         .route("/markets/:id", get(get_market_handler))
         .merge(pool_routes()) // Merge the new pool routes
+        .merge(validator_routes())
         .with_state(state)
         .layer(tower_http::request_id::SetRequestIdLayer::new(
             axum::http::header::HeaderName::from_static("x-request-id"),
