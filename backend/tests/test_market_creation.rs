@@ -19,24 +19,79 @@ async fn setup_test_environment() -> PgPool {
 async fn cleanup_all_test_data(pool: &PgPool) {
     println!("Setting up clean test environment...");
 
+    // Use a transaction to ensure atomic cleanup
+    let mut transaction = pool.begin().await.expect("Failed to start transaction");
+
     // Clean up in reverse order of dependencies to handle foreign key constraints
     sqlx::query("DELETE FROM market_tags")
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .ok();
     sqlx::query("DELETE FROM user_pool")
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .ok();
-    sqlx::query("DELETE FROM pool").execute(pool).await.ok();
-    sqlx::query("DELETE FROM tags").execute(pool).await.ok();
-    sqlx::query("DELETE FROM market").execute(pool).await.ok();
+    sqlx::query("DELETE FROM pool")
+        .execute(&mut *transaction)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM tags")
+        .execute(&mut *transaction)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM market")
+        .execute(&mut *transaction)
+        .await
+        .ok();
     sqlx::query("DELETE FROM market_category")
-        .execute(pool)
+        .execute(&mut *transaction)
         .await
         .ok();
 
+    // Commit the cleanup transaction
+    transaction
+        .commit()
+        .await
+        .expect("Failed to commit cleanup transaction");
+
     println!("Clean test environment ready");
+}
+
+async fn cleanup_test_specific_data(pool: &PgPool, test_prefix: &str) {
+    println!("Cleaning up test-specific data for prefix: {}", test_prefix);
+
+    // Use a transaction to ensure atomic cleanup
+    let mut transaction = pool.begin().await.expect("Failed to start transaction");
+
+    // Clean up only data created by this specific test
+    sqlx::query("DELETE FROM market_tags mt WHERE EXISTS (SELECT 1 FROM tags t WHERE t.id = mt.tag_id AND t.name LIKE $1)")
+        .bind(format!("{}%", test_prefix))
+        .execute(&mut *transaction)
+        .await
+        .ok();
+
+    sqlx::query("DELETE FROM tags WHERE name LIKE $1")
+        .bind(format!("{}%", test_prefix))
+        .execute(&mut *transaction)
+        .await
+        .ok();
+
+    sqlx::query("DELETE FROM market WHERE name LIKE $1")
+        .bind(format!("{}%", test_prefix))
+        .execute(&mut *transaction)
+        .await
+        .ok();
+
+    // Commit the cleanup transaction
+    transaction
+        .commit()
+        .await
+        .expect("Failed to commit test-specific cleanup transaction");
+
+    println!(
+        "Test-specific cleanup completed for prefix: {}",
+        test_prefix
+    );
 }
 
 async fn create_test_market(
@@ -82,13 +137,15 @@ async fn create_test_market(
 }
 
 #[tokio::test]
-#[ignore] // Temporarily ignore until we fix the parallel execution issue
 async fn test_market_creation_with_tags() {
     let pool = setup_test_environment().await;
 
+    // Ensure we start with a completely clean state
+    cleanup_all_test_data(&pool).await;
+
     // Test 1: Create market with new tags
     let market_data = serde_json::json!({
-        "name": "Test Market Creation 1",
+        "name": "creation-test-market-1",
         "description": "A test market for integration testing",
         "category_id": null,
         "image_url": "https://example.com/image.jpg",
@@ -103,7 +160,7 @@ async fn test_market_creation_with_tags() {
         "creator_fee": 5,
         "is_private": false,
         "creator_address": "0x1234567890abcdef",
-        "tags": ["unique-test-sports", "unique-test-football", "unique-test-premier-league"]
+        "tags": ["creation-test-sports", "creation-test-football", "creation-test-premier-league"]
     });
 
     // Simulate the market creation process
@@ -111,7 +168,7 @@ async fn test_market_creation_with_tags() {
     assert!(result.is_ok(), "Market creation should succeed");
 
     let market_with_tags = result.unwrap();
-    assert_eq!(market_with_tags.market.name, "Test Market Creation 1");
+    assert_eq!(market_with_tags.market.name, "creation-test-market-1");
     assert_eq!(market_with_tags.tags.len(), 3);
 
     // Verify tags were created
@@ -120,13 +177,13 @@ async fn test_market_creation_with_tags() {
         .iter()
         .map(|t| t.name.clone())
         .collect();
-    assert!(tag_names.contains(&"unique-test-sports".to_string()));
-    assert!(tag_names.contains(&"unique-test-football".to_string()));
-    assert!(tag_names.contains(&"unique-test-premier-league".to_string()));
+    assert!(tag_names.contains(&"creation-test-sports".to_string()));
+    assert!(tag_names.contains(&"creation-test-football".to_string()));
+    assert!(tag_names.contains(&"creation-test-premier-league".to_string()));
 
     // Test 2: Create another market with some existing tags
     let market_data_2 = serde_json::json!({
-        "name": "Test Market Creation 2",
+        "name": "creation-test-market-2",
         "description": "Another test market",
         "category_id": null,
         "image_url": null,
@@ -141,34 +198,34 @@ async fn test_market_creation_with_tags() {
         "creator_fee": 3,
         "is_private": true,
         "creator_address": "0xabcdef1234567890",
-        "tags": ["unique-test-sports", "unique-test-basketball", "unique-test-nba"] // "unique-test-sports" already exists
+        "tags": ["creation-test-sports", "creation-test-basketball", "creation-test-nba"] // "creation-test-sports" already exists
     });
 
     let result_2 = create_test_market(&pool, &market_data_2).await;
     assert!(result_2.is_ok(), "Second market creation should succeed");
 
     let market_with_tags_2 = result_2.unwrap();
-    assert_eq!(market_with_tags_2.market.name, "Test Market Creation 2");
+    assert_eq!(market_with_tags_2.market.name, "creation-test-market-2");
     assert_eq!(market_with_tags_2.tags.len(), 3);
 
-    // Verify that the "unique-test-sports" tag was reused and new tags were created
+    // Verify that the "creation-test-sports" tag was reused and new tags were created
     let tag_names_2: Vec<String> = market_with_tags_2
         .tags
         .iter()
         .map(|t| t.name.clone())
         .collect();
-    assert!(tag_names_2.contains(&"unique-test-sports".to_string()));
-    assert!(tag_names_2.contains(&"unique-test-basketball".to_string()));
-    assert!(tag_names_2.contains(&"unique-test-nba".to_string()));
+    assert!(tag_names_2.contains(&"creation-test-sports".to_string()));
+    assert!(tag_names_2.contains(&"creation-test-basketball".to_string()));
+    assert!(tag_names_2.contains(&"creation-test-nba".to_string()));
 
     // Test 3: Verify that tags table has the correct number of unique tags
     let unique_tags_count: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM tags WHERE name LIKE 'unique-test-%'")
+        sqlx::query_as("SELECT COUNT(*) FROM tags WHERE name LIKE 'creation-test-%'")
             .fetch_one(&pool)
             .await
             .expect("Failed to count tags");
 
-    // We should have 5 unique tags: unique-test-sports, unique-test-football, unique-test-premier-league, unique-test-basketball, unique-test-nba
+    // We should have 5 unique tags: creation-test-sports, creation-test-football, creation-test-premier-league, creation-test-basketball, creation-test-nba
     assert_eq!(
         unique_tags_count.0, 5,
         "Expected 5 unique test tags, found {}",
@@ -179,7 +236,7 @@ async fn test_market_creation_with_tags() {
     let market_tags_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM market_tags mt 
          JOIN tags t ON mt.tag_id = t.id 
-         WHERE t.name LIKE 'unique-test-%'",
+         WHERE t.name LIKE 'creation-test-%'",
     )
     .fetch_one(&pool)
     .await
@@ -197,7 +254,7 @@ async fn test_market_creation_with_tags() {
         .map(|i| {
             let pool_clone = pool.clone();
             let market_data = serde_json::json!({
-                "name": format!("Concurrent Creation Market {}", i),
+                "name": format!("creation-test-concurrent-market-{}", i),
                 "description": format!("Concurrent test market {}", i),
                 "category_id": null,
                 "image_url": null,
@@ -212,7 +269,7 @@ async fn test_market_creation_with_tags() {
                 "creator_fee": 2,
                 "is_private": false,
                 "creator_address": format!("0x{}", i),
-                "tags": ["unique-test-concurrent", "unique-test-test", format!("unique-test-tag-{}", i)]
+                "tags": ["creation-test-concurrent", "creation-test-test", format!("creation-test-tag-{}", i)]
             });
 
             tokio::spawn(async move { create_test_market(&pool_clone, &market_data).await })
@@ -225,26 +282,30 @@ async fn test_market_creation_with_tags() {
     }
 
     // Verify all concurrent markets were created
-    let total_markets: (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM market WHERE name LIKE 'Concurrent Creation Market%'")
-            .fetch_one(&pool)
-            .await
-            .expect("Failed to count markets");
+    let total_markets: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM market WHERE name LIKE 'creation-test-concurrent-market%'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("Failed to count markets");
 
     // 5 concurrent markets
     assert_eq!(total_markets.0, 5);
 
     // Clean up after test
-    cleanup_all_test_data(&pool).await;
+    cleanup_test_specific_data(&pool, "creation-test").await;
 }
 
 #[tokio::test]
 async fn test_market_retrieval_with_tags() {
     let pool = setup_test_environment().await;
 
+    // Ensure we start with a completely clean state
+    cleanup_all_test_data(&pool).await;
+
     // Create a test market with tags
     let market_data = serde_json::json!({
-        "name": "Retrieval Test Market",
+        "name": "retrieval-test-market",
         "description": "Market for testing retrieval",
         "category_id": null,
         "image_url": "https://example.com/image.jpg",
@@ -272,7 +333,7 @@ async fn test_market_retrieval_with_tags() {
 
     let market_with_tags = retrieved_market.unwrap();
     assert_eq!(market_with_tags.market.id, market_id);
-    assert_eq!(market_with_tags.market.name, "Retrieval Test Market");
+    assert_eq!(market_with_tags.market.name, "retrieval-test-market");
     assert_eq!(market_with_tags.tags.len(), 3);
 
     // Verify all fields are correctly stored and retrieved
@@ -301,5 +362,5 @@ async fn test_market_retrieval_with_tags() {
     );
 
     // Clean up after test
-    cleanup_all_test_data(&pool).await;
+    cleanup_test_specific_data(&pool, "retrieval-test").await;
 }

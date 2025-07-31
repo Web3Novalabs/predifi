@@ -2,20 +2,21 @@ mod config;
 mod controllers;
 mod db;
 pub mod error;
+mod middleware;
 mod models;
 mod routes;
 
 use axum::{
     Router,
-    extract::State,
-    http::{HeaderMap, StatusCode},
+    extract::{Extension, State},
+    http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
 };
 
+use middleware::request_id_middleware;
 use routes::pool_route::pool_routes;
 use std::net::SocketAddr;
-use tower_http::request_id::MakeRequestUuid;
 use tracing::Instrument;
 
 use config::db_config::DbConfig;
@@ -23,6 +24,7 @@ use config::tracing::{TracingConfig, get_trace_context, init_tracing, shutdown_t
 use db::database::AppState;
 use db::database::Database;
 use error::{AppError, AppResult};
+use middleware::RequestId;
 use routes::market::{create_market_handler, get_market_handler};
 
 #[tokio::main]
@@ -74,10 +76,7 @@ async fn main() -> Result<(), AppError> {
         .route("/markets/:id", get(get_market_handler))
         .merge(pool_routes()) // Merge the new pool routes
         .with_state(state)
-        .layer(tower_http::request_id::SetRequestIdLayer::new(
-            axum::http::header::HeaderName::from_static("x-request-id"),
-            MakeRequestUuid,
-        ));
+        .layer(request_id_middleware());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     tracing::info!(
@@ -116,11 +115,11 @@ async fn main() -> Result<(), AppError> {
     Ok(())
 }
 
-async fn ping_handler(State(state): State<AppState>, headers: HeaderMap) -> AppResult<String> {
-    let request_id = headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown");
+async fn ping_handler(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+) -> AppResult<String> {
+    let request_id = request_id.as_str();
 
     // Note: OpenTelemetry span creation removed due to dependency version conflicts
 
@@ -195,12 +194,9 @@ async fn ping_handler(State(state): State<AppState>, headers: HeaderMap) -> AppR
 
 async fn health_handler(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    Extension(request_id): Extension<RequestId>,
 ) -> AppResult<impl IntoResponse> {
-    let request_id = headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown");
+    let request_id = request_id.as_str();
 
     // Note: OpenTelemetry span creation removed due to dependency version conflicts
 
