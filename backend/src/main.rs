@@ -13,9 +13,9 @@ use axum::{
     response::IntoResponse,
     routing::{get, post},
 };
-
 use middleware::request_id_middleware;
 use routes::pool_route::pool_routes;
+use routes::validator_route::validator_routes;
 use std::net::SocketAddr;
 use tracing::Instrument;
 
@@ -75,6 +75,7 @@ async fn main() -> Result<(), AppError> {
         .route("/markets", post(create_market_handler))
         .route("/markets/:id", get(get_market_handler))
         .merge(pool_routes()) // Merge the new pool routes
+        .merge(validator_routes())
         .with_state(state)
         .layer(request_id_middleware());
 
