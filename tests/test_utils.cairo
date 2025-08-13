@@ -1,38 +1,26 @@
-use contract::base::events::Events::{
-    PoolCancelled, StakeRefunded, ValidatorAdded, ValidatorRemoved,
-};
-use contract::base::types::{Pool, PoolDetails, Status};
-use contract::interfaces::iUtils::IUtilityDispatcher;
+use snforge_std::stop_cheat_caller_address;
+use snforge_std::start_cheat_caller_address;
+
+use contract::base::types::{ PoolDetails};
 use contract::interfaces::ipredifi::{
     IPredifiDispatcher, IPredifiDispatcherTrait, IPredifiDisputeDispatcher,
-    IPredifiDisputeDispatcherTrait, IPredifiValidator, IPredifiValidatorDispatcher,
-    IPredifiValidatorDispatcherTrait,
+     IPredifiValidatorDispatcher,
+    
 };
-use contract::predifi::Predifi;
-use contract::utils::Utils;
-use contract::utils::Utils::InternalFunctionsTrait;
 use core::array::ArrayTrait;
 use core::felt252;
-use core::serde::Serde;
 use core::traits::{Into, TryInto};
-use openzeppelin::access::accesscontrol::AccessControlComponent::InternalTrait as AccessControlInternalTrait;
-use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
-use openzeppelin::upgrades::upgradeable::UpgradeableComponent::{Event as UpgradeEvent, Upgraded};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait, EventSpyTrait, declare,
-    get_class_hash, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
-    stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
+    ContractClassTrait, DeclareResultTrait,  declare
 };
-use starknet::storage::{MutableVecTrait, StoragePointerReadAccess, StoragePointerWriteAccess};
-use starknet::{ClassHash, ContractAddress, get_block_timestamp, get_caller_address};
+use starknet::{ClassHash, ContractAddress, get_block_timestamp};
 
 
 // Validator role
 const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
 // Pool creator address constant
 const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
-
 const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
 
 pub fn deploy_predifi() -> (
@@ -91,4 +79,99 @@ pub fn declare_contract(name: ByteArray) -> ClassHash {
     let declare_result = declare(name);
     let declared_contract = declare_result.unwrap().contract_class();
     *declared_contract.class_hash
+}
+
+
+pub fn setup_user_with_tokens(user: ContractAddress, erc20_address: ContractAddress, amount: u256) {
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, user);
+    erc20.approve(erc20_address, amount); // Approve the ERC20 contract itself to mint
+    stop_cheat_caller_address(erc20_address);
+}
+
+
+
+pub fn pool_exists_in_array(pools: Array<PoolDetails>, pool_id: u256) -> bool {
+    let mut i = 0;
+    let len = pools.len();
+
+    loop {
+        if i >= len {
+            break false;
+        }
+
+        let pool = pools.at(i);
+        // Use the correct reference type for comparison
+        if *pool.pool_id == pool_id {
+            break true;
+        }
+
+        i += 1;
+    }
+}
+
+
+pub fn get_default_pool_params() -> (
+    felt252,
+    u8,
+    ByteArray,
+    ByteArray,
+    ByteArray,
+    u64,
+    u64,
+    u64,
+    felt252,
+    felt252,
+    u256,
+    u256,
+    u8,
+    bool,
+    u8,
+) {
+    let current_time = get_block_timestamp();
+    (
+        'Default Pool',
+        0, // 0 = WinBet
+        "Default Description",
+        "default_image.jpg",
+        "https://example.com",
+        current_time + 86400,
+        current_time + 172800,
+        current_time + 259200,
+        'Option A',
+        'Option B',
+        1_000_000_000_000_000_000,
+        10_000_000_000_000_000_000,
+        5,
+        false,
+        0,
+    )
+}
+
+
+pub fn create_test_pool(
+    dispatcher: IPredifiDispatcher,
+    poolName: felt252,
+    poolStartTime: u64,
+    poolLockTime: u64,
+    poolEndTime: u64,
+) -> u256 {
+    dispatcher
+        .create_pool(
+            poolName,
+            0, // 0 = WinBet
+            "Test Description",
+            "Test Image",
+            "Test URL",
+            poolStartTime,
+            poolLockTime,
+            poolEndTime,
+            'Option 1',
+            'Option 2',
+            100_u256,
+            1000_u256,
+            5,
+            false,
+            0,
+        )
 }
