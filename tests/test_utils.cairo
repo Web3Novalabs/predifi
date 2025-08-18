@@ -1,18 +1,15 @@
-use snforge_std::stop_cheat_caller_address;
-use snforge_std::start_cheat_caller_address;
-
-use contract::base::types::{ PoolDetails};
+use contract::base::types::PoolDetails;
 use contract::interfaces::ipredifi::{
     IPredifiDispatcher, IPredifiDispatcherTrait, IPredifiDisputeDispatcher,
-     IPredifiValidatorDispatcher,
-    
+    IPredifiValidatorDispatcher,
 };
 use core::array::ArrayTrait;
 use core::felt252;
 use core::traits::{Into, TryInto};
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait,  declare
+    ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
+    stop_cheat_caller_address,
 };
 use starknet::{ClassHash, ContractAddress, get_block_timestamp};
 
@@ -88,7 +85,6 @@ pub fn setup_user_with_tokens(user: ContractAddress, erc20_address: ContractAddr
     erc20.approve(erc20_address, amount); // Approve the ERC20 contract itself to mint
     stop_cheat_caller_address(erc20_address);
 }
-
 
 
 pub fn pool_exists_in_array(pools: Array<PoolDetails>, pool_id: u256) -> bool {
@@ -174,4 +170,16 @@ pub fn create_test_pool(
             false,
             0,
         )
+}
+
+
+pub fn approve_tokens_for_payment(
+    contract_address: ContractAddress, 
+    erc20_address: ContractAddress, 
+    amount: u256,
+) {
+    // Approve token spending for pool creation
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    // Approve the contract to spend tokens
+    erc20.approve(contract_address, amount);
 }

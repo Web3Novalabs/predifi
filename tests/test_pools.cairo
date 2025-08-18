@@ -1,45 +1,39 @@
-use contract::base::events::Events::{
-    PoolCancelled
-};
+use contract::base::events::Events::PoolCancelled;
 use contract::base::types::{Pool, Status};
-use contract::interfaces::ipredifi::{
-     IPredifiDispatcherTrait,
-};
+use contract::interfaces::ipredifi::IPredifiDispatcherTrait;
 use contract::predifi::Predifi;
 use core::array::ArrayTrait;
 use core::felt252;
 use core::serde::Serde;
-use core::traits::{ TryInto};
-use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+use core::traits::TryInto;
 use snforge_std::{
-     EventSpyAssertionsTrait,
-     spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
+    EventSpyAssertionsTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
     stop_cheat_block_timestamp, stop_cheat_caller_address,
 };
-use starknet::{ ContractAddress, get_block_timestamp};
+use starknet::{ContractAddress, get_block_timestamp};
 
 // Validator role
 const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
 // Pool creator address constant
 const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
 const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
+
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
 
-use super::test_utils::deploy_predifi;
-use super::test_utils::create_default_pool;
-use super::test_utils::get_default_pool_params;
-use super::test_utils::create_test_pool;
-
+use super::test_utils::{
+    approve_tokens_for_payment, create_default_pool, create_test_pool, deploy_predifi,
+    get_default_pool_params,
+};
 
 
 #[test]
 fn test_create_pool() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
-
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
     start_cheat_caller_address(contract.contract_address, pool_creator);
     let pool_id = create_default_pool(contract);
@@ -49,20 +43,17 @@ fn test_create_pool() {
 #[test]
 fn test_cancel_pool() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
-
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
     start_cheat_caller_address(contract.contract_address, pool_creator);
     let pool_id = create_default_pool(contract);
     assert!(pool_id != 0, "not created");
-
     contract.cancel_pool(pool_id);
-
     let fetched_pool = contract.get_pool(pool_id);
-
     assert(fetched_pool.status == Status::Closed, 'Pool not closed');
 }
 
@@ -71,10 +62,11 @@ fn test_cancel_pool_event_emission() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
     let mut spy = spy_events();
 
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
     start_cheat_caller_address(contract.contract_address, pool_creator);
     let pool_id = create_default_pool(contract);
@@ -97,10 +89,11 @@ fn test_cancel_pool_event_emission() {
 fn test_cancel_pool_by_unauthorized_caller() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
     start_cheat_caller_address(contract.contract_address, pool_creator);
     let pool_id = create_default_pool(contract);
@@ -115,10 +108,11 @@ fn test_cancel_pool_by_unauthorized_caller() {
 fn test_invalid_time_sequence_start_after_lock() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     let (
@@ -170,10 +164,11 @@ fn test_invalid_time_sequence_start_after_lock() {
 fn test_zero_min_bet() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
     let (
         poolName,
@@ -220,10 +215,11 @@ fn test_zero_min_bet() {
 fn test_excessive_creator_fee() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     let (
@@ -271,10 +267,11 @@ fn test_excessive_creator_fee() {
 fn test_invalid_pool_type() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     let (
@@ -321,10 +318,11 @@ fn test_invalid_pool_type() {
 fn test_valid_pool_types() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     let (
@@ -444,15 +442,14 @@ fn test_valid_pool_types() {
 }
 
 
-
 #[test]
 fn test_minimal_timing() {
     let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        dispatcher.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     let t0 = 1000;
@@ -472,11 +469,11 @@ fn test_get_active_pools() {
     // Deploy the contract
     let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-
     // Approve the dispatcher contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        dispatcher.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     // Set initial block timestamp
@@ -534,15 +531,13 @@ fn test_get_active_pools() {
 fn test_get_locked_pools() {
     let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
 
-    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        dispatcher.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
-
     let initial_time = 1000;
     start_cheat_block_timestamp(dispatcher.contract_address, initial_time);
-
     // Pool 1
     start_cheat_caller_address(dispatcher.contract_address, pool_creator);
     let pool1_id = create_test_pool(
@@ -570,7 +565,6 @@ fn test_get_locked_pools() {
     );
     stop_cheat_caller_address(dispatcher.contract_address);
     stop_cheat_block_timestamp(dispatcher.contract_address);
-
     // Advance time to just after both locks but before both ends
     let locked_time = time_2 + 1200; // 2200 > 2001 (lock), < 4001 (end)
     start_cheat_block_timestamp(dispatcher.contract_address, locked_time);
@@ -594,16 +588,13 @@ fn test_get_locked_pools() {
 #[test]
 fn test_get_settled_pools() {
     let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
-
-    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        dispatcher.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
-
     let initial_time = 1000;
     start_cheat_block_timestamp(dispatcher.contract_address, initial_time);
-
     // Pool 1
     start_cheat_caller_address(dispatcher.contract_address, pool_creator);
     let pool1_id = create_test_pool(
@@ -631,11 +622,9 @@ fn test_get_settled_pools() {
     );
     stop_cheat_caller_address(dispatcher.contract_address);
     stop_cheat_block_timestamp(dispatcher.contract_address);
-
     // Advance time to after both ends
     let settled_time = initial_time + 5000; // 5000 > 4000 and 4600
     start_cheat_block_timestamp(dispatcher.contract_address, settled_time);
-
     let admin: ContractAddress = 'admin'.try_into().unwrap();
     start_cheat_caller_address(dispatcher.contract_address, admin);
     dispatcher.manually_update_pool_state(pool1_id, 2);
@@ -654,16 +643,13 @@ fn test_get_settled_pools() {
 #[test]
 fn test_get_closed_pools() {
     let (dispatcher, _, _, pool_creator, erc20_address) = deploy_predifi();
-
-    let erc20_dispatcher: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20_dispatcher.approve(dispatcher.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        dispatcher.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
-
     let initial_time = 1000;
     start_cheat_block_timestamp(dispatcher.contract_address, initial_time);
-
     // Pool 1
     start_cheat_caller_address(dispatcher.contract_address, pool_creator);
     let pool1_id = create_test_pool(
@@ -731,9 +717,10 @@ fn test_automatic_pool_state_transitions() {
     let current_time = get_block_timestamp();
 
     // Add token approval
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, admin);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, admin);
@@ -847,10 +834,11 @@ fn test_manual_pool_state_update() {
 
     // Get current time
     let current_time = get_block_timestamp();
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, user);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
     start_cheat_caller_address(contract.contract_address, user);
     // Create a pool with specific timestamps

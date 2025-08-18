@@ -9,14 +9,14 @@ use core::serde::Serde;
 use core::traits::{Into, TryInto};
 use openzeppelin::access::accesscontrol::AccessControlComponent::InternalTrait as AccessControlInternalTrait;
 use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
-use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
+
 use snforge_std::{
     EventSpyAssertionsTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
     stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{MutableVecTrait, StoragePointerReadAccess};
 use starknet::{ContractAddress, get_block_timestamp};
-use super::test_utils::{create_default_pool, deploy_predifi};
+use super::test_utils::{approve_tokens_for_payment, create_default_pool, deploy_predifi};
 
 
 #[test]
@@ -24,9 +24,8 @@ fn test_validate_pool_result_success() {
     let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup ERC20 approval
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Create pool
@@ -108,9 +107,8 @@ fn test_validate_pool_result_success() {
 fn test_validate_pool_result_unauthorized() {
     let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
     // Setup and create pool
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -138,9 +136,8 @@ fn test_validate_pool_result_double_validation() {
     let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Create and lock pool
@@ -195,9 +192,8 @@ fn test_validate_pool_result_wrong_status() {
     let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Create pool but don't lock it
@@ -223,9 +219,8 @@ fn test_validation_consensus_majority_option1() {
     let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Create and lock pool
@@ -293,14 +288,16 @@ fn test_validation_consensus_majority_option1() {
     assert(pool.status == Status::Settled, 'Pool should be settled');
 }
 
+
+
+
 #[test]
 fn test_get_validator_confirmation() {
     let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup and create locked pool
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     let current_time = get_block_timestamp();
@@ -365,9 +362,8 @@ fn test_validator_can_update_state() {
     let validator = 'validator'.try_into().unwrap();
 
     // Add token approval for admin
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, admin);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Add validators
@@ -436,9 +432,8 @@ fn test_assign_random_validators() {
     stop_cheat_caller_address(validator_contract.contract_address);
 
     // Set up token approval for pool creation
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Create a pool
@@ -490,9 +485,8 @@ fn test_assign_exactly_two_validators() {
     stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Create a pool
@@ -589,9 +583,8 @@ fn test_assign_multiple_validators() {
     stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 1_000_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 1_000_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Get current timestamp
@@ -705,9 +698,8 @@ fn test_limited_validators_assignment() {
     stop_cheat_caller_address(contract.contract_address);
 
     // Set up token approval for pool creation
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 1_000_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 1_000_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Get current timestamp
@@ -828,9 +820,8 @@ fn test_assign_random_validators_initial_validator() {
     stop_cheat_caller_address(validator_contract.contract_address);
 
     // Set up token approval for pool creation
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     // Create a pool

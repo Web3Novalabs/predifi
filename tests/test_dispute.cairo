@@ -13,21 +13,10 @@ use snforge_std::{
     stop_cheat_block_timestamp, stop_cheat_caller_address,
 };
 use starknet::{ContractAddress, get_block_timestamp};
-use super::test_utils::{create_default_pool, deploy_predifi};
+use super::test_utils::{create_default_pool, deploy_predifi, approve_tokens_for_payment};
 
 
-// Helper function to create a user address
-// fn create_user(index: felt252) -> ContractAddress {
-//     contract_address_const::<index>();
-// }
 
-// Helper function to approve and fund a user for testing
-fn setup_user_with_tokens(user: ContractAddress, erc20_address: ContractAddress, amount: u256) {
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-    start_cheat_caller_address(erc20_address, user);
-    erc20.approve(erc20_address, amount); // Approve the ERC20 contract itself to mint
-    stop_cheat_caller_address(erc20_address);
-}
 
 // ================================================================================================
 // DISPUTE TESTS
@@ -46,9 +35,8 @@ fn test_raise_dispute_success() {
     let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -79,9 +67,8 @@ fn test_raise_dispute_threshold_reached() {
     let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -125,9 +112,8 @@ fn test_raise_dispute_already_disputed() {
     let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -162,9 +148,8 @@ fn test_raise_dispute_already_suspended() {
     let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup and create pool
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -199,9 +184,8 @@ fn test_resolve_dispute_success() {
     let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 
     // Setup
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     start_cheat_caller_address(erc20_address, pool_creator);
-    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
