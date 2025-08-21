@@ -174,9 +174,7 @@ pub fn create_test_pool(
 
 
 pub fn approve_tokens_for_payment(
-    contract_address: ContractAddress, 
-    erc20_address: ContractAddress, 
-    amount: u256,
+    contract_address: ContractAddress, erc20_address: ContractAddress, amount: u256,
 ) {
     // Approve token spending for pool creation
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };

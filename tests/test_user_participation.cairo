@@ -5,16 +5,13 @@ use contract::utils::Utils::InternalFunctionsTrait;
 use core::array::ArrayTrait;
 use core::serde::Serde;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
-
 use snforge_std::{
     start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
     stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{ContractAddress, get_block_timestamp};
-use super::test_utils::{
-    approve_tokens_for_payment, create_default_pool, deploy_predifi,
-};
+use super::test_utils::{approve_tokens_for_payment, create_default_pool, deploy_predifi};
 
 /// testing access of owner's address value
 #[test]
@@ -134,7 +131,9 @@ fn test_get_creator_fee_percentage() {
 
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, voter);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, voter);
@@ -167,7 +166,9 @@ fn test_get_validator_fee_percentage() {
     let (contract, _, validator_contract, voter, erc20_address) = deploy_predifi();
 
     start_cheat_caller_address(erc20_address, voter);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, voter);
@@ -200,9 +201,10 @@ fn test_creator_fee_multiple_pools() {
     let (contract, _, _, voter, erc20_address) = deploy_predifi();
 
     start_cheat_caller_address(erc20_address, voter);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
-    stop_cheat_caller_address(erc20_address);  
-
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
+    stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id1 = contract
@@ -255,7 +257,9 @@ fn test_creator_fee_multiple_pools() {
 fn test_creator_and_validator_fee_for_same_pool() {
     let (contract, _, validator_contract, voter, erc20_address) = deploy_predifi();
     start_cheat_caller_address(erc20_address, voter);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
     start_cheat_caller_address(contract.contract_address, voter);
     let pool_id = contract
@@ -467,7 +471,9 @@ fn test_unauthorized_manual_update() {
 
     // Add token approval for admin
     start_cheat_caller_address(erc20_address, admin);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     // Create pool as admin
@@ -509,7 +515,9 @@ fn test_invalid_state_transition() {
 
     // Add token approval for user
     start_cheat_caller_address(erc20_address, user);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     // Create pool as user
@@ -552,7 +560,9 @@ fn test_no_change_on_same_state() {
 
     // Add token approval for user
     start_cheat_caller_address(erc20_address, user);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     // Create pool as user
@@ -608,7 +618,9 @@ fn test_track_user_participation() {
     // Approve token spending for pool creation
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, user1);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, user1);
@@ -646,7 +658,9 @@ fn test_get_user_pools() {
     // Approve token spending for pool creation
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, user);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, user);
@@ -701,7 +715,9 @@ fn test_stake_updates_participation() {
     // Approve token spending for pool creation
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, user);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, user);
@@ -731,7 +747,9 @@ fn test_multiple_actions_single_pool() {
 
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, user1);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, user1);
@@ -774,17 +792,23 @@ fn test_multiple_users_pool_tracking() {
 
     // Approve for admin
     start_cheat_caller_address(erc20_address, admin);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     // Approve for user1
     start_cheat_caller_address(erc20_address, user1);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     // Approve for user2
     start_cheat_caller_address(erc20_address, user2);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     // Admin creates pools
@@ -857,7 +881,9 @@ fn test_get_user_pools_by_status() {
 
     // Approve the contract to spend tokens
     start_cheat_caller_address(erc20_address, user);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, user);
@@ -941,7 +967,9 @@ fn test_user_pools_with_time_based_transitions() {
 
     // Approve token spending
     start_cheat_caller_address(erc20_address, user);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, user);
@@ -1097,19 +1125,27 @@ fn test_multiple_users_with_status_transitions() {
 
     // Approve token spending for all users
     start_cheat_caller_address(erc20_address, admin);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(erc20_address, user1);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(erc20_address, user2);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(erc20_address, user3);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     // Get current timestamp

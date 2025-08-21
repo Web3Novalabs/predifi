@@ -19,7 +19,6 @@ const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
 const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
 
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
-
 use super::test_utils::{
     approve_tokens_for_payment, create_default_pool, create_test_pool, deploy_predifi,
     get_default_pool_params,

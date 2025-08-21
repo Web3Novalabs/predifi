@@ -13,9 +13,7 @@ use snforge_std::{
     stop_cheat_block_timestamp, stop_cheat_caller_address,
 };
 use starknet::{ContractAddress, get_block_timestamp};
-use super::test_utils::{create_default_pool, deploy_predifi, approve_tokens_for_payment};
-
-
+use super::test_utils::{approve_tokens_for_payment, create_default_pool, deploy_predifi};
 
 
 // ================================================================================================
@@ -36,7 +34,9 @@ fn test_raise_dispute_success() {
 
     // Setup
     start_cheat_caller_address(erc20_address, pool_creator);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -68,7 +68,9 @@ fn test_raise_dispute_threshold_reached() {
 
     // Setup
     start_cheat_caller_address(erc20_address, pool_creator);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -113,7 +115,9 @@ fn test_raise_dispute_already_disputed() {
 
     // Setup
     start_cheat_caller_address(erc20_address, pool_creator);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -149,7 +153,9 @@ fn test_raise_dispute_already_suspended() {
 
     // Setup and create pool
     start_cheat_caller_address(erc20_address, pool_creator);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
@@ -185,7 +191,9 @@ fn test_resolve_dispute_success() {
 
     // Setup
     start_cheat_caller_address(erc20_address, pool_creator);
-    approve_tokens_for_payment(contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, pool_creator);
