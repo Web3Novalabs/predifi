@@ -1,8 +1,8 @@
 use bigdecimal::BigDecimal;
+use futures;
 use sqlx::PgPool;
 use std::env;
 use std::str::FromStr;
-use futures;
 
 // Test isolation helper
 async fn setup_test_environment() -> PgPool {
@@ -64,12 +64,10 @@ async fn create_test_market(
     market_controller::create_market_with_tags(pool, &new_market).await
 }
 
-
-
 #[tokio::test]
 async fn test_market_creation_with_tags() {
     let pool = setup_test_environment().await;
-    
+
     // Start transaction for test isolation
     let mut tx = pool.begin().await.expect("Failed to start transaction");
 
@@ -108,7 +106,10 @@ async fn test_market_creation_with_tags() {
     assert!(result.is_ok(), "Market creation should succeed");
 
     let market_with_tags = result.unwrap();
-    assert_eq!(market_with_tags.market.name, format!("creation-test-market-1-{}", timestamp));
+    assert_eq!(
+        market_with_tags.market.name,
+        format!("creation-test-market-1-{}", timestamp)
+    );
     assert_eq!(market_with_tags.tags.len(), 3);
 
     // Verify tags were created
@@ -149,7 +150,10 @@ async fn test_market_creation_with_tags() {
     assert!(result_2.is_ok(), "Second market creation should succeed");
 
     let market_with_tags_2 = result_2.unwrap();
-    assert_eq!(market_with_tags_2.market.name, format!("creation-test-market-2-{}", timestamp));
+    assert_eq!(
+        market_with_tags_2.market.name,
+        format!("creation-test-market-2-{}", timestamp)
+    );
     assert_eq!(market_with_tags_2.tags.len(), 3);
 
     // Verify that the "creation-test-sports" tag was reused and new tags were created
@@ -163,13 +167,11 @@ async fn test_market_creation_with_tags() {
     assert!(tag_names_2.contains(&format!("creation-test-nba-{}", timestamp)));
 
     // Test 3: Verify that tags table has the correct number of unique tags
-    let unique_tags_count: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM tags WHERE name LIKE $1"
-    )
-    .bind(format!("creation-test-%-{}", timestamp))
-    .fetch_one(&mut *tx)
-    .await
-    .expect("Failed to count tags");
+    let unique_tags_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM tags WHERE name LIKE $1")
+        .bind(format!("creation-test-%-{}", timestamp))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("Failed to count tags");
 
     // We should have 5 unique tags: creation-test-sports, creation-test-football, creation-test-premier-league, creation-test-basketball, creation-test-nba
     assert_eq!(
@@ -233,13 +235,11 @@ async fn test_market_creation_with_tags() {
     }
 
     // Verify all concurrent markets were created
-    let total_markets: (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM market WHERE name LIKE $1",
-    )
-    .bind(format!("creation-test-concurrent-market-%-{}", timestamp))
-    .fetch_one(&mut *tx)
-    .await
-    .expect("Failed to count markets");
+    let total_markets: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM market WHERE name LIKE $1")
+        .bind(format!("creation-test-concurrent-market-%-{}", timestamp))
+        .fetch_one(&mut *tx)
+        .await
+        .expect("Failed to count markets");
 
     // 5 concurrent markets
     assert_eq!(total_markets.0, 5);
