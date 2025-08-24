@@ -1,0 +1,141 @@
+name: Predifi Backend CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  DATABASE_URL: postgres://postgres:postgres@localhost:5432/predifi_test
+
+jobs:
+  test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: predifi_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install SQLx CLI
+        run: cargo install sqlx-cli --no-default-features --features postgres
+
+      - name: Wait for PostgreSQL
+        run: |
+          echo "⏳ Waiting for PostgreSQL to be ready..."
+          timeout 60s bash -c 'until pg_isready -h localhost -p 5432 -U postgres; do sleep 1; done'
+          echo "✅ PostgreSQL is ready!"
+
+      - name: Setup test database
+        run: |
+          echo "🗄️ Setting up test database..."
+          sqlx database create
+          sqlx migrate run
+          echo "✅ Test database ready!"
+
+      - name: Run unit tests
+        run: |
+          echo "🧪 Running unit tests..."
+          cargo test --lib --bins
+          echo "✅ Unit tests completed!"
+
+      - name: Run integration tests
+        run: |
+          echo "🔗 Running integration tests..."
+          cargo test --tests -- --nocapture
+          echo "✅ Integration tests completed!"
+
+      - name: Run code quality checks
+        run: |
+          echo "🔍 Running code quality checks..."
+          cargo clippy -- -D warnings
+          cargo fmt -- --check
+          echo "✅ Code quality checks passed!"
+
+      - name: Build release version
+        run: |
+          echo "🏗️ Building release version..."
+          cargo build --release
+          echo "✅ Release build successful!"
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      - name: Run security audit
+        run: |
+          echo "🔒 Running security audit..."
+          cargo audit --version || cargo install cargo-audit --features vendored-openssl
+          cargo audit
+          echo "✅ Security audit completed!"
+
+  notify:
+    name: Test Results Summary
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Success notification
+        if: success()
+        run: |
+          echo "🎉 All tests passed successfully!"
+          echo "✅ Integration tests: ${{ needs.test.result }}"
+          echo "✅ Security audit: ${{ needs.security.result }}"
+          echo "🚀 Ready for deployment!"
+
+      - name: Failure notification
+        if: failure()
+        run: |
+          echo "❌ CI/CD Pipeline failed!"
+          echo "🔍 Check the logs above for details."
+          echo "📊 Test results: ${{ needs.test.result }}"
+          echo "🔒 Security results: ${{ needs.security.result }}"
+          echo "💡 Fix the issues and push again." 

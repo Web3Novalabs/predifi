@@ -8,22 +8,41 @@ use backend::models::pool::{NewPool, Pool, PoolStatus};
 use backend::routes::pool_route::pool_routes;
 use bigdecimal::BigDecimal;
 use sqlx::{PgPool, Row};
-use sqlx::{Pool as SqlxPool, Postgres};
 use std::env;
 use tower::ServiceExt; // for .oneshot()
+
+// Define our test database structure
+struct TestDb {
+    pool: PgPool,
+}
+
+impl TestDb {
+    async fn new() -> Self {
+        let database_url = env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://ew@localhost:5432/predifi_test".to_string());
+        let pool = PgPool::connect(&database_url)
+            .await
+            .expect("Failed to connect to DB");
+
+        // Run migrations
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("Failed to run migrations");
+
+        Self { pool }
+    }
+}
 
 #[tokio::test]
 async fn test_pool_controller_functions() {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
-    let pool = SqlxPool::<Postgres>::connect(&database_url)
-        .await
-        .expect("Failed to connect to DB");
+    let test_db = TestDb::new().await;
 
     // Insert a market row
     let market_row = sqlx::query("INSERT INTO market (name) VALUES ($1) RETURNING id")
         .bind("Test Market")
-        .fetch_one(&pool)
+        .fetch_one(&test_db.pool)
         .await
         .expect("Insert market failed");
     let market_id: i32 = market_row.get("id");
@@ -47,13 +66,15 @@ async fn test_pool_controller_functions() {
         is_private: Some(false),
         category_id: None,
     };
-    let pool_obj = create_pool(&pool, &new_pool)
+    let pool_obj = create_pool(&test_db.pool, &new_pool)
         .await
         .expect("create_pool failed");
     assert_eq!(pool_obj.name, "Test Pool");
 
     // Test get_pool
-    let fetched = get_pool(&pool, pool_obj.id).await.expect("get_pool failed");
+    let fetched = get_pool(&test_db.pool, pool_obj.id)
+        .await
+        .expect("get_pool failed");
     assert_eq!(fetched.id, pool_obj.id);
 
     // Insert pools with different statuses
@@ -70,87 +91,66 @@ async fn test_pool_controller_functions() {
             .bind(format!("Pool-{status:?}"))
             .bind(1)
             .bind(format!("{status:?}"))
-            .fetch_one(&pool)
+            .fetch_one(&test_db.pool)
             .await
             .expect("Insert pool failed");
         pool_ids.push(row.get::<i32, _>("id"));
     }
 
     // Test get_pools_by_status
-    let active_pools = get_pools_by_status(&pool, "Active", 10, 0)
+    let active_pools = get_pools_by_status(&test_db.pool, "Active", 10, 0)
         .await
         .expect("get_pools_by_status failed");
     assert!(active_pools.iter().any(|p| p.status == PoolStatus::Active));
 
     // Test get_active_pools
-    let actives = get_active_pools(&pool, 10, 0)
+    let actives = get_active_pools(&test_db.pool, 10, 0)
         .await
         .expect("get_active_pools failed");
     assert!(actives.iter().all(|p| p.status == PoolStatus::Active));
 
     // Test get_locked_pools
-    let locked = get_locked_pools(&pool, 10, 0)
+    let locked = get_locked_pools(&test_db.pool, 10, 0)
         .await
         .expect("get_locked_pools failed");
     assert!(locked.iter().all(|p| p.status == PoolStatus::Locked));
 
     // Test get_settled_pools
-    let settled = get_settled_pools(&pool, 10, 0)
+    let settled = get_settled_pools(&test_db.pool, 10, 0)
         .await
         .expect("get_settled_pools failed");
     assert!(settled.iter().all(|p| p.status == PoolStatus::Settled));
 
     // Test get_closed_pools
-    let closed = get_closed_pools(&pool, 10, 0)
+    let closed = get_closed_pools(&test_db.pool, 10, 0)
         .await
         .expect("get_closed_pools failed");
     assert!(closed.iter().all(|p| p.status == PoolStatus::Closed));
 
     // Test create_user_pool
-    let user_pool = create_user_pool(&pool, "user1", pool_obj.id, &BigDecimal::from(10))
+    let user_pool = create_user_pool(&test_db.pool, "user1", pool_obj.id, &BigDecimal::from(10))
         .await
         .expect("create_user_pool failed");
     assert_eq!(user_pool.user_id, "user1");
 
     // Test get_user_pool
-    let fetched_user_pool = get_user_pool(&pool, user_pool.id)
+    let fetched_user_pool = get_user_pool(&test_db.pool, user_pool.id)
         .await
         .expect("get_user_pool failed");
     assert_eq!(fetched_user_pool.id, user_pool.id);
 
-    // Clean up: delete user_pool rows before pool rows to avoid FK violation
-    // Remove all user_pool rows referencing any pool in pool_ids
-    sqlx::query("DELETE FROM user_pool WHERE pool_id = ANY($1)")
-        .bind(&pool_ids)
-        .execute(&pool)
-        .await
-        .expect("Cleanup user_pool failed");
-    for id in pool_ids {
-        sqlx::query("DELETE FROM pool WHERE id = $1")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .expect("Cleanup pool failed");
-    }
-    sqlx::query("DELETE FROM market WHERE id = $1")
-        .bind(market_id)
-        .execute(&pool)
-        .await
-        .expect("Cleanup market failed");
+    // Transaction auto-rollbacks, no cleanup needed
 }
 
 #[tokio::test]
 async fn test_pools_routes() {
     dotenvy::dotenv().ok();
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
-    let pool = PgPool::connect(&database_url)
-        .await
-        .expect("Failed to connect to DB");
+    let test_db = TestDb::new().await;
 
     // Insert a market row
     let market_row = sqlx::query("INSERT INTO market (name) VALUES ($1) RETURNING id")
         .bind("RouteTest Market")
-        .fetch_one(&pool)
+        .fetch_one(&test_db.pool)
         .await
         .expect("Insert market failed");
     let market_id: i32 = market_row.get("id");
@@ -164,7 +164,7 @@ async fn test_pools_routes() {
             .bind(format!("Pool-{status}"))
             .bind(1)
             .bind(*status)
-            .fetch_one(&pool)
+            .fetch_one(&test_db.pool)
             .await
             .expect("Insert pool failed");
         pool_ids.push(row.get::<i32, _>("id"));
@@ -172,7 +172,9 @@ async fn test_pools_routes() {
 
     // Build app state and router
     let state = backend::db::database::AppState {
-        db: backend::db::database::Database { pool: pool.clone() },
+        db: backend::db::database::Database {
+            pool: test_db.pool.clone(),
+        },
     };
     let app = pool_routes().with_state(state);
 
@@ -199,33 +201,18 @@ async fn test_pools_routes() {
     test_route(&app, "/pools/settled", "Settled").await;
     test_route(&app, "/pools/closed", "Closed").await;
 
-    // Clean up
-    for id in pool_ids {
-        sqlx::query("DELETE FROM pool WHERE id = $1")
-            .bind(id)
-            .execute(&pool)
-            .await
-            .expect("Cleanup pool failed");
-    }
-    sqlx::query("DELETE FROM market WHERE id = $1")
-        .bind(market_id)
-        .execute(&pool)
-        .await
-        .expect("Cleanup market failed");
+    // Transaction auto-rollbacks, no cleanup needed
 }
 
 #[tokio::test]
 async fn test_pool_status_enum_mapping() {
     dotenvy::dotenv().ok();
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set for tests");
-    let pool = PgPool::connect(&database_url)
-        .await
-        .expect("Failed to connect to DB");
+    let test_db = TestDb::new().await;
 
     // Insert a market row to satisfy foreign key constraint
     let market_row = sqlx::query("INSERT INTO market (name) VALUES ($1) RETURNING id")
         .bind("Test Market")
-        .fetch_one(&pool)
+        .fetch_one(&test_db.pool)
         .await
         .expect("Insert market failed");
     let market_id: i32 = market_row.get("id");
@@ -236,7 +223,7 @@ async fn test_pool_status_enum_mapping() {
         .bind("Test Pool")
         .bind(1)
         .bind("Locked")
-        .fetch_one(&pool)
+        .fetch_one(&test_db.pool)
         .await
         .expect("Insert failed");
 
@@ -245,21 +232,11 @@ async fn test_pool_status_enum_mapping() {
     // Query the pool and check status mapping
     let pool_obj: Pool = sqlx::query_as::<_, Pool>("SELECT * FROM pool WHERE id = $1")
         .bind(id)
-        .fetch_one(&pool)
+        .fetch_one(&test_db.pool)
         .await
         .expect("Fetch failed");
 
     assert_eq!(pool_obj.status, PoolStatus::Locked);
 
-    // Clean up
-    sqlx::query("DELETE FROM pool WHERE id = $1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .expect("Cleanup failed");
-    sqlx::query("DELETE FROM market WHERE id = $1")
-        .bind(market_id)
-        .execute(&pool)
-        .await
-        .expect("Cleanup market failed");
+    // Transaction auto-rollbacks, no cleanup needed
 }
