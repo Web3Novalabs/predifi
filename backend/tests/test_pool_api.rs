@@ -10,8 +10,8 @@ struct TestDb {
 impl TestDb {
     /// Create a new test database connection
     async fn new() -> Self {
-        let database_url = std::env::var("TEST_DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://ew@localhost:5432/predifi_test".to_string());
+        let database_url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/testdb".to_string());
 
         let pool = PgPool::connect(&database_url)
             .await

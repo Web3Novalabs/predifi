@@ -19,7 +19,7 @@ struct TestDb {
 impl TestDb {
     async fn new() -> Self {
         let database_url = env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgres://ew@localhost:5432/predifi_test".to_string());
+            .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/testdb".to_string());
         let pool = PgPool::connect(&database_url)
             .await
             .expect("Failed to connect to DB");

@@ -50,7 +50,7 @@ print_status "success" "Prerequisites check completed"
 # Check if DATABASE_URL is set
 if [ -z "$DATABASE_URL" ]; then
     print_status "warning" "DATABASE_URL not set. Using default test database..."
-    export DATABASE_URL="postgres://ew@localhost:5432/predifi_test"
+    export DATABASE_URL="postgres://postgres:postgres@localhost:5432/testdb"
 fi
 
 # Run code quality checks

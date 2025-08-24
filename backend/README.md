@@ -42,19 +42,20 @@ The backend will connect to the database running in Docker.
 1. **Database Setup**: Ensure you have a test database running:
    ```sh
    # Create test database (if using local PostgreSQL)
-   createdb predifi_test
+   createdb testdb
    
    # Or use Docker for testing
    docker run --name predifi-test-db \
-     -e POSTGRES_DB=predifi_test \
-     -e POSTGRES_USER=ew \
-     -p 5433:5432 \
+     -e POSTGRES_DB=testdb \
+     -e POSTGRES_USER=postgres \
+     -e POSTGRES_PASSWORD=postgres \
+     -p 5432:5432 \
      -d postgres:15
    ```
 
 2. **Environment Variables**: Set up test environment:
    ```sh
-   export DATABASE_URL="postgres://ew@localhost:5433/predifi_test"
+   export DATABASE_URL="postgres://postgres:postgres@localhost:5432/testdb"
    ```
 
 3. **Run Tests**:
