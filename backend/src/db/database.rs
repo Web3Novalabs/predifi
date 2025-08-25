@@ -18,6 +18,12 @@ impl Database {
     pub fn pool(&self) -> &Pool<Postgres> {
         &self.pool
     }
+
+    /// Create a Database instance from an existing pool (useful for testing)
+    #[allow(dead_code)]
+    pub fn from_pool(pool: Pool<Postgres>) -> Self {
+        Self { pool }
+    }
 }
 
 impl Database {

@@ -16,8 +16,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 chrono = { version = "0.4", features = ["serde"] }
 # OpenTelemetry dependencies
 opentelemetry = { version = "0.23", features = ["trace"] }
-opentelemetry-stdout = { version = "0.4", features = ["trace"] }
-opentelemetry-otlp = { version = "0.16", features = ["trace"] }
+opentelemetry-stdout = "0.4"
+opentelemetry-otlp = "0.16"
 opentelemetry_sdk = { version = "0.23", features = ["trace", "rt-tokio"] }
 tracing-opentelemetry = "0.24"
 uuid = { version = "1.0", features = ["v4"] }
@@ -31,3 +31,10 @@ rust_decimal = { version = "1.37", features = ["serde", "db-postgres"] }
 bigdecimal = { version = "0.3", features = ["serde"] }
 futures = "0.3"
 hyper = "1.6.0"
+
+[dev-dependencies]
+testcontainers = "0.15"
+testcontainers-modules = { version = "0.3", features = ["postgres"] }
+axum-test = "12.0"
+tower = { version = "0.5.2", features = ["util"] }
+tokio-test = "0.4"

@@ -72,12 +72,11 @@ where
 
 fn extract_or_generate_request_id(request: &Request) -> String {
     // Check for existing request ID in headers
-    if let Some(request_id) = request.headers().get(REQUEST_ID_HEADER) {
-        if let Ok(id) = request_id.to_str() {
-            if !id.is_empty() {
-                return id.to_string();
-            }
-        }
+    if let Some(request_id) = request.headers().get(REQUEST_ID_HEADER)
+        && let Ok(id) = request_id.to_str()
+        && !id.is_empty()
+    {
+        return id.to_string();
     }
 
     // Generate new request ID if none provided or invalid
