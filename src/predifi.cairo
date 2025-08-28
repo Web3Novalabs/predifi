@@ -430,7 +430,13 @@ pub mod Predifi {
         fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) {
             self.pausable.assert_not_paused();
 
-            let pool = self.pools.read(pool_id);
+            // Input Validation
+            assert(pool_id > 0, Errors::INVALID_POOL_ID);
+            assert(amount > 0, Errors::INVALID_AMOUNT);
+            assert(option != '', Errors::EMPTY_OPTION);
+            let mut pool = self.pools.read(pool_id);
+            self.assert_pool_exists(@pool);
+
             let option1: felt252 = pool.option1;
             let option2: felt252 = pool.option2;
 
@@ -503,6 +509,8 @@ pub mod Predifi {
             self.pausable.assert_not_paused();
 
             let pool = self.pools.read(pool_id);
+            assert(pool.pool_id == pool_id, Errors::POOL_DOES_NOT_EXIST);
+            assert(amount != 0, Errors::INVALID_AMOUNT);
 
             // Validation checks using SecurityTrait
             self.assert_pool_not_suspended(@pool);
@@ -543,6 +551,7 @@ pub mod Predifi {
 
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
+            assert(pool.pool_id == pool_id, Errors::POOL_DOES_NOT_EXIST);
 
             // Validation checks using SecurityTrait
             self.assert_pool_closed(@pool);
