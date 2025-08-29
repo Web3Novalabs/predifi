@@ -255,6 +255,9 @@ pub mod Predifi {
             self.assert_future_start_time(poolStartTime);
             self.assert_valid_bet_amounts(minBetAmount, maxBetAmount);
             self.assert_valid_creator_fee(creatorFee);
+            self.assert_valid_felt252(poolName);
+            self.assert_valid_felt252(option1);
+            self.assert_valid_felt252(option2);
 
             let creator_address = get_caller_address();
 
@@ -326,6 +329,7 @@ pub mod Predifi {
         /// @param pool_id The ID of the pool to cancel.
         fn cancel_pool(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
+            self.assert_greater_than_zero(pool_id);
 
             let caller = get_caller_address();
             let pool = self.get_pool(pool_id);
@@ -355,6 +359,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return The creator's contract address.
         fn get_pool_creator(self: @ContractState, pool_id: u256) -> ContractAddress {
+            self.assert_greater_than_zero(pool_id);
             let pool = self.pools.read(pool_id);
             pool.address
         }
@@ -363,6 +368,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return The PoolOdds struct.
         fn pool_odds(self: @ContractState, pool_id: u256) -> PoolOdds {
+            self.assert_greater_than_zero(pool_id);
             self.pool_odds.read(pool_id)
         }
 
@@ -370,6 +376,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return The PoolDetails struct.
         fn get_pool(self: @ContractState, pool_id: u256) -> PoolDetails {
+            self.assert_greater_than_zero(pool_id);
             self.pools.read(pool_id)
         }
 
@@ -382,6 +389,7 @@ pub mod Predifi {
             ref self: ContractState, pool_id: u256, new_status: u8,
         ) -> Status {
             self.pausable.assert_not_paused();
+            self.assert_greater_than_zero(pool_id);
 
             let pool = self.pools.read(pool_id);
 
@@ -431,9 +439,10 @@ pub mod Predifi {
             self.pausable.assert_not_paused();
 
             // Input Validation
-            assert(pool_id > 0, Errors::INVALID_POOL_ID);
-            assert(amount > 0, Errors::INVALID_AMOUNT);
-            assert(option != '', Errors::EMPTY_OPTION);
+            self.assert_greater_than_zero(amount);
+            self.assert_greater_than_zero(pool_id);
+            self.assert_valid_felt252(option);
+
             let mut pool = self.pools.read(pool_id);
             self.assert_pool_exists(@pool);
 
@@ -507,10 +516,11 @@ pub mod Predifi {
         /// @param amount The amount to stake.
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
             self.pausable.assert_not_paused();
+            self.assert_greater_than_zero(amount);
+            self.assert_greater_than_zero(pool_id);
 
             let pool = self.pools.read(pool_id);
-            assert(pool.pool_id == pool_id, Errors::POOL_DOES_NOT_EXIST);
-            assert(amount != 0, Errors::INVALID_AMOUNT);
+            self.assert_pool_exists(@pool);
 
             // Validation checks using SecurityTrait
             self.assert_pool_not_suspended(@pool);
@@ -548,10 +558,11 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         fn refund_stake(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
-
             let caller = get_caller_address();
+
+            self.assert_greater_than_zero(pool_id);
             let pool = self.get_pool(pool_id);
-            assert(pool.pool_id == pool_id, Errors::POOL_DOES_NOT_EXIST);
+            self.assert_pool_exists(@pool);
 
             // Validation checks using SecurityTrait
             self.assert_pool_closed(@pool);
@@ -592,6 +603,8 @@ pub mod Predifi {
         fn has_user_participated_in_pool(
             self: @ContractState, user: ContractAddress, pool_id: u256,
         ) -> bool {
+            self.assert_non_zero_address(user);
+            self.assert_greater_than_zero(pool_id);
             self.user_participated_pools.read((user, pool_id))
         }
 
@@ -599,6 +612,7 @@ pub mod Predifi {
         /// @param user The user's address.
         /// @return The number of pools.
         fn get_user_pool_count(self: @ContractState, user: ContractAddress) -> u256 {
+            self.assert_non_zero_address(user);
             self.user_pool_count.read(user)
         }
 
@@ -609,6 +623,7 @@ pub mod Predifi {
         fn get_user_pools(
             self: @ContractState, user: ContractAddress, status_filter: Option<Status>,
         ) -> Array<u256> {
+            self.assert_non_zero_address(user);
             let mut result: Array<u256> = ArrayTrait::new();
             let pool_ids_count = self.user_pool_ids_count.read(user);
 
@@ -619,7 +634,7 @@ pub mod Predifi {
 
             // Iterate through all pool IDs this user has participated in
             let mut i: u256 = 0;
-            while i < pool_ids_count {
+            while i != pool_ids_count {
                 let pool_id = self.user_pool_ids.read((user, i));
 
                 // Only read from storage if needed
@@ -645,6 +660,7 @@ pub mod Predifi {
         /// @param user The user's address.
         /// @return Array of pool IDs.
         fn get_user_active_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
+            self.assert_non_zero_address(user);
             self.get_user_pools(user, Option::Some(Status::Active))
         }
 
@@ -652,6 +668,7 @@ pub mod Predifi {
         /// @param user The user's address.
         /// @return Array of pool IDs.
         fn get_user_locked_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
+            self.assert_non_zero_address(user);
             self.get_user_pools(user, Option::Some(Status::Locked))
         }
 
@@ -659,6 +676,7 @@ pub mod Predifi {
         /// @param user The user's address.
         /// @return Array of pool IDs.
         fn get_user_settled_pools(self: @ContractState, user: ContractAddress) -> Array<u256> {
+            self.assert_non_zero_address(user);
             self.get_user_pools(user, Option::Some(Status::Settled))
         }
 
@@ -670,6 +688,8 @@ pub mod Predifi {
         fn check_user_participated(
             self: @ContractState, user: ContractAddress, pool_id: u256,
         ) -> bool {
+            self.assert_non_zero_address(user);
+            self.assert_greater_than_zero(pool_id);
             self.user_pools.read((user, pool_id))
         }
 
@@ -680,6 +700,8 @@ pub mod Predifi {
         fn get_user_stake(
             self: @ContractState, pool_id: u256, address: ContractAddress,
         ) -> UserStake {
+            self.assert_non_zero_address(address);
+            self.assert_greater_than_zero(pool_id);
             self.user_stakes.read((pool_id, address))
         }
 
@@ -687,6 +709,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return The UserStake struct.
         fn get_pool_stakes(self: @ContractState, pool_id: u256) -> UserStake {
+            self.assert_greater_than_zero(pool_id);
             self.pool_stakes.read(pool_id)
         }
 
@@ -694,6 +717,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return True if option2, false if option1.
         fn get_pool_vote(self: @ContractState, pool_id: u256) -> bool {
+            self.assert_greater_than_zero(pool_id);
             self.pool_vote.read(pool_id)
         }
 
@@ -707,6 +731,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return True if the pool exists.
         fn retrieve_pool(self: @ContractState, pool_id: u256) -> bool {
+            self.assert_greater_than_zero(pool_id);
             let pool = self.pools.read(pool_id);
             pool.exists
         }
@@ -715,6 +740,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return The creator fee percentage.
         fn get_creator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
+            self.assert_greater_than_zero(pool_id);
             let pool = self.pools.read(pool_id);
             pool.creatorFee
         }
@@ -722,6 +748,7 @@ pub mod Predifi {
         /// @notice Collects the pool creation fee from the creator.
         /// @param creator The creator's address.
         fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
+            self.assert_non_zero_address(creator);
             // Retrieve the STRK token contract
             let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
 
@@ -765,6 +792,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         fn raise_dispute(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
+            self.assert_greater_than_zero(pool_id);
 
             let pool = self.pools.read(pool_id);
 
@@ -826,6 +854,7 @@ pub mod Predifi {
         /// @param winning_option The winning option (true = option2, false = option1).
         fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
             self.pausable.assert_not_paused();
+            self.assert_greater_than_zero(pool_id);
 
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             let pool = self.pools.read(pool_id);
@@ -867,6 +896,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return The dispute count.
         fn get_dispute_count(self: @ContractState, pool_id: u256) -> u256 {
+            self.assert_greater_than_zero(pool_id);
             self.pool_dispute_count.read(pool_id)
         }
 
@@ -881,6 +911,9 @@ pub mod Predifi {
         /// @param user The user's address.
         /// @return True if user has disputed, false otherwise.
         fn has_user_disputed(self: @ContractState, pool_id: u256, user: ContractAddress) -> bool {
+            self.assert_greater_than_zero(pool_id);
+            self.assert_non_zero_address(user);
+
             self.pool_dispute_users.read((pool_id, user))
         }
 
@@ -888,6 +921,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return True if suspended, false otherwise.
         fn is_pool_suspended(self: @ContractState, pool_id: u256) -> bool {
+            self.assert_greater_than_zero(pool_id);
             let pool = self.pools.read(pool_id);
             pool.status == Status::Suspended
         }
@@ -902,6 +936,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @param outcome The outcome to validate.
         fn validate_outcome(ref self: ContractState, pool_id: u256, outcome: bool) {
+            self.assert_greater_than_zero(pool_id);
             self.pausable.assert_not_paused();
             let pool = self.pools.read(pool_id);
 
@@ -915,6 +950,8 @@ pub mod Predifi {
         /// @return The claimed reward amount.
         fn claim_reward(ref self: ContractState, pool_id: u256) -> u256 {
             self.pausable.assert_not_paused();
+            self.assert_greater_than_zero(pool_id);
+
             let pool = self.pools.read(pool_id);
 
             // Validation checks using SecurityTrait
@@ -933,6 +970,7 @@ pub mod Predifi {
         /// @param selected_option The selected option (true = option2, false = option1).
         fn validate_pool_result(ref self: ContractState, pool_id: u256, selected_option: bool) {
             self.pausable.assert_not_paused();
+            self.assert_greater_than_zero(pool_id);
 
             let pool = self.pools.read(pool_id);
             let caller = get_caller_address();
@@ -1033,6 +1071,7 @@ pub mod Predifi {
         /// @param pool_id The ID of the pool to check.
         /// @return (validation count, is settled, final outcome).
         fn get_pool_validation_status(self: @ContractState, pool_id: u256) -> (u256, bool, bool) {
+            self.assert_greater_than_zero(pool_id);
             let validation_count = self.pool_validation_count.read(pool_id);
             let required_confirmations = self.required_validator_confirmations.read();
             let is_settled = validation_count >= required_confirmations;
@@ -1048,6 +1087,8 @@ pub mod Predifi {
         fn get_validator_confirmation(
             self: @ContractState, pool_id: u256, validator: ContractAddress,
         ) -> (bool, bool) {
+            self.assert_greater_than_zero(pool_id);
+            self.assert_non_zero_address(validator);
             let has_validated = self.pool_validator_confirmations.read((pool_id, validator));
             let selected_option = self.pool_validation_results.read((pool_id, validator));
 
@@ -1072,6 +1113,7 @@ pub mod Predifi {
         fn get_pool_validators(
             self: @ContractState, pool_id: u256,
         ) -> (ContractAddress, ContractAddress) {
+            self.assert_greater_than_zero(pool_id);
             self.pool_validator_assignments.read(pool_id)
         }
 
@@ -1184,6 +1226,7 @@ pub mod Predifi {
         /// @param address The address to check.
         /// @return True if validator, false otherwise.
         fn is_validator(self: @ContractState, address: ContractAddress) -> bool {
+            self.assert_non_zero_address(address);
             self.accesscontrol.has_role(VALIDATOR_ROLE, address)
         }
 
@@ -1206,6 +1249,8 @@ pub mod Predifi {
         fn calculate_validator_fee(
             ref self: ContractState, pool_id: u256, total_amount: u256,
         ) -> u256 {
+            self.assert_greater_than_zero(pool_id);
+            self.assert_greater_than_zero(total_amount);
             // Validator fee is fixed at 10%
             let validator_fee_percentage = 5_u8;
             let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
@@ -1217,6 +1262,7 @@ pub mod Predifi {
         /// @notice Distributes validator fees for a pool.
         /// @param pool_id The pool ID.
         fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
+            self.assert_greater_than_zero(pool_id);
             let total_validator_fee = self.validator_fee.read(pool_id);
 
             let validator_count = self.validators.len();
@@ -1229,7 +1275,7 @@ pub mod Predifi {
 
             // Distribute to each validator
             let mut i: u64 = 0;
-            while i < validator_count {
+            while i != validator_count {
                 // Add debug info to trace the exact point of failure
 
                 // Safe access to validator - check bounds first
@@ -1247,6 +1293,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return The validator fee.
         fn retrieve_validator_fee(self: @ContractState, pool_id: u256) -> u256 {
+            self.assert_greater_than_zero(pool_id);
             self.validator_fee.read(pool_id)
         }
 
@@ -1254,6 +1301,7 @@ pub mod Predifi {
         /// @param pool_id The pool ID.
         /// @return The validator fee percentage.
         fn get_validator_fee_percentage(self: @ContractState, pool_id: u256) -> u8 {
+            self.assert_greater_than_zero(pool_id);
             10_u8
         }
 
@@ -1456,10 +1504,7 @@ pub mod Predifi {
             let len = self.pool_ids.len();
 
             let mut i: u64 = 0;
-            loop {
-                if i >= len {
-                    break;
-                }
+            while i != len {
                 let pool_id = self.pool_ids.at(i).read();
                 let pool = self.pools.read(pool_id);
                 if pool.status == status {
@@ -1484,7 +1529,7 @@ pub mod Predifi {
             let validators = self.get_all_validators();
             let mut i = 0;
 
-            while i < validators.len() {
+            while i != validators.len() {
                 let validator = *validators.at(i);
                 let has_validated = self.pool_validator_confirmations.read((pool_id, validator));
 
@@ -1576,7 +1621,7 @@ pub mod Predifi {
 
             // Distribute to each validator
             let mut i: u64 = 0;
-            while i < validator_count {
+            while i != validator_count {
                 // Safe access to validator - check bounds first
                 if i < self.validators.len() {
                     let validator_address = self.validators.at(i).read();

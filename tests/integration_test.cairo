@@ -865,7 +865,7 @@ fn test_multiple_users_voting_and_natural_settlement() {
 
 
 #[test]
-#[should_panic(expected: 'INVALID AMOUNT')]
+#[should_panic(expected: 'INVALID NUMBER IS ZERO')]
 fn test_voting_on_invalid_amount() {
     let (contract, dispute_contract, validator_contract, _, erc20_address) = deploy_predifi();
 
@@ -915,7 +915,7 @@ fn test_voting_on_invalid_amount() {
 }
 
 #[test]
-#[should_panic(expected: 'EMPTY OPTION')]
+#[should_panic(expected: 'EMPTY FELT252')]
 fn test_voting_on_empty_option() {
     let (contract, dispute_contract, validator_contract, _, erc20_address) = deploy_predifi();
 

@@ -115,12 +115,12 @@ pub mod Errors {
     /// @notice Error: The caller is not authorized to perform this action.
     pub const UNAUTHORIZED_CALLER: felt252 = 'Unauthorized Caller';
 
-    /// @notice Error: The pool_id is zero , it must greater then zero.
-    pub const INVALID_POOL_ID: felt252 = 'INVALID POOL ID';
+    /// @notice Error:  Address is zero , it must be non zero address.
+    pub const INVALID_ZERO_ADDRESS: felt252 = 'INVALID_ZERO_ADDRESS';
 
     /// @notice Error: The amount is zero or invalid , it must  greater then zero.
-    pub const INVALID_AMOUNT: felt252 = 'INVALID AMOUNT';
+    pub const INVALID_ZERO_VALUE: felt252 = 'INVALID NUMBER IS ZERO';
 
-    /// @notice Error: Ths option is empty felt252 .
-    pub const EMPTY_OPTION: felt252 = 'EMPTY OPTION';
+    /// @notice Error: This  is empty felt252 .
+    pub const EMPTY_FELT252: felt252 = 'EMPTY FELT252';
 }

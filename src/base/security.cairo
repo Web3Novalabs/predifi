@@ -1,5 +1,5 @@
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
-use starknet::{ContractAddress, get_block_timestamp};
+use starknet::{ContractAddress, contract_address_const, get_block_timestamp};
 use crate::base::errors::Errors;
 use crate::base::types::{PoolDetails, Status};
 
@@ -146,6 +146,21 @@ pub trait SecurityTrait<TContractState> {
     fn assert_valid_state_transition(
         self: @TContractState, current_status: Status, new_status: Status, is_admin: bool,
     );
+
+    /// Prevent Zero number
+    /// @notice Assert valid number not zero
+    /// @param u256 number that to chack for zero.
+    fn assert_greater_than_zero(self: @TContractState, number: u256);
+
+    /// Assert empty felt252
+    /// @notice Assert valid felt252 , prevent empty felt.
+    /// @param  a felt252 variable
+    fn assert_valid_felt252(self: @TContractState, felt: felt252);
+
+    /// Validate Non Zero address
+    /// @notice Assert valid address not zero address.
+    /// @param a ContractAddress type variable.
+    fn assert_non_zero_address(self: @TContractState, address: ContractAddress);
 }
 
 /// @notice Implementation of SecurityTrait
@@ -313,5 +328,20 @@ pub impl Security<TContractState> of SecurityTrait<TContractState> {
         };
 
         assert(is_valid_transition, Errors::INVALID_STATE_TRANSITION);
+    }
+
+    /// @notice : Assert u256 variable is  not zero number .
+    fn assert_greater_than_zero(self: @TContractState, number: u256) {
+        assert(number > 0, Errors::INVALID_ZERO_VALUE);
+    }
+
+    /// @notice : Assert felt252 variable is  not empty .
+    fn assert_valid_felt252(self: @TContractState, felt: felt252) {
+        assert(felt != '', Errors::EMPTY_FELT252);
+    }
+
+    /// @notice : Assert Address is not Zero address .
+    fn assert_non_zero_address(self: @TContractState, address: ContractAddress) {
+        assert(address != contract_address_const::<0>(), Errors::INVALID_ZERO_ADDRESS);
     }
 }
