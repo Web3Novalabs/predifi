@@ -862,3 +862,132 @@ fn test_multiple_users_voting_and_natural_settlement() {
     dispute_contract.claim_reward(pool_id);
     stop_cheat_caller_address(dispute_contract.contract_address);
 }
+
+
+#[test]
+#[should_panic(expected: 'INVALID NUMBER IS ZERO')]
+fn test_voting_on_invalid_amount() {
+    let (contract, dispute_contract, validator_contract, _, erc20_address) = deploy_predifi();
+
+    // Use consistent setup
+    let users = array![
+        USER_ONE, USER_TWO, USER_THREE, VALIDATOR_ONE, VALIDATOR_TWO, VALIDATOR_THREE,
+    ]
+        .span();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+
+    // Setup tokens first
+    setup_tokens_and_approvals(erc20_address, contract.contract_address, users);
+
+    // Setup initial token distribution for pool creator
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, POOL_CREATOR);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Add validators as admin BEFORE creating pool
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(VALIDATOR_ONE);
+    validator_contract.add_validator(VALIDATOR_TWO);
+    validator_contract.add_validator(VALIDATOR_THREE);
+    stop_cheat_caller_address(validator_contract.contract_address);
+
+    // Create pool
+    start_cheat_caller_address(contract.contract_address, POOL_CREATOR);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Multiple users vote on different options with some Invalid params
+
+    // Invalid amount
+    start_cheat_caller_address(contract.contract_address, USER_ONE);
+    contract.vote(pool_id, 'Team A', 0);
+    stop_cheat_caller_address(contract.contract_address);
+    // Invalid option
+    start_cheat_caller_address(contract.contract_address, USER_TWO);
+    contract.vote(pool_id, '', 800);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // not existed pool id
+    start_cheat_caller_address(contract.contract_address, USER_THREE);
+    contract.vote(pool_id + 21, 'Team A', 500);
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[should_panic(expected: 'EMPTY FELT252')]
+fn test_voting_on_empty_option() {
+    let (contract, dispute_contract, validator_contract, _, erc20_address) = deploy_predifi();
+
+    // Use consistent setup
+    let users = array![
+        USER_ONE, USER_TWO, USER_THREE, VALIDATOR_ONE, VALIDATOR_TWO, VALIDATOR_THREE,
+    ]
+        .span();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+
+    // Setup tokens first
+    setup_tokens_and_approvals(erc20_address, contract.contract_address, users);
+
+    // Setup initial token distribution for pool creator
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, POOL_CREATOR);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Add validators as admin BEFORE creating pool
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(VALIDATOR_ONE);
+    validator_contract.add_validator(VALIDATOR_TWO);
+    validator_contract.add_validator(VALIDATOR_THREE);
+    stop_cheat_caller_address(validator_contract.contract_address);
+
+    // Create pool
+    start_cheat_caller_address(contract.contract_address, POOL_CREATOR);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Invalid option
+    start_cheat_caller_address(contract.contract_address, USER_TWO);
+    contract.vote(pool_id, '', 800);
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[should_panic(expected: 'Pool does not exist')]
+fn test_voting_on_invalid_pool() {
+    let (contract, dispute_contract, validator_contract, _, erc20_address) = deploy_predifi();
+
+    // Use consistent setup
+    let users = array![
+        USER_ONE, USER_TWO, USER_THREE, VALIDATOR_ONE, VALIDATOR_TWO, VALIDATOR_THREE,
+    ]
+        .span();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+
+    // Setup tokens first
+    setup_tokens_and_approvals(erc20_address, contract.contract_address, users);
+
+    // Setup initial token distribution for pool creator
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+    start_cheat_caller_address(erc20_address, POOL_CREATOR);
+    erc20.approve(contract.contract_address, 200_000_000_000_000_000_000_000);
+    stop_cheat_caller_address(erc20_address);
+
+    // Add validators as admin BEFORE creating pool
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(VALIDATOR_ONE);
+    validator_contract.add_validator(VALIDATOR_TWO);
+    validator_contract.add_validator(VALIDATOR_THREE);
+    stop_cheat_caller_address(validator_contract.contract_address);
+
+    // Create pool
+    start_cheat_caller_address(contract.contract_address, POOL_CREATOR);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // not existed pool id
+    start_cheat_caller_address(contract.contract_address, USER_THREE);
+    contract.vote(pool_id + 21, 'Team A', 500);
+    stop_cheat_caller_address(contract.contract_address);
+}
