@@ -2,6 +2,7 @@
 pub mod Predifi {
     // Cairo imports
     use core::hash::{HashStateExTrait, HashStateTrait};
+    use core::panic_with_felt252;
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
     // oz imports
@@ -17,7 +18,6 @@ pub mod Predifi {
     use starknet::{
         ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
     };
-    use core::panic_with_felt252;
     use crate::base::errors::Errors;
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, EmergencyActionCancelled,
@@ -866,7 +866,7 @@ pub mod Predifi {
                 // Use the helper function to validate the address and handle potential panics
                 let user_address = self.extract_user_address_from_action_data(action_data);
                 // Store the validated address for later use if needed
-                // Note: The validation is done here to fail fast if the address is invalid
+            // Note: The validation is done here to fail fast if the address is invalid
             }
 
             // Generate unique action ID

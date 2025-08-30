@@ -772,4 +772,3 @@ fn test_emergency_withdrawal_invalid_address() {
     dispatcher.schedule_emergency_action(3, pool_id, 0);
 }
 
-
