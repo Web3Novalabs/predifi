@@ -114,4 +114,61 @@ pub mod Errors {
 
     /// @notice Error: The caller is not authorized to perform this action.
     pub const UNAUTHORIZED_CALLER: felt252 = 'Unauthorized Caller';
+
+    // Emergency Function Errors
+
+    /// @notice Error: The pool is not in emergency state.
+    pub const POOL_NOT_IN_EMERGENCY_STATE: felt252 = 'Pool is not in emergency state';
+
+    /// @notice Error: The pool is already in emergency state.
+    pub const POOL_ALREADY_IN_EMERGENCY_STATE: felt252 = 'Pool already in emergency';
+
+    /// @notice Error: Emergency withdrawals are not allowed for this pool.
+    pub const EMERGENCY_WITHDRAWALS_NOT_ALLOWED: felt252 = 'Emergency withdrawals blocked';
+
+    /// @notice Error: The user has no funds to withdraw from this pool.
+    pub const NO_FUNDS_TO_WITHDRAW: felt252 = 'No funds to withdraw';
+
+    /// @notice Error: The emergency action is not scheduled.
+    pub const EMERGENCY_ACTION_NOT_SCHEDULED: felt252 = 'Action not scheduled';
+
+    /// @notice Error: The emergency action is not ready for execution.
+    pub const EMERGENCY_ACTION_NOT_READY: felt252 = 'Action not ready';
+
+    /// @notice Error: The emergency action has already been executed.
+    pub const EMERGENCY_ACTION_ALREADY_EXECUTED: felt252 = 'Action already executed';
+
+    /// @notice Error: The emergency action has been cancelled.
+    pub const EMERGENCY_ACTION_CANCELLED: felt252 = 'Action cancelled';
+
+    /// @notice Error: The timelock delay has not passed yet.
+    pub const TIMELOCK_DELAY_NOT_PASSED: felt252 = 'Timelock not passed';
+
+    /// @notice Error: The emergency action type is invalid.
+    pub const INVALID_EMERGENCY_ACTION_TYPE: felt252 = 'Invalid action type';
+
+    /// @notice Error: The emergency action data is invalid.
+    pub const INVALID_EMERGENCY_ACTION_DATA: felt252 = 'Invalid action data';
+
+    /// @notice Error: The emergency action cannot be cancelled.
+    pub const EMERGENCY_ACTION_CANNOT_BE_CANCELLED: felt252 = 'Cannot cancel';
+
+    /// @notice Error: The pool is frozen and cannot be modified.
+    pub const POOL_IS_FROZEN: felt252 = 'Pool frozen';
+
+    /// @notice Error: The pool is not frozen.
+    pub const POOL_IS_NOT_FROZEN: felt252 = 'Pool not frozen';
+
+    /// @notice Error: The emergency action has been cancelled.
+    pub const ERR_ACTION_CANCELLED: felt252 = 'Action has been cancelled';
+
+
+    /// @notice Error: The emergency action is not in waiting status.
+    pub const ERR_ACTION_NOT_WAITING: felt252 = 'Action is not in waiting status';
+
+    /// @notice Error: The address provided is invalid (zero address).
+    pub const INVALID_ADDRESS: felt252 = 'Invalid address provided';
+
+    /// @notice Error: Failed to decode action data.
+    pub const ACTION_DATA_DECODE_FAILED: felt252 = 'Failed to decode action data';
 }

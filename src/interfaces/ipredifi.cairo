@@ -1,3 +1,5 @@
+use core::byte_array::ByteArray;
+use core::integer::u256;
 use starknet::{ClassHash, ContractAddress};
 use crate::base::types::{PoolDetails, PoolOdds, Status, UserStake};
 
@@ -187,6 +189,47 @@ pub trait IPredifi<TContractState> {
     /// @notice Returns all closed pools.
     /// @return Array of PoolDetails.
     fn get_closed_pools(self: @TContractState) -> Array<PoolDetails>;
+
+    // Emergency Functions
+
+    /// @notice Emergency withdrawal function for problematic pools.
+    /// @dev Allows users to withdraw funds from pools in emergency state.
+    /// @param pool_id The pool ID to withdraw from.
+    fn emergency_withdraw(ref self: TContractState, pool_id: u256);
+
+    /// @notice Schedules an emergency action with timelock.
+    /// @dev Only callable by admin. Schedules emergency action for execution after delay.
+    /// @param action_type The type of emergency action.
+    /// @param pool_id The pool ID for the action.
+    /// @param action_data Additional data for the action.
+    /// @return The unique action ID.
+    fn schedule_emergency_action(
+        ref self: TContractState, action_type: u8, pool_id: u256, action_data: felt252,
+    ) -> u256;
+
+    /// @notice Executes a scheduled emergency action after timelock delay.
+    /// @dev Only callable by admin. Executes action if delay has passed.
+    /// @param action_id The ID of the scheduled action.
+    fn execute_emergency_action(ref self: TContractState, action_id: u256);
+
+    /// @notice Cancels a scheduled emergency action.
+    /// @dev Only callable by admin. Cancels action before execution.
+    /// @param action_id The ID of the scheduled action.
+    fn cancel_emergency_action(ref self: TContractState, action_id: u256);
+
+    /// @notice Returns the status of a scheduled emergency action.
+    /// @param action_id The ID of the scheduled action.
+    /// @return The action status and execution time.
+    fn get_emergency_action_status(self: @TContractState, action_id: u256) -> (u8, u64);
+
+    /// @notice Returns whether a pool is in emergency state.
+    /// @param pool_id The pool ID.
+    /// @return True if pool is in emergency state, false otherwise.
+    fn is_pool_emergency_state(self: @TContractState, pool_id: u256) -> bool;
+
+    /// @notice Returns all pools in emergency state.
+    /// @return Array of PoolDetails for emergency pools.
+    fn get_emergency_pools(self: @TContractState) -> Array<PoolDetails>;
 }
 
 #[starknet::interface]

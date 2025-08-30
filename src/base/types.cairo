@@ -266,3 +266,69 @@ pub struct PoolDetails {
     /// @notice Whether the pool exists.
     pub exists: bool,
 }
+
+// Emergency Types
+
+/// @notice Enum representing the types of emergency actions.
+#[derive(Copy, Drop, Serde, PartialEq, starknet::Store, Debug)]
+pub enum EmergencyActionType {
+    #[default]
+    /// @notice Emergency pool freezing.
+    FreezePool,
+    /// @notice Emergency pool resolution.
+    ResolvePool,
+    /// @notice Emergency pool unfreezing.
+    UnfreezePool,
+    /// @notice Emergency withdrawal.
+    EmergencyWithdrawal,
+}
+
+/// @notice Enum representing the status of emergency actions.
+#[derive(Copy, Drop, Serde, PartialEq, starknet::Store, Debug)]
+pub enum EmergencyActionStatus {
+    #[default]
+    /// @notice Action is not set.
+    Unset,
+    /// @notice Action is waiting for timelock delay.
+    Waiting,
+    /// @notice Action is ready for execution.
+    Ready,
+    /// @notice Action has been executed.
+    Done,
+    /// @notice Action has been cancelled.
+    Cancelled,
+}
+
+/// @notice Struct representing a scheduled emergency action.
+#[derive(Drop, Serde, PartialEq, Clone, starknet::Store)]
+pub struct EmergencyAction {
+    /// @notice The type of emergency action.
+    pub action_type: EmergencyActionType,
+    /// @notice The pool ID for the action.
+    pub pool_id: u256,
+    /// @notice Additional data for the action (winning option: 0 = option1, 1 = option2).
+    pub action_data: felt252,
+    /// @notice The timestamp when the action was scheduled.
+    pub scheduled_time: u64,
+    /// @notice The timestamp when the action can be executed.
+    pub execution_time: u64,
+    /// @notice The current status of the action.
+    pub status: EmergencyActionStatus,
+    /// @notice The admin who scheduled the action.
+    pub admin: starknet::ContractAddress,
+}
+
+/// @notice Struct representing emergency pool state.
+#[derive(Drop, Serde, PartialEq, starknet::Store, Clone)]
+pub struct EmergencyPoolState {
+    /// @notice Whether the pool is in emergency state.
+    pub is_emergency: bool,
+    /// @notice The timestamp when emergency state was activated.
+    pub emergency_timestamp: u64,
+    /// @notice The reason for emergency state.
+    pub emergency_reason: felt252,
+    /// @notice The admin who activated emergency state.
+    pub emergency_admin: starknet::ContractAddress,
+    /// @notice Whether emergency withdrawals are allowed.
+    pub allow_emergency_withdrawals: bool,
+}

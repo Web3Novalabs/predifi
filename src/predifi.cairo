@@ -17,20 +17,25 @@ pub mod Predifi {
     use starknet::{
         ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
     };
+    use core::panic_with_felt252;
     use crate::base::errors::Errors;
     use crate::base::events::Events::{
-        BetPlaced, DisputeRaised, DisputeResolved, FeeWithdrawn, FeesCollected,
-        PoolAutomaticallySettled, PoolCancelled, PoolResolved, PoolStateTransition, PoolSuspended,
-        StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved, ValidatorResultSubmitted,
-        ValidatorsAssigned,
+        BetPlaced, DisputeRaised, DisputeResolved, EmergencyActionCancelled,
+        EmergencyActionExecuted, EmergencyActionScheduled, EmergencyWithdrawal, FeeWithdrawn,
+        FeesCollected, PoolAutomaticallySettled, PoolCancelled, PoolEmergencyFrozen,
+        PoolEmergencyResolved, PoolEmergencyUnfrozen, PoolResolved, PoolStateTransition,
+        PoolSuspended, StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved,
+        ValidatorResultSubmitted, ValidatorsAssigned,
     };
     use crate::base::security::{Security, SecurityTrait};
 
     // package imports
     use crate::base::types::{
+        EmergencyAction, EmergencyActionStatus, EmergencyActionType, EmergencyPoolState,
         PoolDetails, PoolOdds, Status, UserStake, u8_to_category, u8_to_pool, u8_to_status,
     };
     use crate::interfaces::ipredifi::{IPredifi, IPredifiDispute, IPredifiValidator};
+
 
     // 1 STRK in WEI
     const ONE_STRK: u256 = 1_000_000_000_000_000_000;
@@ -130,6 +135,11 @@ pub mod Predifi {
             u256, bool,
         >, // pool_id -> final_outcome (true = option2, false = option1)
         required_validator_confirmations: u256, // Number of validators needed to settle a pool
+        // Emergency functionality storage
+        emergency_pool_states: Map<u256, EmergencyPoolState>, // pool_id -> emergency state
+        scheduled_emergency_actions: Map<u256, EmergencyAction>, // action_id -> emergency action
+        emergency_action_counter: u256, // Counter for generating unique action IDs
+        emergency_timelock_delay: u64, // Minimum delay for emergency actions (default: 24 hours)
         #[substorage(v0)]
         pausable: PausableComponent::Storage,
         #[substorage(v0)]
@@ -172,6 +182,21 @@ pub mod Predifi {
         ValidatorResultSubmitted: ValidatorResultSubmitted,
         /// @notice Emitted when a pool is automatically settled.
         PoolAutomaticallySettled: PoolAutomaticallySettled,
+        // Emergency Events
+        /// @notice Emitted when an emergency withdrawal is made.
+        EmergencyWithdrawal: EmergencyWithdrawal,
+        /// @notice Emitted when a pool is frozen due to emergency.
+        PoolEmergencyFrozen: PoolEmergencyFrozen,
+        /// @notice Emitted when a pool is unfrozen from emergency state.
+        PoolEmergencyUnfrozen: PoolEmergencyUnfrozen,
+        /// @notice Emitted when a pool is resolved through emergency resolution.
+        PoolEmergencyResolved: PoolEmergencyResolved,
+        /// @notice Emitted when an emergency action is scheduled.
+        EmergencyActionScheduled: EmergencyActionScheduled,
+        /// @notice Emitted when a scheduled emergency action is executed.
+        EmergencyActionExecuted: EmergencyActionExecuted,
+        /// @notice Emitted when a scheduled emergency action is cancelled.
+        EmergencyActionCancelled: EmergencyActionCancelled,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -206,6 +231,10 @@ pub mod Predifi {
         self
             .required_validator_confirmations
             .write(2); // Require at least 2 validator confirmations to settle
+
+        // Initialize emergency functionality
+        self.emergency_timelock_delay.write(86400); // 24 hours in seconds
+        self.emergency_action_counter.write(0);
     }
 
     #[abi(embed_v0)]
@@ -746,6 +775,347 @@ pub mod Predifi {
         /// @return Array of PoolDetails.
         fn get_closed_pools(self: @ContractState) -> Array<PoolDetails> {
             self.get_pools_by_status(Status::Closed)
+        }
+
+        // Emergency Functions
+
+        /// @notice Emergency withdrawal function for problematic pools.
+        /// @dev Allows users to withdraw funds from pools in emergency state.
+        /// @param pool_id The pool ID to withdraw from.
+        fn emergency_withdraw(ref self: ContractState, pool_id: u256) {
+            // Check if pool exists
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
+
+            // Check if pool is in emergency state
+            let emergency_state = self.emergency_pool_states.read(pool_id);
+            assert(emergency_state.is_emergency, Errors::POOL_NOT_IN_EMERGENCY_STATE);
+            assert(
+                emergency_state.allow_emergency_withdrawals,
+                Errors::EMERGENCY_WITHDRAWALS_NOT_ALLOWED,
+            );
+
+            let caller = get_caller_address();
+
+            // Check if user has participated in this pool
+            let has_participated = self.has_user_participated_in_pool(caller, pool_id);
+            assert(has_participated, Errors::UNAUTHORIZED_CALLER);
+
+            // Get user's stake and calculate withdrawal amount
+            let user_stake = self.get_user_stake(pool_id, caller);
+            assert(user_stake.amount > 0, Errors::NO_FUNDS_TO_WITHDRAW);
+
+            // Calculate withdrawal amount (return original stake)
+            let withdrawal_amount = user_stake.amount;
+
+            // Reset user's stake
+            self
+                .user_stakes
+                .write(
+                    (pool_id, caller),
+                    UserStake { amount: 0, shares: 0, option: false, timestamp: 0 },
+                );
+
+            // Transfer tokens back to user
+            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+            strk_token.transfer(caller, withdrawal_amount);
+
+            // Emit emergency withdrawal event
+            self
+                .emit(
+                    Event::EmergencyWithdrawal(
+                        EmergencyWithdrawal {
+                            pool_id,
+                            user: caller,
+                            amount: withdrawal_amount,
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+        }
+
+
+        /// @notice Schedules an emergency action with timelock.
+        /// @dev Only callable by admin. Schedules emergency action for execution after delay.
+        /// @param action_type The type of emergency action:
+        ///                    0 = FreezePool (action_data: ignored, can be 0)
+        ///                    1 = ResolvePool (action_data: winning option, 0 = option1, 1 =
+        ///                    option2)
+        ///                    2 = UnfreezePool (action_data: ignored, can be 0)
+        ///                    3 = EmergencyWithdrawal (action_data: user address as felt252)
+        /// @param pool_id The pool ID for the action.
+        /// @param action_data Additional data for the action. For EmergencyWithdrawal, this must be
+        /// a valid user address.
+        /// @return The unique action ID.
+        fn schedule_emergency_action(
+            ref self: ContractState, action_type: u8, pool_id: u256, action_data: felt252,
+        ) -> u256 {
+            // Check if caller is admin
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            // Check if pool exists
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
+
+            // Validate action type
+            assert(action_type < 4, Errors::INVALID_EMERGENCY_ACTION_TYPE);
+
+            // Validate action data based on action type
+            if action_type == 3 { // EmergencyWithdrawal
+                // For emergency withdrawal, action_data must contain a valid user address
+                // Use the helper function to validate the address and handle potential panics
+                let user_address = self.extract_user_address_from_action_data(action_data);
+                // Store the validated address for later use if needed
+                // Note: The validation is done here to fail fast if the address is invalid
+            }
+
+            // Generate unique action ID
+            let action_id = self.emergency_action_counter.read();
+            self.emergency_action_counter.write(action_id + 1);
+
+            // Calculate execution time (current time + timelock delay)
+            let current_time = get_block_timestamp();
+            let execution_time = current_time + self.emergency_timelock_delay.read();
+
+            // Create emergency action
+            let emergency_action = EmergencyAction {
+                action_type: self.u8_to_emergency_action_type(action_type),
+                pool_id,
+                action_data,
+                scheduled_time: current_time,
+                execution_time,
+                status: EmergencyActionStatus::Waiting,
+                admin: get_caller_address(),
+            };
+
+            // Store the scheduled action
+            self.scheduled_emergency_actions.write(action_id, emergency_action);
+
+            // Emit action scheduled event
+            self
+                .emit(
+                    Event::EmergencyActionScheduled(
+                        EmergencyActionScheduled {
+                            action_id: action_id,
+                            action_type,
+                            pool_id,
+                            admin: get_caller_address(),
+                            execution_time,
+                            timestamp: current_time,
+                        },
+                    ),
+                );
+
+            action_id
+        }
+
+
+        /// @notice Executes a scheduled emergency action after timelock delay.
+        /// @dev Only callable by admin. Executes action if delay has passed.
+        /// @param action_id The ID of the scheduled action.
+        fn execute_emergency_action(ref self: ContractState, action_id: u256) {
+            // Check if caller is admin
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            // Get the scheduled action
+            let action = self.scheduled_emergency_actions.read(action_id);
+
+            // Check if action exists and is in valid state for execution
+            assert(action.status != EmergencyActionStatus::Cancelled, Errors::ERR_ACTION_CANCELLED);
+            assert(
+                action.status != EmergencyActionStatus::Done,
+                Errors::EMERGENCY_ACTION_ALREADY_EXECUTED,
+            );
+            assert(action.status == EmergencyActionStatus::Waiting, Errors::ERR_ACTION_NOT_WAITING);
+
+            // Check if timelock delay has passed
+            let current_time = get_block_timestamp();
+            assert(current_time >= action.execution_time, Errors::TIMELOCK_DELAY_NOT_PASSED);
+
+            // Execute the action based on type
+            match action.action_type {
+                EmergencyActionType::FreezePool => {
+                    self.emergency_freeze_pool_internal(action.pool_id);
+                },
+                EmergencyActionType::ResolvePool => {
+                    // Extract winning option from action data
+                    let winning_option = action.action_data != 0;
+                    self.emergency_resolve_pool_internal(action.pool_id, winning_option);
+                },
+                EmergencyActionType::UnfreezePool => {
+                    self.emergency_unfreeze_pool_internal(action.pool_id);
+                },
+                EmergencyActionType::EmergencyWithdrawal => {
+                    // Extract user address from action data for admin-initiated emergency
+                    // withdrawal action_data contains the user address as a felt252
+                    // (ContractAddress)
+                    let user_address = self
+                        .extract_user_address_from_action_data(action.action_data);
+
+                    // Check if pool exists
+                    let pool = self.pools.read(action.pool_id);
+                    assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
+
+                    // Check if pool is in emergency state
+                    let emergency_state = self.emergency_pool_states.read(action.pool_id);
+                    assert(emergency_state.is_emergency, Errors::POOL_NOT_IN_EMERGENCY_STATE);
+                    assert(
+                        emergency_state.allow_emergency_withdrawals,
+                        Errors::EMERGENCY_WITHDRAWALS_NOT_ALLOWED,
+                    );
+
+                    // Check if user has participated in this pool
+                    let has_participated = self
+                        .has_user_participated_in_pool(user_address, action.pool_id);
+                    assert(has_participated, Errors::UNAUTHORIZED_CALLER);
+
+                    // Get user's stake and calculate withdrawal amount
+                    let user_stake = self.get_user_stake(action.pool_id, user_address);
+                    assert(user_stake.amount > 0, Errors::NO_FUNDS_TO_WITHDRAW);
+
+                    // Calculate withdrawal amount (return original stake)
+                    let withdrawal_amount = user_stake.amount;
+
+                    // Reset user's stake
+                    self
+                        .user_stakes
+                        .write(
+                            (action.pool_id, user_address),
+                            UserStake { amount: 0, shares: 0, option: false, timestamp: 0 },
+                        );
+
+                    // Transfer tokens back to user
+                    let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
+                    strk_token.transfer(user_address, withdrawal_amount);
+
+                    // Emit emergency withdrawal event
+                    self
+                        .emit(
+                            Event::EmergencyWithdrawal(
+                                EmergencyWithdrawal {
+                                    pool_id: action.pool_id,
+                                    user: user_address,
+                                    amount: withdrawal_amount,
+                                    timestamp: get_block_timestamp(),
+                                },
+                            ),
+                        );
+                },
+            }
+
+            // Mark action as executed
+            let final_action = EmergencyAction {
+                action_type: action.action_type,
+                pool_id: action.pool_id,
+                action_data: action.action_data,
+                scheduled_time: action.scheduled_time,
+                execution_time: action.execution_time,
+                status: EmergencyActionStatus::Done,
+                admin: action.admin,
+            };
+            self.scheduled_emergency_actions.write(action_id, final_action);
+
+            // Emit action executed event
+            self
+                .emit(
+                    Event::EmergencyActionExecuted(
+                        EmergencyActionExecuted {
+                            action_id: action_id,
+                            admin: get_caller_address(),
+                            timestamp: current_time,
+                        },
+                    ),
+                );
+        }
+
+        /// @notice Cancels a scheduled emergency action.
+        /// @dev Only callable by admin. Cancels action before execution.
+        /// @param action_id The ID of the scheduled action.
+        fn cancel_emergency_action(ref self: ContractState, action_id: u256) {
+            // Check if caller is admin
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+
+            // Get the scheduled action
+            let action = self.scheduled_emergency_actions.read(action_id);
+
+            // Check if action exists and is in valid state for cancellation
+            assert(action.status != EmergencyActionStatus::Cancelled, Errors::ERR_ACTION_CANCELLED);
+            assert(
+                action.status != EmergencyActionStatus::Done,
+                Errors::EMERGENCY_ACTION_ALREADY_EXECUTED,
+            );
+            assert(action.status == EmergencyActionStatus::Waiting, Errors::ERR_ACTION_NOT_WAITING);
+
+            // Update action status to cancelled
+            let updated_action = EmergencyAction {
+                action_type: action.action_type,
+                pool_id: action.pool_id,
+                action_data: action.action_data,
+                scheduled_time: action.scheduled_time,
+                execution_time: action.execution_time,
+                status: EmergencyActionStatus::Cancelled,
+                admin: action.admin,
+            };
+            self.scheduled_emergency_actions.write(action_id, updated_action);
+
+            // Emit action cancelled event
+            self
+                .emit(
+                    Event::EmergencyActionCancelled(
+                        EmergencyActionCancelled {
+                            action_id: action_id,
+                            admin: get_caller_address(),
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+        }
+
+        /// @notice Returns the status of a scheduled emergency action.
+        /// @param action_id The ID of the scheduled action.
+        /// @return The action status and execution time.
+        fn get_emergency_action_status(self: @ContractState, action_id: u256) -> (u8, u64) {
+            let action = self.scheduled_emergency_actions.read(action_id);
+            let status_u8 = match action.status {
+                EmergencyActionStatus::Unset => 0,
+                EmergencyActionStatus::Waiting => 1,
+                EmergencyActionStatus::Ready => 2,
+                EmergencyActionStatus::Done => 3,
+                EmergencyActionStatus::Cancelled => 4,
+            };
+            (status_u8, action.execution_time)
+        }
+
+        /// @notice Returns whether a pool is in emergency state.
+        /// @param pool_id The pool ID.
+        /// @return True if pool is in emergency state, false otherwise.
+        fn is_pool_emergency_state(self: @ContractState, pool_id: u256) -> bool {
+            let emergency_state = self.emergency_pool_states.read(pool_id);
+            emergency_state.is_emergency
+        }
+
+        /// @notice Returns all pools in emergency state.
+        /// @return Array of PoolDetails for emergency pools.
+        fn get_emergency_pools(self: @ContractState) -> Array<PoolDetails> {
+            let mut emergency_pools = array![];
+            let len = self.pool_ids.len();
+
+            let mut i: u64 = 0;
+            loop {
+                if i >= len {
+                    break;
+                }
+                let pool_id = self.pool_ids.at(i).read();
+                let pool = self.pools.read(pool_id);
+                if pool.exists {
+                    let emergency_state = self.emergency_pool_states.read(pool_id);
+                    if emergency_state.is_emergency {
+                        emergency_pools.append(pool);
+                    }
+                }
+                i += 1;
+            }
+            emergency_pools
         }
     }
 
@@ -1577,6 +1947,199 @@ pub mod Predifi {
             }
             // Reset the validator fee for this pool after distribution
             self.validator_fee.write(pool_id, 0);
+        }
+
+
+        /// @notice Returns whether a pool is in emergency state.
+        /// @param pool_id The pool ID.
+        /// @return True if pool is in emergency state, false otherwise.
+        fn is_pool_emergency_state(self: @ContractState, pool_id: u256) -> bool {
+            let emergency_state = self.emergency_pool_states.read(pool_id);
+            emergency_state.is_emergency
+        }
+
+        /// @notice Returns all pools in emergency state.
+        /// @return Array of PoolDetails for emergency pools.
+        fn get_emergency_pools(self: @ContractState) -> Array<PoolDetails> {
+            let mut emergency_pools = array![];
+            let len = self.pool_ids.len();
+
+            let mut i: u64 = 0;
+            loop {
+                if i >= len {
+                    break;
+                }
+                let pool_id = self.pool_ids.at(i).read();
+                let pool = self.pools.read(pool_id);
+                if pool.exists {
+                    let emergency_state = self.emergency_pool_states.read(pool_id);
+                    if emergency_state.is_emergency {
+                        emergency_pools.append(pool);
+                    }
+                }
+                i += 1;
+            }
+            emergency_pools
+        }
+
+        /// @notice Internal emergency pool freeze function.
+        /// @dev Only callable internally by the timelocked executor. Freezes a pool in emergency
+        /// state.
+        /// @param pool_id The pool ID to freeze.
+        fn emergency_freeze_pool_internal(ref self: ContractState, pool_id: u256) {
+            // Check if pool exists
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
+
+            // Check if pool is not already in emergency state
+            let emergency_state = self.emergency_pool_states.read(pool_id);
+            assert(!emergency_state.is_emergency, Errors::POOL_ALREADY_IN_EMERGENCY_STATE);
+
+            // Set pool to emergency state
+            let new_emergency_state = EmergencyPoolState {
+                is_emergency: true,
+                emergency_timestamp: get_block_timestamp(),
+                emergency_reason: 'Admin emergency freeze',
+                emergency_admin: get_caller_address(),
+                allow_emergency_withdrawals: true,
+            };
+            self.emergency_pool_states.write(pool_id, new_emergency_state);
+
+            // Emit emergency freeze event
+            self
+                .emit(
+                    Event::PoolEmergencyFrozen(
+                        PoolEmergencyFrozen {
+                            pool_id,
+                            admin: get_caller_address(),
+                            reason: 'Admin emergency freeze',
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+        }
+
+        /// @notice Internal emergency pool unfreeze function.
+        /// @dev Only callable internally by the timelocked executor. Unfreezes a pool from
+        /// emergency state.
+        /// @param pool_id The pool ID to unfreeze.
+        fn emergency_unfreeze_pool_internal(ref self: ContractState, pool_id: u256) {
+            // Check if pool exists
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
+
+            // Check if pool is in emergency state
+            let emergency_state = self.emergency_pool_states.read(pool_id);
+            assert(emergency_state.is_emergency, Errors::POOL_NOT_IN_EMERGENCY_STATE);
+
+            // Clear emergency state
+            let new_emergency_state = EmergencyPoolState {
+                is_emergency: false,
+                emergency_timestamp: 0,
+                emergency_reason: 0,
+                emergency_admin: get_caller_address(),
+                allow_emergency_withdrawals: false,
+            };
+            self.emergency_pool_states.write(pool_id, new_emergency_state);
+
+            // Emit emergency unfreeze event
+            self
+                .emit(
+                    Event::PoolEmergencyUnfrozen(
+                        PoolEmergencyUnfrozen {
+                            pool_id, admin: get_caller_address(), timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+        }
+
+        // Helper function to convert u8 to EmergencyActionType
+        fn u8_to_emergency_action_type(
+            self: @ContractState, action_type: u8,
+        ) -> EmergencyActionType {
+            match action_type {
+                0 => EmergencyActionType::FreezePool,
+                1 => EmergencyActionType::ResolvePool,
+                2 => EmergencyActionType::UnfreezePool,
+                3 => EmergencyActionType::EmergencyWithdrawal,
+                _ => panic!("Invalid emergency action type"),
+            }
+        }
+
+        /// @notice Extracts and validates a user address from action data.
+        /// @dev Helper function for emergency withdrawal actions.
+        /// @param action_data The action data containing the user address as felt252.
+        /// @return The validated user address as ContractAddress.
+        fn extract_user_address_from_action_data(
+            self: @ContractState, action_data: felt252,
+        ) -> ContractAddress {
+            // Validate that the address is not zero
+            assert(action_data != 0, Errors::INVALID_ADDRESS);
+
+            // Convert felt252 to ContractAddress with proper error handling
+            let user_address: ContractAddress = match action_data.try_into() {
+                Option::Some(addr) => addr,
+                Option::None => panic_with_felt252(Errors::ACTION_DATA_DECODE_FAILED),
+            };
+
+            // Additional validation: ensure the address is not the zero address
+            let zero_address: ContractAddress = match 0.try_into() {
+                Option::Some(addr) => addr,
+                Option::None => panic_with_felt252(Errors::ACTION_DATA_DECODE_FAILED),
+            };
+            assert(user_address != zero_address, Errors::INVALID_ADDRESS);
+
+            user_address
+        }
+
+
+        /// @notice Internal emergency pool resolution function.
+        /// @dev Only callable internally by the timelocked executor. Resolves a disputed pool with
+        /// emergency outcome.
+        /// @param pool_id The pool ID to resolve.
+        /// @param winning_option The winning option (true = option2, false = option1).
+        fn emergency_resolve_pool_internal(
+            ref self: ContractState, pool_id: u256, winning_option: bool,
+        ) {
+            // Check if pool exists
+            let pool = self.pools.read(pool_id);
+            assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
+
+            // Check if pool is in emergency state
+            let emergency_state = self.emergency_pool_states.read(pool_id);
+            assert(emergency_state.is_emergency, Errors::POOL_NOT_IN_EMERGENCY_STATE);
+
+            // Set pool outcome and mark as resolved
+            self.pool_outcomes.write(pool_id, winning_option);
+            self.pool_resolved.write(pool_id, true);
+
+            // Update pool status to settled
+            let mut updated_pool = pool;
+            updated_pool.status = Status::Settled;
+            self.pools.write(pool_id, updated_pool);
+
+            // Clear emergency state after resolution
+            let new_emergency_state = EmergencyPoolState {
+                is_emergency: false,
+                emergency_timestamp: 0,
+                emergency_reason: 0,
+                emergency_admin: get_caller_address(),
+                allow_emergency_withdrawals: false,
+            };
+            self.emergency_pool_states.write(pool_id, new_emergency_state);
+
+            // Emit emergency resolution event
+            self
+                .emit(
+                    Event::PoolEmergencyResolved(
+                        PoolEmergencyResolved {
+                            pool_id,
+                            admin: get_caller_address(),
+                            winning_option,
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
         }
     }
 }
