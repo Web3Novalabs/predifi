@@ -522,7 +522,7 @@ pub mod Predifi {
             self.track_user_participation(address, pool_id);
 
             // End reentrancy guard
-            self.reentrancy_guard.stop();
+            self.reentrancy_guard.end();
 
             // Emit event
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
