@@ -7,7 +7,7 @@ pub mod Predifi {
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
-    use openzeppelin::security::PausableComponent;
+    use openzeppelin::security::{PausableComponent, ReentrancyGuardComponent};
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use openzeppelin::upgrades::UpgradeableComponent;
     use starknet::storage::{
@@ -46,6 +46,10 @@ pub mod Predifi {
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: PausableComponent, storage: pausable, event: PausableEvent);
     component!(path: UpgradeableComponent, storage: upgradeable, event: UpgradeableEvent);
+    component!(
+        path: ReentrancyGuardComponent, storage: reentrancy_guard, event: ReentrancyGuardEvent,
+    );
+
 
     // AccessControl
     #[abi(embed_v0)]
@@ -67,6 +71,8 @@ pub mod Predifi {
 
     // SecurityTrait Implementation
     impl SecurityImpl = Security<ContractState>;
+
+    impl InternalImpl = ReentrancyGuardComponent::InternalImpl<ContractState>;
 
     #[storage]
     /// @notice Storage struct for the Predifi contract.
@@ -134,6 +140,8 @@ pub mod Predifi {
         pausable: PausableComponent::Storage,
         #[substorage(v0)]
         upgradeable: UpgradeableComponent::Storage,
+        #[substorage(v0)]
+        reentrancy_guard: ReentrancyGuardComponent::Storage,
     }
 
     /// @notice Events emitted by the Predifi contract.
@@ -180,6 +188,8 @@ pub mod Predifi {
         PausableEvent: PausableComponent::Event,
         #[flat]
         UpgradeableEvent: UpgradeableComponent::Event,
+        #[flat]
+        ReentrancyGuardEvent: ReentrancyGuardComponent::Event,
     }
 
     #[derive(Drop, Hash)]
@@ -464,6 +474,9 @@ pub mod Predifi {
             self.assert_sufficient_balance(dispatcher, caller, amount);
             self.assert_sufficient_allowance(dispatcher, caller, contract_address, amount);
 
+            // Start reentrancy guard
+            self.reentrancy_guard.start();
+
             // Transfer the tokens
             dispatcher.transfer_from(caller, contract_address, amount);
 
@@ -507,6 +520,10 @@ pub mod Predifi {
             self.pool_stakes.write(pool.pool_id, user_stake);
             self.pools.write(pool.pool_id, pool);
             self.track_user_participation(address, pool_id);
+
+            // End reentrancy guard
+            self.reentrancy_guard.stop();
+
             // Emit event
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
