@@ -141,4 +141,68 @@ pub mod Events {
         pub total_validations: u256,
         pub timestamp: u64,
     }
+
+    // Emergency Events
+
+    /// @notice Emitted when an emergency withdrawal is made from a pool.
+    #[derive(Drop, starknet::Event)]
+    pub struct EmergencyWithdrawal {
+        pub pool_id: u256,
+        pub user: ContractAddress,
+        pub amount: u256,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when a pool is frozen due to emergency.
+    #[derive(Drop, starknet::Event)]
+    pub struct PoolEmergencyFrozen {
+        pub pool_id: u256,
+        pub admin: ContractAddress,
+        pub reason: felt252,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when a pool is unfrozen from emergency state.
+    #[derive(Drop, starknet::Event)]
+    pub struct PoolEmergencyUnfrozen {
+        pub pool_id: u256,
+        pub admin: ContractAddress,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when a pool is resolved through emergency resolution.
+    #[derive(Drop, starknet::Event)]
+    pub struct PoolEmergencyResolved {
+        pub pool_id: u256,
+        pub admin: ContractAddress,
+        pub winning_option: bool,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when an emergency action is scheduled with timelock.
+    #[derive(Drop, starknet::Event)]
+    pub struct EmergencyActionScheduled {
+        pub action_id: u256,
+        pub action_type: u8,
+        pub pool_id: u256,
+        pub admin: ContractAddress,
+        pub execution_time: u64,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when a scheduled emergency action is executed.
+    #[derive(Drop, starknet::Event)]
+    pub struct EmergencyActionExecuted {
+        pub action_id: u256,
+        pub admin: ContractAddress,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when a scheduled emergency action is cancelled.
+    #[derive(Drop, starknet::Event)]
+    pub struct EmergencyActionCancelled {
+        pub action_id: u256,
+        pub admin: ContractAddress,
+        pub timestamp: u64,
+    }
 }

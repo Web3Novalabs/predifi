@@ -1,3 +1,4 @@
+use contract::STRK::{IExternalDispatcher as STRKDispatcher, IExternalDispatcherTrait};
 use contract::base::types::PoolDetails;
 use contract::interfaces::ipredifi::{
     IPredifiDispatcher, IPredifiDispatcherTrait, IPredifiDisputeDispatcher,
@@ -180,4 +181,10 @@ pub fn approve_tokens_for_payment(
     let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
     // Approve the contract to spend tokens
     erc20.approve(contract_address, amount);
+}
+
+// Helper to mint STRK to a user on the mock token
+pub fn mint_tokens_for(user: ContractAddress, erc20_address: ContractAddress, amount: u256) {
+    let mut strk: STRKDispatcher = STRKDispatcher { contract_address: erc20_address };
+    strk.mint(user, amount);
 }

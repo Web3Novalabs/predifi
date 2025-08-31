@@ -7,7 +7,7 @@
 use starknet::ContractAddress;
 
 #[starknet::interface]
-trait IExternal<ContractState> {
+pub trait IExternal<ContractState> {
     /// @notice Mints new tokens to a specified recipient.
     /// @param self The contract state.
     /// @param recipient The address of the recipient who will receive the minted tokens.
