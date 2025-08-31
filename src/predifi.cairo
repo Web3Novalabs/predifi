@@ -553,6 +553,9 @@ pub mod Predifi {
             self.assert_sufficient_balance(dispatcher, address, amount);
             self.assert_sufficient_allowance(dispatcher, address, contract_address, amount);
 
+            // Start reentrancy guard
+            self.reentrancy_guard.start();
+
             // Transfer the tokens
             dispatcher.transfer_from(address, contract_address, amount);
 
@@ -568,6 +571,9 @@ pub mod Predifi {
             self.track_user_participation(address, pool_id);
             // emit event
             self.emit(UserStaked { pool_id, address, amount });
+
+            // End reentrancy guard
+            self.reentrancy_guard.end();
         }
 
 
@@ -586,6 +592,8 @@ pub mod Predifi {
 
             let user_stake = self.get_user_stake(pool_id, caller);
             self.assert_non_zero_stake(user_stake.amount);
+
+            // Start reentrancy guard
 
             let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
             let refund_amount = user_stake.amount;
@@ -610,6 +618,9 @@ pub mod Predifi {
                         StakeRefunded { pool_id, address: caller, amount: user_stake.amount },
                     ),
                 );
+
+            // End reentrancy guard
+            self.reentrancy_guard.end();
         }
 
 
