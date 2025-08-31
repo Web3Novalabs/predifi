@@ -8,7 +8,7 @@ pub mod Predifi {
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
     use openzeppelin::introspection::src5::SRC5Component;
-    use openzeppelin::security::PausableComponent;
+    use openzeppelin::security::{PausableComponent, ReentrancyGuardComponent};
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
     use openzeppelin::upgrades::UpgradeableComponent;
     use starknet::storage::{
@@ -51,6 +51,10 @@ pub mod Predifi {
     component!(path: SRC5Component, storage: src5, event: SRC5Event);
     component!(path: PausableComponent, storage: pausable, event: PausableEvent);
     component!(path: UpgradeableComponent, storage: upgradeable, event: UpgradeableEvent);
+    component!(
+        path: ReentrancyGuardComponent, storage: reentrancy_guard, event: ReentrancyGuardEvent,
+    );
+
 
     // AccessControl
     #[abi(embed_v0)]
@@ -72,6 +76,8 @@ pub mod Predifi {
 
     // SecurityTrait Implementation
     impl SecurityImpl = Security<ContractState>;
+
+    impl InternalImpl = ReentrancyGuardComponent::InternalImpl<ContractState>;
 
     #[storage]
     /// @notice Storage struct for the Predifi contract.
@@ -144,6 +150,8 @@ pub mod Predifi {
         pausable: PausableComponent::Storage,
         #[substorage(v0)]
         upgradeable: UpgradeableComponent::Storage,
+        #[substorage(v0)]
+        reentrancy_guard: ReentrancyGuardComponent::Storage,
     }
 
     /// @notice Events emitted by the Predifi contract.
@@ -205,6 +213,8 @@ pub mod Predifi {
         PausableEvent: PausableComponent::Event,
         #[flat]
         UpgradeableEvent: UpgradeableComponent::Event,
+        #[flat]
+        ReentrancyGuardEvent: ReentrancyGuardComponent::Event,
     }
 
     #[derive(Drop, Hash)]
@@ -493,6 +503,9 @@ pub mod Predifi {
             self.assert_sufficient_balance(dispatcher, caller, amount);
             self.assert_sufficient_allowance(dispatcher, caller, contract_address, amount);
 
+            // Start reentrancy guard
+            self.reentrancy_guard.start();
+
             // Transfer the tokens
             dispatcher.transfer_from(caller, contract_address, amount);
 
@@ -536,6 +549,10 @@ pub mod Predifi {
             self.pool_stakes.write(pool.pool_id, user_stake);
             self.pools.write(pool.pool_id, pool);
             self.track_user_participation(address, pool_id);
+
+            // End reentrancy guard
+            self.reentrancy_guard.end();
+
             // Emit event
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
@@ -565,6 +582,9 @@ pub mod Predifi {
             self.assert_sufficient_balance(dispatcher, address, amount);
             self.assert_sufficient_allowance(dispatcher, address, contract_address, amount);
 
+            // Start reentrancy guard
+            self.reentrancy_guard.start();
+
             // Transfer the tokens
             dispatcher.transfer_from(address, contract_address, amount);
 
@@ -580,6 +600,9 @@ pub mod Predifi {
             self.track_user_participation(address, pool_id);
             // emit event
             self.emit(UserStaked { pool_id, address, amount });
+
+            // End reentrancy guard
+            self.reentrancy_guard.end();
         }
 
 
@@ -598,6 +621,8 @@ pub mod Predifi {
 
             let user_stake = self.get_user_stake(pool_id, caller);
             self.assert_non_zero_stake(user_stake.amount);
+
+            // Start reentrancy guard
 
             let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
             let refund_amount = user_stake.amount;
@@ -622,6 +647,9 @@ pub mod Predifi {
                         StakeRefunded { pool_id, address: caller, amount: user_stake.amount },
                     ),
                 );
+
+            // End reentrancy guard
+            self.reentrancy_guard.end();
         }
 
 
