@@ -7,6 +7,7 @@ pub mod Predifi {
     use core::poseidon::PoseidonTrait;
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
+    
     use openzeppelin::introspection::src5::SRC5Component;
     use openzeppelin::security::{PausableComponent, ReentrancyGuardComponent};
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
@@ -18,6 +19,7 @@ pub mod Predifi {
     use starknet::{
         ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
     };
+    
     use crate::base::errors::Errors;
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, EmergencyActionCancelled,
@@ -152,6 +154,11 @@ pub mod Predifi {
         upgradeable: UpgradeableComponent::Storage,
         #[substorage(v0)]
         reentrancy_guard: ReentrancyGuardComponent::Storage,
+        //validator performance tracking
+        validator_reputation: Map<ContractAddress, u256>,
+        validator_success_count: Map<ContractAddress,u256>,
+        validator_fail_count:Map<ContractAddress,u256>,
+        validator_slashed:Map<ContractAddress,u256>,
     }
 
     /// @notice Events emitted by the Predifi contract.
@@ -215,8 +222,24 @@ pub mod Predifi {
         UpgradeableEvent: UpgradeableComponent::Event,
         #[flat]
         ReentrancyGuardEvent: ReentrancyGuardComponent::Event,
+        ValidatorSlashed:ValidatorSlashed,
+        ValidatorPerformanceUpdated:ValidatorPerformanceUpdated,
     }
-
+    impl AccessControlInternalImpl=AccessControlComponent::InternalImpl<ContractState>;
+    #[derive(Drop,starknet::Event)]
+    pub struct ValidatorSlashed{
+        #[key]
+        pub validator:ContractAddress,
+        pub amount:u256,
+        pub reputation_after:u256,
+    }
+    #[derive(Drop,starknet::Event)]
+    pub struct ValidatorPerformanceUpdated{
+        #[key]
+        pub validator:ContractAddress,
+        pub success:bool,
+        pub reputation_after:u256,
+    }
     #[derive(Drop, Hash)]
     struct HashingProperties {
         username: felt252,
@@ -229,6 +252,66 @@ pub mod Predifi {
         login: HashingProperties,
     }
 
+    fn update_performance(ref self:ContractState,validator:ContractAddress,success:bool){
+        if(success){
+            let prev=self.validator_success_count.read(validator);
+            self.validator_success_count.write(validator,prev+1);
+
+            let rep=self.validator_reputation.read(validator)+1;
+            self.validator_reputation.write(validator,rep);
+
+            self.emit(ValidatorPerformanceUpdated{validator,success,reputation_after:rep});
+        } else{
+            let prev=self.validator_fail_count.read(validator);
+            self.validator_fail_count.write(validator,prev+1);
+
+            let rep=self.validator_reputation.read(validator)+1;
+            let new_rep=if rep>0 {rep-1} else { 0 };
+            self.validator_reputation.write(validator,rep);
+
+            self.emit(ValidatorPerformanceUpdated{validator,success,reputation_after:new_rep});
+        }
+    }
+
+    fn slash_validator(ref self:ContractState,validator:ContractAddress,amount:u256){
+        //Ensure only admin can call
+        self.accesscontrol.assert_has_role(DEFAULT_ADMIN_ROLE,get_caller_address());
+
+        let _prev_slashed=self.validator_slashed.read(validator);
+        self.validator_slashed.write(validator,amount);
+
+        let rep=self.validator_reputation.read(validator);
+        let new_rep=if rep>amount {rep-amount} else {0};
+        self.validator_reputation.write(validator,new_rep);
+
+        //Deduct from validator protocol_treasury
+        let treasury=self.validator_treasuries.read(validator);
+        let updated_treasury=if treasury>amount {treasury-amount} else { 0 };
+        self.validator_treasuries.write(validator,updated_treasury);
+
+        self.emit(ValidatorSlashed{validator,amount,reputation_after:new_rep});
+    }
+
+    fn distribute_validator_fees(ref self:ContractState,pool_id:u256){
+        let total_fee=self.validator_fee.read(pool_id);
+        let validators_span=self.validators.len();
+
+        //Compute total reputation
+        let mut total_rep: u256=0;
+        for v in validators_span.iter(){
+            total_rep+=self.validator_reputation.read(*v);
+        }
+        for v in validators_span.iter(){
+            let rep=self.validator_reputation.read(*v);
+            let share=if total_rep>0{
+                (rep*total_fee)/total_rep
+            } else{
+                total_fee/(self.validators.len().into())
+            };
+            let prev=self.validator_treasuries.read(*v);
+            self.validator_treasuries.write(*v,prev+share);
+        }
+    }
     /// @notice Initializes the Predifi contract.
     /// @param self The contract state.
     /// @param token_addr The address of the STRK token contract.
