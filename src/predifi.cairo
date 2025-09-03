@@ -225,7 +225,7 @@ pub mod Predifi {
         ValidatorSlashed:ValidatorSlashed,
         ValidatorPerformanceUpdated:ValidatorPerformanceUpdated,
     }
-    impl AccessControlInternalImpl=AccessControlComponent::InternalImpl<ContractState>;
+   
     #[derive(Drop,starknet::Event)]
     pub struct ValidatorSlashed{
         #[key]
@@ -251,7 +251,9 @@ pub mod Predifi {
         id: felt252,
         login: HashingProperties,
     }
-
+    /// @notice Update validator performance and adjust reputation.
+    /// @param validator Address of the validator.
+    /// @param success  True if  validation was correct, false otherwise.
     fn update_performance(ref self:ContractState,validator:ContractAddress,success:bool){
         if(success){
             let prev=self.validator_success_count.read(validator);
@@ -265,20 +267,23 @@ pub mod Predifi {
             let prev=self.validator_fail_count.read(validator);
             self.validator_fail_count.write(validator,prev+1);
 
-            let rep=self.validator_reputation.read(validator)+1;
+            let rep=self.validator_reputation.read(validator);
             let new_rep=if rep>0 {rep-1} else { 0 };
-            self.validator_reputation.write(validator,rep);
+            self.validator_reputation.write(validator,new_rep);
 
             self.emit(ValidatorPerformanceUpdated{validator,success,reputation_after:new_rep});
         }
     }
 
+    /// @notice Slash a validator by reducing reputation and treasury.
+    /// @param validator Validator address to slash.
+    /// @param amount Amount to slash.
     fn slash_validator(ref self:ContractState,validator:ContractAddress,amount:u256){
         //Ensure only admin can call
-        self.accesscontrol.assert_has_role(DEFAULT_ADMIN_ROLE,get_caller_address());
+        self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
-        let _prev_slashed=self.validator_slashed.read(validator);
-        self.validator_slashed.write(validator,amount);
+        let prev_slashed=self.validator_slashed.read(validator);
+        self.validator_slashed.write(validator,prev_slashed+amount);
 
         let rep=self.validator_reputation.read(validator);
         let new_rep=if rep>amount {rep-amount} else {0};
@@ -292,25 +297,60 @@ pub mod Predifi {
         self.emit(ValidatorSlashed{validator,amount,reputation_after:new_rep});
     }
 
+    /// @notice Distribute validator fees among validators based on reputation.
+    /// @param pool_id ID fo the pool to distribute fees for.
     fn distribute_validator_fees(ref self:ContractState,pool_id:u256){
         let total_fee=self.validator_fee.read(pool_id);
-        let validators_span=self.validators.len();
+        let validators_len: u64=self.validators.len().into();
 
         //Compute total reputation
         let mut total_rep: u256=0;
-        for v in validators_span.iter(){
-            total_rep+=self.validator_reputation.read(*v);
+        let mut i:u64=0;
+        loop{
+            if i==validators_len{
+                break;
+            }
+            let v = self.validators.at(i.into()).read();
+            total_rep+=self.validator_reputation.read(v);
+            i += 1;
         }
-        for v in validators_span.iter(){
-            let rep=self.validator_reputation.read(*v);
+        let mut j: u64=0;
+        loop {
+            if j == validators_len {
+                break;
+            }
+            let v=self.validators.at(j.into()).read();
+            let rep=self.validator_reputation.read(v);
             let share=if total_rep>0{
-                (rep*total_fee)/total_rep
+                    (rep*total_fee)/total_rep
             } else{
-                total_fee/(self.validators.len().into())
+                    total_fee/(self.validators.len().into())
             };
-            let prev=self.validator_treasuries.read(*v);
-            self.validator_treasuries.write(*v,prev+share);
+            let prev=self.validator_treasuries.read(v);
+            self.validator_treasuries.write(v,prev+share);
+            j+=1;
         }
+    }
+
+    // -----------------------------------------
+    // Getter functions for frontend / tests
+    // -----------------------------------------
+    
+    /// @notice Get validator reputation
+    fn get_validator_reputation(self:@ContractState, validator:ContractAddress)->u256{
+        self.validator_reputation.read(validator)
+    }
+    /// @notice Get validator success count
+    fn get_validator_success(self:@ContractState, validator:ContractAddress)->u256{
+        self.validator_success_count.read(validator)
+    }
+    /// @notice Get validator fail count
+    fn get_validator_slashed(self:@ContractState, validator:ContractAddress)->u256{
+        self.validator_slashed.read(validator)
+    }
+    /// @notice Get validator treasury
+    fn get_validator_treasury(self:@ContractState, validator:ContractAddress)->u256{
+        self.validator_treasuries.read(validator)
     }
     /// @notice Initializes the Predifi contract.
     /// @param self The contract state.
