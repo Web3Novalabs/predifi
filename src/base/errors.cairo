@@ -124,6 +124,12 @@ pub mod Errors {
     /// @notice Error: This  is empty felt252 .
     pub const EMPTY_FELT252: felt252 = 'EMPTY FELT252';
 
+    /// @notice Error: The protocol or validator fee exceeds the maximum allowed percentage.
+    pub const FEE_EXCEEDS_MAX: felt252 = 'Fee exceeds maximum allowed';
+
+    /// @notice Error: The protocol or validator fee exceeds 100 percent.
+    pub const FEE_EXCEEDS_100_PERCENT: felt252 = 'Fee exceeds 100 percent';
+
     // Emergency Function Errors
 
     /// @notice Error: The pool is not in emergency state.
@@ -170,7 +176,6 @@ pub mod Errors {
 
     /// @notice Error: The emergency action has been cancelled.
     pub const ERR_ACTION_CANCELLED: felt252 = 'Action has been cancelled';
-
 
     /// @notice Error: The emergency action is not in waiting status.
     pub const ERR_ACTION_NOT_WAITING: felt252 = 'Action is not in waiting status';

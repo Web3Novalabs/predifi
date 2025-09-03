@@ -18,7 +18,7 @@ pub mod Predifi {
     use starknet::{
         ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
     };
-    use crate::base::errors::Errors;
+    use crate::base::errors::Errors; 
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, EmergencyActionCancelled,
         EmergencyActionExecuted, EmergencyActionScheduled, EmergencyWithdrawal, FeeWithdrawn,
@@ -152,6 +152,9 @@ pub mod Predifi {
         upgradeable: UpgradeableComponent::Storage,
         #[substorage(v0)]
         reentrancy_guard: ReentrancyGuardComponent::Storage,
+        protocol_fee_percentage: u256, // Configurable protocol fee percentage
+        validator_fee_percentage: u256, // Configurable validator fee percentage
+        max_fee_percentage: u256, // Maximum allowed fee percentage
     }
 
     /// @notice Events emitted by the Predifi contract.
@@ -215,6 +218,18 @@ pub mod Predifi {
         UpgradeableEvent: UpgradeableComponent::Event,
         #[flat]
         ReentrancyGuardEvent: ReentrancyGuardComponent::Event,
+        /// @notice Emitted when fee percentages are updated.
+        FeeUpdated: FeeUpdated,
+    }
+
+    /// @notice Emitted when fee percentages are updated.
+    #[derive(Drop, starknet::Event)]
+    pub struct FeeUpdated {
+        protocol_fee_percentage: u256,
+        validator_fee_percentage: u256,
+        max_fee_percentage: u256,
+        updated_by: ContractAddress,
+        timestamp: u64,
     }
 
     #[derive(Drop, Hash)]
@@ -245,6 +260,10 @@ pub mod Predifi {
         // Initialize emergency functionality
         self.emergency_timelock_delay.write(86400); // 24 hours in seconds
         self.emergency_action_counter.write(0);
+        // Initialize fee percentages (e.g., 5% protocol, 5% validator, 10% max)
+        self.protocol_fee_percentage.write(5_u256);
+        self.validator_fee_percentage.write(5_u256);
+        self.max_fee_percentage.write(10_u256);
     }
 
     #[abi(embed_v0)]
@@ -364,6 +383,44 @@ pub mod Predifi {
             pool_id
         }
 
+        /// @notice Updates the protocol and validator fee percentages.
+        /// @dev Only callable by admin. Emits FeeUpdated event.
+        /// @param new_protocol_fee The new protocol fee percentage.
+        /// @param new_validator_fee The new validator fee percentage.
+        fn update_fee_percentages(
+        ref self: ContractState, new_protocol_fee: u256, new_validator_fee: u256
+        ) {
+            self.pausable.assert_not_paused();
+            self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+            let max_fee = self.max_fee_percentage.read();
+
+            // Validate fees
+            assert(new_protocol_fee <= max_fee, Errors::FEE_EXCEEDS_MAX);
+            assert(new_validator_fee <= max_fee, Errors::FEE_EXCEEDS_MAX);
+            assert(new_protocol_fee <= 100_u256, Errors::FEE_EXCEEDS_100_PERCENT);
+            assert(new_validator_fee <= 100_u256, Errors::FEE_EXCEEDS_100_PERCENT);
+
+           // Update fees
+           self.protocol_fee_percentage.write(new_protocol_fee);
+           self.validator_fee_percentage.write(new_validator_fee);
+
+          // Emit event
+          let caller = get_caller_address();
+          let timestamp = get_block_timestamp();
+          self
+            .emit(
+                Event::FeeUpdated(
+                    FeeUpdated {
+                        protocol_fee_percentage: new_protocol_fee,
+                        validator_fee_percentage: new_validator_fee,
+                        max_fee_percentage: max_fee,
+                        updated_by: caller,
+                        timestamp: timestamp,
+                    }
+                )
+            );
+        }
+
         /// @notice Cancels a pool. Only the pool creator can cancel.
         /// @param pool_id The ID of the pool to cancel.
         fn cancel_pool(ref self: ContractState, pool_id: u256) {
@@ -401,6 +458,16 @@ pub mod Predifi {
             self.assert_greater_than_zero(pool_id);
             let pool = self.pools.read(pool_id);
             pool.address
+        }
+
+        /// @notice Gets the current protocol and validator fee percentages.
+        /// @return (protocol_fee_percentage, validator_fee_percentage, max_fee_percentage).
+        fn get_fee_percentages(self: @ContractState) -> (u256, u256, u256) {
+            (
+                self.protocol_fee_percentage.read(),
+                self.validator_fee_percentage.read(),
+                self.max_fee_percentage.read()
+            )
         }
 
         /// @notice Returns the odds for a given pool.
@@ -928,7 +995,7 @@ pub mod Predifi {
             if action_type == 3 { // EmergencyWithdrawal
                 // For emergency withdrawal, action_data must contain a valid user address
                 // Use the helper function to validate the address and handle potential panics
-                let user_address = self.extract_user_address_from_action_data(action_data);
+                let _user_address = self.extract_user_address_from_action_data(action_data);
                 // Store the validated address for later use if needed
             // Note: The validation is done here to fail fast if the address is invalid
             }
@@ -1649,9 +1716,9 @@ pub mod Predifi {
         ) -> u256 {
             self.assert_greater_than_zero(pool_id);
             self.assert_greater_than_zero(total_amount);
-            // Validator fee is fixed at 10%
-            let validator_fee_percentage = 5_u8;
-            let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
+            // Use configurable validator fee percentage
+            let validator_fee_percentage = self.validator_fee_percentage.read();
+            let validator_fee = (total_amount * validator_fee_percentage) / 100_u256;
 
             self.validator_fee.write(pool_id, validator_fee);
             validator_fee
@@ -1947,26 +2014,85 @@ pub mod Predifi {
             option2_votes > option1_votes
         }
 
-        /// @notice Calculates the total payout for a pool.
+        /// @notice Calculates the total payout for a pool, including fees.
         /// @param pool_id The pool ID.
-        /// @param winning_option The winning option.
+        /// @param winning_option The winning option (true = option2, false = option1).
         /// @return The total payout amount.
         fn calculate_total_payout(
-            self: @ContractState, pool_id: u256, winning_option: bool,
+            ref self: ContractState, pool_id: u256, winning_option: bool
         ) -> u256 {
+            self.assert_greater_than_zero(pool_id);
             let pool = self.pools.read(pool_id);
+            self.assert_pool_exists(@pool);
+
+            let total_pool_amount = pool.totalStakeOption1 + pool.totalStakeOption2;
+                if total_pool_amount == 0 {
+                return 0;
+            }
+
+            // Get fee percentages
+            let protocol_fee_percentage = self.protocol_fee_percentage.read();
+            let _validator_fee = IPredifiValidator::calculate_validator_fee(
+                ref self, pool_id, total_pool_amount
+                );
+                let creator_fee_percentage: u256 = pool.creatorFee.into();
 
             // Calculate fees
-            let creator_fee_amount = (pool.totalBetAmountStrk * pool.creatorFee.into()) / 100_u256;
-            let validator_fee_amount = self.validator_fee.read(pool_id);
-            let protocol_fee_amount = (pool.totalBetAmountStrk * 5_u256)
-                / 100_u256; // 5% protocol fee
+           let protocol_fee = (total_pool_amount * protocol_fee_percentage) / 100_u256;
+           let validator_fee = IPredifiValidator::calculate_validator_fee(
+           ref self, pool_id, total_pool_amount
+           );
+          let creator_fee = (total_pool_amount * creator_fee_percentage) / 100_u256;
 
-            // Total payout is total bet amount minus all fees
-            let total_fees = creator_fee_amount + validator_fee_amount + protocol_fee_amount;
-            let total_payout = pool.totalBetAmountStrk - total_fees;
+    // Update treasuries
+    self.protocol_treasury.write(self.protocol_treasury.read() + protocol_fee);
+    self
+        .creator_treasuries
+        .write(pool.address, self.creator_treasuries.read(pool.address) + creator_fee);
 
-            total_payout
+    // Calculate total payout (subtract fees from total pool amount)
+    let total_fees = protocol_fee + validator_fee + creator_fee;
+    let total_payout = if total_pool_amount > total_fees {
+        total_pool_amount - total_fees
+    } else {
+        0
+    };
+
+    // Emit FeesCollected for protocol fee
+    self.emit(
+        Event::FeesCollected(
+            FeesCollected {
+                pool_id,
+                fee_type: 'protocol',
+                recipient: get_contract_address(), // Protocol treasury
+                amount: protocol_fee,
+            }
+        )
+    );
+    // Emit FeesCollected for validator fee
+    self.emit(
+        Event::FeesCollected(
+            FeesCollected {
+                pool_id,
+                fee_type: 'validator',
+                recipient: get_contract_address(), // Validator fees distributed later
+                amount: validator_fee,
+            }
+        )
+    );
+    // Emit FeesCollected for creator fee
+    self.emit(
+        Event::FeesCollected(
+            FeesCollected {
+                pool_id,
+                fee_type: 'creator',
+                recipient: pool.address,
+                amount: creator_fee,
+            }
+        )
+    );
+
+       total_payout
         }
 
         /// @notice Collects the pool creation fee from the creator.
@@ -1989,47 +2115,9 @@ pub mod Predifi {
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
         }
 
-        /// @notice Calculates the validator fee for a pool.
-        /// @param pool_id The pool ID.
-        /// @param total_amount The total amount to calculate fee from.
-        /// @return The validator fee.
-        fn calculate_validator_fee(
-            ref self: ContractState, pool_id: u256, total_amount: u256,
-        ) -> u256 {
-            // Validator fee is fixed at 5%
-            let validator_fee_percentage = 5_u8;
-            let mut validator_fee = (total_amount * validator_fee_percentage.into()) / 100_u256;
+        
 
-            self.validator_fee.write(pool_id, validator_fee);
-            validator_fee
-        }
-
-        /// @notice Distributes validator fees for a pool.
-        /// @param pool_id The pool ID.
-        fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
-            let total_validator_fee = self.validator_fee.read(pool_id);
-
-            let validator_count = self.validators.len();
-
-            // Convert validator_count to u256 for the division
-            let validator_count_u256: u256 = validator_count.into();
-            let fee_per_validator = total_validator_fee / validator_count_u256;
-
-            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
-
-            // Distribute to each validator
-            let mut i: u64 = 0;
-            while i != validator_count {
-                // Safe access to validator - check bounds first
-                if i < self.validators.len() {
-                    let validator_address = self.validators.at(i).read();
-                    strk_token.transfer(validator_address, fee_per_validator);
-                }
-                i += 1;
-            }
-            // Reset the validator fee for this pool after distribution
-            self.validator_fee.write(pool_id, 0);
-        }
+        
 
 
         /// @notice Returns whether a pool is in emergency state.

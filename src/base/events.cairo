@@ -46,6 +46,16 @@ pub mod Events {
         pub amount: u256,
     }
 
+    /// @notice Emitted when fee percentages are updated.
+    #[derive(Drop, starknet::Event)]
+    pub struct FeeUpdated {
+        pub protocol_fee_percentage: u256,
+        pub validator_fee_percentage: u256,
+        pub max_fee_percentage: u256,
+        pub updated_by: ContractAddress,
+        pub timestamp: u64,
+    }
+
     /// @notice Emitted when a pool changes state.
     #[derive(Drop, starknet::Event)]
     pub struct PoolStateTransition {
@@ -205,4 +215,33 @@ pub mod Events {
         pub admin: ContractAddress,
         pub timestamp: u64,
     }
-}
+
+    /// @notice The enum for all events emitted by the contract.
+    #[derive(Drop, starknet::Event)]
+    pub enum Events {
+        BetPlaced: BetPlaced,
+        UserStaked: UserStaked,
+        StakeRefunded: StakeRefunded,
+        FeesCollected: FeesCollected,
+        FeeUpdated: FeeUpdated,
+        PoolStateTransition: PoolStateTransition,
+        PoolResolved: PoolResolved,
+        FeeWithdrawn: FeeWithdrawn,
+        ValidatorsAssigned: ValidatorsAssigned,
+        ValidatorAdded: ValidatorAdded,
+        ValidatorRemoved: ValidatorRemoved,
+        DisputeRaised: DisputeRaised,
+        DisputeResolved: DisputeResolved,
+        PoolSuspended: PoolSuspended,
+        PoolCancelled: PoolCancelled,
+        ValidatorResultSubmitted: ValidatorResultSubmitted,
+        PoolAutomaticallySettled: PoolAutomaticallySettled,
+        EmergencyWithdrawal: EmergencyWithdrawal,
+        PoolEmergencyFrozen: PoolEmergencyFrozen,
+        PoolEmergencyUnfrozen: PoolEmergencyUnfrozen,
+        PoolEmergencyResolved: PoolEmergencyResolved,
+        EmergencyActionScheduled: EmergencyActionScheduled,
+        EmergencyActionExecuted: EmergencyActionExecuted,
+        EmergencyActionCancelled: EmergencyActionCancelled,
+    }
+} 
