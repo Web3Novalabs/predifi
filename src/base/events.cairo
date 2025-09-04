@@ -205,4 +205,23 @@ pub mod Events {
         pub admin: ContractAddress,
         pub timestamp: u64,
     }
+    #[derive(Drop,starknet::Event)]
+    pub struct ValidatorSlashed{
+        #[key]
+        pub validator:ContractAddress,
+        pub amount:u256,
+        pub reputation_after:u256,
+    }
+    #[derive(Drop,starknet::Event)]
+    pub struct ValidatorPerformanceUpdated{
+        #[key]
+        pub validator:ContractAddress,
+        pub success:bool,
+        pub reputation_after:u256,
+    }
+    #[derive(Drop,starknet::Event)]
+    pub struct FeesDistributed{
+        pub pool_id:u256,
+        pub total_distributed: u256,
+    }
 }

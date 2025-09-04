@@ -19,7 +19,6 @@ pub mod Predifi {
     use starknet::{
         ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
     };
-    
     use crate::base::errors::Errors;
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, EmergencyActionCancelled,
@@ -27,7 +26,7 @@ pub mod Predifi {
         FeesCollected, PoolAutomaticallySettled, PoolCancelled, PoolEmergencyFrozen,
         PoolEmergencyResolved, PoolEmergencyUnfrozen, PoolResolved, PoolStateTransition,
         PoolSuspended, StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved,
-        ValidatorResultSubmitted, ValidatorsAssigned,
+        ValidatorResultSubmitted, ValidatorsAssigned,ValidatorSlashed, ValidatorPerformanceUpdated,FeesDistributed
     };
     use crate::base::security::{Security, SecurityTrait};
 
@@ -224,22 +223,10 @@ pub mod Predifi {
         ReentrancyGuardEvent: ReentrancyGuardComponent::Event,
         ValidatorSlashed:ValidatorSlashed,
         ValidatorPerformanceUpdated:ValidatorPerformanceUpdated,
+        FeesDistributed: FeesDistributed,
     }
    
-    #[derive(Drop,starknet::Event)]
-    pub struct ValidatorSlashed{
-        #[key]
-        pub validator:ContractAddress,
-        pub amount:u256,
-        pub reputation_after:u256,
-    }
-    #[derive(Drop,starknet::Event)]
-    pub struct ValidatorPerformanceUpdated{
-        #[key]
-        pub validator:ContractAddress,
-        pub success:bool,
-        pub reputation_after:u256,
-    }
+   
     #[derive(Drop, Hash)]
     struct HashingProperties {
         username: felt252,
@@ -256,86 +243,92 @@ pub mod Predifi {
     /// @param success  True if  validation was correct, false otherwise.
     fn update_performance(ref self:ContractState,validator:ContractAddress,success:bool){
         if(success){
-            let prev=self.validator_success_count.read(validator);
+            let prev: u256=self.validator_success_count.read(validator);
             self.validator_success_count.write(validator,prev+1);
 
-            let rep=self.validator_reputation.read(validator)+1;
+            let rep: u256=self.validator_reputation.read(validator)+1;
             self.validator_reputation.write(validator,rep);
 
-            self.emit(ValidatorPerformanceUpdated{validator,success,reputation_after:rep});
+            self.emit(Event::ValidatorPerformanceUpdated(
+                ValidatorPerformanceUpdated{validator,success,reputation_after:rep}
+            ));
         } else{
-            let prev=self.validator_fail_count.read(validator);
+            let prev: u256=self.validator_fail_count.read(validator);
             self.validator_fail_count.write(validator,prev+1);
 
-            let rep=self.validator_reputation.read(validator);
-            let new_rep=if rep>0 {rep-1} else { 0 };
+            let rep: u256=self.validator_reputation.read(validator);
+            let new_rep: u256=if rep>0 {rep-1} else { 0 };
             self.validator_reputation.write(validator,new_rep);
 
-            self.emit(ValidatorPerformanceUpdated{validator,success,reputation_after:new_rep});
+            self.emit(Event::ValidatorPerformanceUpdated(
+                ValidatorPerformanceUpdated{validator,success,reputation_after:new_rep}
+            ));
         }
     }
 
-    /// @notice Slash a validator by reducing reputation and treasury.
+    /// @notice Slash a validator by halving reputation and treasury.
     /// @param validator Validator address to slash.
-    /// @param amount Amount to slash.
-    fn slash_validator(ref self:ContractState,validator:ContractAddress,amount:u256){
-        //Ensure only admin can call
-        self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
+    fn slash_validator(ref self:Storage,validator:ContractAddress){
+        let reputation: u256=self.validator_reputation.read(validator);
+        let treasury: u256=self.validator_treasuries.read(validator);
 
-        let prev_slashed=self.validator_slashed.read(validator);
-        self.validator_slashed.write(validator,prev_slashed+amount);
+        let new_rep: u256=reputation/2;
+        let new_treasury: u256=treasury/2;
 
-        let rep=self.validator_reputation.read(validator);
-        let new_rep=if rep>amount {rep-amount} else {0};
         self.validator_reputation.write(validator,new_rep);
+        self.validator_treasuries.write(validator,new_treasury);
 
-        //Deduct from validator protocol_treasury
-        let treasury=self.validator_treasuries.read(validator);
-        let updated_treasury=if treasury>amount {treasury-amount} else { 0 };
-        self.validator_treasuries.write(validator,updated_treasury);
-
-        self.emit(ValidatorSlashed{validator,amount,reputation_after:new_rep});
+        self.emit(Event::ValidatorSlashed(
+            ValidatorSlashed{
+                validator,
+                amount:treasury-new_treasury,
+                reputation_after:new_rep,
+            }
+        ));
+        
     }
 
-    /// @notice Distribute validator fees among validators based on reputation.
+    /// @notice Distribute fees among to validators of a pool who chose the correct option.
     /// @param pool_id ID fo the pool to distribute fees for.
-    fn distribute_validator_fees(ref self:ContractState,pool_id:u256){
-        let total_fee=self.validator_fee.read(pool_id);
-        let validators_len: u64=self.validators.len().into();
+    fn distribute_validator_fees(ref self:Storage,pool_id:u256){
+        //Ensure pool exists
+        let pool_data: PoolDetails=self.pools.read(pool_id);
 
-        //Compute total reputation
-        let mut total_rep: u256=0;
-        let mut i:u64=0;
-        loop{
-            if i==validators_len{
-                break;
+        //Ensure pool has ended
+        assert(pool_data.has_ended==true,1002);
+
+        //Ensure pool has been resolved
+        assert(pool_data.is_resolved==true,1003);
+
+        let correct_option=pool_data.correct_option;
+        let total_fees: u256=pool_data.fee_pool;
+
+        //Filter validators that chose the correct option
+        let mut eligible_validators=ArrayTrait::new();
+        let mut total_reputation: u256=0;
+
+        for validator in pool_data.validators{
+            // Use your pool_validation_results storage
+            let choice:bool=self.pool_validation_results.read((pool_id,*validator));
+            if choice==correct_option{
+                let rep: u256=self.validator_reputation.read(*validator);
+                eligible_validators.append(*validator);
+                total_reputation+=rep;
             }
-            let v = self.validators.at(i.into()).read();
-            total_rep+=self.validator_reputation.read(v);
-            i += 1;
         }
-        let mut j: u64=0;
-        loop {
-            if j == validators_len {
-                break;
-            }
-            let v=self.validators.at(j.into()).read();
-            let rep=self.validator_reputation.read(v);
-            let share=if total_rep>0{
-                    (rep*total_fee)/total_rep
-            } else{
-                    total_fee/(self.validators.len().into())
-            };
-            let prev=self.validator_treasuries.read(v);
-            self.validator_treasuries.write(v,prev+share);
-            j+=1;
+        //Distribute proportionally by reputation
+        for validator in eligible_validators{
+            let rep: u256=self.validator_reputation.read(*validator);
+            let share: u256 =total_fees*rep/total_reputation;
+
+            let balance: u256=self.validator_treasuries.read(*validator);
+            self.validator_treasuries.write(*validator,balance+share);
         }
+        self.emit(Events::FeesDistributed(
+            FeesDistributed{pool_id,total_distributed:total_fees}
+        ));
     }
 
-    // -----------------------------------------
-    // Getter functions for frontend / tests
-    // -----------------------------------------
-    
     /// @notice Get validator reputation
     fn get_validator_reputation(self:@ContractState, validator:ContractAddress)->u256{
         self.validator_reputation.read(validator)
