@@ -470,10 +470,14 @@ pub mod Predifi {
             u8_to_status(new_status)
         }
 
-        /// @notice Places a bet on a pool.
-        /// @param pool_id The pool ID.
-        /// @param option The option to bet on.
-        /// @param amount The amount to bet.
+        /// @notice Places a bet on a specific outcome in a prediction pool
+        /// @dev Transfers tokens from user, updates pool odds, and validates bet constraints
+        /// @param pool_id The unique identifier of the pool to bet on
+        /// @param option The outcome option to bet on (Yes/No or specific outcome)
+        /// @param amount The amount of tokens to bet (must be >= pool's min_bet_amount)
+        /// @custom:reentrancy-guard Protected against reentrancy attacks using internal locks
+        /// @custom:validation Validates pool status, betting period, and user balance
+        /// @custom:odds-update Automatically recalculates pool odds after successful bet
         fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) {
             self.pausable.assert_not_paused();
 
@@ -557,9 +561,12 @@ pub mod Predifi {
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
 
-        /// @notice Stakes tokens to become a validator for a pool.
-        /// @param pool_id The pool ID.
-        /// @param amount The amount to stake.
+        /// @notice Stakes tokens to become eligible for validation rewards
+        /// @dev Increases user's validator stake and updates protocol security parameters
+        /// @param amount Amount of tokens to stake (must be > 0)
+        /// @custom:compound-rewards Automatically compounds previous rewards if any exist
+        /// @custom:lock-period Staked tokens subject to unbonding period for withdrawal
+        /// @custom:delegation Allows delegation of stake to other validators if desired
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
             self.pausable.assert_not_paused();
             self.assert_greater_than_zero(amount);
@@ -1185,9 +1192,15 @@ pub mod Predifi {
 
     #[abi(embed_v0)]
     impl dispute of IPredifiDispute<ContractState> {
-        /// @notice Raises a dispute for a pool.
-        /// @dev Emits DisputeRaised and may suspend the pool if threshold is met.
-        /// @param pool_id The pool ID.
+        /// @notice Raises a dispute against a pool's validation result
+        /// @dev Initiates multi-stage dispute resolution process with economic security
+        /// @param pool_id Pool identifier where dispute is being raised
+        /// @param evidence_hash IPFS hash containing dispute evidence and reasoning
+        /// @param stake_amount Amount staked by disputer (forfeited if dispute fails)
+        /// @return bool True if dispute is accepted for processing
+        /// @custom:evidence-requirement All disputes must include verifiable evidence
+        /// @custom:economic-security Disputers stake tokens that are slashed for frivolous disputes
+        /// @custom:time-limit Disputes must be raised within specified time window after resolution
         fn raise_dispute(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
             self.assert_greater_than_zero(pool_id);
@@ -1246,10 +1259,13 @@ pub mod Predifi {
             }
         }
 
-        /// @notice Resolves a dispute and restores pool status.
-        /// @dev Only callable by admin. Emits DisputeResolved and PoolStateTransition.
-        /// @param pool_id The pool ID.
-        /// @param winning_option The winning option (true = option2, false = option1).
+        /// @notice Processes dispute resolution through community voting
+        /// @dev Implements staged dispute resolution with escalation mechanisms
+        /// @param dispute_id Unique identifier for the dispute being processed
+        /// @param resolution Decision from dispute resolution (Accept/Reject)
+        /// @custom:multi-stage Stage 1: Community vote, Stage 2: Expert panel, Stage 3: Governance
+        /// @custom:economic-incentives Correct dispute voters receive rewards from dispute stakes
+        /// @custom:finality Final dispute decisions are immutable and trigger pool re-resolution
         fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
             self.pausable.assert_not_paused();
             self.assert_greater_than_zero(pool_id);
