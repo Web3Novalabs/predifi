@@ -104,6 +104,31 @@ scarb build
 snforge test
 ```
 
+## 🐳 DevContainer Setup (Docker)
+
+We provide a **Docker DevContainer** to simplify development and avoid local dependency issues.
+
+### Prerequisites
+- [Docker](https://docs.docker.com/get-docker/) installed and running  
+- [Visual Studio Code](https://code.visualstudio.com/) with the [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers)
+
+### Setup
+1. Open the project in **VS Code**.  
+2. Press **CTRL + SHIFT + P** → select **“Dev Containers: Reopen in Container”**.  
+3. The container will build and install all required tools automatically.  
+
+### Verify
+Inside the container, run:
+
+```bash
+scarb build
+scarb test
+scarb fmt    
+scarb fmt --check
+```
+### Note :
+  - If During running `scarb build` throw error `killed` , Then increase your docker ram allocation and cores. and restart !
+
 # Contributing
 
 We welcome contributions! Please follow these steps:
