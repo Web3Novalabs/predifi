@@ -288,6 +288,7 @@ pub mod Predifi {
             self.pausable.assert_not_paused();
             // Convert u8 to Pool enum with validation
             let pool_type_enum = u8_to_pool(poolType);
+            let creator_address = get_caller_address();
 
             // Validation checks using SecurityTrait
             self.assert_valid_pool_timing(poolStartTime, poolLockTime, poolEndTime);
@@ -298,7 +299,7 @@ pub mod Predifi {
             self.assert_valid_felt252(option1);
             self.assert_valid_felt252(option2);
 
-            let creator_address = get_caller_address();
+
 
             // Collect pool creation fee (1 STRK)
             IPredifi::collect_pool_creation_fee(ref self, creator_address);
@@ -484,14 +485,13 @@ pub mod Predifi {
 
             let mut pool = self.pools.read(pool_id);
             self.assert_pool_exists(@pool);
+            self.assert_pool_active(@pool);
 
             let option1: felt252 = pool.option1;
             let option2: felt252 = pool.option2;
 
             // Validation checks using SecurityTrait
-            self.assert_valid_pool_option(option, option1, option2);
-            self.assert_pool_not_suspended(@pool);
-            self.assert_pool_active(@pool);
+            self.assert_valid_pool_option(option, option1, option2);     
             self.assert_amount_within_limits(amount, pool.minBetAmount, pool.maxBetAmount);
 
             // Transfer betting amount from the user to the contract
@@ -562,12 +562,13 @@ pub mod Predifi {
         /// @param amount The amount to stake.
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
             self.pausable.assert_not_paused();
+            //Input Validatioin
             self.assert_greater_than_zero(amount);
             self.assert_greater_than_zero(pool_id);
-
+            
             let pool = self.pools.read(pool_id);
             self.assert_pool_exists(@pool);
-
+ 
             // Validation checks using SecurityTrait
             self.assert_pool_not_suspended(@pool);
             self.assert_min_stake_amount(amount);
@@ -1339,7 +1340,6 @@ pub mod Predifi {
             let pool = self.pools.read(pool_id);
 
             // Validation checks using SecurityTrait
-            self.assert_pool_exists(@pool);
             self.assert_pool_not_suspended(@pool);
         }
 
@@ -1374,7 +1374,6 @@ pub mod Predifi {
             let caller = get_caller_address();
 
             // Validation checks using SecurityTrait
-            self.assert_pool_exists(@pool);
             self.assert_pool_not_suspended(@pool);
 
             // Check if caller is an authorized validator
