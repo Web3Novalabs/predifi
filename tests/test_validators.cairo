@@ -971,3 +971,65 @@ fn test_remove_validator_unauthorized() {
     // Unauthorized caller attempt to remove the validator role
     IPredifiValidator::remove_validator(ref state, validator);
 }
+#[test]
+fn test_slash_validator_halves_rep_and_treasury(){
+    let (_contract_address, mut state)= deploy_contract("src/predifi.cairo");
+    let v=addr(2);
+
+    //Send reputation and treasury
+    state.reputations.write(v,100);
+    state.treasuries.write(v,200);
+
+    // Slash validator
+    Predifi::slash_validator(ref state,v);
+
+    let rep=Predifi::get_validator_reputation(@state,v);
+    let treasury=Predifi::get_validator_treasury(@state,v);
+
+    assert(rep==50,'Reputation should be halved');
+    assert(treasury==100,'Treasury should be halved');
+}
+#[test]
+fn test_distribute_validator_fees_only_correct_validators(){
+    let (_contract_address, mut state)=deploy_contract("src/predifi.cairo");
+    let v1=addr(10);
+    let v2=addr(20);
+    let v3=addr(30);
+
+    let pool_id=1;
+
+    //Setup pool
+    let pool=PoolData{
+        has_ended:true,
+        is_resolved: true,
+        correct_option:1,
+        fee_pool:60,
+        validators:array![v1,v2,v3],
+    };
+    state.pools.write(pool_id,Some(pool));
+
+    //Set reputations
+    state.reputations.write(v1,10);
+    state.reputataion.write(v2,20);
+    state.reputation.write(v3,30);
+
+    //Mark choices: v1 and v2 correct, v3 Wrong
+    state.validator_choices.write((pool_id,v1),1);
+    state.validator_choices.write((pool_id,v2),1);
+    state.validator_choices.write((pool_id,v3),0);
+
+    Predifi::distribute_validator_fees(ref state, pool_id);
+
+    let t1=Predifi::get_validator_treasury(@state,v1);
+    let t2=Predifi::get_validator_treasury(@state,v2);
+    let t3=Predifi::get_validator_treasury(@state,v3);
+
+    //Eligible rep=30(10+20)
+    //v1 share=(10/30)*60=20
+    //v2 share=(20/30)*60=20
+    //v3 gets 0
+    assert(t1==20,'v1 should get 20');
+    assert(t2==40,'v2 should get 40');
+    assert(t3==0,'v3 should get 0');
+
+}
