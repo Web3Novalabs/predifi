@@ -299,8 +299,6 @@ pub mod Predifi {
             self.assert_valid_felt252(option1);
             self.assert_valid_felt252(option2);
 
-
-
             // Collect pool creation fee (1 STRK)
             IPredifi::collect_pool_creation_fee(ref self, creator_address);
 
@@ -491,7 +489,7 @@ pub mod Predifi {
             let option2: felt252 = pool.option2;
 
             // Validation checks using SecurityTrait
-            self.assert_valid_pool_option(option, option1, option2);     
+            self.assert_valid_pool_option(option, option1, option2);
             self.assert_amount_within_limits(amount, pool.minBetAmount, pool.maxBetAmount);
 
             // Transfer betting amount from the user to the contract
@@ -565,10 +563,10 @@ pub mod Predifi {
             //Input Validatioin
             self.assert_greater_than_zero(amount);
             self.assert_greater_than_zero(pool_id);
-            
+
             let pool = self.pools.read(pool_id);
             self.assert_pool_exists(@pool);
- 
+
             // Validation checks using SecurityTrait
             self.assert_pool_not_suspended(@pool);
             self.assert_min_stake_amount(amount);
