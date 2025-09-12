@@ -20,19 +20,23 @@ pub mod Predifi {
     };
     use crate::base::errors::Errors;
     use crate::base::events::Events::{
-        BetPlaced, DisputeRaised, DisputeResolved, EmergencyActionCancelled,
+        BetPlaced, ContractPaused, ContractUnpaused, ContractUpgraded, CreatorFeesCollected,
+        DisputeRaised, DisputeResolved, DisputeThresholdUpdated, EmergencyActionCancelled,
         EmergencyActionExecuted, EmergencyActionScheduled, EmergencyWithdrawal, FeeWithdrawn,
-        FeesCollected, PoolAutomaticallySettled, PoolCancelled, PoolEmergencyFrozen,
-        PoolEmergencyResolved, PoolEmergencyUnfrozen, PoolResolved, PoolStateTransition,
-        PoolSuspended, StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved,
+        FeesCollected, PoolAutomaticallySettled, PoolCancelled, PoolCreated,
+        PoolCreationFeeCollected, PoolEmergencyFrozen, PoolEmergencyResolved,
+        PoolEmergencyUnfrozen, PoolResolved, PoolStateTransition, PoolSuspended,
+        ProtocolFeesCollected, StakeRefunded, UserStaked, ValidatorAdded,
+        ValidatorConfirmationsUpdated, ValidatorFeesDistributed, ValidatorRemoved,
         ValidatorResultSubmitted, ValidatorsAssigned,
     };
     use crate::base::security::{Security, SecurityTrait};
 
     // package imports
     use crate::base::types::{
-        EmergencyAction, EmergencyActionStatus, EmergencyActionType, EmergencyPoolState,
-        PoolDetails, PoolOdds, Status, UserStake, u8_to_category, u8_to_pool, u8_to_status,
+        CategoryType, EmergencyAction, EmergencyActionStatus, EmergencyActionType,
+        EmergencyPoolState, PoolDetails, PoolOdds, Status, UserStake, u8_to_category, u8_to_pool,
+        u8_to_status,
     };
     use crate::interfaces::ipredifi::{IPredifi, IPredifiDispute, IPredifiValidator};
 
@@ -205,6 +209,30 @@ pub mod Predifi {
         EmergencyActionExecuted: EmergencyActionExecuted,
         /// @notice Emitted when a scheduled emergency action is cancelled.
         EmergencyActionCancelled: EmergencyActionCancelled,
+        // Configuration Events
+        /// @notice Emitted when validator confirmations requirement is updated.
+        ValidatorConfirmationsUpdated: ValidatorConfirmationsUpdated,
+        /// @notice Emitted when dispute threshold is updated.
+        DisputeThresholdUpdated: DisputeThresholdUpdated,
+        // Pool Lifecycle Events
+        /// @notice Emitted when a new pool is created.
+        PoolCreated: PoolCreated,
+        // Contract Management Events
+        /// @notice Emitted when the contract is paused.
+        ContractPaused: ContractPaused,
+        /// @notice Emitted when the contract is unpaused.
+        ContractUnpaused: ContractUnpaused,
+        /// @notice Emitted when the contract is upgraded.
+        ContractUpgraded: ContractUpgraded,
+        // Fee Collection Events
+        /// @notice Emitted when protocol fees are collected.
+        ProtocolFeesCollected: ProtocolFeesCollected,
+        /// @notice Emitted when creator fees are collected.
+        CreatorFeesCollected: CreatorFeesCollected,
+        /// @notice Emitted when validator fees are distributed.
+        ValidatorFeesDistributed: ValidatorFeesDistributed,
+        /// @notice Emitted when pool creation fee is collected.
+        PoolCreationFeeCollected: PoolCreationFeeCollected,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -359,6 +387,35 @@ pub mod Predifi {
 
             // Add to pool count
             self.pool_count.write(self.pool_count.read() + 1);
+
+            // Emit pool created event
+            self.emit(
+                Event::PoolCreated(
+                    PoolCreated {
+                        pool_id,
+                        creator: creator_address,
+                        pool_name: poolName,
+                        category: CategoryType(u8_to_category(category)),
+                        end_time: poolEndTime,
+                        min_bet_amount: minBetAmount,
+                        max_bet_amount: maxBetAmount,
+                        creator_fee: creatorFee,
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
+
+            // Emit pool creation fee collected event
+            self.emit(
+                Event::PoolCreationFeeCollected(
+                    PoolCreationFeeCollected {
+                        pool_id,
+                        creator: creator_address,
+                        amount: ONE_STRK,
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
 
             pool_id
         }
@@ -1515,7 +1572,21 @@ pub mod Predifi {
             // Only admin can set this
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             self.assert_positive_count(count);
+            
+            let previous_count = self.required_validator_confirmations.read();
             self.required_validator_confirmations.write(count);
+
+            // Emit event for validator confirmations update
+            self.emit(
+                Event::ValidatorConfirmationsUpdated(
+                    ValidatorConfirmationsUpdated {
+                        previous_count,
+                        new_count: count,
+                        admin: get_caller_address(),
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
         }
 
         /// @notice Gets the validators assigned to a pool.
@@ -1723,6 +1794,16 @@ pub mod Predifi {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             self.pausable.pause();
+
+            // Emit custom contract paused event
+            self.emit(
+                Event::ContractPaused(
+                    ContractPaused {
+                        admin: get_caller_address(),
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
         }
 
         /// @notice Unpauses the contract and resumes normal operations
@@ -1732,6 +1813,16 @@ pub mod Predifi {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             self.pausable.unpause();
+
+            // Emit custom contract unpaused event
+            self.emit(
+                Event::ContractUnpaused(
+                    ContractUnpaused {
+                        admin: get_caller_address(),
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
         }
 
         /// @notice Upgrades the contract implementation
@@ -1744,6 +1835,17 @@ pub mod Predifi {
 
             // Replace the class hash, hence upgrading the contract
             self.upgradeable.upgrade(new_class_hash);
+
+            // Emit contract upgraded event
+            self.emit(
+                Event::ContractUpgraded(
+                    ContractUpgraded {
+                        admin: get_caller_address(),
+                        new_class_hash,
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
         }
     }
 
