@@ -17,9 +17,14 @@ use starknet::{ClassHash, ContractAddress, get_block_timestamp};
 
 // Validator role
 const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
-// Pool creator address constant
-const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
-const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
+// Helper functions to avoid const try_into issues
+fn get_pool_creator() -> ContractAddress {
+    123.try_into().unwrap()
+}
+
+fn get_user_one() -> ContractAddress {
+    'User1'.try_into().unwrap()
+}
 
 pub fn deploy_predifi() -> (
     IPredifiDispatcher,
@@ -33,7 +38,7 @@ pub fn deploy_predifi() -> (
 
     // Deploy mock ERC20
     let erc20_class = declare("STARKTOKEN").unwrap().contract_class();
-    let mut calldata = array![POOL_CREATOR.into(), owner.into(), 6];
+    let mut calldata = array![get_pool_creator().into(), owner.into(), 6];
     let (erc20_address, _) = erc20_class.deploy(@calldata).unwrap();
 
     let contract_class = declare("Predifi").unwrap().contract_class();
@@ -46,7 +51,7 @@ pub fn deploy_predifi() -> (
     let dispatcher = IPredifiDispatcher { contract_address };
     let dispute_dispatcher = IPredifiDisputeDispatcher { contract_address };
     let validator_dispatcher = IPredifiValidatorDispatcher { contract_address };
-    (dispatcher, dispute_dispatcher, validator_dispatcher, POOL_CREATOR, erc20_address)
+    (dispatcher, dispute_dispatcher, validator_dispatcher, get_pool_creator(), erc20_address)
 }
 
 

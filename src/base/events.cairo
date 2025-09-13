@@ -1,10 +1,10 @@
 // Import necessary types
-use starknet::ContractAddress;
+use starknet::{ContractAddress, ClassHash};
 use crate::base::types::Status;
 
 // Events module
 pub mod Events {
-    use super::{ContractAddress, Status};
+    use super::{ContractAddress, ClassHash, Status};
 
     /// @notice Emitted when a bet is placed on a pool.
     /// @param pool_id Pool where bet was placed
@@ -15,8 +15,10 @@ pub mod Events {
     #[derive(Drop, starknet::Event)]
     pub struct BetPlaced {
         /// @notice The pool ID.
+        #[key]
         pub pool_id: u256,
         /// @notice The address of the user who placed the bet.
+        #[key]
         pub address: ContractAddress,
         /// @notice The option selected by the user.
         pub option: felt252,
@@ -32,7 +34,9 @@ pub mod Events {
     /// @param amount Amount of tokens staked
     #[derive(Drop, starknet::Event)]
     pub struct UserStaked {
+        #[key]
         pub pool_id: u256,
+        #[key]
         pub address: ContractAddress,
         pub amount: u256,
     }
@@ -68,6 +72,7 @@ pub mod Events {
     /// @param timestamp Time of the state transition
     #[derive(Drop, starknet::Event)]
     pub struct PoolStateTransition {
+        #[key]
         pub pool_id: u256,
         pub previous_status: Status,
         pub new_status: Status,
@@ -82,6 +87,7 @@ pub mod Events {
     /// @param min_bet_amount Minimum bet requirement
     #[derive(Drop, starknet::Event)]
     pub struct PoolResolved {
+        #[key]
         pub pool_id: u256,
         pub winning_option: bool,
         pub total_payout: u256,
@@ -116,7 +122,9 @@ pub mod Events {
     /// @param caller Address of the admin who performed the addition
     #[derive(Drop, starknet::Event)]
     pub struct ValidatorAdded {
+        #[key]
         pub account: ContractAddress,
+        #[key]
         pub caller: ContractAddress,
     }
 
@@ -125,7 +133,9 @@ pub mod Events {
     /// @param caller Address of the admin who performed the removal
     #[derive(Drop, starknet::Event)]
     pub struct ValidatorRemoved {
+        #[key]
         pub account: ContractAddress,
+        #[key]
         pub caller: ContractAddress,
     }
 
@@ -135,7 +145,9 @@ pub mod Events {
     /// @param timestamp Time of dispute initiation
     #[derive(Drop, starknet::Event)]
     pub struct DisputeRaised {
+        #[key]
         pub pool_id: u256,
+        #[key]
         pub user: ContractAddress,
         pub timestamp: u64,
     }
@@ -256,6 +268,110 @@ pub mod Events {
     pub struct EmergencyActionCancelled {
         pub action_id: u256,
         pub admin: ContractAddress,
+        pub timestamp: u64,
+    }
+
+    // Configuration Events
+
+    /// @notice Emitted when the required validator confirmations count is updated.
+    #[derive(Drop, starknet::Event)]
+    pub struct ValidatorConfirmationsUpdated {
+        pub previous_count: u256,
+        pub new_count: u256,
+        #[key]
+        pub admin: ContractAddress,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when the dispute threshold is updated.
+    #[derive(Drop, starknet::Event)]
+    pub struct DisputeThresholdUpdated {
+        pub previous_threshold: u256,
+        pub new_threshold: u256,
+        pub admin: ContractAddress,
+        pub timestamp: u64,
+    }
+
+    // Pool Lifecycle Events
+
+    /// @notice Emitted when a new pool is created.
+    #[derive(Drop, starknet::Event)]
+    pub struct PoolCreated {
+        #[key]
+        pub pool_id: u256,
+        #[key]
+        pub creator: ContractAddress,
+        pub pool_name: felt252,
+        #[key]
+        pub category: felt252,
+        pub end_time: u64,
+        pub min_bet_amount: u256,
+        pub max_bet_amount: u256,
+        pub creator_fee: u8,
+        pub timestamp: u64,
+    }
+
+    // Contract Management Events
+
+    /// @notice Emitted when the contract is paused.
+    #[derive(Drop, starknet::Event)]
+    pub struct ContractPaused {
+        #[key]
+        pub admin: ContractAddress,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when the contract is unpaused.
+    #[derive(Drop, starknet::Event)]
+    pub struct ContractUnpaused {
+        #[key]
+        pub admin: ContractAddress,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when the contract is upgraded.
+    #[derive(Drop, starknet::Event)]
+    pub struct ContractUpgraded {
+        pub admin: ContractAddress,
+        pub new_class_hash: ClassHash,
+        pub timestamp: u64,
+    }
+
+    // Fee Collection Events
+
+    /// @notice Emitted when protocol fees are collected.
+    #[derive(Drop, starknet::Event)]
+    pub struct ProtocolFeesCollected {
+        pub pool_id: u256,
+        pub amount: u256,
+        pub recipient: ContractAddress,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when creator fees are collected.
+    #[derive(Drop, starknet::Event)]
+    pub struct CreatorFeesCollected {
+        pub pool_id: u256,
+        pub creator: ContractAddress,
+        pub amount: u256,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when validator fees are distributed.
+    #[derive(Drop, starknet::Event)]
+    pub struct ValidatorFeesDistributed {
+        pub pool_id: u256,
+        pub total_amount: u256,
+        pub validator_count: u256,
+        pub timestamp: u64,
+    }
+
+    /// @notice Emitted when pool creation fee is collected.
+    #[derive(Drop, starknet::Event)]
+    pub struct PoolCreationFeeCollected {
+        pub pool_id: u256,
+        pub creator: ContractAddress,
+        pub amount: u256,
         pub timestamp: u64,
     }
 }
