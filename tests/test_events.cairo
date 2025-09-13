@@ -233,14 +233,18 @@ fn test_validator_added_event() {
 /// Tests that the ValidatorRemoved event is emitted correctly
 #[test]
 fn test_validator_removed_event() {
-    let (_, _, validator_contract, _, validator1) = deploy_predifi();
+    let (_, _, validator_contract, _, _) = deploy_predifi();
     let admin: ContractAddress = 'admin'.try_into().unwrap();
+    let test_validator: ContractAddress = 'test_validator'.try_into().unwrap();
     let mut spy = spy_events();
 
     start_cheat_caller_address(validator_contract.contract_address, admin);
     
-    // Remove a validator (validator1 should exist from deployment)
-    validator_contract.remove_validator(validator1);
+    // First add a validator so we can remove it
+    validator_contract.add_validator(test_validator);
+    
+    // Remove the validator
+    validator_contract.remove_validator(test_validator);
 
     stop_cheat_caller_address(validator_contract.contract_address);
 
@@ -251,7 +255,7 @@ fn test_validator_removed_event() {
     // Verify the ValidatorRemoved event
     let expected_event = PredifiEvent::ValidatorRemoved(
         ValidatorRemoved {
-            account: validator1,
+            account: test_validator,
             caller: admin,
         }
     );
