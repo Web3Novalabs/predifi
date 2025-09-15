@@ -432,7 +432,7 @@ fn test_distribute_validation_fee() {
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(dispatcher.contract_address, POOL_CREATOR);
-    dispatcher.collect_pool_creation_fee(POOL_CREATOR);
+    dispatcher.collect_pool_creation_fee(POOL_CREATOR, 1); // Using pool_id 1 for test
 
     validator_dispatcher.calculate_validator_fee(18, 10_000);
 

@@ -323,9 +323,6 @@ pub mod Predifi {
             self.assert_valid_felt252(option1);
             self.assert_valid_felt252(option2);
 
-            // Collect pool creation fee (1 STRK)
-            IPredifi::collect_pool_creation_fee(ref self, creator_address);
-
             let mut pool_id = self.generate_deterministic_number();
 
             // While a pool with this pool_id already exists, generate a new one.
@@ -401,17 +398,8 @@ pub mod Predifi {
                 )
             );
 
-            // Emit pool creation fee collected event
-            self.emit(
-                Event::PoolCreationFeeCollected(
-                    PoolCreationFeeCollected {
-                        pool_id,
-                        creator: creator_address,
-                        amount: ONE_STRK,
-                        timestamp: get_block_timestamp(),
-                    }
-                )
-            );
+            // Collect pool creation fee (1 STRK) now that we have the pool_id
+            IPredifi::collect_pool_creation_fee(ref self, creator_address, pool_id);
 
             pool_id
         }
@@ -657,8 +645,9 @@ pub mod Predifi {
             // add caller to validator list
             self.validators.push(address);
             self.track_user_participation(address, pool_id);
-            // emit event
+            // emit events
             self.emit(UserStaked { pool_id, address, amount });
+            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
 
             // End reentrancy guard
             self.reentrancy_guard.end();
@@ -863,7 +852,8 @@ pub mod Predifi {
 
         /// @notice Collects the pool creation fee from the creator.
         /// @param creator The creator's address.
-        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
+        /// @param pool_id The pool ID for which the fee is being collected.
+        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress, pool_id: u256) {
             self.assert_non_zero_address(creator);
             // Retrieve the STRK token contract
             let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
@@ -879,7 +869,7 @@ pub mod Predifi {
             self.emit(
                 Event::PoolCreationFeeCollected(
                     PoolCreationFeeCollected {
-                        pool_id: 0, // Pool ID not available at this point
+                        pool_id,
                         creator,
                         amount: ONE_STRK,
                         timestamp: get_block_timestamp(),
@@ -2129,7 +2119,8 @@ pub mod Predifi {
         /// @notice Collects the pool creation fee from the creator.
         /// @dev Transfers 1 STRK from creator to contract.
         /// @param creator The creator's address.
-        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
+        /// @param pool_id The pool ID for which the fee is being collected.
+        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress, pool_id: u256) {
             // Retrieve the STRK token contract
             let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
 
@@ -2149,7 +2140,7 @@ pub mod Predifi {
             self.emit(
                 Event::PoolCreationFeeCollected(
                     PoolCreationFeeCollected {
-                        pool_id: 0, // Pool ID not available at this point  
+                        pool_id,
                         creator,
                         amount: ONE_STRK,
                         timestamp: get_block_timestamp(),
