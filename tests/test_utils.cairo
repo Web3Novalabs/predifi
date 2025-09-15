@@ -17,14 +17,9 @@ use starknet::{ClassHash, ContractAddress, get_block_timestamp};
 
 // Validator role
 const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
-// Helper functions to avoid const try_into issues
-fn get_pool_creator() -> ContractAddress {
-    123.try_into().unwrap()
-}
-
-fn get_user_one() -> ContractAddress {
-    'User1'.try_into().unwrap()
-}
+// Pool creator address constant
+const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
+const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
 
 pub fn deploy_predifi() -> (
     IPredifiDispatcher,
@@ -38,7 +33,7 @@ pub fn deploy_predifi() -> (
 
     // Deploy mock ERC20
     let erc20_class = declare("STARKTOKEN").unwrap().contract_class();
-    let mut calldata = array![get_pool_creator().into(), owner.into(), 6];
+    let mut calldata = array![POOL_CREATOR.into(), owner.into(), 6];
     let (erc20_address, _) = erc20_class.deploy(@calldata).unwrap();
 
     let contract_class = declare("Predifi").unwrap().contract_class();
@@ -51,7 +46,7 @@ pub fn deploy_predifi() -> (
     let dispatcher = IPredifiDispatcher { contract_address };
     let dispute_dispatcher = IPredifiDisputeDispatcher { contract_address };
     let validator_dispatcher = IPredifiValidatorDispatcher { contract_address };
-    (dispatcher, dispute_dispatcher, validator_dispatcher, get_pool_creator(), erc20_address)
+    (dispatcher, dispute_dispatcher, validator_dispatcher, POOL_CREATOR, erc20_address)
 }
 
 
@@ -192,27 +187,4 @@ pub fn approve_tokens_for_payment(
 pub fn mint_tokens_for(user: ContractAddress, erc20_address: ContractAddress, amount: u256) {
     let mut strk: STRKDispatcher = STRKDispatcher { contract_address: erc20_address };
     strk.mint(user, amount);
-}
-
-// Helper function to setup token distribution and approvals for multiple users
-pub fn setup_tokens_and_approvals(
-    erc20_address: ContractAddress, contract_address: ContractAddress, users: Span<ContractAddress>,
-) {
-    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
-
-    // Distribute tokens and approve contract
-    let mut i = 0;
-    while i != users.len() {
-        let user = *users.at(i);
-        start_cheat_caller_address(erc20_address, POOL_CREATOR);
-
-        // Transfer tokens to user
-        erc20.transfer(user, 1000 * 1_000_000_000_000_000_000);
-        stop_cheat_caller_address(erc20_address);
-
-        start_cheat_caller_address(erc20_address, user);
-        erc20.approve(contract_address, 1000 * 1_000_000_000_000_000_000);
-        stop_cheat_caller_address(erc20_address);
-        i += 1;
-    };
 }
