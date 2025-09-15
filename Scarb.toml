@@ -11,7 +11,7 @@ openzeppelin = "1.0.0"
 pragma_lib = { git = "https://github.com/astraly-labs/pragma-lib" }
 
 [dev-dependencies]
-snforge_std = "0.46.0"
+snforge_std = "0.39.0"
 assert_macros = "2.9.4"
 
 [[target.starknet-contract]]
