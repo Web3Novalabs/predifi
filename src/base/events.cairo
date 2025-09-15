@@ -1,5 +1,5 @@
 // Import necessary types
-use starknet::{ContractAddress, ClassHash};
+use starknet::ContractAddress;
 use crate::base::types::Status;
 
 // Events module
