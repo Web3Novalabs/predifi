@@ -329,13 +329,6 @@ pub mod Events {
         pub timestamp: u64,
     }
 
-    /// @notice Emitted when the contract is upgraded.
-    #[derive(Drop, starknet::Event)]
-    pub struct ContractUpgraded {
-        pub admin: ContractAddress,
-        pub new_class_hash: ClassHash,
-        pub timestamp: u64,
-    }
 
     // Fee Collection Events
 

@@ -20,8 +20,8 @@ pub mod Predifi {
     };
     use crate::base::errors::Errors;
     use crate::base::events::Events::{
-        BetPlaced, ContractPaused, ContractUnpaused, ContractUpgraded, CreatorFeesCollected,
-        DisputeRaised, DisputeResolved, DisputeThresholdUpdated, EmergencyActionCancelled,
+        BetPlaced, ContractPaused, ContractUnpaused, CreatorFeesCollected,
+        DisputeRaised, DisputeResolved, EmergencyActionCancelled,
         EmergencyActionExecuted, EmergencyActionScheduled, EmergencyWithdrawal, FeeWithdrawn,
         FeesCollected, PoolAutomaticallySettled, PoolCancelled, PoolCreated,
         PoolCreationFeeCollected, PoolEmergencyFrozen, PoolEmergencyResolved,
@@ -212,8 +212,6 @@ pub mod Predifi {
         // Configuration Events
         /// @notice Emitted when validator confirmations requirement is updated.
         ValidatorConfirmationsUpdated: ValidatorConfirmationsUpdated,
-        /// @notice Emitted when dispute threshold is updated.
-        DisputeThresholdUpdated: DisputeThresholdUpdated,
         // Pool Lifecycle Events
         /// @notice Emitted when a new pool is created.
         PoolCreated: PoolCreated,
@@ -222,8 +220,6 @@ pub mod Predifi {
         ContractPaused: ContractPaused,
         /// @notice Emitted when the contract is unpaused.
         ContractUnpaused: ContractUnpaused,
-        /// @notice Emitted when the contract is upgraded.
-        ContractUpgraded: ContractUpgraded,
         // Fee Collection Events
         /// @notice Emitted when protocol fees are collected.
         ProtocolFeesCollected: ProtocolFeesCollected,
@@ -878,6 +874,18 @@ pub mod Predifi {
 
             // Transfer the pool creation fee from creator to the contract
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
+            
+            // Emit pool creation fee collected event
+            self.emit(
+                Event::PoolCreationFeeCollected(
+                    PoolCreationFeeCollected {
+                        pool_id: 0, // Pool ID not available at this point
+                        creator,
+                        amount: ONE_STRK,
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
         }
 
         /// @notice Returns all active pools.
@@ -1524,6 +1532,37 @@ pub mod Predifi {
                         ),
                     );
 
+                // Collect and emit fees
+                let pool = self.pools.read(pool_id);
+                let creator_fee_amount = (pool.totalBetAmountStrk * pool.creatorFee.into()) / 100_u256;
+                let protocol_fee_amount = (pool.totalBetAmountStrk * 5_u256) / 100_u256; // 5% protocol fee
+                
+                if creator_fee_amount > 0 {
+                    self.emit(
+                        Event::CreatorFeesCollected(
+                            CreatorFeesCollected {
+                                pool_id,
+                                creator: pool.creator,
+                                amount: creator_fee_amount,
+                                timestamp: get_block_timestamp(),
+                            }
+                        )
+                    );
+                }
+                
+                if protocol_fee_amount > 0 {
+                    self.emit(
+                        Event::ProtocolFeesCollected(
+                            ProtocolFeesCollected {
+                                pool_id,
+                                amount: protocol_fee_amount,
+                                recipient: get_contract_address(), // Protocol fees go to contract
+                                timestamp: get_block_timestamp(),
+                            }
+                        )
+                    );
+                }
+
                 // Emit pool resolved event for compatibility
                 let total_payout = self.calculate_total_payout(pool_id, final_outcome);
                 self
@@ -1769,6 +1808,18 @@ pub mod Predifi {
             }
             // Reset the validator fee for this pool after distribution
             self.validator_fee.write(pool_id, 0);
+            
+            // Emit validator fees distributed event
+            self.emit(
+                Event::ValidatorFeesDistributed(
+                    ValidatorFeesDistributed {
+                        pool_id,
+                        total_amount: total_validator_fee,
+                        validator_count: validator_count_u256,
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
         }
 
         /// @notice Retrieves the validator fee for a pool.
@@ -1836,16 +1887,6 @@ pub mod Predifi {
             // Replace the class hash, hence upgrading the contract
             self.upgradeable.upgrade(new_class_hash);
 
-            // Emit contract upgraded event
-            self.emit(
-                Event::ContractUpgraded(
-                    ContractUpgraded {
-                        admin: get_caller_address(),
-                        new_class_hash,
-                        timestamp: get_block_timestamp(),
-                    }
-                )
-            );
         }
     }
 
@@ -2102,6 +2143,18 @@ pub mod Predifi {
 
             // Transfer the pool creation fee from creator to the contract
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
+            
+            // Emit pool creation fee collected event
+            self.emit(
+                Event::PoolCreationFeeCollected(
+                    PoolCreationFeeCollected {
+                        pool_id: 0, // Pool ID not available at this point  
+                        creator,
+                        amount: ONE_STRK,
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
         }
 
         /// @notice Calculates the validator fee for a pool.
@@ -2144,6 +2197,18 @@ pub mod Predifi {
             }
             // Reset the validator fee for this pool after distribution
             self.validator_fee.write(pool_id, 0);
+            
+            // Emit validator fees distributed event
+            self.emit(
+                Event::ValidatorFeesDistributed(
+                    ValidatorFeesDistributed {
+                        pool_id,
+                        total_amount: total_validator_fee,
+                        validator_count: validator_count_u256,
+                        timestamp: get_block_timestamp(),
+                    }
+                )
+            );
         }
 
 
