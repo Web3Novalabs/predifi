@@ -4,7 +4,7 @@ use crate::base::types::Status;
 
 // Events module
 pub mod Events {
-    use super::{ContractAddress, ClassHash, Status};
+    use super::{ContractAddress, Status};
 
     /// @notice Emitted when a bet is placed on a pool.
     /// @param pool_id Pool where bet was placed
