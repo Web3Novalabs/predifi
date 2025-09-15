@@ -1538,11 +1538,12 @@ pub mod Predifi {
                 let protocol_fee_amount = (pool.totalBetAmountStrk * 5_u256) / 100_u256; // 5% protocol fee
                 
                 if creator_fee_amount > 0 {
+                    let creator = self.get_pool_creator(pool_id);
                     self.emit(
                         Event::CreatorFeesCollected(
                             CreatorFeesCollected {
                                 pool_id,
-                                creator: pool.creator,
+                                creator,
                                 amount: creator_fee_amount,
                                 timestamp: get_block_timestamp(),
                             }
