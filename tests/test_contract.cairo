@@ -32,7 +32,7 @@ fn test_upgrade_by_admin() {
 
     // Get emitted events
     let events = spy.get_events();
-    assert(events.events.len() >= 1, 'Upgrade event not emitted');
+    assert(events.events.len() == 1, 'Upgrade event not emitted');
     // Verify upgrade event
     let expected_upgrade_event = UpgradeEvent::Upgraded(Upgraded { class_hash: new_class_hash });
 
