@@ -193,3 +193,26 @@ pub fn mint_tokens_for(user: ContractAddress, erc20_address: ContractAddress, am
     let mut strk: STRKDispatcher = STRKDispatcher { contract_address: erc20_address };
     strk.mint(user, amount);
 }
+
+// Helper function to setup token distribution and approvals for multiple users
+pub fn setup_tokens_and_approvals(
+    erc20_address: ContractAddress, contract_address: ContractAddress, users: Span<ContractAddress>,
+) {
+    let erc20: IERC20Dispatcher = IERC20Dispatcher { contract_address: erc20_address };
+
+    // Distribute tokens and approve contract
+    let mut i = 0;
+    while i != users.len() {
+        let user = *users.at(i);
+        start_cheat_caller_address(erc20_address, POOL_CREATOR);
+
+        // Transfer tokens to user
+        erc20.transfer(user, 1000 * 1_000_000_000_000_000_000);
+        stop_cheat_caller_address(erc20_address);
+
+        start_cheat_caller_address(erc20_address, user);
+        erc20.approve(contract_address, 1000 * 1_000_000_000_000_000_000);
+        stop_cheat_caller_address(erc20_address);
+        i += 1;
+    };
+}
