@@ -545,10 +545,12 @@ pub mod Predifi {
             };
 
             // Batch storage writes to minimize gas costs
-            self.pool_odds.write(
-                pool_id,
-                self.calculate_odds(pool_id, pool.totalStakeOption1, pool.totalStakeOption2)
-            );
+            self
+                .pool_odds
+                .write(
+                    pool_id,
+                    self.calculate_odds(pool_id, pool.totalStakeOption1, pool.totalStakeOption2),
+                );
             self.user_stakes.write((pool_id, caller), user_stake);
             self.pool_vote.write(pool_id, option == option2);
             self.pool_stakes.write(pool_id, user_stake);
@@ -559,7 +561,12 @@ pub mod Predifi {
             self.reentrancy_guard.end();
 
             // Emit event
-            self.emit(Event::BetPlaced(BetPlaced { pool_id, address: caller, option, amount, shares }));
+            self
+                .emit(
+                    Event::BetPlaced(
+                        BetPlaced { pool_id, address: caller, option, amount, shares },
+                    ),
+                );
         }
 
         /// @notice Stakes tokens to become eligible for validation rewards
