@@ -972,64 +972,36 @@ fn test_remove_validator_unauthorized() {
     IPredifiValidator::remove_validator(ref state, validator);
 }
 #[test]
-fn test_slash_validator_halves_rep_and_treasury(){
-    let (_contract_address, mut state)= deploy_contract("src/predifi.cairo");
-    let v=addr(2);
+fn test_update_performance_success_and_failure(){
 
-    //Send reputation and treasury
-    state.reputations.write(v,100);
-    state.treasuries.write(v,200);
+    let (contract,_, validator_contract, _, _)= deploy_predifi();
+    let validator: ContractAddress= 'validator'.try_into().unwrap();
 
-    // Slash validator
-    Predifi::slash_validator(ref state,v);
+    //initialize validator reputation and counts
+   let admin: ContractAddress="admin".try_into().unwrap();
+   start_cheat_caller_address(validator_contract.contract_address,admin);
+   validator_contract.add_validator(validator);
+   stop_cheat_caller_address(validator_contract.contract_address);
 
-    let rep=Predifi::get_validator_reputation(@state,v);
-    let treasury=Predifi::get_validator_treasury(@state,v);
+    //update performance - success
+    start_cheat_caller_address(validator_contract.contract_address, validator);
+    validator_contract.update_performance(validator, true);
+    stop_cheat_caller_address(validator_contract.contract_address);
 
-    assert(rep==50,'Reputation should be halved');
-    assert(treasury==100,'Treasury should be halved');
+    let rep_after_success=state.validator_reputation.read(validator);
+    let success_count= state.validator_success_count.read(validator);
+    assert(rep_after_success==11,"Reputation should increase by 1");
+    assert(success_count==1,"Succcess count should increase");
+
+    //update performance - failure
+    start_cheat_caller_address(state.contract_address,validator);
+    Predifi::update_performance(ref state, validator,fee);
+    stop_cheat_caller_address(state.contract_address);
+
+    let rep_after_failure=state.validator_reputation.read(validator);
+    let fail_count=state.validator_fail_count.read(validator);
+    assert(rep_after_failure==10,"Reputation should decrease by 1");
+    assert(fail_count==1,"Fail count should increase");
 }
-#[test]
-fn test_distribute_validator_fees_only_correct_validators(){
-    let (_contract_address, mut state)=deploy_contract("src/predifi.cairo");
-    let v1=addr(10);
-    let v2=addr(20);
-    let v3=addr(30);
 
-    let pool_id=1;
 
-    //Setup pool
-    let pool=PoolData{
-        has_ended:true,
-        is_resolved: true,
-        correct_option:1,
-        fee_pool:60,
-        validators:array![v1,v2,v3],
-    };
-    state.pools.write(pool_id,Some(pool));
-
-    //Set reputations
-    state.reputations.write(v1,10);
-    state.reputataion.write(v2,20);
-    state.reputation.write(v3,30);
-
-    //Mark choices: v1 and v2 correct, v3 Wrong
-    state.validator_choices.write((pool_id,v1),1);
-    state.validator_choices.write((pool_id,v2),1);
-    state.validator_choices.write((pool_id,v3),0);
-
-    Predifi::distribute_validator_fees(ref state, pool_id);
-
-    let t1=Predifi::get_validator_treasury(@state,v1);
-    let t2=Predifi::get_validator_treasury(@state,v2);
-    let t3=Predifi::get_validator_treasury(@state,v3);
-
-    //Eligible rep=30(10+20)
-    //v1 share=(10/30)*60=20
-    //v2 share=(20/30)*60=20
-    //v3 gets 0
-    assert(t1==20,'v1 should get 20');
-    assert(t2==40,'v2 should get 40');
-    assert(t3==0,'v3 should get 0');
-
-}

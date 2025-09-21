@@ -1,7 +1,7 @@
 use starknet::ContractAddress;
 use starknet::storage::Vec;
-use crate::base::types::Status;
-use crate::base::enums::{Category,Pool}
+//use crate::base::types::Status;
+//use crate::base::enums::{Category,Pool};
 /// @notice Enum representing the types of pools available.
 #[derive(Copy, Drop, Serde, PartialEq, starknet::Store, Debug)]
 pub enum Pool {
@@ -271,9 +271,9 @@ pub struct PoolDetails {
     pub exists: bool,
     pub has_ended: bool,
     pub is_resolved: bool,
-    pub correct_option:bool,
+    pub correct_option: bool,
     pub fee_pool: u256,
-    pub validators: Vec<ContractAddress>,
+    pub validators_count: u32,
 }
 
 // Emergency Types

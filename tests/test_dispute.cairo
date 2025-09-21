@@ -305,7 +305,7 @@ fn test_get_suspended_pools() {
 }
 
 #[test]
-#[should_panic(expected: 'Pool is suspended')]
+#[should_panic(expected: 'Pool is inactive')]
 fn test_vote_on_suspended_pool() {
     let (contract, dispute_contract, _, pool_creator, erc20_address) = deploy_predifi();
 

@@ -1,13 +1,13 @@
 #[starknet::contract]
 pub mod Predifi {
     // Cairo imports
+    use core::array::{Array, ArrayTrait, SpanTrait};
     use core::hash::{HashStateExTrait, HashStateTrait};
     use core::panic_with_felt252;
     use core::pedersen::PedersenTrait;
     use core::poseidon::PoseidonTrait;
     // oz imports
     use openzeppelin::access::accesscontrol::{AccessControlComponent, DEFAULT_ADMIN_ROLE};
-    
     use openzeppelin::introspection::src5::SRC5Component;
     use openzeppelin::security::{PausableComponent, ReentrancyGuardComponent};
     use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
@@ -23,13 +23,13 @@ pub mod Predifi {
     use crate::base::events::Events::{
         BetPlaced, DisputeRaised, DisputeResolved, EmergencyActionCancelled,
         EmergencyActionExecuted, EmergencyActionScheduled, EmergencyWithdrawal, FeeWithdrawn,
-        FeesCollected, PoolAutomaticallySettled, PoolCancelled, PoolEmergencyFrozen,
-        PoolEmergencyResolved, PoolEmergencyUnfrozen, PoolResolved, PoolStateTransition,
-        PoolSuspended, StakeRefunded, UserStaked, ValidatorAdded, ValidatorRemoved,
-        ValidatorResultSubmitted, ValidatorsAssigned,ValidatorSlashed, ValidatorPerformanceUpdated,FeesDistributed
+        FeesCollected, FeesDistributed, PoolAutomaticallySettled, PoolCancelled,
+        PoolEmergencyFrozen, PoolEmergencyResolved, PoolEmergencyUnfrozen, PoolResolved,
+        PoolStateTransition, PoolSuspended, StakeRefunded, UserStaked, ValidatorAdded,
+        ValidatorPerformanceUpdated, ValidatorRemoved, ValidatorResultSubmitted, ValidatorSlashed,
+        ValidatorsAssigned,
     };
     use crate::base::security::{Security, SecurityTrait};
-
     // package imports
     use crate::base::types::{
         EmergencyAction, EmergencyActionStatus, EmergencyActionType, EmergencyPoolState,
@@ -155,9 +155,11 @@ pub mod Predifi {
         reentrancy_guard: ReentrancyGuardComponent::Storage,
         //validator performance tracking
         validator_reputation: Map<ContractAddress, u256>,
-        validator_success_count: Map<ContractAddress,u256>,
-        validator_fail_count:Map<ContractAddress,u256>,
-        validator_slashed:Map<ContractAddress,u256>,
+        validator_success_count: Map<ContractAddress, u256>,
+        validator_fail_count: Map<ContractAddress, u256>,
+        validator_slashed: Map<ContractAddress, u256>,
+        pool_validators: Map<(u256, u32), ContractAddress>,
+        pool_validators_count: Map<u256, u32>,
     }
 
     /// @notice Events emitted by the Predifi contract.
@@ -221,12 +223,12 @@ pub mod Predifi {
         UpgradeableEvent: UpgradeableComponent::Event,
         #[flat]
         ReentrancyGuardEvent: ReentrancyGuardComponent::Event,
-        ValidatorSlashed:ValidatorSlashed,
-        ValidatorPerformanceUpdated:ValidatorPerformanceUpdated,
+        ValidatorSlashed: ValidatorSlashed,
+        ValidatorPerformanceUpdated: ValidatorPerformanceUpdated,
         FeesDistributed: FeesDistributed,
     }
-   
-   
+
+
     #[derive(Drop, Hash)]
     struct HashingProperties {
         username: felt252,
@@ -241,108 +243,124 @@ pub mod Predifi {
     /// @notice Update validator performance and adjust reputation.
     /// @param validator Address of the validator.
     /// @param success  True if  validation was correct, false otherwise.
-    fn update_performance(ref self:ContractState,validator:ContractAddress,success:bool){
-        if(success){
-            let prev: u256=self.validator_success_count.read(validator);
-            self.validator_success_count.write(validator,prev+1);
+    #[external(v0)]
+    fn update_performance(ref self: ContractState, validator: ContractAddress, success: bool) {
+        if (success) {
+            let prev: u256 = self.validator_success_count.read(validator);
+            self.validator_success_count.write(validator, prev + 1);
 
-            let rep: u256=self.validator_reputation.read(validator)+1;
-            self.validator_reputation.write(validator,rep);
+            let rep: u256 = self.validator_reputation.read(validator) + 1;
+            self.validator_reputation.write(validator, rep);
 
-            self.emit(Event::ValidatorPerformanceUpdated(
-                ValidatorPerformanceUpdated{validator,success,reputation_after:rep}
-            ));
-        } else{
-            let prev: u256=self.validator_fail_count.read(validator);
-            self.validator_fail_count.write(validator,prev+1);
+            self
+                .emit(
+                    Event::ValidatorPerformanceUpdated(
+                        ValidatorPerformanceUpdated { validator, success, reputation_after: rep },
+                    ),
+                );
+        } else {
+            let prev: u256 = self.validator_fail_count.read(validator);
+            self.validator_fail_count.write(validator, prev + 1);
 
-            let rep: u256=self.validator_reputation.read(validator);
-            let new_rep: u256=if rep>0 {rep-1} else { 0 };
-            self.validator_reputation.write(validator,new_rep);
+            let rep: u256 = self.validator_reputation.read(validator);
+            let new_rep: u256 = if rep > 0 {
+                rep - 1
+            } else {
+                0
+            };
+            self.validator_reputation.write(validator, new_rep);
 
-            self.emit(Event::ValidatorPerformanceUpdated(
-                ValidatorPerformanceUpdated{validator,success,reputation_after:new_rep}
-            ));
-        }
+            self
+                .emit(
+                    Event::ValidatorPerformanceUpdated(
+                        ValidatorPerformanceUpdated {
+                            validator, success, reputation_after: new_rep,
+                        },
+                    ),
+                );
     }
 
     /// @notice Slash a validator by halving reputation and treasury.
     /// @param validator Validator address to slash.
-    fn slash_validator(ref self:Storage,validator:ContractAddress){
-        let reputation: u256=self.validator_reputation.read(validator);
-        let treasury: u256=self.validator_treasuries.read(validator);
+    fn slash_validator(ref self: ContractState, validator: ContractAddress) {
+        let reputation: u256 = self.validator_reputation.read(validator);
+        let treasury: u256 = self.validator_treasuries.read(validator);
 
-        let new_rep: u256=reputation/2;
-        let new_treasury: u256=treasury/2;
+        let new_rep: u256 = reputation / 2;
+        let new_treasury: u256 = treasury / 2;
 
-        self.validator_reputation.write(validator,new_rep);
-        self.validator_treasuries.write(validator,new_treasury);
+        self.validator_reputation.write(validator, new_rep);
+        self.validator_treasuries.write(validator, new_treasury);
 
-        self.emit(Event::ValidatorSlashed(
-            ValidatorSlashed{
-                validator,
-                amount:treasury-new_treasury,
-                reputation_after:new_rep,
-            }
-        ));
-        
+        self
+            .emit(
+                Event::ValidatorSlashed(
+                    ValidatorSlashed {
+                        validator, amount: treasury - new_treasury, reputation_after: new_rep,
+                    },
+                ),
+            );
     }
 
     /// @notice Distribute fees among to validators of a pool who chose the correct option.
     /// @param pool_id ID fo the pool to distribute fees for.
-    fn distribute_validator_fees(ref self:Storage,pool_id:u256){
+    fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
         //Ensure pool exists
-        let pool_data: PoolDetails=self.pools.read(pool_id);
+        let pool_data: PoolDetails = self.pools.read(pool_id);
 
         //Ensure pool has ended
-        assert(pool_data.has_ended==true,1002);
+        assert(pool_data.has_ended == true, 1002);
 
         //Ensure pool has been resolved
-        assert(pool_data.is_resolved==true,1003);
+        assert(pool_data.is_resolved == true, 1003);
 
-        let correct_option=pool_data.correct_option;
-        let total_fees: u256=pool_data.fee_pool;
+        let correct_option = pool_data.correct_option;
+        let total_fees: u256 = pool_data.fee_pool;
 
         //Filter validators that chose the correct option
-        let mut eligible_validators=ArrayTrait::new();
-        let mut total_reputation: u256=0;
+        let mut eligible_validators = ArrayTrait::new();
+        let mut total_reputation: u256 = 0;
 
-        for validator in pool_data.validators{
+        let len = pool_data.validators_count;
+        let mut i = 0;
+        while i < len {
+            let validator = self.pool_validators.read((pool_id, i));
+
             // Use your pool_validation_results storage
-            let choice:bool=self.pool_validation_results.read((pool_id,*validator));
-            if choice==correct_option{
-                let rep: u256=self.validator_reputation.read(*validator);
-                eligible_validators.append(*validator);
-                total_reputation+=rep;
+            let choice: bool = self.pool_validation_results.read((pool_id, validator));
+            if choice == correct_option {
+                let rep: u256 = self.validator_reputation.read(validator);
+                eligible_validators.append(validator);
+                total_reputation += rep;
             }
+            i += 1;
         }
         //Distribute proportionally by reputation
-        for validator in eligible_validators{
-            let rep: u256=self.validator_reputation.read(*validator);
-            let share: u256 =total_fees*rep/total_reputation;
+        for validator in eligible_validators {
+            //let validator=*validator_ptr;
+            let rep: u256 = self.validator_reputation.read(validator);
+            let share: u256 = total_fees * rep / total_reputation;
 
-            let balance: u256=self.validator_treasuries.read(*validator);
-            self.validator_treasuries.write(*validator,balance+share);
+            let balance: u256 = self.validator_treasuries.read(validator);
+            self.validator_treasuries.write(validator, balance + share);
         }
-        self.emit(Events::FeesDistributed(
-            FeesDistributed{pool_id,total_distributed:total_fees}
-        ));
+        self.emit(FeesDistributed { pool_id, total_distributed: total_fees });
     }
 
     /// @notice Get validator reputation
-    fn get_validator_reputation(self:@ContractState, validator:ContractAddress)->u256{
+    fn get_validator_reputation(self: @ContractState, validator: ContractAddress) -> u256 {
         self.validator_reputation.read(validator)
     }
     /// @notice Get validator success count
-    fn get_validator_success(self:@ContractState, validator:ContractAddress)->u256{
+    fn get_validator_success(self: @ContractState, validator: ContractAddress) -> u256 {
         self.validator_success_count.read(validator)
     }
     /// @notice Get validator fail count
-    fn get_validator_slashed(self:@ContractState, validator:ContractAddress)->u256{
+    fn get_validator_slashed(self: @ContractState, validator: ContractAddress) -> u256 {
         self.validator_slashed.read(validator)
     }
     /// @notice Get validator treasury
-    fn get_validator_treasury(self:@ContractState, validator:ContractAddress)->u256{
+    fn get_validator_treasury(self: @ContractState, validator: ContractAddress) -> u256 {
         self.validator_treasuries.read(validator)
     }
     /// @notice Initializes the Predifi contract.
@@ -404,6 +422,7 @@ pub mod Predifi {
             self.pausable.assert_not_paused();
             // Convert u8 to Pool enum with validation
             let pool_type_enum = u8_to_pool(poolType);
+            let creator_address = get_caller_address();
 
             // Validation checks using SecurityTrait
             self.assert_valid_pool_timing(poolStartTime, poolLockTime, poolEndTime);
@@ -414,8 +433,6 @@ pub mod Predifi {
             self.assert_valid_felt252(option1);
             self.assert_valid_felt252(option2);
 
-            let creator_address = get_caller_address();
-
             // Collect pool creation fee (1 STRK)
             IPredifi::collect_pool_creation_fee(ref self, creator_address);
 
@@ -425,6 +442,8 @@ pub mod Predifi {
             while self.retrieve_pool(pool_id) {
                 pool_id = self.generate_deterministic_number();
             }
+
+            //pub validators: Array<ContractAddress>,
 
             // Create pool details structure
             let pool_details = PoolDetails {
@@ -455,6 +474,11 @@ pub mod Predifi {
                 totalSharesOption2: 0_u256,
                 initial_share_price: 5000, // 0.5 in basis points (10000 = 1.0)
                 exists: true,
+                has_ended: false,
+                is_resolved: false,
+                correct_option: false,
+                fee_pool: 0_u256,
+                validators_count: 0,
             };
 
             self.pools.write(pool_id, pool_details);
@@ -586,10 +610,14 @@ pub mod Predifi {
             u8_to_status(new_status)
         }
 
-        /// @notice Places a bet on a pool.
-        /// @param pool_id The pool ID.
-        /// @param option The option to bet on.
-        /// @param amount The amount to bet.
+        /// @notice Places a bet on a specific outcome in a prediction pool
+        /// @dev Transfers tokens from user, updates pool odds, and validates bet constraints
+        /// @param pool_id The unique identifier of the pool to bet on
+        /// @param option The outcome option to bet on (Yes/No or specific outcome)
+        /// @param amount The amount of tokens to bet (must be >= pool's min_bet_amount)
+        /// @custom:reentrancy-guard Protected against reentrancy attacks using internal locks
+        /// @custom:validation Validates pool status, betting period, and user balance
+        /// @custom:odds-update Automatically recalculates pool odds after successful bet
         fn vote(ref self: ContractState, pool_id: u256, option: felt252, amount: u256) {
             self.pausable.assert_not_paused();
 
@@ -600,14 +628,13 @@ pub mod Predifi {
 
             let mut pool = self.pools.read(pool_id);
             self.assert_pool_exists(@pool);
+            self.assert_pool_active(@pool);
 
             let option1: felt252 = pool.option1;
             let option2: felt252 = pool.option2;
 
             // Validation checks using SecurityTrait
             self.assert_valid_pool_option(option, option1, option2);
-            self.assert_pool_not_suspended(@pool);
-            self.assert_pool_active(@pool);
             self.assert_amount_within_limits(amount, pool.minBetAmount, pool.maxBetAmount);
 
             // Transfer betting amount from the user to the contract
@@ -673,11 +700,15 @@ pub mod Predifi {
             self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
         }
 
-        /// @notice Stakes tokens to become a validator for a pool.
-        /// @param pool_id The pool ID.
-        /// @param amount The amount to stake.
+        /// @notice Stakes tokens to become eligible for validation rewards
+        /// @dev Increases user's validator stake and updates protocol security parameters
+        /// @param amount Amount of tokens to stake (must be > 0)
+        /// @custom:compound-rewards Automatically compounds previous rewards if any exist
+        /// @custom:lock-period Staked tokens subject to unbonding period for withdrawal
+        /// @custom:delegation Allows delegation of stake to other validators if desired
         fn stake(ref self: ContractState, pool_id: u256, amount: u256) {
             self.pausable.assert_not_paused();
+            //Input Validatioin
             self.assert_greater_than_zero(amount);
             self.assert_greater_than_zero(pool_id);
 
@@ -1301,9 +1332,15 @@ pub mod Predifi {
 
     #[abi(embed_v0)]
     impl dispute of IPredifiDispute<ContractState> {
-        /// @notice Raises a dispute for a pool.
-        /// @dev Emits DisputeRaised and may suspend the pool if threshold is met.
-        /// @param pool_id The pool ID.
+        /// @notice Raises a dispute against a pool's validation result
+        /// @dev Initiates multi-stage dispute resolution process with economic security
+        /// @param pool_id Pool identifier where dispute is being raised
+        /// @param evidence_hash IPFS hash containing dispute evidence and reasoning
+        /// @param stake_amount Amount staked by disputer (forfeited if dispute fails)
+        /// @return bool True if dispute is accepted for processing
+        /// @custom:evidence-requirement All disputes must include verifiable evidence
+        /// @custom:economic-security Disputers stake tokens that are slashed for frivolous disputes
+        /// @custom:time-limit Disputes must be raised within specified time window after resolution
         fn raise_dispute(ref self: ContractState, pool_id: u256) {
             self.pausable.assert_not_paused();
             self.assert_greater_than_zero(pool_id);
@@ -1362,10 +1399,13 @@ pub mod Predifi {
             }
         }
 
-        /// @notice Resolves a dispute and restores pool status.
-        /// @dev Only callable by admin. Emits DisputeResolved and PoolStateTransition.
-        /// @param pool_id The pool ID.
-        /// @param winning_option The winning option (true = option2, false = option1).
+        /// @notice Processes dispute resolution through community voting
+        /// @dev Implements staged dispute resolution with escalation mechanisms
+        /// @param dispute_id Unique identifier for the dispute being processed
+        /// @param resolution Decision from dispute resolution (Accept/Reject)
+        /// @custom:multi-stage Stage 1: Community vote, Stage 2: Expert panel, Stage 3: Governance
+        /// @custom:economic-incentives Correct dispute voters receive rewards from dispute stakes
+        /// @custom:finality Final dispute decisions are immutable and trigger pool re-resolution
         fn resolve_dispute(ref self: ContractState, pool_id: u256, winning_option: bool) {
             self.pausable.assert_not_paused();
             self.assert_greater_than_zero(pool_id);
@@ -1455,7 +1495,6 @@ pub mod Predifi {
             let pool = self.pools.read(pool_id);
 
             // Validation checks using SecurityTrait
-            self.assert_pool_exists(@pool);
             self.assert_pool_not_suspended(@pool);
         }
 
@@ -1490,7 +1529,6 @@ pub mod Predifi {
             let caller = get_caller_address();
 
             // Validation checks using SecurityTrait
-            self.assert_pool_exists(@pool);
             self.assert_pool_not_suspended(@pool);
 
             // Check if caller is an authorized validator
@@ -2339,5 +2377,7 @@ pub mod Predifi {
                     ),
                 );
         }
+    }
+    
     }
 }

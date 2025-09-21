@@ -392,3 +392,14 @@ pub trait IPredifiValidator<TContractState> {
     /// @dev Can only be called by admin. Emits Unpaused event on success.
     fn unpause(ref self: TContractState);
 }
+// #[starknet::interface]
+// pub trait IPredifiValidatorTest<TContractState> {
+//     fn set_validator_reputation_for_test(ref self: TContractState, validator: ContractAddress,
+//     value: u256);
+//     fn set_validator_treasury_for_test(ref self: TContractState, validator: ContractAddress,
+//     value: u256);
+//     fn slash_validator(ref self: TContractState, validator: ContractAddress);
+//     fn get_validator_reputation(self: @TContractState, validator: ContractAddress) -> u256;
+//     fn get_validator_treasury(self: @TContractState, validator: ContractAddress) -> u256;
+// }
+
