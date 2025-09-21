@@ -61,6 +61,7 @@ pub mod Events {
         pub amount: u256,
     }
 
+
     /// @notice Emitted when a pool changes state.
     /// @notice Emitted when a pool changes state.\
     /// @param pool_id Unique identifier of the pool
