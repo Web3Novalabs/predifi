@@ -278,6 +278,7 @@ pub mod Predifi {
                         },
                     ),
                 );
+        }
     }
 
     /// @notice Slash a validator by halving reputation and treasury.
@@ -2066,6 +2067,7 @@ pub mod Predifi {
             }
             result
         }
+    
 
         /// @notice Calculates the validation consensus for a pool.
         /// @param pool_id The pool ID.
@@ -2377,7 +2379,5 @@ pub mod Predifi {
                     ),
                 );
         }
-    }
-    
     }
 }
