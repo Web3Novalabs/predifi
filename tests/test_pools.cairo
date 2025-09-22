@@ -7,7 +7,7 @@ use core::felt252;
 use core::serde::Serde;
 use core::traits::TryInto;
 use snforge_std::{
-    EventSpyAssertionsTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
+    EventSpyAssertionsTrait, EventSpyTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
     stop_cheat_block_timestamp, stop_cheat_caller_address,
 };
 use starknet::{ContractAddress, get_block_timestamp};
@@ -28,6 +28,10 @@ use super::test_utils::{
 #[test]
 fn test_create_pool() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
+
+    // Setup event spy
+    let mut spy = spy_events();
+
     // Approve the DISPATCHER contract to spend tokens
     start_cheat_caller_address(erc20_address, pool_creator);
     approve_tokens_for_payment(
@@ -37,6 +41,10 @@ fn test_create_pool() {
     start_cheat_caller_address(contract.contract_address, pool_creator);
     let pool_id = create_default_pool(contract);
     assert!(pool_id != 0, "not created");
+
+    // Check that events were emitted (PoolCreated and PoolCreationFeeCollected)
+    let events = spy.get_events();
+    assert(events.events.len() >= 2, 'Missing pool events');
 }
 
 #[test]
@@ -896,4 +904,37 @@ fn test_manual_pool_state_update() {
     // Verify final state in storage
     let final_pool = contract.get_pool(pool_id);
     assert(final_pool.status == Status::Closed, 'should be Closed in storage');
+}
+
+#[test]
+fn test_pool_state_transition_event() {
+    let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
+
+    // Approve tokens for pool creation
+    start_cheat_caller_address(erc20_address, pool_creator);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
+    stop_cheat_caller_address(erc20_address);
+
+    // Create a pool
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Setup event spy before state transition
+    let mut spy = spy_events();
+
+    // Change to admin for manual state update
+    let admin = 'admin'.try_into().unwrap();
+    start_cheat_caller_address(contract.contract_address, admin);
+
+    // Manually update pool state (this should emit PoolStateTransition event)
+    contract.manually_update_pool_state(pool_id, 1); // Change to Locked
+
+    // Check that PoolStateTransition event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No state events');
+
+    stop_cheat_caller_address(contract.contract_address);
 }

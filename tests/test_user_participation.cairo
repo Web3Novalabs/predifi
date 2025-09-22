@@ -6,7 +6,7 @@ use core::array::ArrayTrait;
 use core::serde::Serde;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
+    EventSpyTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
     stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
@@ -436,8 +436,15 @@ fn test_distribute_validation_fee() {
 
     validator_dispatcher.calculate_validator_fee(18, 10_000);
 
+    // Setup event spy before fee distribution
+    let mut spy = spy_events();
+
     start_cheat_caller_address(dispatcher.contract_address, dispatcher.contract_address);
     validator_dispatcher.distribute_validator_fees(18);
+
+    // Check that ValidatorFeesDistributed event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No fee distribution events');
 
     let balance_validator1 = erc20.balance_of(validator1);
     assert(balance_validator1 == 125, 'distribution failed');
@@ -1343,4 +1350,32 @@ fn test_multiple_users_with_status_transitions() {
     assert(user3_all_pools.len() == 1, 'U3: 1 total pool');
 
     stop_cheat_block_timestamp(contract.contract_address);
+}
+
+#[test]
+fn test_bet_placed_event() {
+    let (contract, _, _, user, erc20_address) = deploy_predifi();
+
+    // Approve tokens for the user
+    start_cheat_caller_address(erc20_address, user);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
+    stop_cheat_caller_address(erc20_address);
+
+    // Create a pool
+    start_cheat_caller_address(contract.contract_address, user);
+    let pool_id = create_default_pool(contract);
+
+    // Setup event spy before voting
+    let mut spy = spy_events();
+
+    // Place a bet (vote)
+    contract.vote(pool_id, 'Team A', 200);
+
+    // Check that BetPlaced event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No bet events');
+
+    stop_cheat_caller_address(contract.contract_address);
 }

@@ -13,7 +13,7 @@ use core::integer::u256;
 use core::option::OptionTrait;
 use core::serde::Serde;
 use snforge_std::{
-    ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait, declare, spy_events,
+    ContractClassTrait, DeclareResultTrait, EventSpyAssertionsTrait, EventSpyTrait, declare, spy_events,
     start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
     stop_cheat_caller_address,
 };
@@ -152,6 +152,10 @@ fn test_emergency_freeze_pool() {
 
     // Execute the scheduled emergency action
     dispatcher.execute_emergency_action(action_id);
+
+    // Check that emergency events were emitted
+    let events = spy.get_events();
+    assert(events.events.len() >= 2, 'Missing emergency events');
 
     // Verify pool is in emergency state
     assert!(dispatcher.is_pool_emergency_state(pool_id), "Pool should be in emergency state");
