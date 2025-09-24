@@ -1,4 +1,6 @@
-use contract::base::events::Events::{PoolResolved, ValidatorAdded, ValidatorRemoved, ValidatorResultSubmitted};
+use contract::base::events::Events::{
+    PoolResolved, ValidatorAdded, ValidatorRemoved, ValidatorResultSubmitted,
+};
 use contract::base::types::Status;
 use contract::interfaces::ipredifi::{
     IPredifiDispatcherTrait, IPredifiValidator, IPredifiValidatorDispatcherTrait,
@@ -10,8 +12,8 @@ use core::traits::{Into, TryInto};
 use openzeppelin::access::accesscontrol::AccessControlComponent::InternalTrait as AccessControlInternalTrait;
 use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
 use snforge_std::{
-    EventSpyAssertionsTrait, EventSpyTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
-    stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
+    EventSpyAssertionsTrait, EventSpyTrait, spy_events, start_cheat_block_timestamp,
+    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{MutableVecTrait, StoragePointerReadAccess};
 use starknet::{ContractAddress, get_block_timestamp};

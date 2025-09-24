@@ -6,8 +6,8 @@ use core::array::ArrayTrait;
 use core::serde::Serde;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    EventSpyTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address, stop_cheat_block_timestamp,
-    stop_cheat_caller_address, test_address,
+    EventSpyTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
+    stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
 };
 use starknet::storage::{StoragePointerReadAccess, StoragePointerWriteAccess};
 use starknet::{ContractAddress, get_block_timestamp};

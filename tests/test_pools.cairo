@@ -7,8 +7,8 @@ use core::felt252;
 use core::serde::Serde;
 use core::traits::TryInto;
 use snforge_std::{
-    EventSpyAssertionsTrait, EventSpyTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
-    stop_cheat_block_timestamp, stop_cheat_caller_address,
+    EventSpyAssertionsTrait, EventSpyTrait, spy_events, start_cheat_block_timestamp,
+    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address,
 };
 use starknet::{ContractAddress, get_block_timestamp};
 

@@ -1,4 +1,6 @@
-use contract::base::events::Events::{ContractPaused, ContractUnpaused, DisputeRaised, StakeRefunded};
+use contract::base::events::Events::{
+    ContractPaused, ContractUnpaused, DisputeRaised, StakeRefunded,
+};
 use contract::base::types::Status;
 use contract::interfaces::ipredifi::{
     IPredifiDispatcherTrait, IPredifiDisputeDispatcherTrait, IPredifiValidatorDispatcherTrait,
@@ -9,8 +11,8 @@ use core::serde::Serde;
 use core::traits::TryInto;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    EventSpyAssertionsTrait, EventSpyTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
-    stop_cheat_block_timestamp, stop_cheat_caller_address,
+    EventSpyAssertionsTrait, EventSpyTrait, spy_events, start_cheat_block_timestamp,
+    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address,
 };
 use starknet::{ContractAddress, get_block_timestamp};
 use super::test_utils::{approve_tokens_for_payment, create_default_pool, deploy_predifi};
