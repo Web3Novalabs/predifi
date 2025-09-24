@@ -377,8 +377,9 @@ pub mod Predifi {
 
             self.pool_odds.write(pool_id, initial_odds);
 
-            // Add to pool count
-            self.pool_count.write(self.pool_count.read() + 1);
+            // Cache current pool count to avoid redundant read
+            let current_count = self.pool_count.read();
+            self.pool_count.write(current_count + 1);
 
             // Emit pool created event
             self
@@ -526,6 +527,13 @@ pub mod Predifi {
             self.assert_greater_than_zero(pool_id);
             self.assert_valid_felt252(option);
 
+            // Cache frequently used values to reduce storage reads
+            let caller = get_caller_address();
+            let contract_address = get_contract_address();
+            let token_addr = self.token_addr.read();
+            let dispatcher = IERC20Dispatcher { contract_address: token_addr };
+
+            // Single pool read for validation and data access
             let mut pool = self.pools.read(pool_id);
             self.assert_pool_exists(@pool);
             self.assert_pool_active(@pool);
@@ -537,12 +545,7 @@ pub mod Predifi {
             self.assert_valid_pool_option(option, option1, option2);
             self.assert_amount_within_limits(amount, pool.minBetAmount, pool.maxBetAmount);
 
-            // Transfer betting amount from the user to the contract
-            let caller = get_caller_address();
-            let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
-
             // Check balance and allowance using SecurityTrait
-            let contract_address = get_contract_address();
             self.assert_sufficient_balance(dispatcher, caller, amount);
             self.assert_sufficient_allowance(dispatcher, caller, contract_address, amount);
 
@@ -552,7 +555,7 @@ pub mod Predifi {
             // Transfer the tokens
             dispatcher.transfer_from(caller, contract_address, amount);
 
-            let mut pool = self.pools.read(pool_id);
+            // Update pool state in memory
             if option == option1 {
                 pool.totalStakeOption1 += amount;
                 pool
@@ -567,11 +570,6 @@ pub mod Predifi {
             pool.totalBetAmountStrk += amount;
             pool.totalBetCount += 1;
 
-            // Update pool odds
-            let odds = self
-                .calculate_odds(pool.pool_id, pool.totalStakeOption1, pool.totalStakeOption2);
-            self.pool_odds.write(pool_id, odds);
-
             // Calculate the user's shares
             let shares: u256 = if option == option1 {
                 self.calculate_shares(amount, pool.totalStakeOption1, pool.totalStakeOption2)
@@ -579,25 +577,37 @@ pub mod Predifi {
                 self.calculate_shares(amount, pool.totalStakeOption2, pool.totalStakeOption1)
             };
 
-            // Store user stake
+            // Create user stake object
             let user_stake = UserStake {
                 option: option == option2,
                 amount: amount,
                 shares: shares,
                 timestamp: get_block_timestamp(),
             };
-            let address: ContractAddress = get_caller_address();
-            self.user_stakes.write((pool.pool_id, address), user_stake);
-            self.pool_vote.write(pool.pool_id, option == option2);
-            self.pool_stakes.write(pool.pool_id, user_stake);
-            self.pools.write(pool.pool_id, pool);
-            self.track_user_participation(address, pool_id);
+
+            // Batch storage writes to minimize gas costs
+            self
+                .pool_odds
+                .write(
+                    pool_id,
+                    self.calculate_odds(pool_id, pool.totalStakeOption1, pool.totalStakeOption2),
+                );
+            self.user_stakes.write((pool_id, caller), user_stake);
+            self.pool_vote.write(pool_id, option == option2);
+            self.pool_stakes.write(pool_id, user_stake);
+            self.pools.write(pool_id, pool);
+            self.track_user_participation(caller, pool_id);
 
             // End reentrancy guard
             self.reentrancy_guard.end();
 
             // Emit event
-            self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
+            self
+                .emit(
+                    Event::BetPlaced(
+                        BetPlaced { pool_id, address: caller, option, amount, shares },
+                    ),
+                );
         }
 
         /// @notice Stakes tokens to become eligible for validation rewards
@@ -619,13 +629,13 @@ pub mod Predifi {
             self.assert_pool_not_suspended(@pool);
             self.assert_min_stake_amount(amount);
 
+            // Cache frequently used values to reduce redundant calls
             let address: ContractAddress = get_caller_address();
-
-            // Transfer stake amount from user to contract
-            let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
+            let contract_address = get_contract_address();
+            let token_addr = self.token_addr.read();
+            let dispatcher = IERC20Dispatcher { contract_address: token_addr };
 
             // Check balance and allowance using SecurityTrait
-            let contract_address = get_contract_address();
             self.assert_sufficient_balance(dispatcher, address, amount);
             self.assert_sufficient_allowance(dispatcher, address, contract_address, amount);
 
@@ -635,22 +645,22 @@ pub mod Predifi {
             // Transfer the tokens
             dispatcher.transfer_from(address, contract_address, amount);
 
-            // Add to previous stake if any
+            // Read and update user stake in a single operation
             let mut stake = self.user_stakes.read((pool_id, address));
             stake.amount = amount + stake.amount;
-            // write the new stake
+
+            // Batch storage writes to minimize gas costs
             self.user_stakes.write((pool_id, address), stake);
-            // grant the validator role
             self.accesscontrol._grant_role(VALIDATOR_ROLE, address);
-            // add caller to validator list
             self.validators.push(address);
             self.track_user_participation(address, pool_id);
-            // emit events
-            self.emit(UserStaked { pool_id, address, amount });
-            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
 
             // End reentrancy guard
             self.reentrancy_guard.end();
+
+            // emit events
+            self.emit(UserStaked { pool_id, address, amount });
+            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
         }
 
 
@@ -908,6 +918,11 @@ pub mod Predifi {
         /// @dev Allows users to withdraw funds from pools in emergency state.
         /// @param pool_id The pool ID to withdraw from.
         fn emergency_withdraw(ref self: ContractState, pool_id: u256) {
+            // Cache frequently used values to reduce storage reads
+            let caller = get_caller_address();
+            let token_addr = self.token_addr.read();
+            let strk_token = IERC20Dispatcher { contract_address: token_addr };
+
             // Check if pool exists
             let pool = self.pools.read(pool_id);
             assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
@@ -919,8 +934,6 @@ pub mod Predifi {
                 emergency_state.allow_emergency_withdrawals,
                 Errors::EMERGENCY_WITHDRAWALS_NOT_ALLOWED,
             );
-
-            let caller = get_caller_address();
 
             // Check if user has participated in this pool
             let has_participated = self.has_user_participated_in_pool(caller, pool_id);
@@ -942,7 +955,6 @@ pub mod Predifi {
                 );
 
             // Transfer tokens back to user
-            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
             strk_token.transfer(caller, withdrawal_amount);
 
             // Emit emergency withdrawal event
@@ -989,7 +1001,7 @@ pub mod Predifi {
             if action_type == 3 { // EmergencyWithdrawal
                 // For emergency withdrawal, action_data must contain a valid user address
                 // Use the helper function to validate the address and handle potential panics
-                let user_address = self.extract_user_address_from_action_data(action_data);
+                let _user_address = self.extract_user_address_from_action_data(action_data);
                 // Store the validated address for later use if needed
             // Note: The validation is done here to fail fast if the address is invalid
             }
@@ -1941,7 +1953,7 @@ pub mod Predifi {
         /// @param total_stake_other_option Total stake for other option.
         /// @return The calculated shares.
         fn calculate_shares(
-            ref self: ContractState,
+            self: @ContractState,
             amount: u256,
             total_stake_selected_option: u256,
             total_stake_other_option: u256,
@@ -1962,7 +1974,7 @@ pub mod Predifi {
         /// @param total_stake_option2 Total stake for option 2.
         /// @return The PoolOdds struct.
         fn calculate_odds(
-            ref self: ContractState,
+            self: @ContractState,
             pool_id: u256,
             total_stake_option1: u256,
             total_stake_option2: u256,
