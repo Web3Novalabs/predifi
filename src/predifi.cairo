@@ -946,7 +946,7 @@ pub mod Predifi {
             if action_type == 3 { // EmergencyWithdrawal
                 // For emergency withdrawal, action_data must contain a valid user address
                 // Use the helper function to validate the address and handle potential panics
-                let user_address = self.extract_user_address_from_action_data(action_data);
+                let _user_address = self.extract_user_address_from_action_data(action_data);
                 // Store the validated address for later use if needed
             // Note: The validation is done here to fail fast if the address is invalid
             }

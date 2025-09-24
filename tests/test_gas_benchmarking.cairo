@@ -9,7 +9,7 @@ const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
 const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
 const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
-use super::test_utils::{approve_tokens_for_payment, create_default_pool, deploy_predifi};
+use super::test_utils::{approve_tokens_for_payment, create_default_pool, deploy_predifi, mint_tokens_for};
 
 /// @notice Gas benchmarking tests for optimized storage operations
 /// @dev These tests measure gas consumption of optimized functions to ensure efficiency
@@ -30,6 +30,7 @@ fn test_vote_function_gas_optimization() {
 
     // Setup user with tokens
     start_cheat_caller_address(erc20_address, USER_ONE);
+    mint_tokens_for(USER_ONE, erc20_address, ONE_STRK * 1000);
     approve_tokens_for_payment(contract.contract_address, erc20_address, ONE_STRK * 1000);
     stop_cheat_caller_address(erc20_address);
 
@@ -39,12 +40,12 @@ fn test_vote_function_gas_optimization() {
     start_cheat_caller_address(contract.contract_address, USER_ONE);
 
     // Execute vote function (without gas metering since it's not available in this version)
-    contract.vote(pool_id, 'Team A', ONE_STRK);
+    contract.vote(pool_id, 'Team A', 1000);
 
-    // Verify the vote was successful by checking pool state
+        // Verify the vote was successful by checking pool state
     let pool = contract.get_pool(pool_id);
-    assert(pool.totalBetCount == 1, 'Vote should have been recorded');
-    assert(pool.totalStakeOption1 == ONE_STRK, 'Stake should be recorded correctly');
+    assert(pool.totalBetCount == 1, 'Vote not recorded');
+    assert(pool.totalStakeOption1 == 1000, 'Stake incorrect');
 }
 
 #[test]
@@ -63,17 +64,18 @@ fn test_stake_function_gas_optimization() {
 
     // Setup user with tokens
     start_cheat_caller_address(erc20_address, USER_ONE);
+    mint_tokens_for(USER_ONE, erc20_address, ONE_STRK * 1000);
     approve_tokens_for_payment(contract.contract_address, erc20_address, ONE_STRK * 1000);
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_caller_address(contract.contract_address, USER_ONE);
 
     // Execute stake function
-    contract.stake(pool_id, ONE_STRK * 200);
+    contract.stake(pool_id, 200_000_000_000_000_000_000);
 
-    // Verify the stake was successful
+        // Verify the stake was successful
     let user_stake = contract.get_user_stake(pool_id, USER_ONE);
-    assert(user_stake.amount == ONE_STRK * 200, 'Stake should be recorded correctly');
+    assert(user_stake.amount == 200_000_000_000_000_000_000, 'Stake amount wrong');
 }
 
 #[test]
@@ -130,12 +132,13 @@ fn test_emergency_withdraw_gas_optimization() {
 
     // Setup user with tokens and make them participate
     start_cheat_caller_address(erc20_address, USER_ONE);
+    mint_tokens_for(USER_ONE, erc20_address, ONE_STRK * 1000);
     approve_tokens_for_payment(contract.contract_address, erc20_address, ONE_STRK * 1000);
     stop_cheat_caller_address(erc20_address);
 
     start_cheat_block_timestamp(contract.contract_address, 1710000001);
     start_cheat_caller_address(contract.contract_address, USER_ONE);
-    contract.vote(pool_id, 'Team A', ONE_STRK);
+    contract.vote(pool_id, 'Team A', 1000);
 
     // Simulate emergency state (this would normally be done by admin)
     // For testing purposes, we'll assume emergency state is set
@@ -161,6 +164,7 @@ fn test_multiple_votes_gas_comparison() {
 
     // Setup user with tokens
     start_cheat_caller_address(erc20_address, USER_ONE);
+    mint_tokens_for(USER_ONE, erc20_address, ONE_STRK * 10000);
     approve_tokens_for_payment(contract.contract_address, erc20_address, ONE_STRK * 10000);
     stop_cheat_caller_address(erc20_address);
 
@@ -168,13 +172,13 @@ fn test_multiple_votes_gas_comparison() {
     start_cheat_caller_address(contract.contract_address, USER_ONE);
 
     // Execute multiple votes to test cumulative gas efficiency
-    contract.vote(pool_id, 'Team A', ONE_STRK);
-    contract.vote(pool_id, 'Team B', ONE_STRK * 2);
-    contract.vote(pool_id, 'Team A', ONE_STRK * 3);
+    contract.vote(pool_id, 'Team A', 1000);
+    contract.vote(pool_id, 'Team B', 2000);
+    contract.vote(pool_id, 'Team A', 3000);
 
     // Verify final state
     let pool = contract.get_pool(pool_id);
     assert(pool.totalBetCount == 3, 'Should have 3 bets');
-    assert(pool.totalStakeOption1 == ONE_STRK + ONE_STRK * 3, 'Option 1 stake should be correct');
-    assert(pool.totalStakeOption2 == ONE_STRK * 2, 'Option 2 stake should be correct');
+    assert(pool.totalStakeOption1 == 1000 + 3000, 'Option1 stake wrong');
+    assert(pool.totalStakeOption2 == 2000, 'Option2 stake wrong');
 }
