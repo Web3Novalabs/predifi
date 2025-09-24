@@ -111,6 +111,9 @@ pub trait IPredifi<TContractState> {
     /// @return The creator's contract address.
     fn get_pool_creator(self: @TContractState, pool_id: u256) -> ContractAddress;
 
+    fn update_fee_percentages(ref self: TContractState, new_protocol_fee: u256, new_validator_fee: u256);
+    fn get_fee_percentages(self: @TContractState) -> (u256, u256, u256);
+
     /// @notice Returns the creator fee percentage for a pool.
     /// @param pool_id The pool ID.
     /// @return The creator fee percentage.
