@@ -9,8 +9,9 @@ const VALIDATOR_ROLE: felt252 = selector!("VALIDATOR_ROLE");
 const POOL_CREATOR: ContractAddress = 123.try_into().unwrap();
 const USER_ONE: ContractAddress = 'User1'.try_into().unwrap();
 const ONE_STRK: u256 = 1_000_000_000_000_000_000;
-use super::test_utils::{approve_tokens_for_payment, create_default_pool, deploy_predifi, mint_tokens_for};
-
+use super::test_utils::{
+    approve_tokens_for_payment, create_default_pool, deploy_predifi, mint_tokens_for,
+};
 /// @notice Gas benchmarking tests for optimized storage operations
 /// @dev These tests measure gas consumption of optimized functions to ensure efficiency
 
@@ -42,7 +43,7 @@ fn test_vote_function_gas_optimization() {
     // Execute vote function (without gas metering since it's not available in this version)
     contract.vote(pool_id, 'Team A', 1000);
 
-        // Verify the vote was successful by checking pool state
+    // Verify the vote was successful by checking pool state
     let pool = contract.get_pool(pool_id);
     assert(pool.totalBetCount == 1, 'Vote not recorded');
     assert(pool.totalStakeOption1 == 1000, 'Stake incorrect');
@@ -73,7 +74,7 @@ fn test_stake_function_gas_optimization() {
     // Execute stake function
     contract.stake(pool_id, 200_000_000_000_000_000_000);
 
-        // Verify the stake was successful
+    // Verify the stake was successful
     let user_stake = contract.get_user_stake(pool_id, USER_ONE);
     assert(user_stake.amount == 200_000_000_000_000_000_000, 'Stake amount wrong');
 }
