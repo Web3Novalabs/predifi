@@ -61,6 +61,8 @@ pub mod Events {
         pub amount: u256,
     }
 
+
+    /// @notice Emitted when a pool changes state.
     /// @notice Emitted when a pool changes state.\
     /// @param pool_id Unique identifier of the pool
     /// @param previous_status The previous status of the pool
@@ -257,5 +259,24 @@ pub mod Events {
         pub action_id: u256,
         pub admin: ContractAddress,
         pub timestamp: u64,
+    }
+    #[derive(Drop, starknet::Event)]
+    pub struct ValidatorSlashed {
+        #[key]
+        pub validator: ContractAddress,
+        pub amount: u256,
+        pub reputation_after: u256,
+    }
+    #[derive(Drop, starknet::Event)]
+    pub struct ValidatorPerformanceUpdated {
+        #[key]
+        pub validator: ContractAddress,
+        pub success: bool,
+        pub reputation_after: u256,
+    }
+    #[derive(Drop, starknet::Event)]
+    pub struct FeesDistributed {
+        pub pool_id: u256,
+        pub total_distributed: u256,
     }
 }

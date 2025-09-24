@@ -971,3 +971,37 @@ fn test_remove_validator_unauthorized() {
     // Unauthorized caller attempt to remove the validator role
     IPredifiValidator::remove_validator(ref state, validator);
 }
+#[test]
+fn test_update_performance_success_and_failure(){
+
+    let (contract,_, validator_contract, _, _)= deploy_predifi();
+    let validator: ContractAddress= 'validator'.try_into().unwrap();
+
+    //initialize validator reputation and counts
+   let admin: ContractAddress="admin".try_into().unwrap();
+   start_cheat_caller_address(validator_contract.contract_address,admin);
+   validator_contract.add_validator(validator);
+   stop_cheat_caller_address(validator_contract.contract_address);
+
+    //update performance - success
+    start_cheat_caller_address(validator_contract.contract_address, validator);
+    validator_contract.update_performance(validator, true);
+    stop_cheat_caller_address(validator_contract.contract_address);
+
+    let rep_after_success=state.validator_reputation.read(validator);
+    let success_count= state.validator_success_count.read(validator);
+    assert(rep_after_success==11,"Reputation should increase by 1");
+    assert(success_count==1,"Succcess count should increase");
+
+    //update performance - failure
+    start_cheat_caller_address(state.contract_address,validator);
+    Predifi::update_performance(ref state, validator,fee);
+    stop_cheat_caller_address(state.contract_address);
+
+    let rep_after_failure=state.validator_reputation.read(validator);
+    let fail_count=state.validator_fail_count.read(validator);
+    assert(rep_after_failure==10,"Reputation should decrease by 1");
+    assert(fail_count==1,"Fail count should increase");
+}
+
+
