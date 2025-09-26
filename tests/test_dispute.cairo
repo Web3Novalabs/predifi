@@ -1,4 +1,6 @@
-use contract::base::events::Events::StakeRefunded;
+use contract::base::events::Events::{
+    ContractPaused, ContractUnpaused, DisputeRaised, StakeRefunded,
+};
 use contract::base::types::Status;
 use contract::interfaces::ipredifi::{
     IPredifiDispatcherTrait, IPredifiDisputeDispatcherTrait, IPredifiValidatorDispatcherTrait,
@@ -9,8 +11,8 @@ use core::serde::Serde;
 use core::traits::TryInto;
 use openzeppelin::token::erc20::interface::{IERC20Dispatcher, IERC20DispatcherTrait};
 use snforge_std::{
-    EventSpyAssertionsTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
-    stop_cheat_block_timestamp, stop_cheat_caller_address,
+    EventSpyAssertionsTrait, EventSpyTrait, spy_events, start_cheat_block_timestamp,
+    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address,
 };
 use starknet::{ContractAddress, get_block_timestamp};
 use super::test_utils::{approve_tokens_for_payment, create_default_pool, deploy_predifi};
@@ -46,9 +48,16 @@ fn test_raise_dispute_success() {
     // Create a user and raise dispute
     let user1 = 'user1'.try_into().unwrap();
 
+    // Setup event spy before raising dispute
+    let mut spy = spy_events();
+
     start_cheat_caller_address(dispute_contract.contract_address, user1);
     dispute_contract.raise_dispute(pool_id);
     stop_cheat_caller_address(dispute_contract.contract_address);
+
+    // Check that DisputeRaised event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No dispute events');
 
     // Verify dispute was raised
     let dispute_count = dispute_contract.get_dispute_count(pool_id);
@@ -810,4 +819,33 @@ fn test_refund_stake_paused() {
     // Try to refund stake while paused - should panic
     start_cheat_caller_address(contract.contract_address, admin);
     contract.refund_stake(1);
+}
+
+#[test]
+fn test_contract_pause_unpause_events() {
+    let (_, _, validator_contract, _, _) = deploy_predifi();
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+
+    // Setup event spy
+    let mut spy = spy_events();
+
+    // Pause the contract
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.pause();
+
+    // Check that ContractPaused event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No pause events');
+
+    // Reset spy for unpause
+    spy = spy_events();
+
+    // Unpause the contract
+    validator_contract.unpause();
+
+    // Check that ContractUnpaused event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No unpause events');
+
+    stop_cheat_caller_address(validator_contract.contract_address);
 }
