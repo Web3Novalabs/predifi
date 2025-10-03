@@ -118,8 +118,8 @@ pub trait IPredifi<TContractState> {
 
     /// @notice Collects the pool creation fee from the creator.
     /// @dev Transfers 1 STRK from creator to contract.
-    /// @param creator The creator's address.
-    fn collect_pool_creation_fee(ref self: TContractState, creator: ContractAddress);
+    /// @param pool_id The pool ID for which the fee is being collected.
+    fn collect_pool_creation_fee(ref self: TContractState, creator: ContractAddress, pool_id: u256);
 
     /// @notice Manually updates the state of a pool.
     /// @dev Only callable by admin or validator. Enforces valid state transitions.
@@ -230,6 +230,7 @@ pub trait IPredifi<TContractState> {
     /// @notice Returns all pools in emergency state.
     /// @return Array of PoolDetails for emergency pools.
     fn get_emergency_pools(self: @TContractState) -> Array<PoolDetails>;
+
 }
 
 #[starknet::interface]
@@ -391,15 +392,31 @@ pub trait IPredifiValidator<TContractState> {
     /// @notice Unpauses the contract and resumes normal operations.
     /// @dev Can only be called by admin. Emits Unpaused event on success.
     fn unpause(ref self: TContractState);
+
+    ///@notice Updates the validator's reputation and success/fail counts.
+    /// @param validator The validator address.
+    fn update_performance(ref self: TContractState, validator: ContractAddress, success: bool);
+    
+    /// @notice Slash a validator by halving reputation and treasury.
+    /// @param validator Validator address to slash.
+    fn slash_validator(ref self: TContractState, validator: ContractAddress);
+
+    /// @notice Distribute fees among validators of a pool who chose the correct option.
+    /// @param pool_id ID of the pool to distribute fees for.
+    fn distribute_validator_fees(ref self: TContractState, pool_id: u256);
+
+    /// @notice Get validator reputation.
+    fn get_validator_reputation(self: @TContractState, validator: ContractAddress) -> u256;
+
+    /// @notice Get validator success count.
+    fn get_validator_success(self: @TContractState, validator: ContractAddress) ->u256;
+
+    /// @notice Get validator fail count.
+    fn get_validator_slashed(self: @TContractState, validator: ContractAddress) ->u256;
+
+    /// @notice Get validator treasury.
+    fn get_validator_treasury(self: @TContractState, validator: ContractAddress) ->u256;
 }
-// #[starknet::interface]
-// pub trait IPredifiValidatorTest<TContractState> {
-//     fn set_validator_reputation_for_test(ref self: TContractState, validator: ContractAddress,
-//     value: u256);
-//     fn set_validator_treasury_for_test(ref self: TContractState, validator: ContractAddress,
-//     value: u256);
-//     fn slash_validator(ref self: TContractState, validator: ContractAddress);
-//     fn get_validator_reputation(self: @TContractState, validator: ContractAddress) -> u256;
-//     fn get_validator_treasury(self: @TContractState, validator: ContractAddress) -> u256;
-// }
+
+
 

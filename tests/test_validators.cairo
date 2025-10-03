@@ -1,4 +1,6 @@
-use contract::base::events::Events::{ValidatorAdded, ValidatorRemoved};
+use contract::base::events::Events::{
+    PoolResolved,ValidatorAdded, ValidatorRemoved,
+ValidatorResultSubmitted,};
 use contract::base::types::Status;
 use contract::interfaces::ipredifi::{
     IPredifiDispatcherTrait, IPredifiValidator, IPredifiValidatorDispatcherTrait,
@@ -10,8 +12,8 @@ use core::traits::{Into, TryInto};
 use openzeppelin::access::accesscontrol::AccessControlComponent::InternalTrait as AccessControlInternalTrait;
 use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
 use snforge_std::{
-    EventSpyAssertionsTrait, spy_events, start_cheat_block_timestamp, start_cheat_caller_address,
-    stop_cheat_block_timestamp, stop_cheat_caller_address, test_address,
+    EventSpyAssertionsTrait,EventSpyTrait, spy_events, start_cheat_block_timestamp,
+    start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address , test_address,
 };
 use starknet::storage::{MutableVecTrait, StoragePointerReadAccess};
 use starknet::{ContractAddress, get_block_timestamp};
@@ -74,10 +76,16 @@ fn test_validate_pool_result_success() {
     validator_contract.add_validator(validator2);
     stop_cheat_caller_address(validator_contract.contract_address);
 
+    // Setup event spy before first validation
+    let mut spy = spy_events();
     // First validator validates - pool should remain locked
     start_cheat_caller_address(validator_contract.contract_address, validator1);
     validator_contract.validate_pool_result(pool_id, true); // Vote for option2
     stop_cheat_caller_address(validator_contract.contract_address);
+    
+    // Check that ValidatorResultSubmitted event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No validation events');
 
     let pool_after_first_validation = contract.get_pool(pool_id);
     assert(pool_after_first_validation.status == Status::Locked, 'Pool should still be locked');
@@ -87,10 +95,17 @@ fn test_validate_pool_result_success() {
     assert(validation_count == 1, 'Should have 1 validation');
     assert(!is_settled, 'Pool should not be settled yet');
 
+    // Reset spy for second validation that will trigger settlement
+    spy = spy_events();
+
     // Second validator validates - pool should be settled
     start_cheat_caller_address(validator_contract.contract_address, validator2);
     validator_contract.validate_pool_result(pool_id, true); // Vote for option2
-    stop_cheat_caller_address(contract.contract_address);
+    stop_cheat_caller_address(validator_contract.contract_address);
+
+    // Check that events were emitted (ValidatorResultSubmitted and PoolResolved)
+    let events = spy.get_events();
+    assert(events.events.len() >= 2, 'Missing resolution events');
 
     let pool_after_second_validation = contract.get_pool(pool_id);
     assert(pool_after_second_validation.status == Status::Settled, 'Pool should be settled');
@@ -972,36 +987,99 @@ fn test_remove_validator_unauthorized() {
     IPredifiValidator::remove_validator(ref state, validator);
 }
 #[test]
-fn test_update_performance_success_and_failure(){
+fn test_set_required_validator_confirmations_event() {
+    let (_, _, validator_contract, _, _) = deploy_predifi();
+    let admin = 'admin'.try_into().unwrap();
 
-    let (contract,_, validator_contract, _, _)= deploy_predifi();
-    let validator: ContractAddress= 'validator'.try_into().unwrap();
+    // Setup event spy
+    let mut spy = spy_events();
 
-    //initialize validator reputation and counts
-   let admin: ContractAddress="admin".try_into().unwrap();
-   start_cheat_caller_address(validator_contract.contract_address,admin);
-   validator_contract.add_validator(validator);
-   stop_cheat_caller_address(validator_contract.contract_address);
-
-    //update performance - success
-    start_cheat_caller_address(validator_contract.contract_address, validator);
-    validator_contract.update_performance(validator, true);
+    // Set caller as admin and update validator confirmations
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.set_required_validator_confirmations(5);
     stop_cheat_caller_address(validator_contract.contract_address);
 
-    let rep_after_success=state.validator_reputation.read(validator);
-    let success_count= state.validator_success_count.read(validator);
-    assert(rep_after_success==11,"Reputation should increase by 1");
-    assert(success_count==1,"Succcess count should increase");
-
-    //update performance - failure
-    start_cheat_caller_address(state.contract_address,validator);
-    Predifi::update_performance(ref state, validator,fee);
-    stop_cheat_caller_address(state.contract_address);
-
-    let rep_after_failure=state.validator_reputation.read(validator);
-    let fail_count=state.validator_fail_count.read(validator);
-    assert(rep_after_failure==10,"Reputation should decrease by 1");
-    assert(fail_count==1,"Fail count should increase");
+    // Check that events were emitted (just check event exists, not content)
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No events');
 }
 
+#[test]
+fn test_assign_validators_event() {
+    let (contract, _, validator_contract, pool_creator, erc20_address) = deploy_predifi();
+
+    // Create validators
+    let validator1 = 'validator1'.try_into().unwrap();
+    let validator2 = 'validator2'.try_into().unwrap();
+
+    // Add validators to the contract
+    let admin = 'admin'.try_into().unwrap();
+    start_cheat_caller_address(validator_contract.contract_address, admin);
+    validator_contract.add_validator(validator1);
+    validator_contract.add_validator(validator2);
+    stop_cheat_caller_address(validator_contract.contract_address);
+
+    // Set up token approval for pool creation
+    start_cheat_caller_address(erc20_address, pool_creator);
+    approve_tokens_for_payment(
+        contract.contract_address, erc20_address, 200_000_000_000_000_000_000_000,
+    );
+    stop_cheat_caller_address(erc20_address);
+
+    // Create a pool
+    start_cheat_caller_address(contract.contract_address, pool_creator);
+    let pool_id = create_default_pool(contract);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Setup event spy before assigning validators
+    let mut spy = spy_events();
+
+    // Assign validators to the pool
+    validator_contract.assign_random_validators(pool_id);
+
+    // Check that ValidatorsAssigned event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No validator events');
+}
+#[test]
+fn test_update_performance_success_and_failure() {
+    let admin: ContractAddress = 0x1.into();
+    let validator: ContractAddress = 0x2.into();
+    let test_address: ContractAddress= 0x100.into();
+
+    //initialize contract state for testing
+    let mut state= Predifi::contract_state_for_testing();
+    //let storage_state: @ContractState =store_contract_state_for_testing(&mut state);
+
+    //Initialize access control and grant DEFAULT_ADMIN_ROLE to admin
+    let mut ac= state.accesscontrol;
+    AccessControlInternalTrait::initializer(ref ac);
+    AccessControlInternalTrait::_grant_role(ref ac, DEFAULT_ADMIN_ROLE,admin);
+    state.accesscontrol=ac;
+
+    // act as admin to add the validator
+    start_cheat_caller_address(test_address, admin);
+    IPredifiValidator::add_validator(ref mut state, validator);
+    stop_cheat_caller_address(test_address);
+
+    //update performance success
+    start_cheat_caller_address(test_address, validator);
+    IPredifiValidator::update_performance(ref mut state,validator, true);
+    stop_cheat_caller_address(test_address);
+
+    let rep_after_success = IPredifiValidator::get_validator_reputation(ref state, validator);
+    let success_count = IPredifiValidator::get_validator_success(ref state,validator);
+    assert(rep_after_success == 11, "Reputation should increase by 1");
+    assert(success_count == 1, "Succcess count should increase");
+
+    //update performance - failure
+    start_cheat_caller_address(test_address, validator);
+    IPredifiValidator::update_performance(ref mut state, validator, false);
+    stop_cheat_caller_address(test_address);
+
+    let rep_after_failure = IPredifiValidator::get_validator_reputation( ref state, validator);
+    let fail_count = IPredifiValidator::get_validator_slashed( ref state, validator);
+    assert(rep_after_failure == 10, "Reputation should decrease by 1");
+    assert(fail_count == 1, "Fail count should increase");
+}
 

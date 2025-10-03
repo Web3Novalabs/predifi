@@ -243,7 +243,6 @@ pub mod Predifi {
     /// @notice Update validator performance and adjust reputation.
     /// @param validator Address of the validator.
     /// @param success  True if  validation was correct, false otherwise.
-    #[external(v0)]
     fn update_performance(ref self: ContractState, validator: ContractAddress, success: bool) {
         if (success) {
             let prev: u256 = self.validator_success_count.read(validator);
@@ -364,6 +363,7 @@ pub mod Predifi {
     fn get_validator_treasury(self: @ContractState, validator: ContractAddress) -> u256 {
         self.validator_treasuries.read(validator)
     }
+
     /// @notice Initializes the Predifi contract.
     /// @param self The contract state.
     /// @param token_addr The address of the STRK token contract.
@@ -1329,6 +1329,8 @@ pub mod Predifi {
             }
             emergency_pools
         }
+
+    
     }
 
     #[abi(embed_v0)]
@@ -2067,7 +2069,7 @@ pub mod Predifi {
             }
             result
         }
-    
+
 
         /// @notice Calculates the validation consensus for a pool.
         /// @param pool_id The pool ID.
@@ -2379,5 +2381,129 @@ pub mod Predifi {
                     ),
                 );
         }
+    /// @notice Update validator performance and adjust reputation.
+    /// @param validator Address of the validator.
+    /// @param success  True if  validation was correct, false otherwise.
+    fn update_performance(ref self: ContractState, validator: ContractAddress, success: bool) {
+        if (success) {
+            let prev: u256 = self.validator_success_count.read(validator);
+            self.validator_success_count.write(validator, prev + 1);
+
+            let rep: u256 = self.validator_reputation.read(validator) + 1;
+            self.validator_reputation.write(validator, rep);
+
+            self
+                .emit(
+                    Event::ValidatorPerformanceUpdated(
+                        ValidatorPerformanceUpdated { validator, success, reputation_after: rep },
+                    ),
+                );
+        } else {
+            let prev: u256 = self.validator_fail_count.read(validator);
+            self.validator_fail_count.write(validator, prev + 1);
+
+            let rep: u256 = self.validator_reputation.read(validator);
+            let new_rep: u256 = if rep > 0 {
+                rep - 1
+            } else {
+                0
+            };
+            self.validator_reputation.write(validator, new_rep);
+
+            self
+                .emit(
+                    Event::ValidatorPerformanceUpdated(
+                        ValidatorPerformanceUpdated {
+                            validator, success, reputation_after: new_rep,
+                        },
+                    ),
+                );
+        }
+    }
+
+    /// @notice Slash a validator by halving reputation and treasury.
+    /// @param validator Validator address to slash.
+    fn slash_validator(ref self: ContractState, validator: ContractAddress) {
+        let reputation: u256 = self.validator_reputation.read(validator);
+        let treasury: u256 = self.validator_treasuries.read(validator);
+
+        let new_rep: u256 = reputation / 2;
+        let new_treasury: u256 = treasury / 2;
+
+        self.validator_reputation.write(validator, new_rep);
+        self.validator_treasuries.write(validator, new_treasury);
+
+        self
+            .emit(
+                Event::ValidatorSlashed(
+                    ValidatorSlashed {
+                        validator, amount: treasury - new_treasury, reputation_after: new_rep,
+                    },
+                ),
+            );
+    }
+
+    /// @notice Distribute fees among to validators of a pool who chose the correct option.
+    /// @param pool_id ID fo the pool to distribute fees for.
+    fn distribute_validator_fees(ref self: ContractState, pool_id: u256) {
+        //Ensure pool exists
+        let pool_data: PoolDetails = self.pools.read(pool_id);
+
+        //Ensure pool has ended
+        assert(pool_data.has_ended == true, 1002);
+
+        //Ensure pool has been resolved
+        assert(pool_data.is_resolved == true, 1003);
+
+        let correct_option = pool_data.correct_option;
+        let total_fees: u256 = pool_data.fee_pool;
+
+        //Filter validators that chose the correct option
+        let mut eligible_validators = ArrayTrait::new();
+        let mut total_reputation: u256 = 0;
+
+        let len = pool_data.validators_count;
+        let mut i = 0;
+        while i < len {
+            let validator = self.pool_validators.read((pool_id, i));
+
+            // Use your pool_validation_results storage
+            let choice: bool = self.pool_validation_results.read((pool_id, validator));
+            if choice == correct_option {
+                let rep: u256 = self.validator_reputation.read(validator);
+                eligible_validators.append(validator);
+                total_reputation += rep;
+            }
+            i += 1;
+        }
+        //Distribute proportionally by reputation
+        for validator in eligible_validators {
+            //let validator=*validator_ptr;
+            let rep: u256 = self.validator_reputation.read(validator);
+            let share: u256 = total_fees * rep / total_reputation;
+
+            let balance: u256 = self.validator_treasuries.read(validator);
+            self.validator_treasuries.write(validator, balance + share);
+        }
+        self.emit(FeesDistributed { pool_id, total_distributed: total_fees });
+    }
+
+    /// @notice Get validator reputation
+    fn get_validator_reputation(self: @ContractState, validator: ContractAddress) -> u256 {
+        self.validator_reputation.read(validator)
+    }
+    /// @notice Get validator success count
+    fn get_validator_success(self: @ContractState, validator: ContractAddress) -> u256 {
+        self.validator_success_count.read(validator)
+    }
+    /// @notice Get validator fail count
+    fn get_validator_slashed(self: @ContractState, validator: ContractAddress) -> u256 {
+        self.validator_slashed.read(validator)
+    }
+    /// @notice Get validator treasury
+    fn get_validator_treasury(self: @ContractState, validator: ContractAddress) -> u256 {
+        self.validator_treasuries.read(validator)
+    }
+    
     }
 }
