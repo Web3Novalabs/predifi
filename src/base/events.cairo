@@ -272,6 +272,9 @@ pub mod Events {
         pub admin: ContractAddress,
         pub timestamp: u64,
     }
+
+    // Configuration Events
+
     /// @notice Emitted when the required validator confirmations count is updated.
     #[derive(Drop, starknet::Event)]
     pub struct ValidatorConfirmationsUpdated {
@@ -366,6 +369,7 @@ pub mod Events {
         pub amount: u256,
         pub timestamp: u64,
     }
+
     #[derive(Drop, starknet::Event)]
     pub struct ValidatorSlashed {
         #[key]

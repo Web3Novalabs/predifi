@@ -1,5 +1,6 @@
 use contract::base::events::Events::{
     ContractPaused, ContractUnpaused, DisputeRaised, StakeRefunded,
+
 }
 use contract::base::types::Status;
 use contract::interfaces::ipredifi::{
@@ -48,8 +49,10 @@ fn test_raise_dispute_success() {
 
     // Create a user and raise dispute
     let user1 = 'user1'.try_into().unwrap();
+
     // Setup event spy before raising dispute
     let mut spy = spy_events();
+
     start_cheat_caller_address(dispute_contract.contract_address, user1);
     dispute_contract.raise_dispute(pool_id);
     stop_cheat_caller_address(dispute_contract.contract_address);

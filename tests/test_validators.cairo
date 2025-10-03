@@ -1,6 +1,9 @@
 use contract::base::events::Events::{
+
     PoolResolved,ValidatorAdded, ValidatorRemoved,
 ValidatorResultSubmitted,};
+
+
 use contract::base::types::Status;
 use contract::interfaces::ipredifi::{
     IPredifiDispatcherTrait, IPredifiValidator, IPredifiValidatorDispatcherTrait,
@@ -12,8 +15,10 @@ use core::traits::{Into, TryInto};
 use openzeppelin::access::accesscontrol::AccessControlComponent::InternalTrait as AccessControlInternalTrait;
 use openzeppelin::access::accesscontrol::DEFAULT_ADMIN_ROLE;
 use snforge_std::{
+
     EventSpyAssertionsTrait,EventSpyTrait, spy_events, start_cheat_block_timestamp,
     start_cheat_caller_address, stop_cheat_block_timestamp, stop_cheat_caller_address , test_address,
+
 };
 use starknet::storage::{MutableVecTrait, StoragePointerReadAccess};
 use starknet::{ContractAddress, get_block_timestamp};
@@ -78,11 +83,16 @@ fn test_validate_pool_result_success() {
 
     // Setup event spy before first validation
     let mut spy = spy_events();
+
     // First validator validates - pool should remain locked
     start_cheat_caller_address(validator_contract.contract_address, validator1);
     validator_contract.validate_pool_result(pool_id, true); // Vote for option2
     stop_cheat_caller_address(validator_contract.contract_address);
     
+    // Check that ValidatorResultSubmitted event was emitted
+    let events = spy.get_events();
+    assert(events.events.len() > 0, 'No validation events');
+
     // Check that ValidatorResultSubmitted event was emitted
     let events = spy.get_events();
     assert(events.events.len() > 0, 'No validation events');
@@ -986,6 +996,7 @@ fn test_remove_validator_unauthorized() {
     // Unauthorized caller attempt to remove the validator role
     IPredifiValidator::remove_validator(ref state, validator);
 }
+
 #[test]
 fn test_set_required_validator_confirmations_event() {
     let (_, _, validator_contract, _, _) = deploy_predifi();
@@ -1041,6 +1052,7 @@ fn test_assign_validators_event() {
     let events = spy.get_events();
     assert(events.events.len() > 0, 'No validator events');
 }
+
 #[test]
 fn test_update_performance_success_and_failure() {
     let admin: ContractAddress = 0x1.into();
@@ -1082,4 +1094,5 @@ fn test_update_performance_success_and_failure() {
     assert(rep_after_failure == 10, "Reputation should decrease by 1");
     assert(fail_count == 1, "Fail count should increase");
 }
+
 

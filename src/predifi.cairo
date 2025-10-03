@@ -32,8 +32,9 @@ pub mod Predifi {
     use crate::base::security::{Security, SecurityTrait};
     // package imports
     use crate::base::types::{
-        EmergencyAction, EmergencyActionStatus, EmergencyActionType, EmergencyPoolState,
-        PoolDetails, PoolOdds, Status, UserStake, u8_to_category, u8_to_pool, u8_to_status,
+        CategoryType, EmergencyAction, EmergencyActionStatus, EmergencyActionType,
+        EmergencyPoolState, PoolDetails, PoolOdds, Status, UserStake, u8_to_category, u8_to_pool,
+        u8_to_status,
     };
     use crate::interfaces::ipredifi::{IPredifi, IPredifiDispute, IPredifiValidator};
 
@@ -213,6 +214,26 @@ pub mod Predifi {
         EmergencyActionExecuted: EmergencyActionExecuted,
         /// @notice Emitted when a scheduled emergency action is cancelled.
         EmergencyActionCancelled: EmergencyActionCancelled,
+        // Configuration Events
+        /// @notice Emitted when validator confirmations requirement is updated.
+        ValidatorConfirmationsUpdated: ValidatorConfirmationsUpdated,
+        // Pool Lifecycle Events
+        /// @notice Emitted when a new pool is created.
+        PoolCreated: PoolCreated,
+        // Contract Management Events
+        /// @notice Emitted when the contract is paused.
+        ContractPaused: ContractPaused,
+        /// @notice Emitted when the contract is unpaused.
+        ContractUnpaused: ContractUnpaused,
+        // Fee Collection Events
+        /// @notice Emitted when protocol fees are collected.
+        ProtocolFeesCollected: ProtocolFeesCollected,
+        /// @notice Emitted when creator fees are collected.
+        CreatorFeesCollected: CreatorFeesCollected,
+        /// @notice Emitted when validator fees are distributed.
+        ValidatorFeesDistributed: ValidatorFeesDistributed,
+        /// @notice Emitted when pool creation fee is collected.
+        PoolCreationFeeCollected: PoolCreationFeeCollected,
         #[flat]
         AccessControlEvent: AccessControlComponent::Event,
         #[flat]
@@ -434,9 +455,6 @@ pub mod Predifi {
             self.assert_valid_felt252(option1);
             self.assert_valid_felt252(option2);
 
-            // Collect pool creation fee (1 STRK)
-            IPredifi::collect_pool_creation_fee(ref self, creator_address);
-
             let mut pool_id = self.generate_deterministic_number();
 
             // While a pool with this pool_id already exists, generate a new one.
@@ -499,8 +517,30 @@ pub mod Predifi {
 
             self.pool_odds.write(pool_id, initial_odds);
 
-            // Add to pool count
-            self.pool_count.write(self.pool_count.read() + 1);
+            // Cache current pool count to avoid redundant read
+            let current_count = self.pool_count.read();
+            self.pool_count.write(current_count + 1);
+
+            // Emit pool created event
+            self
+                .emit(
+                    Event::PoolCreated(
+                        PoolCreated {
+                            pool_id,
+                            creator: creator_address,
+                            pool_name: poolName,
+                            category: CategoryType(u8_to_category(category)),
+                            end_time: poolEndTime,
+                            min_bet_amount: minBetAmount,
+                            max_bet_amount: maxBetAmount,
+                            creator_fee: creatorFee,
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
+
+            // Collect pool creation fee (1 STRK) now that we have the pool_id
+            IPredifi::collect_pool_creation_fee(ref self, creator_address, pool_id);
 
             pool_id
         }
@@ -627,6 +667,13 @@ pub mod Predifi {
             self.assert_greater_than_zero(pool_id);
             self.assert_valid_felt252(option);
 
+            // Cache frequently used values to reduce storage reads
+            let caller = get_caller_address();
+            let contract_address = get_contract_address();
+            let token_addr = self.token_addr.read();
+            let dispatcher = IERC20Dispatcher { contract_address: token_addr };
+
+            // Single pool read for validation and data access
             let mut pool = self.pools.read(pool_id);
             self.assert_pool_exists(@pool);
             self.assert_pool_active(@pool);
@@ -638,12 +685,7 @@ pub mod Predifi {
             self.assert_valid_pool_option(option, option1, option2);
             self.assert_amount_within_limits(amount, pool.minBetAmount, pool.maxBetAmount);
 
-            // Transfer betting amount from the user to the contract
-            let caller = get_caller_address();
-            let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
-
             // Check balance and allowance using SecurityTrait
-            let contract_address = get_contract_address();
             self.assert_sufficient_balance(dispatcher, caller, amount);
             self.assert_sufficient_allowance(dispatcher, caller, contract_address, amount);
 
@@ -653,7 +695,7 @@ pub mod Predifi {
             // Transfer the tokens
             dispatcher.transfer_from(caller, contract_address, amount);
 
-            let mut pool = self.pools.read(pool_id);
+            // Update pool state in memory
             if option == option1 {
                 pool.totalStakeOption1 += amount;
                 pool
@@ -668,11 +710,6 @@ pub mod Predifi {
             pool.totalBetAmountStrk += amount;
             pool.totalBetCount += 1;
 
-            // Update pool odds
-            let odds = self
-                .calculate_odds(pool.pool_id, pool.totalStakeOption1, pool.totalStakeOption2);
-            self.pool_odds.write(pool_id, odds);
-
             // Calculate the user's shares
             let shares: u256 = if option == option1 {
                 self.calculate_shares(amount, pool.totalStakeOption1, pool.totalStakeOption2)
@@ -680,25 +717,37 @@ pub mod Predifi {
                 self.calculate_shares(amount, pool.totalStakeOption2, pool.totalStakeOption1)
             };
 
-            // Store user stake
+            // Create user stake object
             let user_stake = UserStake {
                 option: option == option2,
                 amount: amount,
                 shares: shares,
                 timestamp: get_block_timestamp(),
             };
-            let address: ContractAddress = get_caller_address();
-            self.user_stakes.write((pool.pool_id, address), user_stake);
-            self.pool_vote.write(pool.pool_id, option == option2);
-            self.pool_stakes.write(pool.pool_id, user_stake);
-            self.pools.write(pool.pool_id, pool);
-            self.track_user_participation(address, pool_id);
+
+            // Batch storage writes to minimize gas costs
+            self
+                .pool_odds
+                .write(
+                    pool_id,
+                    self.calculate_odds(pool_id, pool.totalStakeOption1, pool.totalStakeOption2),
+                );
+            self.user_stakes.write((pool_id, caller), user_stake);
+            self.pool_vote.write(pool_id, option == option2);
+            self.pool_stakes.write(pool_id, user_stake);
+            self.pools.write(pool_id, pool);
+            self.track_user_participation(caller, pool_id);
 
             // End reentrancy guard
             self.reentrancy_guard.end();
 
             // Emit event
-            self.emit(Event::BetPlaced(BetPlaced { pool_id, address, option, amount, shares }));
+            self
+                .emit(
+                    Event::BetPlaced(
+                        BetPlaced { pool_id, address: caller, option, amount, shares },
+                    ),
+                );
         }
 
         /// @notice Stakes tokens to become eligible for validation rewards
@@ -720,13 +769,13 @@ pub mod Predifi {
             self.assert_pool_not_suspended(@pool);
             self.assert_min_stake_amount(amount);
 
+            // Cache frequently used values to reduce redundant calls
             let address: ContractAddress = get_caller_address();
-
-            // Transfer stake amount from user to contract
-            let dispatcher = IERC20Dispatcher { contract_address: self.token_addr.read() };
+            let contract_address = get_contract_address();
+            let token_addr = self.token_addr.read();
+            let dispatcher = IERC20Dispatcher { contract_address: token_addr };
 
             // Check balance and allowance using SecurityTrait
-            let contract_address = get_contract_address();
             self.assert_sufficient_balance(dispatcher, address, amount);
             self.assert_sufficient_allowance(dispatcher, address, contract_address, amount);
 
@@ -736,21 +785,22 @@ pub mod Predifi {
             // Transfer the tokens
             dispatcher.transfer_from(address, contract_address, amount);
 
-            // Add to previous stake if any
+            // Read and update user stake in a single operation
             let mut stake = self.user_stakes.read((pool_id, address));
             stake.amount = amount + stake.amount;
-            // write the new stake
+
+            // Batch storage writes to minimize gas costs
             self.user_stakes.write((pool_id, address), stake);
-            // grant the validator role
             self.accesscontrol._grant_role(VALIDATOR_ROLE, address);
-            // add caller to validator list
             self.validators.push(address);
             self.track_user_participation(address, pool_id);
-            // emit event
-            self.emit(UserStaked { pool_id, address, amount });
 
             // End reentrancy guard
             self.reentrancy_guard.end();
+
+            // emit events
+            self.emit(UserStaked { pool_id, address, amount });
+            self.emit(ValidatorAdded { account: address, caller: get_caller_address() });
         }
 
 
@@ -952,7 +1002,10 @@ pub mod Predifi {
 
         /// @notice Collects the pool creation fee from the creator.
         /// @param creator The creator's address.
-        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
+        /// @param pool_id The pool ID for which the fee is being collected.
+        fn collect_pool_creation_fee(
+            ref self: ContractState, creator: ContractAddress, pool_id: u256,
+        ) {
             self.assert_non_zero_address(creator);
             // Retrieve the STRK token contract
             let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
@@ -963,6 +1016,16 @@ pub mod Predifi {
 
             // Transfer the pool creation fee from creator to the contract
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
+
+            // Emit pool creation fee collected event
+            self
+                .emit(
+                    Event::PoolCreationFeeCollected(
+                        PoolCreationFeeCollected {
+                            pool_id, creator, amount: ONE_STRK, timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
         }
 
         /// @notice Returns all active pools.
@@ -995,6 +1058,11 @@ pub mod Predifi {
         /// @dev Allows users to withdraw funds from pools in emergency state.
         /// @param pool_id The pool ID to withdraw from.
         fn emergency_withdraw(ref self: ContractState, pool_id: u256) {
+            // Cache frequently used values to reduce storage reads
+            let caller = get_caller_address();
+            let token_addr = self.token_addr.read();
+            let strk_token = IERC20Dispatcher { contract_address: token_addr };
+
             // Check if pool exists
             let pool = self.pools.read(pool_id);
             assert(pool.exists, Errors::POOL_DOES_NOT_EXIST);
@@ -1006,8 +1074,6 @@ pub mod Predifi {
                 emergency_state.allow_emergency_withdrawals,
                 Errors::EMERGENCY_WITHDRAWALS_NOT_ALLOWED,
             );
-
-            let caller = get_caller_address();
 
             // Check if user has participated in this pool
             let has_participated = self.has_user_participated_in_pool(caller, pool_id);
@@ -1029,7 +1095,6 @@ pub mod Predifi {
                 );
 
             // Transfer tokens back to user
-            let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
             strk_token.transfer(caller, withdrawal_amount);
 
             // Emit emergency withdrawal event
@@ -1076,7 +1141,7 @@ pub mod Predifi {
             if action_type == 3 { // EmergencyWithdrawal
                 // For emergency withdrawal, action_data must contain a valid user address
                 // Use the helper function to validate the address and handle potential panics
-                let user_address = self.extract_user_address_from_action_data(action_data);
+                let _user_address = self.extract_user_address_from_action_data(action_data);
                 // Store the validated address for later use if needed
             // Note: The validation is done here to fail fast if the address is invalid
             }
@@ -1611,6 +1676,42 @@ pub mod Predifi {
                         ),
                     );
 
+                // Collect and emit fees
+                let pool = self.pools.read(pool_id);
+                let creator_fee_amount = (pool.totalBetAmountStrk * pool.creatorFee.into())
+                    / 100_u256;
+                let protocol_fee_amount = (pool.totalBetAmountStrk * 5_u256)
+                    / 100_u256; // 5% protocol fee
+
+                if creator_fee_amount > 0 {
+                    let creator = self.get_pool_creator(pool_id);
+                    self
+                        .emit(
+                            Event::CreatorFeesCollected(
+                                CreatorFeesCollected {
+                                    pool_id,
+                                    creator,
+                                    amount: creator_fee_amount,
+                                    timestamp: get_block_timestamp(),
+                                },
+                            ),
+                        );
+                }
+
+                if protocol_fee_amount > 0 {
+                    self
+                        .emit(
+                            Event::ProtocolFeesCollected(
+                                ProtocolFeesCollected {
+                                    pool_id,
+                                    amount: protocol_fee_amount,
+                                    recipient: get_contract_address(), // Protocol fees go to contract
+                                    timestamp: get_block_timestamp(),
+                                },
+                            ),
+                        );
+                }
+
                 // Emit pool resolved event for compatibility
                 let total_payout = self.calculate_total_payout(pool_id, final_outcome);
                 self
@@ -1659,7 +1760,22 @@ pub mod Predifi {
             // Only admin can set this
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
             self.assert_positive_count(count);
+
+            let previous_count = self.required_validator_confirmations.read();
             self.required_validator_confirmations.write(count);
+
+            // Emit event for validator confirmations update
+            self
+                .emit(
+                    Event::ValidatorConfirmationsUpdated(
+                        ValidatorConfirmationsUpdated {
+                            previous_count,
+                            new_count: count,
+                            admin: get_caller_address(),
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
         }
 
         /// @notice Gets the validators assigned to a pool.
@@ -1842,6 +1958,19 @@ pub mod Predifi {
             }
             // Reset the validator fee for this pool after distribution
             self.validator_fee.write(pool_id, 0);
+
+            // Emit validator fees distributed event
+            self
+                .emit(
+                    Event::ValidatorFeesDistributed(
+                        ValidatorFeesDistributed {
+                            pool_id,
+                            total_amount: total_validator_fee,
+                            validator_count: validator_count_u256,
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
         }
 
         /// @notice Retrieves the validator fee for a pool.
@@ -1867,6 +1996,16 @@ pub mod Predifi {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             self.pausable.pause();
+
+            // Emit custom contract paused event
+            self
+                .emit(
+                    Event::ContractPaused(
+                        ContractPaused {
+                            admin: get_caller_address(), timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
         }
 
         /// @notice Unpauses the contract and resumes normal operations
@@ -1876,6 +2015,16 @@ pub mod Predifi {
             self.accesscontrol.assert_only_role(DEFAULT_ADMIN_ROLE);
 
             self.pausable.unpause();
+
+            // Emit custom contract unpaused event
+            self
+                .emit(
+                    Event::ContractUnpaused(
+                        ContractUnpaused {
+                            admin: get_caller_address(), timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
         }
 
         /// @notice Upgrades the contract implementation
@@ -1946,7 +2095,7 @@ pub mod Predifi {
         /// @param total_stake_other_option Total stake for other option.
         /// @return The calculated shares.
         fn calculate_shares(
-            ref self: ContractState,
+            self: @ContractState,
             amount: u256,
             total_stake_selected_option: u256,
             total_stake_other_option: u256,
@@ -1967,7 +2116,7 @@ pub mod Predifi {
         /// @param total_stake_option2 Total stake for option 2.
         /// @return The PoolOdds struct.
         fn calculate_odds(
-            ref self: ContractState,
+            self: @ContractState,
             pool_id: u256,
             total_stake_option1: u256,
             total_stake_option2: u256,
@@ -2130,7 +2279,10 @@ pub mod Predifi {
         /// @notice Collects the pool creation fee from the creator.
         /// @dev Transfers 1 STRK from creator to contract.
         /// @param creator The creator's address.
-        fn collect_pool_creation_fee(ref self: ContractState, creator: ContractAddress) {
+        /// @param pool_id The pool ID for which the fee is being collected.
+        fn collect_pool_creation_fee(
+            ref self: ContractState, creator: ContractAddress, pool_id: u256,
+        ) {
             // Retrieve the STRK token contract
             let strk_token = IERC20Dispatcher { contract_address: self.token_addr.read() };
 
@@ -2145,6 +2297,16 @@ pub mod Predifi {
 
             // Transfer the pool creation fee from creator to the contract
             strk_token.transfer_from(creator, contract_address, ONE_STRK);
+
+            // Emit pool creation fee collected event
+            self
+                .emit(
+                    Event::PoolCreationFeeCollected(
+                        PoolCreationFeeCollected {
+                            pool_id, creator, amount: ONE_STRK, timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
         }
 
         /// @notice Calculates the validator fee for a pool.
@@ -2187,6 +2349,19 @@ pub mod Predifi {
             }
             // Reset the validator fee for this pool after distribution
             self.validator_fee.write(pool_id, 0);
+
+            // Emit validator fees distributed event
+            self
+                .emit(
+                    Event::ValidatorFeesDistributed(
+                        ValidatorFeesDistributed {
+                            pool_id,
+                            total_amount: total_validator_fee,
+                            validator_count: validator_count_u256,
+                            timestamp: get_block_timestamp(),
+                        },
+                    ),
+                );
         }
 
 

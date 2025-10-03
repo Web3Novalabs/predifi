@@ -28,6 +28,8 @@ use super::test_utils::{
 #[test]
 fn test_create_pool() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
+
+
     // Setup event spy
     let mut spy = spy_events();
     // Approve the DISPATCHER contract to spend tokens
@@ -39,6 +41,7 @@ fn test_create_pool() {
     start_cheat_caller_address(contract.contract_address, pool_creator);
     let pool_id = create_default_pool(contract);
     assert!(pool_id != 0, "not created");
+
     // Check that events were emitted (PoolCreated and PoolCreationFeeCollected)
     let events = spy.get_events();
     assert(events.events.len() >= 2, 'Missing pool events');
@@ -902,6 +905,7 @@ fn test_manual_pool_state_update() {
     let final_pool = contract.get_pool(pool_id);
     assert(final_pool.status == Status::Closed, 'should be Closed in storage');
 }
+
 #[test]
 fn test_pool_state_transition_event() {
     let (contract, _, _, pool_creator, erc20_address) = deploy_predifi();
@@ -933,4 +937,6 @@ fn test_pool_state_transition_event() {
     assert(events.events.len() > 0, 'No state events');
 
     stop_cheat_caller_address(contract.contract_address);
+
 }
+

@@ -118,6 +118,8 @@ pub trait IPredifi<TContractState> {
 
     /// @notice Collects the pool creation fee from the creator.
     /// @dev Transfers 1 STRK from creator to contract.
+
+    /// @param creator The creator's address.
     /// @param pool_id The pool ID for which the fee is being collected.
     fn collect_pool_creation_fee(ref self: TContractState, creator: ContractAddress, pool_id: u256);
 
