@@ -38,7 +38,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Format Check (Lint)
-        run: pnpm lint
+        run: pnpm lint --max-warnings=0
         # Runs ESLint to verify code quality and formatting rules defined in eslint config.
         # This satisfies the "Format Check" requirement.
 
