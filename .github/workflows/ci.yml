@@ -3,9 +3,9 @@ name: Smart Contract CI
 #trigger on Pull Requests to the 'contract' branch
 on:
     push:
-        branches: [ contract ]
+        branches: [ main, contract ]
     pull_request:
-        branches: [ contract ]
+        branches: [ main, contract ]
 
 env:
     CARGO_TERM_COLOR: always
