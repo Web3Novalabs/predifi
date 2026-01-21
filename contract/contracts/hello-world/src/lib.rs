@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, vec, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, vec, Env, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,7 +17,6 @@ pub struct Pool {
     pub end_time: u64,
 }
 
-#[contractimpl]
 impl Pool {
     pub fn is_pool_active(&self) -> bool {
         self.status == PoolStatus::Active
