@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Navbar from "./(marketing)/components/Navbar";
 import HeroSection from "./(marketing)/components/HeroSection";
 import PredictionProtocol from "./(marketing)/components/PredictionProtocol";
