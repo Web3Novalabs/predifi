@@ -1,26 +1,39 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-background: oklch(0.17 0.04 255);
+  --color-foreground: oklch(0.98 0 0);
+  --color-card: oklch(0.17 0.04 255);
+  --color-card-foreground: oklch(0.98 0 0);
+  --color-popover: oklch(0.17 0.04 255);
+  --color-popover-foreground: oklch(0.98 0 0);
+  --color-primary: oklch(0.65 0.15 200);
+  --color-primary-foreground: oklch(0.17 0.04 255);
+  --color-secondary: oklch(0.25 0.04 240);
+  --color-secondary-foreground: oklch(0.98 0 0);
+  --color-muted: oklch(0.25 0.04 240);
+  --color-muted-foreground: oklch(0.65 0.03 240);
+  --color-accent: oklch(0.25 0.04 240);
+  --color-accent-foreground: oklch(0.98 0 0);
+  --color-destructive: oklch(0.50 0.20 25);
+  --color-destructive-foreground: oklch(0.98 0 0);
+  --color-border: oklch(0.25 0.04 240);
+  --color-input: oklch(0.25 0.04 240);
+  --color-ring: oklch(0.65 0.15 200);
+  --color-success: oklch(0.50 0.15 150);
+  --color-warning: oklch(0.70 0.15 60);
+  --color-info: oklch(0.60 0.15 230);
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+@layer base {
+  * {
+    border-color: var(--color-border);
   }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
 }
