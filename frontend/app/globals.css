@@ -22,5 +22,26 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "DM Mono", sans-serif;
+}
+
+button {
+  cursor: pointer;
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-out forwards;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px); /* Slight slide up effect */
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
