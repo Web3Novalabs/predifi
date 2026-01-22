@@ -1,31 +1,11 @@
 import type { Metadata } from "next";
-import { DM_Sans, Geist, Geist_Mono } from "next/font/google";
+import { DM_Mono } from "next/font/google";
 import "./globals.css";
-import { Anton } from "next/font/google";
 
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+const dmMono = DM_Mono({
   subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-const anton = Anton({
-  weight: ["400"], // Anton only has one weight
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-anton",
-});
-
-const dmSans = DM_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "700", "900"], // Choose the weights you need
-  display: "swap",
-  variable: "--font-dmsans",
+  weight: ["300", "400", "500"],
+  variable: "--font-dm-mono",
 });
 
 export const metadata: Metadata = {
@@ -102,11 +82,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`bg-no-repeat bg-fixed bg h-full bg-cover py-7 ${dmSans.variable} ${anton.variable} ${geistSans.variable} ${geistMono.variable} antialiased font-dmsans`}
-        suppressHydrationWarning={true}
-      >
-        <main className="mt-28 ">{children}</main>
+      <body className={`antialiased text-sm ${dmMono.variable}`}>
+        {children}
       </body>
     </html>
   );
