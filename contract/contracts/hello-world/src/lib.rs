@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, vec, Env, String, Vec};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, vec, Env, String, Vec};
 
 #[derive(Clone)]
 #[contracttype]
