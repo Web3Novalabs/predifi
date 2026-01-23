@@ -31,5 +31,11 @@ pub trait IPredifi<TContractState> {
     fn get_pool_vote(self: @TContractState, pool_id: u256) -> bool;
     fn get_pool_count(self: @TContractState) -> u256;
     fn retrieve_pool(self: @TContractState, pool_id: u256) -> bool;
+
+    // Role Management
+    fn assign_role(ref self: TContractState, role: felt252, account: ContractAddress);
+    fn revoke_role(ref self: TContractState, role: felt252, account: ContractAddress);
+    fn transfer_role(ref self: TContractState, role: felt252, new_account: ContractAddress, old_account: ContractAddress);
+    fn has_role(self: @TContractState, role: felt252, account: ContractAddress) -> bool;
 }
 

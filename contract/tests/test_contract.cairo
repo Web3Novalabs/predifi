@@ -2,7 +2,7 @@ use contract::base::types::{Category, Pool, PoolDetails, Status};
 use contract::interfaces::ipredifi::{IPredifiDispatcher, IPredifiDispatcherTrait};
 use core::felt252;
 use core::traits::Into;
-use snforge_std::{ContractClassTrait, DeclareResultTrait, declare};
+use snforge_std::{ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address, stop_cheat_caller_address, start_cheat_caller_address_global, stop_cheat_caller_address_global};
 use starknet::{
     ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
 };
@@ -544,4 +544,32 @@ fn test_get_pool_vote() {
     let pool_vote = contract.get_pool_vote(pool_id);
 
     assert(!pool_vote, 'Incorrect pool vote');
+}
+
+#[test]
+fn test_role_management() {
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+    let user: ContractAddress = 'user'.try_into().unwrap(); 
+    
+    // Cheat caller for the constructor
+    start_cheat_caller_address_global(admin);
+    let contract = deploy_predifi();
+    stop_cheat_caller_address_global();
+
+    // Verify admin
+    assert(contract.has_role('ADMIN', admin), 'Admin should have ADMIN role');
+    
+    // Now prank as admin to assign role
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.assign_role('OPERATOR', user);
+    stop_cheat_caller_address(contract.contract_address);
+
+    assert(contract.has_role('OPERATOR', user), 'User should have OPERATOR role');
+
+    // Revoke
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.revoke_role('OPERATOR', user);
+    stop_cheat_caller_address(contract.contract_address);
+
+    assert(!contract.has_role('OPERATOR', user), 'User should not have OPERATOR role');
 }

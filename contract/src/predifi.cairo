@@ -11,6 +11,7 @@ pub mod Predifi {
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
+        UNAUTHORIZED, INVALID_ROLE, SELF_REVOKE_ERROR, ROLE_NOT_ASSIGNED,
     };
     // oz imports
 
@@ -32,6 +33,7 @@ pub mod Predifi {
         user_hash_poseidon: felt252,
         user_hash_pedersen: felt252,
         nonce: felt252,
+        roles: Map<(felt252, ContractAddress), bool>,
     }
 
     // Events
@@ -39,6 +41,22 @@ pub mod Predifi {
     #[derive(Drop, starknet::Event)]
     enum Event {
         BetPlaced: BetPlaced,
+        RoleGranted: RoleGranted,
+        RoleRevoked: RoleRevoked,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct RoleGranted {
+        role: felt252,
+        account: ContractAddress,
+        sender: ContractAddress,
+    }
+
+    #[derive(Drop, starknet::Event)]
+    struct RoleRevoked {
+        role: felt252,
+        account: ContractAddress,
+        sender: ContractAddress,
     }
 
     #[derive(Drop, starknet::Event)]
@@ -63,7 +81,11 @@ pub mod Predifi {
     }
 
     #[constructor]
-    fn constructor(ref self: ContractState) {}
+    fn constructor(ref self: ContractState) {
+        let admin = get_caller_address();
+        self.roles.write(('ADMIN', admin), true);
+        self.emit(Event::RoleGranted(RoleGranted { role: 'ADMIN', account: admin, sender: admin }));
+    }
 
     #[abi(embed_v0)]
     impl predifi of IPredifi<ContractState> {
@@ -235,6 +257,41 @@ pub mod Predifi {
         fn retrieve_pool(self: @ContractState, pool_id: u256) -> bool {
             let pool = self.pools.read(pool_id);
             pool.exists
+        }
+
+        fn assign_role(ref self: ContractState, role: felt252, account: ContractAddress) {
+            let caller = get_caller_address();
+            assert(self.roles.read(('ADMIN', caller)), UNAUTHORIZED);
+            self.roles.write((role, account), true);
+            self.emit(Event::RoleGranted(RoleGranted { role, account, sender: caller }));
+        }
+
+        fn revoke_role(ref self: ContractState, role: felt252, account: ContractAddress) {
+            let caller = get_caller_address();
+            assert(self.roles.read(('ADMIN', caller)), UNAUTHORIZED);
+            assert(!(role == 'ADMIN' && account == caller), SELF_REVOKE_ERROR);
+            self.roles.write((role, account), false);
+            self.emit(Event::RoleRevoked(RoleRevoked { role, account, sender: caller }));
+        }
+
+        fn transfer_role(
+            ref self: ContractState,
+            role: felt252,
+            new_account: ContractAddress,
+            old_account: ContractAddress
+        ) {
+            let caller = get_caller_address();
+            assert(self.roles.read(('ADMIN', caller)), UNAUTHORIZED);
+            assert(self.roles.read((role, old_account)), ROLE_NOT_ASSIGNED);
+
+            self.roles.write((role, new_account), true);
+            self.roles.write((role, old_account), false);
+            self.emit(Event::RoleGranted(RoleGranted { role, account: new_account, sender: caller }));
+            self.emit(Event::RoleRevoked(RoleRevoked { role, account: old_account, sender: caller }));
+        }
+
+        fn has_role(self: @ContractState, role: felt252, account: ContractAddress) -> bool {
+            self.roles.read((role, account))
         }
     }
 

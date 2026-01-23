@@ -11,4 +11,8 @@ pub mod Errors {
     pub const TOTAL_STAKE_MUST_BE_ONE_STRK: felt252 = 'Total stake should be 1 STRK';
     pub const TOTAL_SHARE_MUST_BE_ONE_STRK: felt252 = 'Total shares should be 1 STRK';
     pub const USER_SHARE_MUST_BE_ONE_STRK: felt252 = 'User shares should be 1 STRK';
+    pub const UNAUTHORIZED: felt252 = 'Caller is not authorized';
+    pub const INVALID_ROLE: felt252 = 'Role is invalid';
+    pub const SELF_REVOKE_ERROR: felt252 = 'Cannot revoke own admin role';
+    pub const ROLE_NOT_ASSIGNED: felt252 = 'Role not assigned to address';
 }
