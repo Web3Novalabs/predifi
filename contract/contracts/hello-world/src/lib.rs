@@ -84,4 +84,3 @@ impl Contract {
 
 mod test;
 mod test_pool;
-
