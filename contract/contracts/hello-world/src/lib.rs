@@ -1,18 +1,80 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, vec, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, vec, Env, String, Vec};
+
+/// Represents the current status of a prediction pool.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PoolStatus {
+    /// The pool is open for predictions.
+    Active,
+    /// The event has occurred and the outcome is determined.
+    Resolved,
+    /// The pool is closed for new predictions but not yet resolved.
+    Closed,
+    /// The outcome is being disputed.
+    Disputed,
+}
+
+/// A prediction pool structure containing status and timing information.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Pool {
+    pub status: PoolStatus,
+    /// The timestamp (in seconds) when the pool stops accepting predictions.
+    pub end_time: u64,
+}
+
+impl Pool {
+    /// Checks if the pool is currently active.
+    ///
+    /// # Returns
+    /// * `true` if the pool status is `Active`.
+    pub fn is_pool_active(&self) -> bool {
+        self.status == PoolStatus::Active
+    }
+
+    /// Checks if the pool has been resolved.
+    ///
+    /// # Returns
+    /// * `true` if the pool status is `Resolved`.
+    pub fn is_pool_resolved(&self) -> bool {
+        self.status == PoolStatus::Resolved
+    }
+
+    /// Determines if the pool can accept new predictions.
+    ///
+    /// A pool can accept predictions if it is `Active` and the current
+    /// ledger timestamp is before the pool's `end_time`.
+    ///
+    /// # Arguments
+    /// * `env` - The current contract environment.
+    pub fn can_accept_predictions(&self, env: &Env) -> bool {
+        if !self.is_pool_active() {
+            return false;
+        }
+        env.ledger().timestamp() < self.end_time
+    }
+
+    /// Validates if a transition to a new status is allowed.
+    ///
+    /// # Arguments
+    /// * `new_status` - The target status to transition to.
+    ///
+    /// # Returns
+    /// * `true` if the transition is valid according to the state machine rules.
+    pub fn validate_state_transition(&self, new_status: PoolStatus) -> bool {
+        match (self.status, new_status) {
+            (PoolStatus::Active, PoolStatus::Resolved) => true,
+            (PoolStatus::Active, PoolStatus::Closed) => true,
+            (PoolStatus::Resolved, PoolStatus::Disputed) => true,
+            _ => false,
+        }
+    }
+}
 
 #[contract]
 pub struct Contract;
 
-// This is a sample contract. Replace this placeholder with your own contract logic.
-// A corresponding test example is available in `test.rs`.
-//
-// For comprehensive examples, visit <https://github.com/stellar/soroban-examples>.
-// The repository includes use cases for the Stellar ecosystem, such as data storage on
-// the blockchain, token swaps, liquidity pools, and more.
-//
-// Refer to the official documentation:
-// <https://developers.stellar.org/docs/build/smart-contracts/overview>.
 #[contractimpl]
 impl Contract {
     pub fn hello(env: Env, to: String) -> Vec<String> {
@@ -21,3 +83,5 @@ impl Contract {
 }
 
 mod test;
+mod test_pool;
+
