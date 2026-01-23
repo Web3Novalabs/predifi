@@ -146,11 +146,7 @@ impl PredifiContract {
         // Share = (User Stake / Total Winning Stake) * Total Pool Stake
         // Share = (User Stake / Total Winning Stake) * Total Pool Stake
         let outcome_key = DataKey::OutcomeStake(pool_id, pool.outcome);
-        let winning_outcome_stake: i128 = env
-            .storage()
-            .instance()
-            .get(&outcome_key)
-            .unwrap_or(0);
+        let winning_outcome_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
 
         if winning_outcome_stake == 0 {
             // Should not happen if prediction.outcome == pool.outcome and user has stake
