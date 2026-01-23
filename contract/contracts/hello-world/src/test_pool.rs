@@ -16,20 +16,6 @@ fn create_test_pool(status: PoolStatus, end_time: u64) -> Pool {
     }
 }
 
-fn create_test_pool(status: PoolStatus, end_time: u64) -> Pool {
-    Pool {
-        pool_id: 1,
-        name: String::from_str(&Env::default(), "Test Pool"),
-        total_liquidity: 0,
-        token_a: String::from_str(&Env::default(), "ETH"),
-        token_b: String::from_str(&Env::default(), "USDC"),
-        fee_rate: 30,
-        is_active: true,
-        status,
-        end_time,
-    }
-}
-
 #[test]
 fn test_is_pool_active() {
     let pool = create_test_pool(PoolStatus::Active, 100);
