@@ -15,6 +15,24 @@ pub enum PoolStatus {
     Disputed,
 }
 
+/// Specific errors for the PrediFi contract.
+#[soroban_sdk::contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    InvalidEndTime = 1,
+    PoolExists = 2,
+    PoolNotFound = 3,
+    DeadlinePassed = 4,
+    PoolNotActive = 5,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DataKey {
+    Pool(u64), // Pool ID -> Pool struct
+}
+
 /// A prediction pool structure containing status and timing information.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,11 +95,74 @@ pub struct Contract;
 
 #[contractimpl]
 impl Contract {
+    /// Creates a new prediction pool with a specified deadline.
+    ///
+    /// # Arguments
+    /// * `pool_id` - A unique identifier for the pool.
+    /// * `end_time` - The timestamp (in seconds) when the pool stops accepting predictions.
+    ///
+    /// # Returns
+    /// * `Ok(())` on success, or an `Error` on failure.
+    pub fn create_pool(env: Env, pool_id: u64, end_time: u64) -> Result<(), Error> {
+        let key = DataKey::Pool(pool_id);
+        
+        if env.storage().persistent().has(&key) {
+            return Err(Error::PoolExists);
+        }
+
+        if end_time <= env.ledger().timestamp() {
+            return Err(Error::InvalidEndTime);
+        }
+
+        let pool = Pool {
+            status: PoolStatus::Active,
+            end_time,
+        };
+
+        env.storage().persistent().set(&key, &pool);
+        Ok(())
+    }
+
+    /// Submits a prediction to a specific pool.
+    ///
+    /// # Arguments
+    /// * `pool_id` - The identifier of the pool to predict on.
+    ///
+    /// # Returns
+    /// * `Ok(())` if the prediction is valid, or an `Error` on failure.
+    pub fn submit_prediction(env: Env, pool_id: u64) -> Result<(), Error> {
+        let key = DataKey::Pool(pool_id);
+        
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(Error::PoolNotFound)?;
+
+        if !pool.is_pool_active() {
+            return Err(Error::PoolNotActive);
+        }
+
+        if !pool.can_accept_predictions(&env) {
+            return Err(Error::DeadlinePassed);
+        }
+
+        // Logic for recording the prediction would go here
+        Ok(())
+    }
+
+    /// Retrieves pool information.
+    pub fn get_pool(env: Env, pool_id: u64) -> Option<Pool> {
+        let key = DataKey::Pool(pool_id);
+        env.storage().persistent().get(&key)
+    }
+
     pub fn hello(env: Env, to: String) -> Vec<String> {
         vec![&env, String::from_str(&env, "Hello"), to]
     }
 }
 
 mod test;
+#[cfg(test)]
 mod test_pool;
 
