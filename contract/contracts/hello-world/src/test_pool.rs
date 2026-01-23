@@ -35,7 +35,7 @@ fn test_is_pool_resolved() {
 #[test]
 fn test_can_accept_predictions() {
     let env = Env::default();
-    
+
     // Test active pool within time
     let pool = Pool {
         status: PoolStatus::Active,
@@ -47,7 +47,7 @@ fn test_can_accept_predictions() {
     // Test active pool expierd
     let pool_expired = Pool {
         status: PoolStatus::Active,
-        end_time: 0, 
+        end_time: 0,
     };
     // 0 < 0 is false
     assert!(!pool_expired.can_accept_predictions(&env));
@@ -66,7 +66,7 @@ fn test_validate_state_transition() {
         status: PoolStatus::Active,
         end_time: 100,
     };
-    
+
     assert!(pool_active.validate_state_transition(PoolStatus::Resolved));
     assert!(pool_active.validate_state_transition(PoolStatus::Closed));
     assert!(!pool_active.validate_state_transition(PoolStatus::Disputed));
