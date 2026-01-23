@@ -31,8 +31,9 @@ fn test_get_pool() {
     let token_a = String::from_str(&env, "ETH");
     let token_b = String::from_str(&env, "USDC");
     let fee_rate = 30u32;
+    let end_time = 100u64;
 
-    client.create_pool(&pool_id, &name, &token_a, &token_b, &fee_rate);
+    client.create_pool(&pool_id, &name, &token_a, &token_b, &fee_rate, &end_time);
 
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.pool_id, pool_id);
@@ -42,6 +43,8 @@ fn test_get_pool() {
     assert_eq!(pool.fee_rate, fee_rate);
     assert_eq!(pool.is_active, true);
     assert_eq!(pool.total_liquidity, 0);
+    assert_eq!(pool.status, PoolStatus::Active);
+    assert_eq!(pool.end_time, end_time);
 }
 
 #[test]

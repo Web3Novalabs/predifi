@@ -1,5 +1,17 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, vec, Env, String, Vec};
+use soroban_sdk::{contract, contractimpl, contracterror, contracttype, vec, Env, String, Vec};
+
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Pool(u64),
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Error {
+    PoolNotFound = 1,
+}
 
 /// Represents the current status of a prediction pool.
 #[contracttype]
@@ -19,6 +31,13 @@ pub enum PoolStatus {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Pool {
+    pub pool_id: u64,
+    pub name: String,
+    pub total_liquidity: i128,
+    pub token_a: String,
+    pub token_b: String,
+    pub fee_rate: u32,
+    pub is_active: bool,
     pub status: PoolStatus,
     /// The timestamp (in seconds) when the pool stops accepting predictions.
     pub end_time: u64,
@@ -63,12 +82,12 @@ impl Pool {
     /// # Returns
     /// * `true` if the transition is valid according to the state machine rules.
     pub fn validate_state_transition(&self, new_status: PoolStatus) -> bool {
-        match (self.status, new_status) {
-            (PoolStatus::Active, PoolStatus::Resolved) => true,
-            (PoolStatus::Active, PoolStatus::Closed) => true,
-            (PoolStatus::Resolved, PoolStatus::Disputed) => true,
-            _ => false,
-        }
+        matches!(
+            (self.status, new_status),
+            (PoolStatus::Active, PoolStatus::Resolved)
+                | (PoolStatus::Active, PoolStatus::Closed)
+                | (PoolStatus::Resolved, PoolStatus::Disputed)
+        )
     }
 }
 
@@ -88,6 +107,7 @@ impl Contract {
         token_a: String,
         token_b: String,
         fee_rate: u32,
+        end_time: u64,
     ) {
         let pool = Pool {
             pool_id,
@@ -97,8 +117,12 @@ impl Contract {
             token_b,
             fee_rate,
             is_active: true,
+            status: PoolStatus::Active,
+            end_time,
         };
-        env.storage().persistent().set(&DataKey::Pool(pool_id), &pool);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Pool(pool_id), &pool);
     }
 
     pub fn get_pool(env: Env, pool_id: u64) -> Result<Pool, Error> {
@@ -111,4 +135,3 @@ impl Contract {
 
 mod test;
 mod test_pool;
-
