@@ -63,12 +63,12 @@ impl Pool {
     /// # Returns
     /// * `true` if the transition is valid according to the state machine rules.
     pub fn validate_state_transition(&self, new_status: PoolStatus) -> bool {
-        match (self.status, new_status) {
-            (PoolStatus::Active, PoolStatus::Resolved) => true,
-            (PoolStatus::Active, PoolStatus::Closed) => true,
-            (PoolStatus::Resolved, PoolStatus::Disputed) => true,
-            _ => false,
-        }
+        matches!(
+            (self.status, new_status),
+            (PoolStatus::Active, PoolStatus::Resolved)
+                | (PoolStatus::Active, PoolStatus::Closed)
+                | (PoolStatus::Resolved, PoolStatus::Disputed)
+        )
     }
 }
 

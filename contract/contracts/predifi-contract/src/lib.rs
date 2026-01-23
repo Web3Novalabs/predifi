@@ -79,8 +79,10 @@ impl PredifiContract {
             .unwrap();
 
         // Transfer tokens to contract
+        // Transfer tokens to contract
         let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&user, &env.current_contract_address(), &amount);
+        let contract_addr = env.current_contract_address();
+        token_client.transfer(&user, &contract_addr, &amount);
 
         // Record prediction
         let prediction = Prediction { amount, outcome };
@@ -100,6 +102,7 @@ impl PredifiContract {
             .set(&outcome_key, &(current_outcome_stake + amount));
     }
 
+    #[allow(deprecated)]
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> i128 {
         user.require_auth();
 
@@ -141,10 +144,12 @@ impl PredifiContract {
 
         // 5. Calculate winnings
         // Share = (User Stake / Total Winning Stake) * Total Pool Stake
+        // Share = (User Stake / Total Winning Stake) * Total Pool Stake
+        let outcome_key = DataKey::OutcomeStake(pool_id, pool.outcome);
         let winning_outcome_stake: i128 = env
             .storage()
             .instance()
-            .get(&DataKey::OutcomeStake(pool_id, pool.outcome))
+            .get(&outcome_key)
             .unwrap_or(0);
 
         if winning_outcome_stake == 0 {
