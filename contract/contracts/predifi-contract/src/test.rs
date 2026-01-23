@@ -2,7 +2,7 @@
 #![allow(deprecated)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, Env, token}; 
+use soroban_sdk::{testutils::Address as _, token, Env};
 
 #[test]
 fn test_claim_winnings() {
@@ -18,12 +18,12 @@ fn test_claim_winnings() {
     let token_contract = env.register_stellar_asset_contract(token_admin.clone()); // Revert to v1
     let token = token::Client::new(&env, &token_contract);
     let token_admin_client = token::StellarAssetClient::new(&env, &token_contract); // Client for minting
-    let token_address = token_contract; 
+    let token_address = token_contract;
 
     // Setup Users
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
-    
+
     // Mint tokens to users
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
@@ -37,7 +37,7 @@ fn test_claim_winnings() {
     // Place Predictions
     // User 1 bets 100 on Outcome 1
     client.place_prediction(&user1, &pool_id, &100, &1);
-    
+
     // User 2 bets 100 on Outcome 2
     client.place_prediction(&user2, &pool_id, &100, &2);
 
@@ -49,7 +49,7 @@ fn test_claim_winnings() {
 
     // User 1 Claims
     let winnings = client.claim_winnings(&user1, &pool_id);
-    
+
     // Total pool is 200. Winning stake is 100. User 1 stake is 100.
     // Share = (100 / 100) * 200 = 200.
     assert_eq!(winnings, 200);
@@ -89,7 +89,7 @@ fn test_double_claim() {
 #[test]
 #[should_panic(expected = "Pool not resolved")]
 fn test_claim_unresolved() {
-      let env = Env::default();
+    let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(&env, &contract_id);
@@ -105,7 +105,7 @@ fn test_claim_unresolved() {
     client.init();
     let pool_id = client.create_pool(&100, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
-    
+
     // Do NOT resolve
     client.claim_winnings(&user1, &pool_id);
 }

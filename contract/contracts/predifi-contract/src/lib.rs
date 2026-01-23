@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, token};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
 
 #[contracttype]
 #[derive(Clone)]
@@ -18,7 +18,7 @@ pub enum DataKey {
     Prediction(Address, u64), // User, PoolId
     PoolIdCounter,
     HasClaimed(Address, u64), // User, PoolId
-    OutcomeStake(u64, u32), // PoolId, Outcome -> Total stake for this outcome
+    OutcomeStake(u64, u32),   // PoolId, Outcome -> Total stake for this outcome
 }
 
 #[contracttype]
@@ -40,7 +40,11 @@ impl PredifiContract {
     }
 
     pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
-        let pool_id: u64 = env.storage().instance().get(&DataKey::PoolIdCounter).unwrap_or(0);
+        let pool_id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PoolIdCounter)
+            .unwrap_or(0);
         let pool = Pool {
             end_time,
             resolved: false,
@@ -49,12 +53,18 @@ impl PredifiContract {
             token,
         };
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
-        env.storage().instance().set(&DataKey::PoolIdCounter, &(pool_id + 1));
+        env.storage()
+            .instance()
+            .set(&DataKey::PoolIdCounter, &(pool_id + 1));
         pool_id
     }
 
     pub fn resolve_pool(env: Env, pool_id: u64, outcome: u32) {
-        let mut pool: Pool = env.storage().instance().get(&DataKey::Pool(pool_id)).unwrap();
+        let mut pool: Pool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Pool(pool_id))
+            .unwrap();
         pool.resolved = true;
         pool.outcome = outcome;
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
@@ -62,18 +72,21 @@ impl PredifiContract {
 
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         user.require_auth();
-        let mut pool: Pool = env.storage().instance().get(&DataKey::Pool(pool_id)).unwrap();
-        
+        let mut pool: Pool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Pool(pool_id))
+            .unwrap();
+
         // Transfer tokens to contract
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&user, &env.current_contract_address(), &amount);
 
         // Record prediction
-        let prediction = Prediction {
-            amount,
-            outcome,
-        };
-        env.storage().instance().set(&DataKey::Prediction(user.clone(), pool_id), &prediction);
+        let prediction = Prediction { amount, outcome };
+        env.storage()
+            .instance()
+            .set(&DataKey::Prediction(user.clone(), pool_id), &prediction);
 
         // Update total pool stake
         pool.total_stake += amount;
@@ -82,40 +95,58 @@ impl PredifiContract {
         // Update stake specific to this outcome
         let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
         let current_outcome_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
-        env.storage().instance().set(&outcome_key, &(current_outcome_stake + amount));
+        env.storage()
+            .instance()
+            .set(&outcome_key, &(current_outcome_stake + amount));
     }
 
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> i128 {
         user.require_auth();
 
         // 1. Validate pool exists and is resolved
-        let pool: Pool = env.storage().instance().get(&DataKey::Pool(pool_id)).expect("Pool not found");
+        let pool: Pool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Pool(pool_id))
+            .expect("Pool not found");
         if !pool.resolved {
             panic!("Pool not resolved");
         }
 
         // 2. Prevent double claiming
-        if env.storage().instance().has(&DataKey::HasClaimed(user.clone(), pool_id)) {
+        if env
+            .storage()
+            .instance()
+            .has(&DataKey::HasClaimed(user.clone(), pool_id))
+        {
             panic!("Already claimed");
         }
 
         // 3. Get user prediction
-        let prediction: Prediction = env.storage().instance().get(&DataKey::Prediction(user.clone(), pool_id)).expect("No prediction found");
+        let prediction: Prediction = env
+            .storage()
+            .instance()
+            .get(&DataKey::Prediction(user.clone(), pool_id))
+            .expect("No prediction found");
 
         // 4. Check if user won
         if prediction.outcome != pool.outcome {
-             // User lost. No winnings.
-             // We could revert or return 0. Returning 0 is safer but revert is clearer for "claim" action.
-             // Let's return 0 to denote "nothing to claim" without erroring if they just call it?
-             // But usually "claim" implies entitlement. Let's return 0 for now but mark as claimed to prevent re-entrancy attacks or spam?
-             // Actually if they lost, they have nothing to claim.
-             return 0;
+            // User lost. No winnings.
+            // We could revert or return 0. Returning 0 is safer but revert is clearer for "claim" action.
+            // Let's return 0 to denote "nothing to claim" without erroring if they just call it?
+            // But usually "claim" implies entitlement. Let's return 0 for now but mark as claimed to prevent re-entrancy attacks or spam?
+            // Actually if they lost, they have nothing to claim.
+            return 0;
         }
 
         // 5. Calculate winnings
         // Share = (User Stake / Total Winning Stake) * Total Pool Stake
-        let winning_outcome_stake: i128 = env.storage().instance().get(&DataKey::OutcomeStake(pool_id, pool.outcome)).unwrap_or(0);
-        
+        let winning_outcome_stake: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::OutcomeStake(pool_id, pool.outcome))
+            .unwrap_or(0);
+
         if winning_outcome_stake == 0 {
             // Should not happen if prediction.outcome == pool.outcome and user has stake
             panic!("Critical error: winning stake is 0");
@@ -128,10 +159,13 @@ impl PredifiContract {
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
 
         // 7. Update claim status
-        env.storage().instance().set(&DataKey::HasClaimed(user.clone(), pool_id), &true);
+        env.storage()
+            .instance()
+            .set(&DataKey::HasClaimed(user.clone(), pool_id), &true);
 
         // 8. Emit event
-        env.events().publish((Symbol::new(&env, "claim"), user, pool_id), winnings);
+        env.events()
+            .publish((Symbol::new(&env, "claim"), user, pool_id), winnings);
 
         winnings
     }
