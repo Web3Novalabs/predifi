@@ -13,12 +13,25 @@ pub struct Pool {
 
 #[contracttype]
 #[derive(Clone)]
+pub struct UserPredictionDetail {
+    pub pool_id: u64,
+    pub amount: i128,
+    pub user_outcome: u32,
+    pub pool_end_time: u64,
+    pub pool_resolved: bool,
+    pub pool_outcome: u32,
+}
+
+#[contracttype]
+#[derive(Clone)]
 pub enum DataKey {
     Pool(u64),
     Prediction(Address, u64), // User, PoolId
     PoolIdCounter,
     HasClaimed(Address, u64), // User, PoolId
     OutcomeStake(u64, u32),   // PoolId, Outcome -> Total stake for this outcome
+    UserPredictionCount(Address),
+    UserPredictionIndex(Address, u32), // User, Index -> PoolId
 }
 
 #[contracttype]
@@ -100,6 +113,19 @@ impl PredifiContract {
         env.storage()
             .instance()
             .set(&outcome_key, &(current_outcome_stake + amount));
+
+        // Index user's prediction for pagination
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::UserPredictionCount(user.clone()))
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::UserPredictionIndex(user.clone(), count), &pool_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::UserPredictionCount(user.clone()), &(count + 1));
     }
 
     #[allow(deprecated)]
@@ -169,6 +195,57 @@ impl PredifiContract {
             .publish((Symbol::new(&env, "claim"), user, pool_id), winnings);
 
         winnings
+    }
+
+    pub fn get_user_predictions(
+        env: Env,
+        user: Address,
+        offset: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<UserPredictionDetail> {
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::UserPredictionCount(user.clone()))
+            .unwrap_or(0);
+
+        let mut results = soroban_sdk::Vec::new(&env);
+        if offset >= count {
+            return results;
+        }
+
+        let end = core::cmp::min(offset + limit, count);
+
+        for i in offset..end {
+            let pool_id: u64 = env
+                .storage()
+                .instance()
+                .get(&DataKey::UserPredictionIndex(user.clone(), i))
+                .unwrap();
+
+            let prediction: Prediction = env
+                .storage()
+                .instance()
+                .get(&DataKey::Prediction(user.clone(), pool_id))
+                .unwrap();
+
+            let pool: Pool = env
+                .storage()
+                .instance()
+                .get(&DataKey::Pool(pool_id))
+                .unwrap();
+
+            results.push_back(UserPredictionDetail {
+                pool_id,
+                amount: prediction.amount,
+                user_outcome: prediction.outcome,
+                pool_end_time: pool.end_time,
+                pool_resolved: pool.resolved,
+                pool_outcome: pool.outcome,
+            });
+        }
+
+        results
     }
 }
 

@@ -109,3 +109,60 @@ fn test_claim_unresolved() {
     // Do NOT resolve
     client.claim_winnings(&user1, &pool_id);
 }
+
+#[test]
+fn test_get_user_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin);
+    let token_address = token_contract;
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    client.init();
+
+    // Create 3 pools and place predictions
+    let pool0 = client.create_pool(&100, &token_address);
+    let pool1 = client.create_pool(&200, &token_address);
+    let pool2 = client.create_pool(&300, &token_address);
+
+    client.place_prediction(&user, &pool0, &10, &1);
+    client.place_prediction(&user, &pool1, &20, &2);
+    client.place_prediction(&user, &pool2, &30, &1);
+
+    // Test pagination: All 3
+    let all = client.get_user_predictions(&user, &0, &10);
+    assert_eq!(all.len(), 3);
+    assert_eq!(all.get(0).unwrap().pool_id, pool0);
+    assert_eq!(all.get(1).unwrap().pool_id, pool1);
+    assert_eq!(all.get(2).unwrap().pool_id, pool2);
+    assert_eq!(all.get(0).unwrap().amount, 10);
+    assert_eq!(all.get(0).unwrap().user_outcome, 1);
+
+    // Test pagination: Limit 2
+    let first_two = client.get_user_predictions(&user, &0, &2);
+    assert_eq!(first_two.len(), 2);
+    assert_eq!(first_two.get(0).unwrap().pool_id, pool0);
+    assert_eq!(first_two.get(1).unwrap().pool_id, pool1);
+
+    // Test pagination: Offset 1, Limit 2
+    let last_two = client.get_user_predictions(&user, &1, &2);
+    assert_eq!(last_two.len(), 2);
+    assert_eq!(last_two.get(0).unwrap().pool_id, pool1);
+    assert_eq!(last_two.get(1).unwrap().pool_id, pool2);
+
+    // Test pagination: Offset 2, Limit 1
+    let last_one = client.get_user_predictions(&user, &2, &1);
+    assert_eq!(last_one.len(), 1);
+    assert_eq!(last_one.get(0).unwrap().pool_id, pool2);
+
+    // Test pagination: Out of bounds
+    let empty = client.get_user_predictions(&user, &3, &1);
+    assert_eq!(empty.len(), 0);
+}
