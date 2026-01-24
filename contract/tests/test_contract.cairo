@@ -573,3 +573,114 @@ fn test_role_management() {
 
     assert(!contract.has_role('OPERATOR', user), 'User should not have OPERATOR role');
 }
+
+#[test]
+fn test_transfer_role() {
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+    let user1: ContractAddress = 'user1'.try_into().unwrap();
+    let user2: ContractAddress = 'user2'.try_into().unwrap();
+
+    start_cheat_caller_address_global(admin);
+    let contract = deploy_predifi();
+    stop_cheat_caller_address_global();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.assign_role('OPERATOR', user1);
+    assert(contract.has_role('OPERATOR', user1), 'User1 should have role');
+    
+    contract.transfer_role('OPERATOR', user2, user1);
+    stop_cheat_caller_address(contract.contract_address);
+
+    assert(!contract.has_role('OPERATOR', user1), 'User1 should not have role');
+    assert(contract.has_role('OPERATOR', user2), 'User2 should have role');
+}
+
+#[test]
+#[should_panic(expected: 'Caller is not authorized')]
+fn test_unauthorized_assign_role() {
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+    let user: ContractAddress = 'user'.try_into().unwrap();
+    let attacker: ContractAddress = 'attacker'.try_into().unwrap();
+
+    start_cheat_caller_address_global(admin);
+    let contract = deploy_predifi();
+    stop_cheat_caller_address_global();
+
+    start_cheat_caller_address(contract.contract_address, attacker);
+    contract.assign_role('OPERATOR', user);
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[should_panic(expected: 'Caller is not authorized')]
+fn test_unauthorized_revoke_role() {
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+    let user: ContractAddress = 'user'.try_into().unwrap();
+    let attacker: ContractAddress = 'attacker'.try_into().unwrap();
+
+    start_cheat_caller_address_global(admin);
+    let contract = deploy_predifi();
+    stop_cheat_caller_address_global();
+
+    // Assign role first (as admin)
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.assign_role('OPERATOR', user);
+    stop_cheat_caller_address(contract.contract_address);
+
+    // Try to revoke as attacker
+    start_cheat_caller_address(contract.contract_address, attacker);
+    contract.revoke_role('OPERATOR', user);
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[should_panic(expected: 'Caller is not authorized')]
+fn test_unauthorized_transfer_role() {
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+    let user1: ContractAddress = 'user1'.try_into().unwrap();
+    let user2: ContractAddress = 'user2'.try_into().unwrap();
+    let attacker: ContractAddress = 'attacker'.try_into().unwrap();
+
+    start_cheat_caller_address_global(admin);
+    let contract = deploy_predifi();
+    stop_cheat_caller_address_global();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.assign_role('OPERATOR', user1);
+    stop_cheat_caller_address(contract.contract_address);
+
+    start_cheat_caller_address(contract.contract_address, attacker);
+    contract.transfer_role('OPERATOR', user2, user1);
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[should_panic(expected: 'Role not assigned to address')]
+fn test_transfer_role_not_assigned() {
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+    let user1: ContractAddress = 'user1'.try_into().unwrap();
+    let user2: ContractAddress = 'user2'.try_into().unwrap();
+
+    start_cheat_caller_address_global(admin);
+    let contract = deploy_predifi();
+    stop_cheat_caller_address_global();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    // user1 does not have the role
+    contract.transfer_role('OPERATOR', user2, user1);
+    stop_cheat_caller_address(contract.contract_address);
+}
+
+#[test]
+#[should_panic(expected: 'Cannot revoke own admin role')]
+fn test_revoke_own_admin_role() {
+    let admin: ContractAddress = 'admin'.try_into().unwrap();
+
+    start_cheat_caller_address_global(admin);
+    let contract = deploy_predifi();
+    stop_cheat_caller_address_global();
+
+    start_cheat_caller_address(contract.contract_address, admin);
+    contract.revoke_role('ADMIN', admin);
+    stop_cheat_caller_address(contract.contract_address);
+}
