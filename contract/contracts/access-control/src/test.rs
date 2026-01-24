@@ -125,3 +125,17 @@ fn test_unauthorized_assignment() {
     // non_admin tries to assign a role
     client.assign_role(&non_admin, &user, &Role::Operator);
 }
+
+#[test]
+fn test_get_pools() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, AccessControl);
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.init(&admin);
+
+    // Test with valid parameters
+    let result = client.get_pools(&0, &50, &None, &None);
+    assert_eq!(result.len(), 0); // Empty result as expected
+}
