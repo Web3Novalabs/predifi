@@ -4,7 +4,7 @@ Implements a query function to retrieve pool details by pool ID with proper erro
 ### Changes Made
 
 **Data Structures:**
-- Added `Pool` struct containing pool_id, name, total_liquidity, token_a, token_b, fee_rate, and is_active fields
+- Added `Pool` struct containing `pool_id`, `name`, `total_liquidity`, `token_a`, `token_b`, `fee_rate`, `is_active`, `status`, and `end_time` fields
 - Added `DataKey` enum for type-safe storage key management
 - Added `Error` enum with `PoolNotFound` error variant using `#[contracterror]` macro
 
