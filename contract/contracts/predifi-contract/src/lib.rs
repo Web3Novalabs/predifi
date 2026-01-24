@@ -1,5 +1,9 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol,
+};
+
+const RESOLUTION_WINDOW: u64 = 7 * 24 * 60 * 60; // 7 days in seconds
 
 #[contracttype]
 #[derive(Clone)]
@@ -26,6 +30,16 @@ pub enum DataKey {
 pub struct Prediction {
     pub amount: i128,
     pub outcome: u32,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    ResolutionTooEarly = 1,
+    ResolutionTooLate = 2,
+    PoolNotFound = 3,
+    AlreadyResolved = 4,
 }
 
 #[contract]
@@ -59,15 +73,31 @@ impl PredifiContract {
         pool_id
     }
 
-    pub fn resolve_pool(env: Env, pool_id: u64, outcome: u32) {
+    pub fn resolve_pool(env: Env, pool_id: u64, outcome: u32) -> Result<(), Error> {
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
-            .unwrap();
+            .ok_or(Error::PoolNotFound)?;
+
+        if pool.resolved {
+            return Err(Error::AlreadyResolved);
+        }
+
+        let current_time = env.ledger().timestamp();
+
+        if current_time < pool.end_time {
+            return Err(Error::ResolutionTooEarly);
+        }
+
+        if current_time > pool.end_time + RESOLUTION_WINDOW {
+            return Err(Error::ResolutionTooLate);
+        }
+
         pool.resolved = true;
         pool.outcome = outcome;
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        Ok(())
     }
 
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {

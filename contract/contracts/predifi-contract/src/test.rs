@@ -2,7 +2,10 @@
 #![allow(deprecated)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, token, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token, Env,
+};
 
 #[test]
 fn test_claim_winnings() {
@@ -45,6 +48,9 @@ fn test_claim_winnings() {
     assert_eq!(token.balance(&contract_id), 200);
 
     // Resolve Pool - Outcome 1 wins
+    // Resolve Pool - Outcome 1 wins
+    // Move time forward to end_time
+    env.ledger().set_timestamp(100);
     client.resolve_pool(&pool_id, &1);
 
     // User 1 Claims
@@ -80,6 +86,7 @@ fn test_double_claim() {
     client.init();
     let pool_id = client.create_pool(&100, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
+    env.ledger().set_timestamp(100);
     client.resolve_pool(&pool_id, &1);
 
     client.claim_winnings(&user1, &pool_id);
@@ -108,4 +115,43 @@ fn test_claim_unresolved() {
 
     // Do NOT resolve
     client.claim_winnings(&user1, &pool_id);
+}
+
+#[test]
+fn test_resolution_window() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin);
+    let token_address = token_contract;
+
+    client.init();
+    let end_time = 1000;
+    let pool_id = client.create_pool(&end_time, &token_address);
+
+    // 1. Too Early
+    env.ledger().set_timestamp(end_time - 1);
+    let result = client.try_resolve_pool(&pool_id, &1);
+    assert_eq!(result, Err(Ok(Error::ResolutionTooEarly)));
+
+    // 2. Too Late
+    let resolution_window = 7 * 24 * 60 * 60;
+    env.ledger().set_timestamp(end_time + resolution_window + 1);
+    let result = client.try_resolve_pool(&pool_id, &1);
+    assert_eq!(result, Err(Ok(Error::ResolutionTooLate)));
+
+    // 3. Just Right (Start of window)
+    env.ledger().set_timestamp(end_time);
+    let result = client.try_resolve_pool(&pool_id, &1);
+    assert!(result.is_ok());
+
+    // Create another pool for end of window test
+    let pool_id_2 = client.create_pool(&end_time, &token_address);
+    // 4. Just Right (End of window)
+    env.ledger().set_timestamp(end_time + resolution_window);
+    let result = client.try_resolve_pool(&pool_id_2, &1);
+    assert!(result.is_ok());
 }
