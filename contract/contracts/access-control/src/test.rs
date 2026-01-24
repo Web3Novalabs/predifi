@@ -25,7 +25,8 @@ fn test_double_initialization() {
 
     let admin = Address::generate(&env);
     client.init(&admin);
-    client.init(&admin);
+    let result = client.try_init(&admin);
+    assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
 }
 
 #[test]
@@ -123,5 +124,6 @@ fn test_unauthorized_assignment() {
     client.init(&admin);
 
     // non_admin tries to assign a role
-    client.assign_role(&non_admin, &user, &Role::Operator);
+    let result = client.try_assign_role(&non_admin, &user, &Role::Operator);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
