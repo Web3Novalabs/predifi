@@ -2,12 +2,12 @@
 
 use super::*;
 use soroban_sdk::testutils::Address as _;
-use soroban_sdk::{Env, Address};
+use soroban_sdk::{Address, Env};
 
 #[test]
 fn test_initialization() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, AccessControl);
+    let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
@@ -17,15 +17,15 @@ fn test_initialization() {
 }
 
 #[test]
-#[should_panic(expected = "AlreadyInitialized")]
 fn test_double_initialization() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, AccessControl);
+    let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     client.init(&admin);
-    client.init(&admin);
+    let result = client.try_init(&admin);
+    assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
 }
 
 #[test]
@@ -33,14 +33,14 @@ fn test_role_assignment() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, AccessControl);
+    let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
 
     client.init(&admin);
-    
+
     client.assign_role(&admin, &user, &Role::Operator);
     assert!(client.has_role(&user, &Role::Operator));
 }
@@ -50,14 +50,14 @@ fn test_role_revocation() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, AccessControl);
+    let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
 
     client.init(&admin);
-    
+
     client.assign_role(&admin, &user, &Role::Operator);
     assert!(client.has_role(&user, &Role::Operator));
 
@@ -70,7 +70,7 @@ fn test_role_transfer() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, AccessControl);
+    let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
@@ -78,7 +78,7 @@ fn test_role_transfer() {
     let user2 = Address::generate(&env);
 
     client.init(&admin);
-    
+
     client.assign_role(&admin, &user1, &Role::Operator);
     assert!(client.has_role(&user1, &Role::Operator));
 
@@ -92,7 +92,7 @@ fn test_admin_transfer() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, AccessControl);
+    let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
     let admin1 = Address::generate(&env);
@@ -108,12 +108,11 @@ fn test_admin_transfer() {
 }
 
 #[test]
-#[should_panic(expected = "Unauthorized")]
 fn test_unauthorized_assignment() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let contract_id = env.register_contract(None, AccessControl);
+    let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
@@ -121,9 +120,10 @@ fn test_unauthorized_assignment() {
     let user = Address::generate(&env);
 
     client.init(&admin);
-    
+
     // non_admin tries to assign a role
-    client.assign_role(&non_admin, &user, &Role::Operator);
+    let result = client.try_assign_role(&non_admin, &user, &Role::Operator);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
 
 #[test]

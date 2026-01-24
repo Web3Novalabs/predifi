@@ -1,6 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, String, Vec};
-use core::cmp;
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -63,10 +62,10 @@ pub struct AccessControl;
 #[contractimpl]
 impl AccessControl {
     /// Initialize the contract with an initial admin address.
-    /// 
+    ///
     /// # Arguments
     /// * `admin` - The address to be appointed as the initial super admin.
-    /// 
+    ///
     /// # Errors
     /// * `AlreadyInitialized` - If the contract has already been initialized.
     pub fn init(env: Env, admin: Address) {
@@ -75,16 +74,17 @@ impl AccessControl {
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         // Also grant the Admin role to the admin address
-        env.storage().persistent().set(&DataKey::Role(admin, Role::Admin), &());
-        // Initialize pool count
-        env.storage().persistent().set(&DataKey::PoolCount, &0u64);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Role(admin, Role::Admin), &());
+        Ok(())
     }
 
     /// Returns the current super admin address.
-    /// 
+    ///
     /// # Returns
     /// The address of the current super admin.
-    /// 
+    ///
     /// # Errors
     /// * `NotInitialized` - If the contract hasn't been initialized yet.
     pub fn get_admin(env: Env) -> Address {
@@ -95,60 +95,80 @@ impl AccessControl {
     }
 
     /// Assigns a specific role to a user.
-    /// 
+    ///
     /// Only the current super admin can call this function.
-    /// 
+    ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
     /// * `user` - The address to receive the role.
     /// * `role` - The role to be assigned.
-    /// 
+    ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
-    pub fn assign_role(env: Env, admin_caller: Address, user: Address, role: Role) {
+    pub fn assign_role(
+        env: Env,
+        admin_caller: Address,
+        user: Address,
+        role: Role,
+    ) -> Result<(), Error> {
         admin_caller.require_auth();
-        
-        let current_admin = Self::get_admin(env.clone());
+
+        let current_admin = Self::get_admin(env.clone())?;
         if admin_caller != current_admin {
             panic!("Unauthorized");
         }
 
-        env.storage().persistent().set(&DataKey::Role(user, role), &());
+        env.storage()
+            .persistent()
+            .set(&DataKey::Role(user, role), &());
+        Ok(())
     }
 
     /// Revokes a specific role from a user.
-    /// 
+    ///
     /// Only the current super admin can call this function.
-    /// 
+    ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
     /// * `user` - The address from which the role will be revoked.
     /// * `role` - The role to be revoked.
-    /// 
+    ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
     /// * `RoleNotFound` - If the user doesn't have the specified role.
-    pub fn revoke_role(env: Env, admin_caller: Address, user: Address, role: Role) {
+    pub fn revoke_role(
+        env: Env,
+        admin_caller: Address,
+        user: Address,
+        role: Role,
+    ) -> Result<(), Error> {
         admin_caller.require_auth();
-        
-        let current_admin = Self::get_admin(env.clone());
+
+        let current_admin = Self::get_admin(env.clone())?;
         if admin_caller != current_admin {
             panic!("Unauthorized");
         }
 
-        if !env.storage().persistent().has(&DataKey::Role(user.clone(), role.clone())) {
-            panic!("RoleNotFound");
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Role(user.clone(), role.clone()))
+        {
+            return Err(Error::RoleNotFound);
         }
 
-        env.storage().persistent().remove(&DataKey::Role(user, role));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Role(user, role));
+        Ok(())
     }
 
     /// Checks if a user has a specific role.
-    /// 
+    ///
     /// # Arguments
     /// * `user` - The address to check.
     /// * `role` - The role to check for.
-    /// 
+    ///
     /// # Returns
     /// `true` if the user has the role, `false` otherwise.
     pub fn has_role(env: Env, user: Address, role: Role) -> bool {
@@ -156,15 +176,15 @@ impl AccessControl {
     }
 
     /// Transfers a role from one address to another.
-    /// 
+    ///
     /// Only the current super admin can call this function.
-    /// 
+    ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
     /// * `from` - The address currently holding the role.
     /// * `to` - The address to receive the role.
     /// * `role` - The role to be transferred.
-    /// 
+    ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
     /// * `RoleNotFound` - If the `from` address doesn't have the specified role.
@@ -176,89 +196,63 @@ impl AccessControl {
         role: Role,
     ) {
         admin_caller.require_auth();
-        
-        let current_admin = Self::get_admin(env.clone());
+
+        let current_admin = Self::get_admin(env.clone())?;
         if admin_caller != current_admin {
             panic!("Unauthorized");
         }
 
-        if !env.storage().persistent().has(&DataKey::Role(from.clone(), role.clone())) {
-            panic!("RoleNotFound");
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Role(from.clone(), role.clone()))
+        {
+            return Err(Error::RoleNotFound);
         }
 
-        env.storage().persistent().remove(&DataKey::Role(from, role.clone()));
-        env.storage().persistent().set(&DataKey::Role(to, role), &());
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Role(from, role.clone()));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Role(to, role), &());
+        Ok(())
     }
 
     /// Transfers the super admin status to a new address.
-    /// 
+    ///
     /// Only the current super admin can call this function.
-    /// 
+    ///
     /// # Arguments
     /// * `admin_caller` - The address of the current admin.
     /// * `new_admin` - The address to become the new super admin.
-    /// 
+    ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the current super admin.
-    pub fn transfer_admin(env: Env, admin_caller: Address, new_admin: Address) {
+    pub fn transfer_admin(
+        env: Env,
+        admin_caller: Address,
+        new_admin: Address,
+    ) -> Result<(), Error> {
         admin_caller.require_auth();
-        
-        let current_admin = Self::get_admin(env.clone());
+
+        let current_admin = Self::get_admin(env.clone())?;
         if admin_caller != current_admin {
             panic!("Unauthorized");
         }
 
         // Update the admin address
         env.storage().instance().set(&DataKey::Admin, &new_admin);
-        
+
         // Transfer the Admin role record
-        env.storage().persistent().remove(&DataKey::Role(current_admin, Role::Admin));
-        env.storage().persistent().set(&DataKey::Role(new_admin, Role::Admin), &());
-    }
-
-    /// Retrieves a paginated list of pools with optional filtering.
-    ///
-    /// # Arguments
-    /// * `env` - The current contract environment.
-    /// * `offset` - The starting index for pagination.
-    /// * `limit` - The maximum number of pools to return.
-    /// * `status_filter` - Optional filter for pool status.
-    /// * `category_filter` - Optional filter for pool category.
-    ///
-    /// # Returns
-    /// * A vector of pool IDs that match the criteria.
-    ///
-    /// # Errors
-    /// * `InvalidLimit` - If the limit exceeds the maximum allowed value.
-    pub fn get_pools(
-        env: Env,
-        offset: u32,
-        limit: u32,
-        status_filter: Option<PoolStatus>,
-        category_filter: Option<PoolCategory>,
-    ) -> Result<Vec<u64>, Error> {
-        // Validate limit to prevent excessive gas usage
-        const MAX_LIMIT: u32 = 100;
-        if limit > MAX_LIMIT {
-            return Err(Error::InvalidLimit);
-        }
-
-        let total_pools: u64 = env.storage()
+        env.storage()
             .persistent()
-            .get(&DataKey::PoolCount)
-            .unwrap_or(0);
+            .remove(&DataKey::Role(current_admin, Role::Admin));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Role(new_admin, Role::Admin), &());
 
-        let mut result = Vec::new(&env);
-        let start = offset as u64;
-        let end = cmp::min(start + limit as u64, total_pools);
-
-        for pool_id in start..end {
-            // In a real implementation, we would check the pool's status and category
-            // against the filters before including it in the result
-            result.push_back(pool_id);
-        }
-
-        Ok(result)
+        Ok(())
     }
 }
 
