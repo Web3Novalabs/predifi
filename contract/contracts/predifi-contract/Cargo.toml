@@ -1,12 +1,11 @@
 [package]
-name = "hello-world"
+name = "predifi-contract"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
 [lib]
-crate-type = ["lib", "cdylib"]
-doctest = false
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
 soroban-sdk = { workspace = true }

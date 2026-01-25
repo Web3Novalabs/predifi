@@ -8,7 +8,7 @@ function Navbar() {
 
   return (
     <nav
-      className="bg-black relative z-50"
+      className="bg-[#000A0B] relative z-50"
       style={{ boxShadow: "0px 20px 25px 0px #000A0B" }}
     >
       <div className="flex justify-between items-center p-5 md:px-[50px]">
