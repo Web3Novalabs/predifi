@@ -63,12 +63,6 @@ impl PredifiContract {
         admin
     }
 
-    fn guard_pool_active(pool: &Pool) {
-        if pool.cancelled {
-            panic!("Pool cancelled");
-        }
-    }
-
     fn guard_pool_not_final(pool: &Pool) {
         if pool.cancelled || pool.resolved {
             panic!("Pool already finalized");
@@ -250,6 +244,7 @@ impl PredifiContract {
         winnings
     }
 
+    #[allow(deprecated)]
     pub fn cancel_pool(env: Env, pool_id: u64) {
         let admin = Self::require_admin(&env);
 
