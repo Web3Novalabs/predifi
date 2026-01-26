@@ -1,6 +1,10 @@
 #![no_std]
-use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
-// Event structs for contract events
+use soroban_sdk::{
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+};
+
+const RESOLUTION_WINDOW: u64 = 7 * 24 * 60 * 60; // 7 days in seconds
+                                                 // Event structs for contract events
 #[contractevent]
 pub struct SetFeeBpsEvent {
     pub new_fee_bps: u32,
@@ -179,6 +183,7 @@ impl PredifiContract {
                 .set(&DataKey::CollectedFees(pool_id), &fee);
             FeeCollectedEvent { pool_id, fee }.publish(&env);
         }
+        Ok(())
     }
 
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
