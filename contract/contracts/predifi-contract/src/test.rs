@@ -29,7 +29,9 @@ fn test_claim_winnings() {
     token_admin_client.mint(&user2, &1000);
 
     // Init contract
-    client.init();
+    let treasury = Address::generate(&env);
+    let fee_bps = 0u32;
+    client.init(&treasury, &fee_bps);
 
     // Create Pool
     let pool_id = client.create_pool(&100, &token_address);
@@ -77,7 +79,9 @@ fn test_double_claim() {
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
-    client.init();
+    let treasury = Address::generate(&env);
+    let fee_bps = 0u32;
+    client.init(&treasury, &fee_bps);
     let pool_id = client.create_pool(&100, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
     client.resolve_pool(&pool_id, &1);
@@ -102,7 +106,9 @@ fn test_claim_unresolved() {
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
-    client.init();
+    let treasury = Address::generate(&env);
+    let fee_bps = 0u32;
+    client.init(&treasury, &fee_bps);
     let pool_id = client.create_pool(&100, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
 
@@ -125,7 +131,9 @@ fn test_get_user_predictions() {
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
-    client.init();
+    let treasury = Address::generate(&env);
+    let fee_bps = 0u32;
+    client.init(&treasury, &fee_bps);
 
     // Create 3 pools and place predictions
     let pool0 = client.create_pool(&100, &token_address);
