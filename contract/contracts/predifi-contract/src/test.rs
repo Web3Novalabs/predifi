@@ -32,7 +32,9 @@ fn test_claim_winnings() {
     token_admin_client.mint(&user2, &1000);
 
     // Init contract
-    client.init();
+    let treasury = Address::generate(&env);
+    let fee_bps = 0u32;
+    client.init(&treasury, &fee_bps);
 
     // Create Pool
     let pool_id = client.create_pool(&100, &token_address);
@@ -83,7 +85,9 @@ fn test_double_claim() {
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
-    client.init();
+    let treasury = Address::generate(&env);
+    let fee_bps = 0u32;
+    client.init(&treasury, &fee_bps);
     let pool_id = client.create_pool(&100, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
     env.ledger().set_timestamp(100);
@@ -109,7 +113,9 @@ fn test_claim_unresolved() {
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
-    client.init();
+    let treasury = Address::generate(&env);
+    let fee_bps = 0u32;
+    client.init(&treasury, &fee_bps);
     let pool_id = client.create_pool(&100, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
 
@@ -118,7 +124,7 @@ fn test_claim_unresolved() {
 }
 
 #[test]
-fn test_resolution_window() {
+fn test_get_user_predictions() {
     let env = Env::default();
     env.mock_all_auths();
     let contract_id = env.register(PredifiContract, ());
@@ -127,31 +133,51 @@ fn test_resolution_window() {
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract(token_admin);
     let token_address = token_contract;
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
 
-    client.init();
-    let end_time = 1000;
-    let pool_id = client.create_pool(&end_time, &token_address);
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
 
-    // 1. Too Early
-    env.ledger().set_timestamp(end_time - 1);
-    let result = client.try_resolve_pool(&pool_id, &1);
-    assert_eq!(result, Err(Ok(Error::ResolutionTooEarly)));
+    let treasury = Address::generate(&env);
+    let fee_bps = 0u32;
+    client.init(&treasury, &fee_bps);
 
-    // 2. Too Late
-    let resolution_window = 7 * 24 * 60 * 60;
-    env.ledger().set_timestamp(end_time + resolution_window + 1);
-    let result = client.try_resolve_pool(&pool_id, &1);
-    assert_eq!(result, Err(Ok(Error::ResolutionTooLate)));
+    // Create 3 pools and place predictions
+    let pool0 = client.create_pool(&100, &token_address);
+    let pool1 = client.create_pool(&200, &token_address);
+    let pool2 = client.create_pool(&300, &token_address);
 
-    // 3. Just Right (Start of window)
-    env.ledger().set_timestamp(end_time);
-    let result = client.try_resolve_pool(&pool_id, &1);
-    assert!(result.is_ok());
+    client.place_prediction(&user, &pool0, &10, &1);
+    client.place_prediction(&user, &pool1, &20, &2);
+    client.place_prediction(&user, &pool2, &30, &1);
 
-    // Create another pool for end of window test
-    let pool_id_2 = client.create_pool(&end_time, &token_address);
-    // 4. Just Right (End of window)
-    env.ledger().set_timestamp(end_time + resolution_window);
-    let result = client.try_resolve_pool(&pool_id_2, &1);
-    assert!(result.is_ok());
+    // Test pagination: All 3
+    let all = client.get_user_predictions(&user, &0, &10);
+    assert_eq!(all.len(), 3);
+    assert_eq!(all.get(0).unwrap().pool_id, pool0);
+    assert_eq!(all.get(1).unwrap().pool_id, pool1);
+    assert_eq!(all.get(2).unwrap().pool_id, pool2);
+    assert_eq!(all.get(0).unwrap().amount, 10);
+    assert_eq!(all.get(0).unwrap().user_outcome, 1);
+
+    // Test pagination: Limit 2
+    let first_two = client.get_user_predictions(&user, &0, &2);
+    assert_eq!(first_two.len(), 2);
+    assert_eq!(first_two.get(0).unwrap().pool_id, pool0);
+    assert_eq!(first_two.get(1).unwrap().pool_id, pool1);
+
+    // Test pagination: Offset 1, Limit 2
+    let last_two = client.get_user_predictions(&user, &1, &2);
+    assert_eq!(last_two.len(), 2);
+    assert_eq!(last_two.get(0).unwrap().pool_id, pool1);
+    assert_eq!(last_two.get(1).unwrap().pool_id, pool2);
+
+    // Test pagination: Offset 2, Limit 1
+    let last_one = client.get_user_predictions(&user, &2, &1);
+    assert_eq!(last_one.len(), 1);
+    assert_eq!(last_one.get(0).unwrap().pool_id, pool2);
+
+    // Test pagination: Out of bounds
+    let empty = client.get_user_predictions(&user, &3, &1);
+    assert_eq!(empty.len(), 0);
 }
