@@ -2,7 +2,10 @@
 #![allow(deprecated)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, token, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token, Env,
+};
 
 #[test]
 fn test_claim_winnings() {
@@ -47,6 +50,9 @@ fn test_claim_winnings() {
     assert_eq!(token.balance(&contract_id), 200);
 
     // Resolve Pool - Outcome 1 wins
+    // Resolve Pool - Outcome 1 wins
+    // Move time forward to end_time
+    env.ledger().set_timestamp(100);
     client.resolve_pool(&pool_id, &1);
 
     // User 1 Claims
@@ -84,6 +90,7 @@ fn test_double_claim() {
     client.init(&treasury, &fee_bps);
     let pool_id = client.create_pool(&100, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
+    env.ledger().set_timestamp(100);
     client.resolve_pool(&pool_id, &1);
 
     client.claim_winnings(&user1, &pool_id);
