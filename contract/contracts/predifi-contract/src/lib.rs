@@ -88,7 +88,10 @@ impl PredifiContract {
     pub fn set_fee_bps(env: Env, fee_bps: u32) {
         // Add access control as needed
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
-        env.events().publish(("set_fee_bps",), (fee_bps,));
+        SetFeeBpsEvent {
+            new_fee_bps: fee_bps,
+        }
+        .publish(&env);
     }
 
     pub fn get_fee_bps(env: Env) -> u32 {
@@ -98,7 +101,10 @@ impl PredifiContract {
     pub fn set_treasury(env: Env, treasury: Address) {
         // Add access control as needed
         env.storage().instance().set(&DataKey::Treasury, &treasury);
-        env.events().publish(("set_treasury",), (treasury.clone(),));
+        SetTreasuryEvent {
+            new_treasury: treasury.clone(),
+        }
+        .publish(&env);
     }
 
     pub fn get_treasury(env: Env) -> Address {
@@ -146,7 +152,7 @@ impl PredifiContract {
             env.storage()
                 .instance()
                 .set(&DataKey::CollectedFees(pool_id), &fee);
-            env.events().publish(("fee_collected", pool_id), (fee,));
+            FeeCollectedEvent { pool_id, fee }.publish(&env);
         }
     }
 
@@ -292,8 +298,11 @@ impl PredifiContract {
                         .expect("Treasury not set");
                     token_client.transfer(&env.current_contract_address(), &treasury, &total_fee);
                     env.storage().instance().set(&fee_paid_key, &true);
-                    env.events()
-                        .publish(("fee_distributed", pool_id), (total_fee,));
+                    FeeDistributedEvent {
+                        pool_id,
+                        fee: total_fee,
+                    }
+                    .publish(&env);
                 }
             }
         }
@@ -354,3 +363,5 @@ impl PredifiContract {
 }
 
 mod test;
+
+// stellar contract build

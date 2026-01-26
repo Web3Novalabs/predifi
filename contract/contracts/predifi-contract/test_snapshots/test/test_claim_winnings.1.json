@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 6,
     "nonce": 0,
     "mux_id": 0
   },
@@ -316,6 +316,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "FeeBps"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u32": 0
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "HasClaimed"
                             },
                             {
@@ -502,6 +514,18 @@
                               }
                             }
                           ]
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "Treasury"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                         }
                       },
                       {
