@@ -1,0 +1,179 @@
+use soroban_sdk::contracterror;
+
+/// Global error enum for PrediFi smart contracts.
+///  The error type covers all cases across Predifi contracts
+/// Using Gap based numbering so other errors can be added without renumbering or breaking existing ones
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum PrediFiError {
+    // Initialization & Configuration Errors (1-5)
+    /// contract has not been initialized yet.
+    NotInitialized = 1,
+
+    /// contract has already been initialized.
+    AlreadyInitialized = 2,
+
+    // Authorization & Access Control Errors (10-15)
+    /// The caller is not authorized to perform this action.
+    Unauthorized = 10,
+
+    /// The specified role was not found.
+    RoleNotFound = 11,
+
+    /// The caller does not have the required permissions.
+    InsufficientPermissions = 12,
+
+    // Pool State Errors (20-30)
+    /// The specified pool was not found.
+    PoolNotFound = 20,
+
+    /// The pool has already been resolved.
+    PoolAlreadyResolved = 21,
+
+    /// The pool has not been resolved yet.
+    PoolNotResolved = 22,
+
+    /// The pool has already expired.
+    PoolExpired = 23,
+
+    /// The pool has not expired yet.
+    PoolNotExpired = 24,
+
+    /// The pool is not in a valid state for this operation.
+    InvalidPoolState = 25,
+
+    /// The outcome value is invalid.
+    InvalidOutcome = 26,
+
+    /// The resolution window has expired (too late to resolve).
+    ResolutionWindowExpired = 27,
+
+    // Prediction & Betting Errors (40-50)
+    /// The user has no prediction for this pool.
+    PredictionNotFound = 40,
+
+    /// The user has already placed a prediction on this pool.
+    PredictionAlreadyExists = 41,
+
+    /// The prediction amount is invalid (e.g., zero or negative).
+    InvalidPredictionAmount = 42,
+
+    /// Cannot place prediction after pool end time.
+    PredictionTooLate = 43,
+
+    /// The user has insufficient balance for this prediction.
+    InsufficientBalance = 44,
+
+    // Claiming & Reward Errors (60-70)
+    /// The user has already claimed winnings for this pool.
+    AlreadyClaimed = 60,
+
+    /// The user did not win this pool.
+    NotAWinner = 61,
+
+    /// Critical error: winning stake is zero but should not be.
+    WinningStakeZero = 62,
+
+    // Timestamp & Time Validation Errors (80-85)
+    /// The provided timestamp is invalid.
+    InvalidTimestamp = 80,
+
+    /// The end time must be in the future.
+    EndTimeMustBeFuture = 81,
+
+    /// The end time is too far in the future.
+    EndTimeTooFar = 82,
+
+    // Data & Validation Errors (90-100)
+    /// The provided data is invalid.
+    InvalidData = 90,
+
+    /// The provided address is invalid.
+    InvalidAddress = 91,
+
+    /// The provided token address is invalid.
+    InvalidToken = 92,
+
+    /// The pagination offset is out of bounds.
+    InvalidOffset = 93,
+
+    /// The pagination limit is invalid (e.g., zero or too large).
+    InvalidLimit = 94,
+
+    // Arithmetic & Calculation Errors (110-115)
+    /// An arithmetic overflow occurred.
+    ArithmeticOverflow = 110,
+
+    /// An arithmetic underflow occurred.
+    ArithmeticUnderflow = 111,
+
+    /// Division by zero attempted.
+    DivisionByZero = 112,
+
+    // Storage & State Errors (120-125)
+    /// The storage key was not found.
+    StorageKeyNotFound = 120,
+
+    /// Storage is corrupted or in an invalid state.
+    StorageCorrupted = 121,
+}
+
+impl PrediFiError {
+    /// Returns a human-readable description of the error
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            // Initialization & Configuration
+            PrediFiError::NotInitialized => "Contract not initialized",
+            PrediFiError::AlreadyInitialized => "Contract already initialized",
+
+            // Authorization & Access Control
+            PrediFiError::Unauthorized => "Unauthorized access",
+            PrediFiError::RoleNotFound => "Role not found",
+            PrediFiError::InsufficientPermissions => "Insufficient permissions",
+
+            // Pool State
+            PrediFiError::PoolNotFound => "Pool not found",
+            PrediFiError::PoolAlreadyResolved => "Pool already resolved",
+            PrediFiError::PoolNotResolved => "Pool not resolved",
+            PrediFiError::PoolExpired => "Pool has expired",
+            PrediFiError::PoolNotExpired => "Pool has not expired",
+            PrediFiError::InvalidPoolState => "Invalid pool state",
+            PrediFiError::InvalidOutcome => "Invalid outcome",
+            PrediFiError::ResolutionWindowExpired => "Resolution window has expired",
+
+            // Prediction & Betting
+            PrediFiError::PredictionNotFound => "Prediction not found",
+            PrediFiError::PredictionAlreadyExists => "Prediction already exists",
+            PrediFiError::InvalidPredictionAmount => "Invalid prediction amount",
+            PrediFiError::PredictionTooLate => "Cannot predict after pool end time",
+            PrediFiError::InsufficientBalance => "Insufficient balance",
+
+            // Claiming & Rewards
+            PrediFiError::AlreadyClaimed => "Already claimed",
+            PrediFiError::NotAWinner => "User did not win",
+            PrediFiError::WinningStakeZero => "Critical: winning stake is zero",
+
+            // Timestamp & Time Validation
+            PrediFiError::InvalidTimestamp => "Invalid timestamp",
+            PrediFiError::EndTimeMustBeFuture => "End time must be in the future",
+            PrediFiError::EndTimeTooFar => "End time too far in the future",
+
+            // Data & Validation
+            PrediFiError::InvalidData => "Invalid data",
+            PrediFiError::InvalidAddress => "Invalid address",
+            PrediFiError::InvalidToken => "Invalid token",
+            PrediFiError::InvalidOffset => "Invalid offset",
+            PrediFiError::InvalidLimit => "Invalid limit",
+
+            // Arithmetic & Calculation
+            PrediFiError::ArithmeticOverflow => "Arithmetic overflow",
+            PrediFiError::ArithmeticUnderflow => "Arithmetic underflow",
+            PrediFiError::DivisionByZero => "Division by zero",
+
+            // Storage & State
+            PrediFiError::StorageKeyNotFound => "Storage key not found",
+            PrediFiError::StorageCorrupted => "Storage corrupted",
+        }
+    }
+}
