@@ -1,5 +1,27 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
+use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
+// Event structs for contract events
+#[contractevent]
+pub struct SetFeeBpsEvent {
+    pub new_fee_bps: u32,
+}
+
+#[contractevent]
+pub struct SetTreasuryEvent {
+    pub new_treasury: Address,
+}
+
+#[contractevent]
+pub struct FeeCollectedEvent {
+    pub pool_id: u64,
+    pub fee: i128,
+}
+
+#[contractevent]
+pub struct FeeDistributedEvent {
+    pub pool_id: u64,
+    pub fee: i128,
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -32,6 +54,9 @@ pub enum DataKey {
     OutcomeStake(u64, u32),   // PoolId, Outcome -> Total stake for this outcome
     UserPredictionCount(Address),
     UserPredictionIndex(Address, u32), // User, Index -> PoolId
+    FeeBps,                            // Fee in basis points (1/100 of a percent)
+    Treasury,                          // Protocol treasury address
+    CollectedFees(u64),                // PoolId -> Collected fee amount
 }
 
 #[contracttype]
@@ -46,10 +71,41 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
-    pub fn init(env: Env) {
+    pub fn init(env: Env, treasury: Address, fee_bps: u32) {
+        // Only set if not already initialized
         if !env.storage().instance().has(&DataKey::PoolIdCounter) {
             env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
         }
+        if !env.storage().instance().has(&DataKey::FeeBps) {
+            env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+        }
+        if !env.storage().instance().has(&DataKey::Treasury) {
+            env.storage().instance().set(&DataKey::Treasury, &treasury);
+        }
+    }
+
+    // Set fee (basis points, e.g. 100 = 1%)
+    pub fn set_fee_bps(env: Env, fee_bps: u32) {
+        // Add access control as needed
+        env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+        env.events().publish(("set_fee_bps",), (fee_bps,));
+    }
+
+    pub fn get_fee_bps(env: Env) -> u32 {
+        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+    }
+
+    pub fn set_treasury(env: Env, treasury: Address) {
+        // Add access control as needed
+        env.storage().instance().set(&DataKey::Treasury, &treasury);
+        env.events().publish(("set_treasury",), (treasury.clone(),));
+    }
+
+    pub fn get_treasury(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Treasury)
+            .expect("Treasury not set")
     }
 
     pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
@@ -69,6 +125,7 @@ impl PredifiContract {
         env.storage()
             .instance()
             .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+        // No fee collected at creation, but could emit event if needed
         pool_id
     }
 
@@ -81,6 +138,16 @@ impl PredifiContract {
         pool.resolved = true;
         pool.outcome = outcome;
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+
+        // Calculate and store fee for this pool
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
+        if fee_bps > 0 && pool.total_stake > 0 {
+            let fee = (pool.total_stake * (fee_bps as i128)) / 10_000;
+            env.storage()
+                .instance()
+                .set(&DataKey::CollectedFees(pool_id), &fee);
+            env.events().publish(("fee_collected", pool_id), (fee,));
+        }
     }
 
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
@@ -179,22 +246,59 @@ impl PredifiContract {
             panic!("Critical error: winning stake is 0");
         }
 
-        let winnings = (prediction.amount * pool.total_stake) / winning_outcome_stake;
+        let gross_winnings = (prediction.amount * pool.total_stake) / winning_outcome_stake;
+        // Deduct fee proportionally from winnings
+        let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
+        let mut fee_share = 0i128;
+        if fee_bps > 0 && pool.total_stake > 0 {
+            let total_fee: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::CollectedFees(pool_id))
+                .unwrap_or(0);
+            // User's share of fee = (user's gross winnings / total pool stake) * total_fee
+            fee_share = (gross_winnings * total_fee) / pool.total_stake;
+        }
+        let net_winnings = gross_winnings - fee_share;
 
-        // 6. Transfer winnings
+        // 6. Transfer net winnings
         let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&env.current_contract_address(), &user, &winnings);
+        token_client.transfer(&env.current_contract_address(), &user, &net_winnings);
 
         // 7. Update claim status
         env.storage()
             .instance()
             .set(&DataKey::HasClaimed(user.clone(), pool_id), &true);
 
-        // 8. Emit event
-        env.events()
-            .publish((Symbol::new(&env, "claim"), user, pool_id), winnings);
+        // 8. Emit event (still using legacy for claim, or add #[contractevent] if needed)
+        // env.events().publish((Symbol::new(&env, "claim"), user.clone(), pool_id), net_winnings);
 
-        winnings
+        // 9. On first claim, transfer fee to treasury
+        if fee_bps > 0 && pool.total_stake > 0 {
+            let total_fee: i128 = env
+                .storage()
+                .instance()
+                .get(&DataKey::CollectedFees(pool_id))
+                .unwrap_or(0);
+            if total_fee > 0 {
+                // Use HasClaimed for a special address to mark fee paid
+                let marker_addr = env.current_contract_address();
+                let fee_paid_key = DataKey::HasClaimed(marker_addr, pool_id);
+                if !env.storage().instance().has(&fee_paid_key) {
+                    let treasury: Address = env
+                        .storage()
+                        .instance()
+                        .get(&DataKey::Treasury)
+                        .expect("Treasury not set");
+                    token_client.transfer(&env.current_contract_address(), &treasury, &total_fee);
+                    env.storage().instance().set(&fee_paid_key, &true);
+                    env.events()
+                        .publish(("fee_distributed", pool_id), (total_fee,));
+                }
+            }
+        }
+
+        net_winnings
     }
 
     pub fn get_user_predictions(
