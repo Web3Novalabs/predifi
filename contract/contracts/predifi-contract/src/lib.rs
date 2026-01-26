@@ -31,6 +31,8 @@ pub struct Pool {
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    pub cancelled: bool,
+    pub admin: Address,
 }
 
 #[contracttype]
@@ -54,6 +56,9 @@ pub enum DataKey {
     OutcomeStake(u64, u32),   // PoolId, Outcome -> Total stake for this outcome
     UserPredictionCount(Address),
     UserPredictionIndex(Address, u32), // User, Index -> PoolId
+    PoolUserCount(u64),                // PoolId -> number of unique users
+    PoolUserIndex(u64, u32),           // PoolId, index -> Address
+    Admin,
     FeeBps,                            // Fee in basis points (1/100 of a percent)
     Treasury,                          // Protocol treasury address
     CollectedFees(u64),                // PoolId -> Collected fee amount
@@ -69,8 +74,30 @@ pub struct Prediction {
 #[contract]
 pub struct PredifiContract;
 
+impl PredifiContract {
+    fn get_admin(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin not set")
+    }
+
+    fn require_admin(env: &Env) -> Address {
+        let admin = Self::get_admin(env);
+        admin.require_auth();
+        admin
+    }
+
+    fn guard_pool_not_final(pool: &Pool) {
+        if pool.cancelled || pool.resolved {
+            panic!("Pool already finalized");
+        }
+    }
+}
+
 #[contractimpl]
 impl PredifiContract {
+
     pub fn init(env: Env, treasury: Address, fee_bps: u32) {
         // Only set if not already initialized
         if !env.storage().instance().has(&DataKey::PoolIdCounter) {
@@ -115,6 +142,8 @@ impl PredifiContract {
     }
 
     pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
+        let admin = Self::require_admin(&env);
+
         let pool_id: u64 = env
             .storage()
             .instance()
@@ -126,6 +155,8 @@ impl PredifiContract {
             outcome: 0,
             total_stake: 0,
             token,
+            cancelled: false,
+            admin,
         };
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
         env.storage()
@@ -136,11 +167,16 @@ impl PredifiContract {
     }
 
     pub fn resolve_pool(env: Env, pool_id: u64, outcome: u32) {
+        let _admin = Self::require_admin(&env);
+
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
             .unwrap();
+
+        Self::guard_pool_not_final(&pool);
+
         pool.resolved = true;
         pool.outcome = outcome;
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
@@ -164,30 +200,48 @@ impl PredifiContract {
             .get(&DataKey::Pool(pool_id))
             .unwrap();
 
-        // Transfer tokens to contract
-        // Transfer tokens to contract
+        Self::guard_pool_not_final(&pool);
+
         let token_client = token::Client::new(&env, &pool.token);
         let contract_addr = env.current_contract_address();
         token_client.transfer(&user, &contract_addr, &amount);
 
-        // Record prediction
-        let prediction = Prediction { amount, outcome };
+        let mut prediction: Prediction = env
+            .storage()
+            .instance()
+            .get(&DataKey::Prediction(user.clone(), pool_id))
+            .unwrap_or(Prediction { amount: 0, outcome });
+
+        if prediction.amount == 0 {
+            let pool_user_count: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::PoolUserCount(pool_id))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&DataKey::PoolUserIndex(pool_id, pool_user_count), &user);
+            env.storage()
+                .instance()
+                .set(&DataKey::PoolUserCount(pool_id), &(pool_user_count + 1));
+        } else if prediction.outcome != outcome {
+            panic!("Cannot change prediction outcome");
+        }
+
+        prediction.amount += amount;
         env.storage()
             .instance()
             .set(&DataKey::Prediction(user.clone(), pool_id), &prediction);
 
-        // Update total pool stake
         pool.total_stake += amount;
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
 
-        // Update stake specific to this outcome
         let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
         let current_outcome_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
         env.storage()
             .instance()
             .set(&outcome_key, &(current_outcome_stake + amount));
 
-        // Index user's prediction for pagination
         let count: u32 = env
             .storage()
             .instance()
@@ -205,17 +259,19 @@ impl PredifiContract {
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> i128 {
         user.require_auth();
 
-        // 1. Validate pool exists and is resolved
         let pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
             .expect("Pool not found");
+
+        if pool.cancelled {
+            panic!("Pool cancelled");
+        }
         if !pool.resolved {
             panic!("Pool not resolved");
         }
 
-        // 2. Prevent double claiming
         if env
             .storage()
             .instance()
@@ -224,31 +280,20 @@ impl PredifiContract {
             panic!("Already claimed");
         }
 
-        // 3. Get user prediction
         let prediction: Prediction = env
             .storage()
             .instance()
             .get(&DataKey::Prediction(user.clone(), pool_id))
             .expect("No prediction found");
 
-        // 4. Check if user won
         if prediction.outcome != pool.outcome {
-            // User lost. No winnings.
-            // We could revert or return 0. Returning 0 is safer but revert is clearer for "claim" action.
-            // Let's return 0 to denote "nothing to claim" without erroring if they just call it?
-            // But usually "claim" implies entitlement. Let's return 0 for now but mark as claimed to prevent re-entrancy attacks or spam?
-            // Actually if they lost, they have nothing to claim.
             return 0;
         }
 
-        // 5. Calculate winnings
-        // Share = (User Stake / Total Winning Stake) * Total Pool Stake
-        // Share = (User Stake / Total Winning Stake) * Total Pool Stake
         let outcome_key = DataKey::OutcomeStake(pool_id, pool.outcome);
         let winning_outcome_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
 
         if winning_outcome_stake == 0 {
-            // Should not happen if prediction.outcome == pool.outcome and user has stake
             panic!("Critical error: winning stake is 0");
         }
 
@@ -267,15 +312,18 @@ impl PredifiContract {
         }
         let net_winnings = gross_winnings - fee_share;
 
-        // 6. Transfer net winnings
+
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &net_winnings);
 
-        // 7. Update claim status
         env.storage()
             .instance()
             .set(&DataKey::HasClaimed(user.clone(), pool_id), &true);
 
+        env.events().publish(
+            (Symbol::new(&env, "claim"), user.clone(), pool_id),
+            winnings,
+        );
         // 8. Emit event (still using legacy for claim, or add #[contractevent] if needed)
         // env.events().publish((Symbol::new(&env, "claim"), user.clone(), pool_id), net_winnings);
 
@@ -308,6 +356,65 @@ impl PredifiContract {
         }
 
         net_winnings
+    }
+
+    #[allow(deprecated)]
+    pub fn cancel_pool(env: Env, pool_id: u64) {
+        let admin = Self::require_admin(&env);
+
+        let mut pool: Pool = env
+            .storage()
+            .instance()
+            .get(&DataKey::Pool(pool_id))
+            .expect("Pool not found");
+
+        Self::guard_pool_not_final(&pool);
+
+        pool.cancelled = true;
+        env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+
+        let pool_user_count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PoolUserCount(pool_id))
+            .unwrap_or(0);
+
+        let token_client = token::Client::new(&env, &pool.token);
+        let contract_addr = env.current_contract_address();
+
+        for i in 0..pool_user_count {
+            let user: Address = env
+                .storage()
+                .instance()
+                .get(&DataKey::PoolUserIndex(pool_id, i))
+                .expect("User index missing");
+
+            let prediction: Option<Prediction> = env
+                .storage()
+                .instance()
+                .get(&DataKey::Prediction(user.clone(), pool_id));
+
+            if let Some(pred) = prediction {
+                if pred.amount > 0 {
+                    token_client.transfer(&contract_addr, &user, &pred.amount);
+
+                    env.storage().instance().set(
+                        &DataKey::Prediction(user.clone(), pool_id),
+                        &Prediction {
+                            amount: 0,
+                            outcome: pred.outcome,
+                        },
+                    );
+                }
+            }
+        }
+
+        pool.total_stake = 0;
+        env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+
+        let topic = (Symbol::new(&env, "pool_cancel"), pool_id);
+        let data = (admin, env.ledger().timestamp());
+        env.events().publish(topic, data);
     }
 
     pub fn get_user_predictions(
