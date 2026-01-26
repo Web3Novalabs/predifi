@@ -1,8 +1,6 @@
 #![no_std]
 use predifi_errors::PrediFiError;
-use soroban_sdk::{
-    contract, contractevent, contractimpl, contracttype, token, Address, Env,
-};
+use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
 
 const RESOLUTION_WINDOW: u64 = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -165,7 +163,7 @@ impl PredifiContract {
             .instance()
             .get(&DataKey::PoolIdCounter)
             .unwrap_or(0);
-        
+
         let pool = Pool {
             end_time,
             resolved: false,
@@ -173,12 +171,12 @@ impl PredifiContract {
             total_stake: 0,
             token,
         };
-        
+
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
         env.storage()
             .instance()
             .set(&DataKey::PoolIdCounter, &(pool_id + 1));
-        
+
         Ok(pool_id)
     }
 
@@ -228,14 +226,14 @@ impl PredifiContract {
                 .checked_mul(fee_bps as i128)
                 .and_then(|v| v.checked_div(10_000))
                 .ok_or(PrediFiError::ArithmeticOverflow)?;
-            
+
             env.storage()
                 .instance()
                 .set(&DataKey::CollectedFees(pool_id), &fee);
-            
+
             FeeCollectedEvent { pool_id, fee }.publish(&env);
         }
-        
+
         Ok(())
     }
 
@@ -409,14 +407,14 @@ impl PredifiContract {
         // 6. Deduct fee proportionally from winnings
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0);
         let mut fee_share = 0i128;
-        
+
         if fee_bps > 0 && pool.total_stake > 0 {
             let total_fee: i128 = env
                 .storage()
                 .instance()
                 .get(&DataKey::CollectedFees(pool_id))
                 .unwrap_or(0);
-            
+
             // User's share of fee = (user's gross winnings / total pool stake) * total_fee
             fee_share = gross_winnings
                 .checked_mul(total_fee)
@@ -424,7 +422,7 @@ impl PredifiContract {
                 .checked_div(pool.total_stake)
                 .ok_or(PrediFiError::DivisionByZero)?;
         }
-        
+
         let net_winnings = gross_winnings
             .checked_sub(fee_share)
             .ok_or(PrediFiError::ArithmeticOverflow)?;
@@ -445,22 +443,22 @@ impl PredifiContract {
                 .instance()
                 .get(&DataKey::CollectedFees(pool_id))
                 .unwrap_or(0);
-            
+
             if total_fee > 0 {
                 // Use a marker to track if fee has been distributed
                 let marker_addr = env.current_contract_address();
                 let fee_paid_key = DataKey::HasClaimed(marker_addr, pool_id);
-                
+
                 if !env.storage().instance().has(&fee_paid_key) {
                     let treasury: Address = env
                         .storage()
                         .instance()
                         .get(&DataKey::Treasury)
                         .expect("Treasury not set");
-                    
+
                     token_client.transfer(&env.current_contract_address(), &treasury, &total_fee);
                     env.storage().instance().set(&fee_paid_key, &true);
-                    
+
                     FeeDistributedEvent {
                         pool_id,
                         fee: total_fee,
@@ -505,7 +503,7 @@ impl PredifiContract {
             .unwrap_or(0);
 
         let mut results = soroban_sdk::Vec::new(&env);
-        
+
         if offset >= count {
             return Ok(results);
         }
