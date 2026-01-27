@@ -11,7 +11,7 @@ pub mod Predifi {
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
-        UNAUTHORIZED, INVALID_ROLE, SELF_REVOKE_ERROR, ROLE_NOT_ASSIGNED,
+        INVALID_ROLE, ROLE_NOT_ASSIGNED, SELF_REVOKE_ERROR, UNAUTHORIZED,
     };
     // oz imports
 
@@ -278,7 +278,7 @@ pub mod Predifi {
             ref self: ContractState,
             role: felt252,
             new_account: ContractAddress,
-            old_account: ContractAddress
+            old_account: ContractAddress,
         ) {
             let caller = get_caller_address();
             assert(self.roles.read(('ADMIN', caller)), UNAUTHORIZED);
@@ -286,8 +286,14 @@ pub mod Predifi {
 
             self.roles.write((role, new_account), true);
             self.roles.write((role, old_account), false);
-            self.emit(Event::RoleGranted(RoleGranted { role, account: new_account, sender: caller }));
-            self.emit(Event::RoleRevoked(RoleRevoked { role, account: old_account, sender: caller }));
+            self
+                .emit(
+                    Event::RoleGranted(RoleGranted { role, account: new_account, sender: caller }),
+                );
+            self
+                .emit(
+                    Event::RoleRevoked(RoleRevoked { role, account: old_account, sender: caller }),
+                );
         }
 
         fn has_role(self: @ContractState, role: felt252, account: ContractAddress) -> bool {

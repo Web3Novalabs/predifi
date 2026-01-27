@@ -35,7 +35,12 @@ pub trait IPredifi<TContractState> {
     // Role Management
     fn assign_role(ref self: TContractState, role: felt252, account: ContractAddress);
     fn revoke_role(ref self: TContractState, role: felt252, account: ContractAddress);
-    fn transfer_role(ref self: TContractState, role: felt252, new_account: ContractAddress, old_account: ContractAddress);
+    fn transfer_role(
+        ref self: TContractState,
+        role: felt252,
+        new_account: ContractAddress,
+        old_account: ContractAddress,
+    );
     fn has_role(self: @TContractState, role: felt252, account: ContractAddress) -> bool;
 }
 
