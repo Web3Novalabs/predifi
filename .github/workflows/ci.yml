@@ -1,0 +1,44 @@
+name: Smart Contract CI
+
+#trigger on Pull Requests to the 'contract' branch
+on:
+    push:
+        branches: [ main, contract ]
+    pull_request:
+        branches: [ main, contract ]
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    contract_checks:
+        name: Contract Checks
+        runs-on: ubuntu-latest
+        
+        defaults:
+            run:
+                working-directory: ./contract
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v3
+            - name: Install Rust
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                targets: wasm32-unknown-unknown
+                components: clippy, rustfmt
+            - name: Cache Cargo Dependencies
+              uses: actions/cache@v3
+              with:
+                path: |
+                  ~/.cargo/registry
+                  ~/.cargo/git
+                  contract/target
+                key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock') }}
+            - name: Check Formatting
+              run: cargo fmt --all -- --check
+            - name: Lint with Clippy
+              run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+            - name: Build Contract (WASM)
+              run: cargo build --target wasm32-unknown-unknown --release
+            - name: Run Tests
+              run: cargo test

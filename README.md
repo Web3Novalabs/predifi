@@ -1,117 +1,101 @@
-# PrediFi - Decentralized outcome prediction protocol (on-chain prediction platform )
+# PrediFi - Decentralized Outcome Prediction Protocol (Stellar/Soroban)
+
+PrediFi is a decentralized prediction protocol built on the **Stellar network** using **Soroban smart contracts**. In a trustless, transparent, and secure environment, it allows users to predict future outcomes across various fields, including sports, finance, and global events. By utilizing Stellar's fast and low-cost technology, PrediFi ensures that all predictions and their results are verifiable on-chain and immutable.
 
 Telegram Community: [here](https://t.me/predifi_onchain_build/1)
-## Project Overview:
-PrediFi is a decentralized prediction protocol built on StarkNet. In a trustless, transparent, and secure environment, it allows users to predict future outcomes across various fields, including sports, finance, and global events. By utilizing starknet technology, PrediFi ensures that all predictions and their results are verifiable onchain and immutable, thus eliminating the need for intermediaries.
 
-PrediFi is a groundbreaking decentralized platform designed to empower individuals, influencers, and communities to enter the dynamic world of prediction markets. Leveraging the transformative power of blockchain technology, PrediFi allows anyone to establish custom prediction markets focused on any event imaginable. This innovative approach provides a lively, engaging, and rewarding way to foster interaction within your community while monetizing the buzz and excitement surrounding trending topics.
+## Project Overview
 
-In our fast-paced digital age, conversations about predictions are captivating; they span a wide range of subjects, from sports matchups and political elections to the latest pop culture phenomena. Imagine if you could transform those engaging discussions into tangible rewards! With PrediFi, you have the opportunity to create markets where individuals can wager on the outcomes of these events, turning their insights and forecasts into real-world returns.
+PrediFi is designed to empower individuals, influencers, and communities to enter the dynamic world of prediction markets. Leveraging the power of blockchain, PrediFi allows anyone to establish custom prediction markets focused on any event imaginable.
 
-PrediFi makes it easy to create prediction pools for a wide range of cultural and local events. You can set up pools for major sports championships and awards shows, but that's just the beginning. It's also perfect for engaging with the latest viral trends, community events, environmental happenings, and anything else that sparks buzz in your area. Whether it’s predicting the outcome of a local music festival or the next viral sensation.
+## Project Structure
 
-## Development:
+The repository is organized into two main workspaces:
 
-Requirements:
-- Rust
-- Cairo
-- Starknet foundry
-- Node
-- Pnpm
+- `contract/`: Contains the Stellar/Soroban smart contracts (Rust).
+- `frontend/`: Contains the Next.js web application (TypeScript).
 
-## Installation Guide:
+### Smart Contracts (`contract/`)
 
-Step 1:
+The smart contract logic is written in **Rust** for the **Soroban** platform.
 
-1. Fork the repo
+- `contracts/`: Directory containing individual contract crates.
+  - `hello-world/`: Initial template contract (to be replaced/expanded with PrediFi logic).
 
-2. Clone the forked repo to your local machine 
-  ``` bash
-  git clone https://github.com/your-user-name/auto-swap
-  ```
+### Frontend (`frontend/`)
 
-3. Setup contract:
+The user interface is built with **Next.js**, **Tailwind CSS**, and **TypeScript**.
 
-  ```
-  cd contracts
-  ```
-  
-  // Install asdf scarb and starknet foundry:
-  
-  ``` bash
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.starkup.dev | sh
-  ```
-  
-  // Method 2:
-  
-  Install asdf and install scarb, and starknet foundry: https://foundry-rs.github.io/starknet-foundry/getting-started/installation.html
+## Development
 
-4. Add development tools
-  ``` bash
-  asdf set --home scarb 2.9.2
-  
-  asdf set --home starknet-foundry 0.36.0
-  
-  ```
-   
-5. Ensure installed properly
+### Prerequisites
 
- ``` bash
- snforge --version
+- **Rust**: [Install Rust](https://www.rust-lang.org/tools/install)
+- **Soroban CLI**: [Install Soroban CLI](https://soroban.stellar.org/docs/getting-started/setup#install-the-soroban-cli)
+- **Node.js**: [Install Node.js](https://nodejs.org/)
+- **pnpm**: [Install pnpm](https://pnpm.io/installation)
 
- scarb --version
- ```
+### Installation & Setup
 
-6. Build
-``` bash
-scarb build
-```
-7. Test
-``` bash
-snforge test
-```
+1. **Clone the repository:**
 
-# Contributing
+   ```bash
+   git clone https://github.com/Web3Novalabs/predifi.git
+   cd predifi
+   ```
+
+2. **Smart Contracts:**
+
+   Navigate to the contract directory:
+
+   ```bash
+   cd contract
+   ```
+
+   Build the contracts:
+
+   ```bash
+   soroban contract build
+   ```
+
+   Run tests:
+
+   ```bash
+   cargo test
+   ```
+
+3. **Frontend:**
+
+   Navigate to the frontend directory:
+
+   ```bash
+   cd ../frontend
+   ```
+
+   Install dependencies:
+
+   ```bash
+   pnpm install
+   ```
+
+   Run the development server:
+
+   ```bash
+   pnpm dev
+   ```
+
+   Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+## Contributing
 
 We welcome contributions! Please follow these steps:
 
-## Getting Started
+1. Fork the repository.
+2. Create your feature branch (`git checkout -b feature/your-feature-name`).
+3. Commit your changes with meaningful messages.
+4. Test your changes thoroughly.
+5. Submit a Pull Request.
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/your-feature-name`)
-3. Commit your changes with meaningful messages (`git commit -m 'feat: add new capability'`)
-4. Test your changes thoroughly before submission
+## License
 
-## Testing Requirements
-
-Before submitting your PR:
-1. Run `bash test_local.sh` to ensure compatibility with our workflow actions
-2. Set up your environment variable: `export RPC_URL=https://api.cartridge.gg/x/starknet/mainnet`
-3. All tests must pass locally before proceeding
-
-## Pull Request Process
-
-1. Ensure your branch is up to date with main (`git pull origin main`)
-2. Include comprehensive test cases covering your changes
-3. Update documentation to reflect your modifications
-4. Provide a detailed description in your PR explaining:
-   - The problem solved
-   - Implementation approach
-   - Any potential impacts
-5. Request review from project maintainers
-
-## Code Standards
-
-- Follow the existing code style and conventions
-- Write clean, readable, and maintainable code
-- Include comments for complex logic
-- Keep commits focused and atomic
-
-## Support
-
-Need help with your contribution? You can:
-- Open an issue in the GitHub repository
-- Join our Telegram channel for community assistance
-- Check existing documentation and discussions
-
-We aim to review all contributions promptly and appreciate your efforts to improve the project!
+[MIT](LICENSE)
