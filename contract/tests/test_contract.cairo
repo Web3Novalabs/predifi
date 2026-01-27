@@ -6,9 +6,7 @@ use snforge_std::{
     ContractClassTrait, DeclareResultTrait, declare, start_cheat_caller_address,
     start_cheat_caller_address_global, stop_cheat_caller_address, stop_cheat_caller_address_global,
 };
-use starknet::{
-    ContractAddress, get_block_timestamp,
-};
+use starknet::{ContractAddress, get_block_timestamp};
 
 fn owner() -> ContractAddress {
     'owner'.try_into().unwrap()
