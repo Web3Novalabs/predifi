@@ -20,14 +20,23 @@ const data = [
     { name: "DEC", value: 60000 },
 ];
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({
+    active,
+    payload,
+    label,
+}: {
+    active?: boolean;
+    payload?: { value: number }[];
+    label?: string | number;
+}) => {
     if (active && payload && payload.length) {
+        const value = payload[0].value ?? 0;
         return (
             <div className="bg-zinc-900 border border-white/10 p-2 rounded-lg shadow-xl">
                 <p className="text-zinc-400 text-xs mb-1">{label}</p>
                 <p className="text-white font-bold font-mono">
                     {/* Formatter for currency */}
-                    ${(payload[0].value / 1000).toFixed(0)}k
+                    ${((value as number) / 1000).toFixed(0)}k
                 </p>
             </div>
         );

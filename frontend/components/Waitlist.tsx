@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, FormEvent } from "react";
+import Link from "next/link";
 
 export default function Waitlist() {
   const [email, setEmail] = useState("");
@@ -39,7 +40,7 @@ export default function Waitlist() {
       setStatus("success");
       setName("");
       setEmail("");
-    } catch (error) {
+    } catch (_error) {
       setStatus("error");
       setErrorMessage("Something went wrong. Please try again.");
     }
@@ -132,10 +133,10 @@ export default function Waitlist() {
               </svg>
             </div>
             <h3 className="text-2xl font-bold text-white">
-              You're on the list!
+              You&apos;re on the list!
             </h3>
             <p className="text-gray-400">
-              We'll notify you when PrediFi launches. Get ready to predict!
+              We&apos;ll notify you when PrediFi launches. Get ready to predict!
             </p>
           </div>
         )}
@@ -143,12 +144,12 @@ export default function Waitlist() {
         {/* Footer */}
         <p className="mt-8 text-center text-sm text-gray-500">
           Already have an account?{" "}
-          <a
+          <Link
             href="/login"
             className="text-[#00D9D9] hover:text-[#00c4c4] font-medium transition-colors"
           >
             Sign in
-          </a>
+          </Link>
         </p>
       </div>
     </div>

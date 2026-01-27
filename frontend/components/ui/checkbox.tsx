@@ -31,7 +31,8 @@ const Checkbox = React.forwardRef<
     },
     ref
   ) => {
-    const checkboxId = id || React.useId();
+    const generatedId = React.useId();
+    const checkboxId = id ?? generatedId;
     const isIndeterminate = indeterminate && checked !== true;
 
     return (
@@ -52,8 +53,8 @@ const Checkbox = React.forwardRef<
               error
                 ? `${checkboxId}-error`
                 : helperText
-                ? `${checkboxId}-helper`
-                : undefined
+                  ? `${checkboxId}-helper`
+                  : undefined
             }
             {...props}
           >

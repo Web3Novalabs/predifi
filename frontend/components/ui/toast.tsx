@@ -54,6 +54,7 @@ const Toast = React.forwardRef<HTMLDivElement, ToastProps>(
     return (
       <div
         ref={ref}
+        data-id={id}
         className={cn(toastVariants({ variant }))}
         role="alert"
         aria-live="assertive"
