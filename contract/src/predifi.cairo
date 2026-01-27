@@ -11,7 +11,7 @@ pub mod Predifi {
     use starknet::{ContractAddress, get_block_timestamp, get_caller_address, get_contract_address};
     use crate::base::errors::Errors::{
         AMOUNT_ABOVE_MAXIMUM, AMOUNT_BELOW_MINIMUM, INACTIVE_POOL, INVALID_POOL_OPTION,
-        INVALID_ROLE, ROLE_NOT_ASSIGNED, SELF_REVOKE_ERROR, UNAUTHORIZED,
+        ROLE_NOT_ASSIGNED, SELF_REVOKE_ERROR, UNAUTHORIZED,
     };
     // oz imports
 

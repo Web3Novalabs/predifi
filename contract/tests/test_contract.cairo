@@ -1,4 +1,4 @@
-use contract::base::types::{Category, Pool, PoolDetails, Status};
+use contract::base::types::{Category, Pool};
 use contract::interfaces::ipredifi::{IPredifiDispatcher, IPredifiDispatcherTrait};
 use core::felt252;
 use core::traits::Into;
@@ -7,7 +7,7 @@ use snforge_std::{
     start_cheat_caller_address_global, stop_cheat_caller_address, stop_cheat_caller_address_global,
 };
 use starknet::{
-    ClassHash, ContractAddress, get_block_timestamp, get_caller_address, get_contract_address,
+    ContractAddress, get_block_timestamp,
 };
 
 fn owner() -> ContractAddress {
@@ -574,7 +574,7 @@ fn test_role_management() {
     contract.revoke_role('OPERATOR', user);
     stop_cheat_caller_address(contract.contract_address);
 
-    assert(!contract.has_role('OPERATOR', user), 'User should not have OPERATOR role');
+    assert(!contract.has_role('OPERATOR', user), 'User should not have role');
 }
 
 #[test]
