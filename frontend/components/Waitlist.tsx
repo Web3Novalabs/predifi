@@ -40,9 +40,10 @@ export default function Waitlist() {
       setStatus("success");
       setName("");
       setEmail("");
-    } catch (_error) {
+    } catch (error: unknown) {
       setStatus("error");
-      setErrorMessage("Something went wrong. Please try again.");
+      const message = error instanceof Error ? error.message : "Something went wrong. Please try again.";
+      setErrorMessage(message);
     }
   };
 
