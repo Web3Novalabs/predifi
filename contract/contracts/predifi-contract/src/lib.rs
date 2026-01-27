@@ -26,15 +26,24 @@ pub struct FeeDistributedEvent {
     pub pool_id: u64,
     pub fee: i128,
 }
+#[contractevent]
+pub struct PoolCreatedEvent {
+    pub pool_id: u64,
+    pub creator: Address,
+    pub end_time: u64,
+}
 
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
+    pub creator: Address, // Added for auth/tracking
     pub end_time: u64,
     pub resolved: bool,
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    pub category: soroban_sdk::Symbol,
+    pub options_count: u32, // To validate outcomes later
 }
 
 #[contracttype]
@@ -151,31 +160,60 @@ impl PredifiContract {
     ///
     /// # Errors
     /// * `EndTimeMustBeFuture` - If end_time is not in the future
-    pub fn create_pool(env: Env, end_time: u64, token: Address) -> Result<u64, PrediFiError> {
-        // Validate end_time is in the future
+    /// Create a new prediction pool.
+    pub fn create_pool(
+        env: Env,
+        creator: Address,
+        end_time: u64,
+        token: Address,
+        category: soroban_sdk::Symbol,
+        options_count: u32,
+    ) -> Result<u64, PrediFiError> {
+        // 1. Authorization
+        creator.require_auth();
+
+        // 2. Validate Parameters
         let current_time = env.ledger().timestamp();
         if end_time <= current_time {
             return Err(PrediFiError::EndTimeMustBeFuture);
         }
 
+        if options_count < 2 {
+            return Err(PrediFiError::InvalidOptionsCount);
+        }
+
+        // 3. Generate Unique ID
         let pool_id: u64 = env
             .storage()
             .instance()
             .get(&DataKey::PoolIdCounter)
             .unwrap_or(0);
 
+        // 4. Initialize Pool with ALL fields
         let pool = Pool {
+            creator: creator.clone(), // Field added here
             end_time,
             resolved: false,
             outcome: 0,
-            total_stake: 0,
             token,
+            total_stake: 0,
+            category: category.clone(), // Field added here
+            options_count,              // Field added here
         };
 
+        // 5. Save State
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
         env.storage()
             .instance()
             .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+
+        // 6. Emit Event
+        PoolCreatedEvent {
+            pool_id,
+            creator,
+            end_time,
+        }
+        .publish(&env);
 
         Ok(pool_id)
     }

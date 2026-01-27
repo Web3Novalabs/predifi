@@ -49,6 +49,9 @@ pub enum PrediFiError {
     /// The resolution window has expired (too late to resolve).
     ResolutionWindowExpired = 27,
 
+    /// The number of options provided is invalid.
+    InvalidOptionsCount = 28,
+
     // Prediction & Betting Errors (40-50)
     /// The user has no prediction for this pool.
     PredictionNotFound = 40,
@@ -141,6 +144,7 @@ impl PrediFiError {
             PrediFiError::InvalidPoolState => "Invalid pool state",
             PrediFiError::InvalidOutcome => "Invalid outcome",
             PrediFiError::ResolutionWindowExpired => "Resolution window has expired",
+            PrediFiError::InvalidOptionsCount => "Invalid options count",
 
             // Prediction & Betting
             PrediFiError::PredictionNotFound => "Prediction not found",
