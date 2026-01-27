@@ -1,5 +1,6 @@
 import React from "react";
 import { ArrowRight } from "lucide-react";
+import Image from "next/image";
 
 const featuresData = [
   {
@@ -52,11 +53,14 @@ function Features() {
               `}
             >
               {/* IMAGE */}
-              <div className="flex-shrink-0">
-                <img
+              <div className="flex-shrink-0 relative w-full max-w-[180px] md:max-w-[400px]">
+                <Image
                   src={feature.image}
-                  className="w-full max-w-[180px] md:max-w-[400px] h-auto object-contain"
+                  className="w-full h-auto object-contain"
                   alt={feature.title}
+                  width={400}
+                  height={400}
+                  style={{ width: '100%', height: 'auto' }}
                 />
               </div>
 

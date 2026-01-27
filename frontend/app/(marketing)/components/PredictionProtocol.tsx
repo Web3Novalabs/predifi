@@ -1,6 +1,8 @@
 "use client";
 import React, { useState, useRef } from "react";
 
+import Image from "next/image";
+
 // define your content and images here
 const steps = [
   {
@@ -69,12 +71,15 @@ function PredictionProtocol() {
           onTouchEnd={handleTouchEnd}
         >
           <div className="relative w-full max-w-[320px] md:max-w-none">
-            <img
+            <Image
               key={activeTab} // Key forces re-render for animation
               src={steps[activeTab].image}
               alt={steps[activeTab].title}
               className="animate-fade-in w-full h-auto md:h-[700px] object-contain drop-shadow-2xl"
               draggable={false}
+              width={500}
+              height={700}
+              style={{ width: '100%', height: 'auto' }}
             />
           </div>
         </div>
@@ -87,9 +92,8 @@ function PredictionProtocol() {
               <button
                 key={index}
                 onClick={() => setActiveTab(index)}
-                className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                  activeTab === index ? "bg-[#37B7C3] w-6" : "bg-[#FFFFFF33]"
-                }`}
+                className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${activeTab === index ? "bg-[#37B7C3] w-6" : "bg-[#FFFFFF33]"
+                  }`}
                 aria-label={`Go to slide ${index + 1}`}
               />
             ))}

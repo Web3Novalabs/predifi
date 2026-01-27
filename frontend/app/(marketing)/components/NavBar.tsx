@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import React, { useState } from "react";
+import Image from "next/image";
 import { Menu, X } from "lucide-react";
 
 function Navbar() {
@@ -14,7 +15,7 @@ function Navbar() {
       <div className="flex justify-between items-center p-5 md:px-[50px]">
         {/* LOGO */}
         <Link href="/">
-          <img src="/logo.svg" className="w-[80px] md:w-[100px]" alt="Logo" />
+          <Image src="/logo.svg" className="w-[80px] md:w-[100px] h-auto" alt="Logo" width={100} height={40} />
         </Link>
 
         {/* DESKTOP NAVIGATION (Hidden on mobile) */}
