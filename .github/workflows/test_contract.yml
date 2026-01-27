@@ -11,6 +11,12 @@ jobs:
       - uses: software-mansion/setup-scarb@v1
         with:
           scarb-version: 2.11.3
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/scarb
+          key: ${{ runner.os }}-scarb-${{ hashFiles('contract/Scarb.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-scarb-
       - name: Check cairo format
         working-directory: contract
         run: scarb fmt --check
@@ -25,6 +31,12 @@ jobs:
       - uses: software-mansion/setup-scarb@v1
         with:
           scarb-version: 2.11.2
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/scarb
+          key: ${{ runner.os }}-scarb-${{ hashFiles('contract/Scarb.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-scarb-
       - uses: foundry-rs/setup-snfoundry@v3
         with:
           starknet-foundry-version: 0.39.0
