@@ -19,6 +19,9 @@ function Navbar() {
 
         {/* DESKTOP NAVIGATION (Hidden on mobile) */}
         <div className="hidden md:flex rounded-full p-4 border-[0.5px] border-[#EBFDFF99] text-[#DDDDDD99] items-center gap-x-[60px]">
+          <Link href="/about" className="hover:text-white transition-colors">
+            ABOUT
+          </Link>
           <Link href="/features" className="hover:text-white transition-colors">
             FEATURES
           </Link>
@@ -53,6 +56,13 @@ function Navbar() {
       {/* MOBILE DROPDOWN MENU */}
       {isOpen && (
         <div className="md:hidden absolute top-full left-0 w-full bg-black border-t border-[#EBFDFF20] flex flex-col items-center py-8 space-y-6 shadow-2xl animate-in slide-in-from-top-5 fade-in duration-200">
+          <Link
+            href="/about"
+            className="text-[#DDDDDD99] text-lg hover:text-white transition-colors"
+            onClick={() => setIsOpen(false)}
+          >
+            ABOUT
+          </Link>
           <Link
             href="/features"
             className="text-[#DDDDDD99] text-lg hover:text-white transition-colors"
