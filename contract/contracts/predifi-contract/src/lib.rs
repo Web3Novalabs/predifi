@@ -34,6 +34,14 @@ pub struct PoolCreatedEvent {
     pub end_time: u64,
 }
 
+#[contractevent]
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
@@ -43,6 +51,7 @@ pub struct Pool {
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    pub min_stake: i128,
     pub category: soroban_sdk::Symbol,
     pub options_count: u32, // To validate outcomes later
 }
@@ -215,17 +224,6 @@ impl PredifiContract {
     }
 
     /// Create a new prediction pool.
-    ///
-    /// # Arguments
-    /// * `end_time` - Unix timestamp when the pool closes for predictions
-    /// * `token` - Address of the token used for staking
-    ///
-    /// # Returns
-    /// The unique ID of the created pool
-    ///
-    /// # Errors
-    /// * `EndTimeMustBeFuture` - If end_time is not in the future
-    /// Create a new prediction pool.
     pub fn create_pool(
         env: Env,
         creator: Address,
@@ -233,6 +231,7 @@ impl PredifiContract {
         token: Address,
         category: soroban_sdk::Symbol,
         options_count: u32,
+        min_stake: i128,
     ) -> Result<u64, PrediFiError> {
         // 1. Authorization
         creator.require_auth();
@@ -262,6 +261,7 @@ impl PredifiContract {
             outcome: 0,
             token,
             total_stake: 0,
+            min_stake,
             category: category.clone(), // Field added here
             options_count,              // Field added here
         };
@@ -385,16 +385,16 @@ impl PredifiContract {
 
         user.require_auth();
 
-        // Validate amount
-        if amount <= 0 {
-            return Err(PrediFiError::InvalidPredictionAmount);
-        }
-
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
             .ok_or(PrediFiError::PoolNotFound)?;
+
+        // Validate amount
+        if amount <= 0 || amount < pool.min_stake {
+            return Err(PrediFiError::InvalidPredictionAmount);
+        }
 
         // Check if pool is resolved
         if pool.resolved {
@@ -459,6 +459,14 @@ impl PredifiContract {
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionCount(user.clone()), &new_count);
+
+        PredictionPlacedEvent {
+            pool_id,
+            user,
+            amount,
+            outcome,
+        }
+        .publish(&env);
 
         Ok(())
     }
