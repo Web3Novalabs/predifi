@@ -38,7 +38,7 @@ export interface ToastProps extends VariantProps<typeof toastVariants> {
 }
 
 const Toast = React.forwardRef<HTMLDivElement, ToastProps>(
-  ({ id, variant = "info", title, description, onClose, duration = 5000 }, ref) => {
+  ({ variant = "info", title, description, onClose, duration = 5000 }, ref) => {
     const Icon = icons[variant || "info"];
 
     React.useEffect(() => {

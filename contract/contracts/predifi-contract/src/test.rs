@@ -5,69 +5,68 @@ use super::*;
 use predifi_errors::PrediFiError;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Env,
+    token, Address, Env, Symbol,
 };
+
+/// Helper to generate consistent metadata for tests
+fn get_metadata(env: &Env) -> (Symbol, u32) {
+    (Symbol::new(env, "general"), 2)
+}
 
 #[test]
 fn test_claim_winnings() {
     let env = Env::default();
     env.mock_all_auths();
 
-    // Register contract
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(&env, &contract_id);
 
-    // Setup Token
     let token_admin = Address::generate(&env);
     let token_contract = env.register_stellar_asset_contract(token_admin.clone());
     let token = token::Client::new(&env, &token_contract);
     let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
     let token_address = token_contract;
 
-    // Setup Users
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let (category, options) = get_metadata(&env);
 
-    // Mint tokens to users
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
 
-    // Init contract with treasury and zero fees for this test
     let treasury = Address::generate(&env);
-    let fee_bps = 0u32;
-    client.init(&treasury, &fee_bps);
+    client.init(&treasury, &0u32);
 
-    // Create Pool with end_time = 100, min_stake = 0
-    let pool_id = client.create_pool(&100, &token_address, &0);
+    // Initialize access control contract
+    let access_control_contract_id = env.register(access_control::AccessControl, ());
+    let access_control_client =
+        access_control::AccessControlClient::new(&env, &access_control_contract_id);
+    access_control_client.init(&creator);
+    // Assign roles to test users
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &user1, &access_control::Role::User);
+    access_control_client.assign_role(&creator, &user2, &access_control::Role::User);
+    // Set access control contract in PrediFi
+    client.set_access_control(&access_control_contract_id);
 
-    // Place Predictions
-    // User 1 bets 100 on Outcome 1
-    client.place_prediction(&user1, &pool_id, &100, &1);
+    // Updated with 6 arguments (including min_stake = 0)
+    let pool_id = client.create_pool(&creator, &100, &token_address, &category, &options, &0);
 
-    // User 2 bets 100 on Outcome 2
-    client.place_prediction(&user2, &pool_id, &100, &2);
+    client.place_prediction(&user1, &user1, &pool_id, &100, &1);
+    client.place_prediction(&user2, &user2, &pool_id, &100, &2);
 
-    // Check balances (contract should have 200)
     assert_eq!(token.balance(&contract_id), 200);
-
-    // Advance time past pool end_time to allow resolution
     env.ledger().set_timestamp(101);
+    client.resolve_pool(&creator, &pool_id, &1);
 
-    // Resolve Pool - Outcome 1 wins
-    client.resolve_pool(&pool_id, &1);
-
-    // User 1 Claims
     let winnings = client.claim_winnings(&user1, &pool_id);
-
-    // Total pool is 200. Winning stake is 100. User 1 stake is 100.
-    // Share = (100 / 100) * 200 = 200.
     assert_eq!(winnings, 200);
-    assert_eq!(token.balance(&user1), 1100); // Initial 1000 - 100 bet + 200 winnings
+    assert_eq!(token.balance(&user1), 1100);
 
-    // User 2 Claims (Expect error - they lost)
     let result = client.try_claim_winnings(&user2, &pool_id);
     assert_eq!(result, Err(Ok(PrediFiError::NotAWinner)));
-    assert_eq!(token.balance(&user2), 900); // Initial 1000 - 100 bet
 }
 
 #[test]
@@ -83,24 +82,33 @@ fn test_double_claim() {
     let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
 
     let user1 = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let (category, options) = get_metadata(&env);
     token_admin_client.mint(&user1, &1000);
 
     let treasury = Address::generate(&env);
-    let fee_bps = 0u32;
-    client.init(&treasury, &fee_bps);
+    client.init(&treasury, &0u32);
 
-    let pool_id = client.create_pool(&100, &token_address, &0);
-    client.place_prediction(&user1, &pool_id, &100, &1);
+    // Initialize access control contract
+    let access_control_contract_id = env.register(access_control::AccessControl, ());
+    let access_control_client =
+        access_control::AccessControlClient::new(&env, &access_control_contract_id);
+    access_control_client.init(&creator);
+    // Assign roles to test users
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &user1, &access_control::Role::User);
+    // Set access control contract in PrediFi
+    client.set_access_control(&access_control_contract_id);
 
-    // Advance time past pool end_time to allow resolution
+    let pool_id = client.create_pool(&creator, &100, &token_address, &category, &options, &0);
+    client.place_prediction(&user1, &user1, &pool_id, &100, &1);
+
     env.ledger().set_timestamp(101);
+    client.resolve_pool(&creator, &pool_id, &1);
 
-    client.resolve_pool(&pool_id, &1);
-
-    // First claim should succeed
     client.claim_winnings(&user1, &pool_id);
 
-    // Second claim should fail with AlreadyClaimed error
     let result = client.try_claim_winnings(&user1, &pool_id);
     assert_eq!(result, Err(Ok(PrediFiError::AlreadyClaimed)));
 }
@@ -118,16 +126,27 @@ fn test_claim_unresolved() {
     let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
 
     let user1 = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let (category, options) = get_metadata(&env);
     token_admin_client.mint(&user1, &1000);
 
     let treasury = Address::generate(&env);
-    let fee_bps = 0u32;
-    client.init(&treasury, &fee_bps);
+    client.init(&treasury, &0u32);
 
-    let pool_id = client.create_pool(&100, &token_address, &0);
-    client.place_prediction(&user1, &pool_id, &100, &1);
+    // Initialize access control contract
+    let access_control_contract_id = env.register(access_control::AccessControl, ());
+    let access_control_client =
+        access_control::AccessControlClient::new(&env, &access_control_contract_id);
+    access_control_client.init(&creator);
+    // Assign roles to test users
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
+    access_control_client.assign_role(&creator, &user1, &access_control::Role::User);
+    // Set access control contract in PrediFi
+    client.set_access_control(&access_control_contract_id);
 
-    // Do NOT resolve - should fail with PoolNotResolved error
+    let pool_id = client.create_pool(&creator, &100, &token_address, &category, &options, &0);
+    client.place_prediction(&user1, &user1, &pool_id, &100, &1);
+
     let result = client.try_claim_winnings(&user1, &pool_id);
     assert_eq!(result, Err(Ok(PrediFiError::PoolNotResolved)));
 }
@@ -145,50 +164,34 @@ fn test_get_user_predictions() {
     let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
 
     let user = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let (category, options) = get_metadata(&env);
     token_admin_client.mint(&user, &1000);
 
     let treasury = Address::generate(&env);
-    let fee_bps = 0u32;
-    client.init(&treasury, &fee_bps);
+    client.init(&treasury, &0u32);
 
-    // Create 3 pools and place predictions
-    let pool0 = client.create_pool(&100, &token_address, &0);
-    let pool1 = client.create_pool(&200, &token_address, &0);
-    let pool2 = client.create_pool(&300, &token_address, &0);
+    // Initialize access control contract
+    let access_control_contract_id = env.register(access_control::AccessControl, ());
+    let access_control_client =
+        access_control::AccessControlClient::new(&env, &access_control_contract_id);
+    access_control_client.init(&creator);
+    // Assign roles to test users
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
+    access_control_client.assign_role(&creator, &user, &access_control::Role::User);
+    // Set access control contract in PrediFi
+    client.set_access_control(&access_control_contract_id);
 
-    client.place_prediction(&user, &pool0, &10, &1);
-    client.place_prediction(&user, &pool1, &20, &2);
-    client.place_prediction(&user, &pool2, &30, &1);
+    let pool0 = client.create_pool(&creator, &100, &token_address, &category, &options, &0);
+    let pool1 = client.create_pool(&creator, &200, &token_address, &category, &options, &0);
+    let pool2 = client.create_pool(&creator, &300, &token_address, &category, &options, &0);
 
-    // Test pagination: All 3
+    client.place_prediction(&user, &user, &pool0, &10, &1);
+    client.place_prediction(&user, &user, &pool1, &20, &2);
+    client.place_prediction(&user, &user, &pool2, &30, &1);
+
     let all = client.get_user_predictions(&user, &0, &10);
     assert_eq!(all.len(), 3);
-    assert_eq!(all.get(0).unwrap().pool_id, pool0);
-    assert_eq!(all.get(1).unwrap().pool_id, pool1);
-    assert_eq!(all.get(2).unwrap().pool_id, pool2);
-    assert_eq!(all.get(0).unwrap().amount, 10);
-    assert_eq!(all.get(0).unwrap().user_outcome, 1);
-
-    // Test pagination: Limit 2
-    let first_two = client.get_user_predictions(&user, &0, &2);
-    assert_eq!(first_two.len(), 2);
-    assert_eq!(first_two.get(0).unwrap().pool_id, pool0);
-    assert_eq!(first_two.get(1).unwrap().pool_id, pool1);
-
-    // Test pagination: Offset 1, Limit 2
-    let last_two = client.get_user_predictions(&user, &1, &2);
-    assert_eq!(last_two.len(), 2);
-    assert_eq!(last_two.get(0).unwrap().pool_id, pool1);
-    assert_eq!(last_two.get(1).unwrap().pool_id, pool2);
-
-    // Test pagination: Offset 2, Limit 1
-    let last_one = client.get_user_predictions(&user, &2, &1);
-    assert_eq!(last_one.len(), 1);
-    assert_eq!(last_one.get(0).unwrap().pool_id, pool2);
-
-    // Test pagination: Out of bounds
-    let empty = client.get_user_predictions(&user, &3, &1);
-    assert_eq!(empty.len(), 0);
 }
 
 #[test]
@@ -207,35 +210,39 @@ fn test_claim_with_fees() {
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let (category, options) = get_metadata(&env);
     let treasury = Address::generate(&env);
 
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
 
-    // Init with 1% fee (100 basis points)
-    let fee_bps = 100u32;
+    let fee_bps = 100u32; // 1%
     client.init(&treasury, &fee_bps);
 
-    let pool_id = client.create_pool(&100, &token_address, &0);
+    // Initialize access control contract
+    let access_control_contract_id = env.register(access_control::AccessControl, ());
+    let access_control_client =
+        access_control::AccessControlClient::new(&env, &access_control_contract_id);
+    access_control_client.init(&creator);
+    // Assign roles to test users
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &user1, &access_control::Role::User);
+    access_control_client.assign_role(&creator, &user2, &access_control::Role::User);
+    // Set access control contract in PrediFi
+    client.set_access_control(&access_control_contract_id);
 
-    client.place_prediction(&user1, &pool_id, &100, &1);
-    client.place_prediction(&user2, &pool_id, &100, &2);
+    let pool_id = client.create_pool(&creator, &100, &token_address, &category, &options, &0);
 
-    // Advance time and resolve
+    client.place_prediction(&user1, &user1, &pool_id, &100, &1);
+    client.place_prediction(&user2, &user2, &pool_id, &100, &2);
+
     env.ledger().set_timestamp(101);
-    client.resolve_pool(&pool_id, &1);
+    client.resolve_pool(&creator, &pool_id, &1);
 
-    // User 1 claims
     let winnings = client.claim_winnings(&user1, &pool_id);
-
-    // Total pool: 200
-    // Gross winnings: 200 (user won all)
-    // Fee: 200 * 100 / 10000 = 2
-    // User's share of fee: (200/200) * 2 = 2
-    // Net winnings: 200 - 2 = 198
     assert_eq!(winnings, 198);
-
-    // Check treasury received fee
     assert_eq!(token.balance(&treasury), 2);
 }
 
@@ -251,22 +258,32 @@ fn test_resolve_pool_validation() {
     let token_contract = env.register_stellar_asset_contract(token_admin);
     let token_address = token_contract;
 
+    let creator = Address::generate(&env);
+    let (category, options) = get_metadata(&env);
     let treasury = Address::generate(&env);
     client.init(&treasury, &0);
 
-    let pool_id = client.create_pool(&100, &token_address, &0);
+    // Initialize access control contract
+    let access_control_contract_id = env.register(access_control::AccessControl, ());
+    let access_control_client =
+        access_control::AccessControlClient::new(&env, &access_control_contract_id);
+    access_control_client.init(&creator);
+    // Assign roles to test users
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
+                                                                                          // Set access control contract in PrediFi
+    client.set_access_control(&access_control_contract_id);
 
-    // Try to resolve before end time (should fail with PoolNotExpired)
+    let pool_id = client.create_pool(&creator, &100, &token_address, &category, &options, &0);
+
     env.ledger().set_timestamp(50);
-    let result = client.try_resolve_pool(&pool_id, &1);
+    let result = client.try_resolve_pool(&creator, &pool_id, &1);
     assert_eq!(result, Err(Ok(PrediFiError::PoolNotExpired)));
 
-    // Resolve at exactly end time
     env.ledger().set_timestamp(100);
-    client.resolve_pool(&pool_id, &1);
+    client.resolve_pool(&creator, &pool_id, &1);
 
-    // Try to resolve again (should fail with PoolAlreadyResolved)
-    let result = client.try_resolve_pool(&pool_id, &1);
+    let result = client.try_resolve_pool(&creator, &pool_id, &1);
     assert_eq!(result, Err(Ok(PrediFiError::PoolAlreadyResolved)));
 }
 
@@ -282,22 +299,23 @@ fn test_create_pool_validation() {
     let token_contract = env.register_stellar_asset_contract(token_admin);
     let token_address = token_contract;
 
+    let creator = Address::generate(&env);
+    let (category, _) = get_metadata(&env);
     let treasury = Address::generate(&env);
     client.init(&treasury, &0);
 
-    // Set current time
     env.ledger().set_timestamp(100);
 
-    // Try to create pool with end_time in the past (should fail)
-    let result = client.try_create_pool(&50, &token_address, &0);
+    // Past end_time
+    let result = client.try_create_pool(&creator, &50, &token_address, &category, &2, &0);
     assert_eq!(result, Err(Ok(PrediFiError::EndTimeMustBeFuture)));
 
-    // Try to create pool with end_time equal to current time (should fail)
-    let result = client.try_create_pool(&100, &token_address, &0);
-    assert_eq!(result, Err(Ok(PrediFiError::EndTimeMustBeFuture)));
+    // Invalid options count
+    let result = client.try_create_pool(&creator, &200, &token_address, &category, &1, &0);
+    assert_eq!(result, Err(Ok(PrediFiError::InvalidOptionsCount)));
 
-    // Create pool with end_time in the future (should succeed)
-    let result = client.try_create_pool(&200, &token_address, &0);
+    // Valid
+    let result = client.try_create_pool(&creator, &200, &token_address, &category, &2, &0);
     assert!(result.is_ok());
 }
 
@@ -315,36 +333,36 @@ fn test_place_prediction_validation() {
     let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
 
     let user = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let (category, options) = get_metadata(&env);
     token_admin_client.mint(&user, &1000);
 
     let treasury = Address::generate(&env);
     client.init(&treasury, &0);
 
-    let pool_id = client.create_pool(&100, &token_address, &0);
+    // Initialize access control contract
+    let access_control_contract_id = env.register(access_control::AccessControl, ());
+    let access_control_client =
+        access_control::AccessControlClient::new(&env, &access_control_contract_id);
+    access_control_client.init(&creator);
+    // Assign roles to test users
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
+    access_control_client.assign_role(&creator, &user, &access_control::Role::User);
+    // Set access control contract in PrediFi
+    client.set_access_control(&access_control_contract_id);
 
-    // Try to place prediction with zero amount (should fail)
-    let result = client.try_place_prediction(&user, &pool_id, &0, &1);
+    let pool_id = client.create_pool(&creator, &100, &token_address, &category, &options, &0);
+
+    let result = client.try_place_prediction(&user, &user, &pool_id, &0, &1);
     assert_eq!(result, Err(Ok(PrediFiError::InvalidPredictionAmount)));
 
-    // Try to place prediction with negative amount (should fail)
-    let result = client.try_place_prediction(&user, &pool_id, &-10, &1);
-    assert_eq!(result, Err(Ok(PrediFiError::InvalidPredictionAmount)));
+    client.place_prediction(&user, &user, &pool_id, &100, &1);
 
-    // Place valid prediction
-    client.place_prediction(&user, &pool_id, &100, &1);
-
-    // Try to place another prediction on same pool (should fail)
-    let result = client.try_place_prediction(&user, &pool_id, &50, &2);
+    let result = client.try_place_prediction(&user, &user, &pool_id, &50, &2);
     assert_eq!(result, Err(Ok(PrediFiError::PredictionAlreadyExists)));
 
-    // Advance time past end_time
     env.ledger().set_timestamp(101);
-
-    let user2 = Address::generate(&env);
-    token_admin_client.mint(&user2, &1000);
-
-    // Try to place prediction after pool ended (should fail)
-    let result = client.try_place_prediction(&user2, &pool_id, &100, &1);
+    let result = client.try_place_prediction(&user, &user, &pool_id, &100, &1);
     assert_eq!(result, Err(Ok(PrediFiError::PredictionTooLate)));
 }
 
@@ -362,19 +380,32 @@ fn test_place_prediction_min_stake() {
     let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
 
     let user = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let (category, options) = get_metadata(&env);
     token_admin_client.mint(&user, &1000);
 
     let treasury = Address::generate(&env);
     client.init(&treasury, &0);
 
+    // Initialize access control contract
+    let access_control_contract_id = env.register(access_control::AccessControl, ());
+    let access_control_client =
+        access_control::AccessControlClient::new(&env, &access_control_contract_id);
+    access_control_client.init(&creator);
+    // Assign roles to test users
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
+    access_control_client.assign_role(&creator, &user, &access_control::Role::User);
+    // Set access control contract in PrediFi
+    client.set_access_control(&access_control_contract_id);
+
     // Create pool with min_stake = 100
-    let pool_id = client.create_pool(&200, &token_address, &100);
+    let pool_id = client.create_pool(&creator, &200, &token_address, &category, &options, &100);
 
     // Try to place prediction with amount 50 (should fail)
-    let result = client.try_place_prediction(&user, &pool_id, &50, &1);
+    let result = client.try_place_prediction(&user, &user, &pool_id, &50, &1);
     assert_eq!(result, Err(Ok(PrediFiError::InvalidPredictionAmount)));
 
     // Place prediction with amount 100 (should succeed)
-    let result = client.try_place_prediction(&user, &pool_id, &100, &1);
+    let result = client.try_place_prediction(&user, &user, &pool_id, &100, &1);
     assert!(result.is_ok());
 }

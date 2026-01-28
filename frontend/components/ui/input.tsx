@@ -13,6 +13,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
   ({ className, type, label, error, helperText, disabled, id, ...props }, ref) => {
     const [showPassword, setShowPassword] = React.useState(false);
     const [inputType, setInputType] = React.useState(type);
+    // eslint-disable-next-line
     const inputId = id || React.useId();
 
     React.useEffect(() => {
@@ -54,7 +55,11 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
             disabled={disabled}
             aria-invalid={error ? "true" : "false"}
             aria-describedby={
-              error ? `${inputId}-error` : helperText ? `${inputId}-helper` : undefined
+              error
+                ? `${inputId}-error`
+                : helperText
+                ? `${inputId}-helper`
+                : undefined
             }
             {...props}
           />
@@ -85,10 +90,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           </p>
         )}
         {!error && helperText && (
-          <p
-            id={`${inputId}-helper`}
-            className="text-sm text-muted-foreground"
-          >
+          <p id={`${inputId}-helper`} className="text-sm text-muted-foreground">
             {helperText}
           </p>
         )}
