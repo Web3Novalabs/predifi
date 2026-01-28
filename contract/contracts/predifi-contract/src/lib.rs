@@ -27,6 +27,14 @@ pub struct FeeDistributedEvent {
     pub fee: i128,
 }
 
+#[contractevent]
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
@@ -35,6 +43,7 @@ pub struct Pool {
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    pub min_stake: i128,
 }
 
 #[contracttype]
@@ -145,13 +154,19 @@ impl PredifiContract {
     /// # Arguments
     /// * `end_time` - Unix timestamp when the pool closes for predictions
     /// * `token` - Address of the token used for staking
+    /// * `min_stake` - Minimum amount required to place a prediction
     ///
     /// # Returns
     /// The unique ID of the created pool
     ///
     /// # Errors
     /// * `EndTimeMustBeFuture` - If end_time is not in the future
-    pub fn create_pool(env: Env, end_time: u64, token: Address) -> Result<u64, PrediFiError> {
+    pub fn create_pool(
+        env: Env,
+        end_time: u64,
+        token: Address,
+        min_stake: i128,
+    ) -> Result<u64, PrediFiError> {
         // Validate end_time is in the future
         let current_time = env.ledger().timestamp();
         if end_time <= current_time {
@@ -170,6 +185,7 @@ impl PredifiContract {
             outcome: 0,
             total_stake: 0,
             token,
+            min_stake,
         };
 
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
@@ -260,16 +276,16 @@ impl PredifiContract {
     ) -> Result<(), PrediFiError> {
         user.require_auth();
 
-        // Validate amount
-        if amount <= 0 {
-            return Err(PrediFiError::InvalidPredictionAmount);
-        }
-
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
             .ok_or(PrediFiError::PoolNotFound)?;
+
+        // Validate amount
+        if amount <= 0 || amount < pool.min_stake {
+            return Err(PrediFiError::InvalidPredictionAmount);
+        }
 
         // Check if pool is resolved
         if pool.resolved {
@@ -334,6 +350,14 @@ impl PredifiContract {
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionCount(user.clone()), &new_count);
+
+        PredictionPlacedEvent {
+            pool_id,
+            user,
+            amount,
+            outcome,
+        }
+        .publish(&env);
 
         Ok(())
     }

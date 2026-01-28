@@ -37,8 +37,8 @@ fn test_claim_winnings() {
     let fee_bps = 0u32;
     client.init(&treasury, &fee_bps);
 
-    // Create Pool with end_time = 100
-    let pool_id = client.create_pool(&100, &token_address);
+    // Create Pool with end_time = 100, min_stake = 0
+    let pool_id = client.create_pool(&100, &token_address, &0);
 
     // Place Predictions
     // User 1 bets 100 on Outcome 1
@@ -89,7 +89,7 @@ fn test_double_claim() {
     let fee_bps = 0u32;
     client.init(&treasury, &fee_bps);
 
-    let pool_id = client.create_pool(&100, &token_address);
+    let pool_id = client.create_pool(&100, &token_address, &0);
     client.place_prediction(&user1, &pool_id, &100, &1);
 
     // Advance time past pool end_time to allow resolution
@@ -124,7 +124,7 @@ fn test_claim_unresolved() {
     let fee_bps = 0u32;
     client.init(&treasury, &fee_bps);
 
-    let pool_id = client.create_pool(&100, &token_address);
+    let pool_id = client.create_pool(&100, &token_address, &0);
     client.place_prediction(&user1, &pool_id, &100, &1);
 
     // Do NOT resolve - should fail with PoolNotResolved error
@@ -152,9 +152,9 @@ fn test_get_user_predictions() {
     client.init(&treasury, &fee_bps);
 
     // Create 3 pools and place predictions
-    let pool0 = client.create_pool(&100, &token_address);
-    let pool1 = client.create_pool(&200, &token_address);
-    let pool2 = client.create_pool(&300, &token_address);
+    let pool0 = client.create_pool(&100, &token_address, &0);
+    let pool1 = client.create_pool(&200, &token_address, &0);
+    let pool2 = client.create_pool(&300, &token_address, &0);
 
     client.place_prediction(&user, &pool0, &10, &1);
     client.place_prediction(&user, &pool1, &20, &2);
@@ -216,7 +216,7 @@ fn test_claim_with_fees() {
     let fee_bps = 100u32;
     client.init(&treasury, &fee_bps);
 
-    let pool_id = client.create_pool(&100, &token_address);
+    let pool_id = client.create_pool(&100, &token_address, &0);
 
     client.place_prediction(&user1, &pool_id, &100, &1);
     client.place_prediction(&user2, &pool_id, &100, &2);
@@ -254,7 +254,7 @@ fn test_resolve_pool_validation() {
     let treasury = Address::generate(&env);
     client.init(&treasury, &0);
 
-    let pool_id = client.create_pool(&100, &token_address);
+    let pool_id = client.create_pool(&100, &token_address, &0);
 
     // Try to resolve before end time (should fail with PoolNotExpired)
     env.ledger().set_timestamp(50);
@@ -289,15 +289,15 @@ fn test_create_pool_validation() {
     env.ledger().set_timestamp(100);
 
     // Try to create pool with end_time in the past (should fail)
-    let result = client.try_create_pool(&50, &token_address);
+    let result = client.try_create_pool(&50, &token_address, &0);
     assert_eq!(result, Err(Ok(PrediFiError::EndTimeMustBeFuture)));
 
     // Try to create pool with end_time equal to current time (should fail)
-    let result = client.try_create_pool(&100, &token_address);
+    let result = client.try_create_pool(&100, &token_address, &0);
     assert_eq!(result, Err(Ok(PrediFiError::EndTimeMustBeFuture)));
 
     // Create pool with end_time in the future (should succeed)
-    let result = client.try_create_pool(&200, &token_address);
+    let result = client.try_create_pool(&200, &token_address, &0);
     assert!(result.is_ok());
 }
 
@@ -320,7 +320,7 @@ fn test_place_prediction_validation() {
     let treasury = Address::generate(&env);
     client.init(&treasury, &0);
 
-    let pool_id = client.create_pool(&100, &token_address);
+    let pool_id = client.create_pool(&100, &token_address, &0);
 
     // Try to place prediction with zero amount (should fail)
     let result = client.try_place_prediction(&user, &pool_id, &0, &1);
@@ -346,4 +346,35 @@ fn test_place_prediction_validation() {
     // Try to place prediction after pool ended (should fail)
     let result = client.try_place_prediction(&user2, &pool_id, &100, &1);
     assert_eq!(result, Err(Ok(PrediFiError::PredictionTooLate)));
+}
+
+#[test]
+fn test_place_prediction_min_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin);
+    let token_address = token_contract;
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let treasury = Address::generate(&env);
+    client.init(&treasury, &0);
+
+    // Create pool with min_stake = 100
+    let pool_id = client.create_pool(&200, &token_address, &100);
+
+    // Try to place prediction with amount 50 (should fail)
+    let result = client.try_place_prediction(&user, &pool_id, &50, &1);
+    assert_eq!(result, Err(Ok(PrediFiError::InvalidPredictionAmount)));
+
+    // Place prediction with amount 100 (should succeed)
+    let result = client.try_place_prediction(&user, &pool_id, &100, &1);
+    assert!(result.is_ok());
 }
