@@ -140,7 +140,7 @@ fn test_is_admin() {
 
     // Check that admin is recognized as admin
     assert!(client.is_admin(&admin));
-    
+
     // Check that non-admin is not admin
     assert!(!client.is_admin(&non_admin));
 }

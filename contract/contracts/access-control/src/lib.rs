@@ -240,11 +240,7 @@ impl AccessControl {
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
-    pub fn revoke_all_roles(
-        env: Env,
-        admin_caller: Address,
-        user: Address,
-    ) -> Result<(), Error> {
+    pub fn revoke_all_roles(env: Env, admin_caller: Address, user: Address) -> Result<(), Error> {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone())?;
@@ -271,13 +267,13 @@ impl AccessControl {
     ///
     /// # Returns
     /// `true` if the user has at least one of the specified roles, `false` otherwise.
-    pub fn has_any_role(
-        env: Env,
-        user: Address,
-        roles: soroban_sdk::Vec<Role>,
-    ) -> bool {
+    pub fn has_any_role(env: Env, user: Address, roles: soroban_sdk::Vec<Role>) -> bool {
         for role in roles.iter() {
-            if env.storage().persistent().has(&DataKey::Role(user.clone(), role)) {
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::Role(user.clone(), role))
+            {
                 return true;
             }
         }
