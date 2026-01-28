@@ -215,6 +215,70 @@ impl AccessControl {
 
         Ok(())
     }
+
+    /// Checks if a user is the current super admin.
+    ///
+    /// # Arguments
+    /// * `user` - The address to check.
+    ///
+    /// # Returns
+    /// `true` if the user is the current super admin, `false` otherwise.
+    pub fn is_admin(env: Env, user: Address) -> bool {
+        match Self::get_admin(env) {
+            Ok(admin) => admin == user,
+            Err(_) => false,
+        }
+    }
+
+    /// Revokes all roles from a user.
+    ///
+    /// Only the current super admin can call this function.
+    ///
+    /// # Arguments
+    /// * `admin_caller` - The address of the admin calling the function.
+    /// * `user` - The address from which all roles will be revoked.
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If the caller is not the super admin.
+    pub fn revoke_all_roles(env: Env, admin_caller: Address, user: Address) -> Result<(), Error> {
+        admin_caller.require_auth();
+
+        let current_admin = Self::get_admin(env.clone())?;
+        if admin_caller != current_admin {
+            return Err(Error::Unauthorized);
+        }
+
+        // Revoke all possible roles
+        for role in [Role::Admin, Role::Operator, Role::Moderator].iter() {
+            let key = DataKey::Role(user.clone(), role.clone());
+            if env.storage().persistent().has(&key) {
+                env.storage().persistent().remove(&key);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Checks if a user has any of the specified roles.
+    ///
+    /// # Arguments
+    /// * `user` - The address to check.
+    /// * `roles` - A vector of roles to check.
+    ///
+    /// # Returns
+    /// `true` if the user has at least one of the specified roles, `false` otherwise.
+    pub fn has_any_role(env: Env, user: Address, roles: soroban_sdk::Vec<Role>) -> bool {
+        for role in roles.iter() {
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::Role(user.clone(), role))
+            {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 mod test;
