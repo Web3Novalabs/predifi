@@ -1,5 +1,4 @@
 name: Frontend CI
-
 on:
   push:
     branches: ["main", "frontend"]
@@ -9,7 +8,6 @@ on:
     branches: ["main", "frontend"]
     paths:
       - "frontend/**"
-
 jobs:
   build-and-check:
     name: Frontend Build & Format Check
@@ -17,31 +15,25 @@ jobs:
     defaults:
       run:
         working-directory: ./frontend
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
+      
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "pnpm"
-          cache-dependency-path: frontend/pnpm-lock.yaml
-
+          cache: "npm"
+          cache-dependency-path: "./frontend/package-lock.json"
+      
       - name: Install dependencies
-        run: pnpm install
-
+        run: npm ci
+      
       - name: Format Check (Lint)
-        run: pnpm lint --max-warnings=0
+        run: npm run lint -- --max-warnings=0
         # Runs ESLint to verify code quality and formatting rules defined in eslint config.
         # This satisfies the "Format Check" requirement.
-
+      
       - name: Build Check
-        run: pnpm build
+        run: npm run build
         # Verification that the Next.js application builds successfully.
