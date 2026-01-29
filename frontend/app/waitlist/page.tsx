@@ -4,13 +4,14 @@ import WaitlistForm from "./components/WaitlistForm";
 
 export default function WaitlistPage() {
   return (
-    <div className="text-sm min-h-screen bg-[#001112]">
+    <div className="text-sm min-h-screen bg-[#001112] flex flex-col">
       <Navbar />
 
-      <main className="w-screen overflow-x-hidden">
+      <main className="w-screen overflow-x-hidden flex-1">
         <WaitlistForm />
-        <Footer />
       </main>
+      
+      <Footer />
     </div>
   );
 }
