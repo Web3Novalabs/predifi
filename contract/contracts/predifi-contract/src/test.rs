@@ -271,7 +271,7 @@ fn test_resolve_pool_validation() {
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
-                                                                                          // Set access control contract in PrediFi
+                                                                                            // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
     let pool_id = client.create_pool(&creator, &100, &token_address, &category, &options);
@@ -386,7 +386,7 @@ fn test_resolve_empty_pool() {
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
-                                                                                          // Set access control contract in PrediFi
+                                                                                            // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
     let pool_id = client.create_pool(&creator, &100, &token, &category, &options);
@@ -417,7 +417,7 @@ fn test_resolution_window_expiry() {
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
-                                                                                          // Set access control contract in PrediFi
+                                                                                            // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
     let pool_id = client.create_pool(&creator, &100, &token, &category, &options);
