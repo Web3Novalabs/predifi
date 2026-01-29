@@ -45,9 +45,9 @@ fn test_claim_winnings() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
-    access_control_client.assign_role(&creator, &user1, &access_control::Role::User);
-    access_control_client.assign_role(&creator, &user2, &access_control::Role::User);
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &user1, &access_control::Role::Moderator);
+    access_control_client.assign_role(&creator, &user2, &access_control::Role::Moderator);
     // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -96,8 +96,8 @@ fn test_double_claim() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
-    access_control_client.assign_role(&creator, &user1, &access_control::Role::User);
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &user1, &access_control::Role::Moderator);
     // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -140,7 +140,7 @@ fn test_claim_unresolved() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &user1, &access_control::Role::User);
+    access_control_client.assign_role(&creator, &user1, &access_control::Role::Moderator);
     // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -178,7 +178,7 @@ fn test_get_user_predictions() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &user, &access_control::Role::User);
+    access_control_client.assign_role(&creator, &user, &access_control::Role::Moderator);
     // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -227,9 +227,9 @@ fn test_claim_with_fees() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
-    access_control_client.assign_role(&creator, &user1, &access_control::Role::User);
-    access_control_client.assign_role(&creator, &user2, &access_control::Role::User);
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &user1, &access_control::Role::Moderator);
+    access_control_client.assign_role(&creator, &user2, &access_control::Role::Moderator);
     // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -270,7 +270,7 @@ fn test_resolve_pool_validation() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
                                                                                           // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -347,7 +347,7 @@ fn test_place_prediction_validation() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &user, &access_control::Role::User);
+    access_control_client.assign_role(&creator, &user, &access_control::Role::Moderator);
     // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -385,7 +385,7 @@ fn test_resolve_empty_pool() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
                                                                                           // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -416,7 +416,7 @@ fn test_resolution_window_expiry() {
     access_control_client.init(&creator);
     // Assign roles to test users
     access_control_client.assign_role(&creator, &creator, &access_control::Role::Admin);
-    access_control_client.assign_role(&creator, &creator, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&creator, &creator, &access_control::Role::Operator); // Add Oracle role for resolve_pool
                                                                                           // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
@@ -469,8 +469,8 @@ fn test_fee_precision_small_amounts() {
     access_control_client.init(&user);
     // Assign roles to test users
     access_control_client.assign_role(&user, &user, &access_control::Role::Admin);
-    access_control_client.assign_role(&user, &user, &access_control::Role::Oracle); // Add Oracle role for resolve_pool
-    access_control_client.assign_role(&user, &user, &access_control::Role::User);
+    access_control_client.assign_role(&user, &user, &access_control::Role::Operator); // Add Oracle role for resolve_pool
+    access_control_client.assign_role(&user, &user, &access_control::Role::Moderator);
     // Set access control contract in PrediFi
     client.set_access_control(&access_control_contract_id);
 
