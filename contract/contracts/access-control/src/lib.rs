@@ -181,13 +181,7 @@ impl AccessControl {
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
     /// * `RoleNotFound` - If the `from` address doesn't have the specified role.
-    pub fn transfer_role(
-        env: Env,
-        admin_caller: Address,
-        from: Address,
-        to: Address,
-        role: Role,
-    ) {
+    pub fn transfer_role(env: Env, admin_caller: Address, from: Address, to: Address, role: Role) {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone())?;
