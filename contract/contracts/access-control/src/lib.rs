@@ -14,9 +14,39 @@ pub enum Role {
 }
 
 #[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PoolStatus {
+    /// The pool is open for predictions.
+    Active,
+    /// The event has occurred and the outcome is determined.
+    Resolved,
+    /// The pool is closed for new predictions but not yet resolved.
+    Closed,
+    /// The outcome is being disputed.
+    Disputed,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PoolCategory {
+    /// Sports-related predictions.
+    Sports,
+    /// Political predictions.
+    Politics,
+    /// Financial predictions.
+    Finance,
+    /// Entertainment predictions.
+    Entertainment,
+    /// Other categories.
+    Other,
+}
+
+#[contracttype]
 pub enum DataKey {
     Admin,
     Role(Address, Role),
+    Pool(u64),
+    PoolCount,
 }
 
 #[contract]
@@ -31,9 +61,9 @@ impl AccessControl {
     ///
     /// # Errors
     /// * `AlreadyInitialized` - If the contract has already been initialized.
-    pub fn init(env: Env, admin: Address) -> Result<(), Error> {
+    pub fn init(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
-            return Err(Error::AlreadyInitialized);
+            panic!("AlreadyInitialized");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         // Also grant the Admin role to the admin address
@@ -50,11 +80,11 @@ impl AccessControl {
     ///
     /// # Errors
     /// * `NotInitialized` - If the contract hasn't been initialized yet.
-    pub fn get_admin(env: Env) -> Result<Address, Error> {
+    pub fn get_admin(env: Env) -> Address {
         env.storage()
             .instance()
             .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)
+            .expect("NotInitialized")
     }
 
     /// Assigns a specific role to a user.
@@ -78,7 +108,7 @@ impl AccessControl {
 
         let current_admin = Self::get_admin(env.clone())?;
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            panic!("Unauthorized");
         }
 
         env.storage()
@@ -109,7 +139,7 @@ impl AccessControl {
 
         let current_admin = Self::get_admin(env.clone())?;
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            panic!("Unauthorized");
         }
 
         if !env
@@ -151,18 +181,12 @@ impl AccessControl {
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
     /// * `RoleNotFound` - If the `from` address doesn't have the specified role.
-    pub fn transfer_role(
-        env: Env,
-        admin_caller: Address,
-        from: Address,
-        to: Address,
-        role: Role,
-    ) -> Result<(), Error> {
+    pub fn transfer_role(env: Env, admin_caller: Address, from: Address, to: Address, role: Role) {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone())?;
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            panic!("Unauthorized");
         }
 
         if !env
@@ -201,7 +225,7 @@ impl AccessControl {
 
         let current_admin = Self::get_admin(env.clone())?;
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            panic!("Unauthorized");
         }
 
         // Update the admin address
