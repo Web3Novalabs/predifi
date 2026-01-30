@@ -9,6 +9,8 @@ pub enum Role {
     Admin = 0,
     Operator = 1,
     Moderator = 2,
+    Oracle = 3,
+    User = 4,
 }
 
 #[contracttype]
@@ -249,7 +251,15 @@ impl AccessControl {
         }
 
         // Revoke all possible roles
-        for role in [Role::Admin, Role::Operator, Role::Moderator].iter() {
+        for role in [
+            Role::Admin,
+            Role::Operator,
+            Role::Moderator,
+            Role::Oracle,
+            Role::User,
+        ]
+        .iter()
+        {
             let key = DataKey::Role(user.clone(), role.clone());
             if env.storage().persistent().has(&key) {
                 env.storage().persistent().remove(&key);
