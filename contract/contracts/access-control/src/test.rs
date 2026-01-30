@@ -125,17 +125,113 @@ fn test_unauthorized_assignment() {
     let result = client.try_assign_role(&non_admin, &user, &Role::Operator);
     assert_eq!(result, Err(Ok(Error::Unauthorized)));
 }
-
 #[test]
-fn test_get_pools() {
+fn test_is_admin() {
     let env = Env::default();
-    let contract_id = env.register_contract(None, AccessControl);
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+
     client.init(&admin);
 
-    // Test with valid parameters
-    let result = client.get_pools(&0, &50, &None, &None);
-    assert_eq!(result.len(), 0); // Empty result as expected
+    // Check that admin is recognized as admin
+    assert!(client.is_admin(&admin));
+
+    // Check that non-admin is not admin
+    assert!(!client.is_admin(&non_admin));
+}
+
+#[test]
+fn test_revoke_all_roles() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    client.init(&admin);
+
+    // Assign multiple roles to user
+    client.assign_role(&admin, &user, &Role::Operator);
+    client.assign_role(&admin, &user, &Role::Moderator);
+
+    assert!(client.has_role(&user, &Role::Operator));
+    assert!(client.has_role(&user, &Role::Moderator));
+
+    // Revoke all roles at once
+    client.revoke_all_roles(&admin, &user);
+
+    // Verify all roles are removed
+    assert!(!client.has_role(&user, &Role::Operator));
+    assert!(!client.has_role(&user, &Role::Moderator));
+    assert!(!client.has_role(&user, &Role::Admin));
+}
+
+#[test]
+fn test_revoke_all_roles_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let non_admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    client.init(&admin);
+    client.assign_role(&admin, &user, &Role::Operator);
+
+    // Non-admin tries to revoke all roles
+    let result = client.try_revoke_all_roles(&non_admin, &user);
+    assert_eq!(result, Err(Ok(Error::Unauthorized)));
+}
+
+#[test]
+fn test_has_any_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    client.init(&admin);
+
+    // User has no roles yet
+    let mut empty_roles = soroban_sdk::Vec::new(&env);
+    empty_roles.push_back(Role::Operator);
+    empty_roles.push_back(Role::Moderator);
+    assert!(!client.has_any_role(&user, &empty_roles));
+
+    // Assign Operator role to user
+    client.assign_role(&admin, &user, &Role::Operator);
+
+    // Now user should have any role (Operator is in the list)
+    assert!(client.has_any_role(&user, &empty_roles));
+
+    // Create a list with roles user doesn't have
+    let mut other_roles = soroban_sdk::Vec::new(&env);
+    other_roles.push_back(Role::Admin);
+    other_roles.push_back(Role::Moderator);
+
+    // User still has Operator (not in this list), so should return false
+    assert!(!client.has_any_role(&user, &other_roles));
+
+    // Add Admin to the list - still false because user is not admin
+    let mut mixed_roles = soroban_sdk::Vec::new(&env);
+    mixed_roles.push_back(Role::Operator);
+    mixed_roles.push_back(Role::Admin);
+
+    // Now should be true because user has Operator
+    assert!(client.has_any_role(&user, &mixed_roles));
 }

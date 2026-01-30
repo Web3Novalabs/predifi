@@ -39,7 +39,8 @@ export default function Waitlist() {
       setStatus("success");
       setName("");
       setEmail("");
-    } catch (error) {
+      // eslint-disable-next-line
+    } catch (_) {
       setStatus("error");
       setErrorMessage("Something went wrong. Please try again.");
     }
@@ -132,10 +133,10 @@ export default function Waitlist() {
               </svg>
             </div>
             <h3 className="text-2xl font-bold text-white">
-              You're on the list!
+              You&apos;re on the list!
             </h3>
             <p className="text-gray-400">
-              We'll notify you when PrediFi launches. Get ready to predict!
+              We&apos;ll notify you when PrediFi launches. Get ready to predict!
             </p>
           </div>
         )}

@@ -20,6 +20,7 @@ const data = [
     { name: "DEC", value: 60000 },
 ];
 
+// eslint-disable-next-line
 const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
         return (

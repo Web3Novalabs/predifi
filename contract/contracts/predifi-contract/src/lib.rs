@@ -1,4 +1,5 @@
 #![no_std]
+use access_control::Role;
 use predifi_errors::PrediFiError;
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
 
@@ -27,14 +28,42 @@ pub struct FeeDistributedEvent {
     pub fee: i128,
 }
 
+#[contractevent]
+pub struct PoolCreatedEvent {
+    pub pool_id: u64,
+    pub creator: Address,
+    pub end_time: u64,
+}
+
+#[contractevent]
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+}
+
+#[contractevent]
+pub struct PoolResolvedEvent {
+    pub pool_id: u64,
+    pub outcome: u32,
+    pub resolver: Address,
+    pub total_stake: i128,
+    pub winning_stake: i128,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
+    pub creator: Address, // Added for auth/tracking
     pub end_time: u64,
     pub resolved: bool,
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    pub min_stake: i128,
+    pub category: soroban_sdk::Symbol,
+    pub options_count: u32, // To validate outcomes later
 }
 
 #[contracttype]
@@ -61,6 +90,7 @@ pub enum DataKey {
     FeeBps,                            // Fee in basis points (1/100 of a percent)
     Treasury,                          // Protocol treasury address
     CollectedFees(u64),                // PoolId -> Collected fee amount
+    AccessControlAddress,              // Access control contract address
 }
 
 #[contracttype]
@@ -75,6 +105,49 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
+    /// Get the access control contract address
+    ///
+    /// # Returns
+    /// The address of the access control contract
+    ///
+    /// # Errors
+    /// * `NotInitialized` - If access control contract is not set
+    fn get_access_control_address(env: &Env) -> Result<Address, PrediFiError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::AccessControlAddress)
+            .ok_or(PrediFiError::NotInitialized)
+    }
+
+    /// Get the access control client
+    ///
+    /// # Returns
+    /// The AccessControlClient instance
+    fn get_access_control_client(env: &Env) -> access_control::AccessControlClient<'_> {
+        let access_control_addr = Self::get_access_control_address(env).unwrap();
+        access_control::AccessControlClient::new(env, &access_control_addr)
+    }
+
+    /// Set the access control contract address (only callable once)
+    ///
+    /// # Arguments
+    /// * `access_control_address` - The address of the access control contract
+    ///
+    /// # Errors
+    /// * `AlreadyInitialized` - If access control contract is already set
+    pub fn set_access_control(
+        env: Env,
+        access_control_address: Address,
+    ) -> Result<(), PrediFiError> {
+        if env.storage().instance().has(&DataKey::AccessControlAddress) {
+            return Err(PrediFiError::AlreadyInitialized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::AccessControlAddress, &access_control_address);
+        Ok(())
+    }
+
     /// Initialize the contract.
     ///
     /// Sets up the initial pool ID counter, fee basis points, and treasury address.
@@ -98,14 +171,24 @@ impl PredifiContract {
     /// Set the protocol fee in basis points.
     ///
     /// # Arguments
+    /// * `caller` - The address calling the function
     /// * `fee_bps` - Fee in basis points (e.g., 100 = 1%)
-    pub fn set_fee_bps(env: Env, fee_bps: u32) {
-        // TODO: Add access control to restrict who can call this
+    ///
+    /// # Errors
+    /// * `InsufficientPermissions` - If caller doesn't have Admin role
+    pub fn set_fee_bps(env: Env, caller: Address, fee_bps: u32) -> Result<(), PrediFiError> {
+        // Check if caller has Admin role
+        let access_control_client = Self::get_access_control_client(&env);
+        if !access_control_client.has_role(&caller, &Role::Admin) {
+            return Err(PrediFiError::InsufficientPermissions);
+        }
+
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
         SetFeeBpsEvent {
             new_fee_bps: fee_bps,
         }
         .publish(&env);
+        Ok(())
     }
 
     /// Get the current protocol fee in basis points.
@@ -119,14 +202,24 @@ impl PredifiContract {
     /// Set the treasury address.
     ///
     /// # Arguments
+    /// * `caller` - The address calling the function
     /// * `treasury` - New treasury address
-    pub fn set_treasury(env: Env, treasury: Address) {
-        // TODO: Add access control to restrict who can call this
+    ///
+    /// # Errors
+    /// * `InsufficientPermissions` - If caller doesn't have Admin role
+    pub fn set_treasury(env: Env, caller: Address, treasury: Address) -> Result<(), PrediFiError> {
+        // Check if caller has Admin role
+        let access_control_client = Self::get_access_control_client(&env);
+        if !access_control_client.has_role(&caller, &Role::Admin) {
+            return Err(PrediFiError::InsufficientPermissions);
+        }
+
         env.storage().instance().set(&DataKey::Treasury, &treasury);
         SetTreasuryEvent {
             new_treasury: treasury.clone(),
         }
         .publish(&env);
+        Ok(())
     }
 
     /// Get the treasury address.
@@ -141,41 +234,61 @@ impl PredifiContract {
     }
 
     /// Create a new prediction pool.
-    ///
-    /// # Arguments
-    /// * `end_time` - Unix timestamp when the pool closes for predictions
-    /// * `token` - Address of the token used for staking
-    ///
-    /// # Returns
-    /// The unique ID of the created pool
-    ///
-    /// # Errors
-    /// * `EndTimeMustBeFuture` - If end_time is not in the future
-    pub fn create_pool(env: Env, end_time: u64, token: Address) -> Result<u64, PrediFiError> {
-        // Validate end_time is in the future
+    pub fn create_pool(
+        env: Env,
+        creator: Address,
+        end_time: u64,
+        token: Address,
+        category: soroban_sdk::Symbol,
+        options_count: u32,
+        min_stake: i128,
+    ) -> Result<u64, PrediFiError> {
+        // 1. Authorization
+        creator.require_auth();
+
+        // 2. Validate Parameters
         let current_time = env.ledger().timestamp();
         if end_time <= current_time {
             return Err(PrediFiError::EndTimeMustBeFuture);
         }
 
+        if options_count < 2 {
+            return Err(PrediFiError::InvalidOptionsCount);
+        }
+
+        // 3. Generate Unique ID
         let pool_id: u64 = env
             .storage()
             .instance()
             .get(&DataKey::PoolIdCounter)
             .unwrap_or(0);
 
+        // 4. Initialize Pool with ALL fields
         let pool = Pool {
+            creator: creator.clone(), // Field added here
             end_time,
             resolved: false,
             outcome: 0,
-            total_stake: 0,
             token,
+            total_stake: 0,
+            min_stake,
+            category: category.clone(), // Field added here
+            options_count,              // Field added here
         };
 
+        // 5. Save State
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
         env.storage()
             .instance()
             .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+
+        // 6. Emit Event
+        PoolCreatedEvent {
+            pool_id,
+            creator,
+            end_time,
+        }
+        .publish(&env);
 
         Ok(pool_id)
     }
@@ -183,21 +296,42 @@ impl PredifiContract {
     /// Resolve a prediction pool with the final outcome.
     ///
     /// # Arguments
+    /// * `caller` - The address calling the function
     /// * `pool_id` - ID of the pool to resolve
-    /// * `outcome` - The winning outcome number
+    /// * `outcome` - The winning outcome number (0-indexed, must be < options_count)
     ///
     /// # Errors
     /// * `PoolNotFound` - If the pool doesn't exist
     /// * `PoolAlreadyResolved` - If the pool has already been resolved
     /// * `PoolNotExpired` - If the pool end time hasn't been reached
     /// * `ResolutionWindowExpired` - If the resolution window has passed
-    pub fn resolve_pool(env: Env, pool_id: u64, outcome: u32) -> Result<(), PrediFiError> {
+    /// * `InsufficientPermissions` - If caller doesn't have Admin or Operator role
+    /// * `InvalidOutcome` - If outcome is >= options_count
+    pub fn resolve_pool(
+        env: Env,
+        caller: Address,
+        pool_id: u64,
+        outcome: u32,
+    ) -> Result<(), PrediFiError> {
+        // Require caller authentication
+        caller.require_auth();
+
+        // Check if caller has Admin or Operator role (oracle/admin authorization)
+        let access_control_client = Self::get_access_control_client(&env);
+        if !access_control_client.has_role(&caller, &Role::Admin)
+            && !access_control_client.has_role(&caller, &Role::Operator)
+        {
+            return Err(PrediFiError::InsufficientPermissions);
+        }
+
+        // Validate pool exists
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
             .ok_or(PrediFiError::PoolNotFound)?;
 
+        // Validate pool is in correct state for resolution
         if pool.resolved {
             return Err(PrediFiError::PoolAlreadyResolved);
         }
@@ -214,8 +348,23 @@ impl PredifiContract {
             return Err(PrediFiError::ResolutionWindowExpired);
         }
 
+        // Validate outcome is within valid range
+        if outcome >= pool.options_count {
+            return Err(PrediFiError::InvalidOutcome);
+        }
+
+        // Set winning outcome
         pool.resolved = true;
         pool.outcome = outcome;
+
+        // Calculate total winning stake
+        let winning_stake: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::OutcomeStake(pool_id, outcome))
+            .unwrap_or(0);
+
+        // Update pool status to resolved
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
 
         // Calculate and store fee for this pool
@@ -234,12 +383,23 @@ impl PredifiContract {
             FeeCollectedEvent { pool_id, fee }.publish(&env);
         }
 
+        // Emit resolution event
+        PoolResolvedEvent {
+            pool_id,
+            outcome,
+            resolver: caller,
+            total_stake: pool.total_stake,
+            winning_stake,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
     /// Place a prediction on a pool.
     ///
     /// # Arguments
+    /// * `caller` - The address calling the function (should match user)
     /// * `user` - Address of the user placing the prediction
     /// * `pool_id` - ID of the pool
     /// * `amount` - Amount to stake (must be positive)
@@ -251,25 +411,32 @@ impl PredifiContract {
     /// * `PredictionTooLate` - If pool has already ended
     /// * `PoolAlreadyResolved` - If pool is already resolved
     /// * `PredictionAlreadyExists` - If user already has a prediction on this pool
+    /// * `InsufficientPermissions` - If caller doesn't match user
     pub fn place_prediction(
         env: Env,
+        caller: Address,
         user: Address,
         pool_id: u64,
         amount: i128,
         outcome: u32,
     ) -> Result<(), PrediFiError> {
-        user.require_auth();
-
-        // Validate amount
-        if amount <= 0 {
-            return Err(PrediFiError::InvalidPredictionAmount);
+        // Check if caller matches the user address
+        if caller != user {
+            return Err(PrediFiError::InsufficientPermissions);
         }
+
+        user.require_auth();
 
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
             .ok_or(PrediFiError::PoolNotFound)?;
+
+        // Validate amount
+        if amount <= 0 || amount < pool.min_stake {
+            return Err(PrediFiError::InvalidPredictionAmount);
+        }
 
         // Check if pool is resolved
         if pool.resolved {
@@ -334,6 +501,14 @@ impl PredifiContract {
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionCount(user.clone()), &new_count);
+
+        PredictionPlacedEvent {
+            pool_id,
+            user,
+            amount,
+            outcome,
+        }
+        .publish(&env);
 
         Ok(())
     }
