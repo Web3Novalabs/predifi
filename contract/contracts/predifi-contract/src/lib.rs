@@ -27,6 +27,7 @@ pub struct FeeDistributedEvent {
     pub pool_id: u64,
     pub fee: i128,
 }
+
 #[contractevent]
 pub struct PoolCreatedEvent {
     pub pool_id: u64,
@@ -40,6 +41,15 @@ pub struct PredictionPlacedEvent {
     pub user: Address,
     pub amount: i128,
     pub outcome: u32,
+}
+
+#[contractevent]
+pub struct PoolResolvedEvent {
+    pub pool_id: u64,
+    pub outcome: u32,
+    pub resolver: Address,
+    pub total_stake: i128,
+    pub winning_stake: i128,
 }
 
 #[contracttype]
@@ -288,32 +298,40 @@ impl PredifiContract {
     /// # Arguments
     /// * `caller` - The address calling the function
     /// * `pool_id` - ID of the pool to resolve
-    /// * `outcome` - The winning outcome number
+    /// * `outcome` - The winning outcome number (0-indexed, must be < options_count)
     ///
     /// # Errors
     /// * `PoolNotFound` - If the pool doesn't exist
     /// * `PoolAlreadyResolved` - If the pool has already been resolved
     /// * `PoolNotExpired` - If the pool end time hasn't been reached
     /// * `ResolutionWindowExpired` - If the resolution window has passed
-    /// * `InsufficientPermissions` - If caller doesn't have Oracle role
+    /// * `InsufficientPermissions` - If caller doesn't have Admin or Operator role
+    /// * `InvalidOutcome` - If outcome is >= options_count
     pub fn resolve_pool(
         env: Env,
         caller: Address,
         pool_id: u64,
         outcome: u32,
     ) -> Result<(), PrediFiError> {
-        // Check if caller has Oracle role
+        // Require caller authentication
+        caller.require_auth();
+
+        // Check if caller has Admin or Operator role (oracle/admin authorization)
         let access_control_client = Self::get_access_control_client(&env);
-        if !access_control_client.has_role(&caller, &Role::Oracle) {
+        if !access_control_client.has_role(&caller, &Role::Admin)
+            && !access_control_client.has_role(&caller, &Role::Operator)
+        {
             return Err(PrediFiError::InsufficientPermissions);
         }
 
+        // Validate pool exists
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
             .ok_or(PrediFiError::PoolNotFound)?;
 
+        // Validate pool is in correct state for resolution
         if pool.resolved {
             return Err(PrediFiError::PoolAlreadyResolved);
         }
@@ -330,8 +348,23 @@ impl PredifiContract {
             return Err(PrediFiError::ResolutionWindowExpired);
         }
 
+        // Validate outcome is within valid range
+        if outcome >= pool.options_count {
+            return Err(PrediFiError::InvalidOutcome);
+        }
+
+        // Set winning outcome
         pool.resolved = true;
         pool.outcome = outcome;
+
+        // Calculate total winning stake
+        let winning_stake: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::OutcomeStake(pool_id, outcome))
+            .unwrap_or(0);
+
+        // Update pool status to resolved
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
 
         // Calculate and store fee for this pool
@@ -349,6 +382,16 @@ impl PredifiContract {
 
             FeeCollectedEvent { pool_id, fee }.publish(&env);
         }
+
+        // Emit resolution event
+        PoolResolvedEvent {
+            pool_id,
+            outcome,
+            resolver: caller,
+            total_stake: pool.total_stake,
+            winning_stake,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -368,7 +411,7 @@ impl PredifiContract {
     /// * `PredictionTooLate` - If pool has already ended
     /// * `PoolAlreadyResolved` - If pool is already resolved
     /// * `PredictionAlreadyExists` - If user already has a prediction on this pool
-    /// * `InsufficientPermissions` - If caller doesn't have User role or doesn't match user
+    /// * `InsufficientPermissions` - If caller doesn't match user
     pub fn place_prediction(
         env: Env,
         caller: Address,
@@ -377,9 +420,8 @@ impl PredifiContract {
         amount: i128,
         outcome: u32,
     ) -> Result<(), PrediFiError> {
-        // Check if caller has User role and matches the user address
-        let access_control_client = Self::get_access_control_client(&env);
-        if !access_control_client.has_role(&caller, &Role::User) || caller != user {
+        // Check if caller matches the user address
+        if caller != user {
             return Err(PrediFiError::InsufficientPermissions);
         }
 
