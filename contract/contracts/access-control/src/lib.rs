@@ -2,7 +2,6 @@
 use predifi_errors::PrediFiError;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 
-
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Role {
@@ -272,7 +271,11 @@ impl AccessControl {
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
-    pub fn revoke_all_roles(env: Env, admin_caller: Address, user: Address) -> Result<(), PrediFiError> {
+    pub fn revoke_all_roles(
+        env: Env,
+        admin_caller: Address,
+        user: Address,
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone());

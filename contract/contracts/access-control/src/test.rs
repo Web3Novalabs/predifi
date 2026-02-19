@@ -26,7 +26,6 @@ fn test_double_initialization() {
     client.init(&admin);
     let result = client.try_init(&admin);
     assert!(result.is_err()); // init panics with an error code, which results in an InvokeError
-
 }
 
 #[test]
@@ -125,7 +124,6 @@ fn test_unauthorized_assignment() {
     // non_admin tries to assign a role
     let result = client.try_assign_role(&non_admin, &user, &Role::Operator);
     assert_eq!(result, Err(Ok(PrediFiError::Unauthorized.into())));
-
 }
 #[test]
 fn test_is_admin() {
@@ -194,7 +192,6 @@ fn test_revoke_all_roles_unauthorized() {
     // Non-admin tries to revoke all roles
     let result = client.try_revoke_all_roles(&non_admin, &user);
     assert_eq!(result, Err(Ok(PrediFiError::Unauthorized.into())));
-
 }
 
 #[test]
