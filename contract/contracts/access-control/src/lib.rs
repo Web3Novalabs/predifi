@@ -60,17 +60,16 @@ impl AccessControl {
     /// * `admin` - The address to be appointed as the initial super admin.
     ///
     /// # Errors
-    /// * `AlreadyInitialized` - If the contract has already been initialized.
+    /// * Panics with `"AlreadyInitialized"` if the contract has already been initialized.
     pub fn init(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("AlreadyInitialized");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
-        // Also grant the Admin role to the admin address
+        // Also grant the Admin role to the admin address.
         env.storage()
             .persistent()
             .set(&DataKey::Role(admin, Role::Admin), &());
-        Ok(())
     }
 
     /// Returns the current super admin address.
@@ -79,7 +78,7 @@ impl AccessControl {
     /// The address of the current super admin.
     ///
     /// # Errors
-    /// * `NotInitialized` - If the contract hasn't been initialized yet.
+    /// * Panics with `"NotInitialized"` if the contract hasn't been initialized yet.
     pub fn get_admin(env: Env) -> Address {
         env.storage()
             .instance()
@@ -93,8 +92,8 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
-    /// * `user` - The address to receive the role.
-    /// * `role` - The role to be assigned.
+    /// * `user`         - The address to receive the role.
+    /// * `role`         - The role to be assigned.
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
@@ -106,9 +105,9 @@ impl AccessControl {
     ) -> Result<(), Error> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            panic!("Unauthorized");
+            return Err(Error::Unauthorized);
         }
 
         env.storage()
@@ -123,12 +122,12 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
-    /// * `user` - The address from which the role will be revoked.
-    /// * `role` - The role to be revoked.
+    /// * `user`         - The address from which the role will be revoked.
+    /// * `role`         - The role to be revoked.
     ///
     /// # Errors
-    /// * `Unauthorized` - If the caller is not the super admin.
-    /// * `RoleNotFound` - If the user doesn't have the specified role.
+    /// * `Unauthorized`  - If the caller is not the super admin.
+    /// * `RoleNotFound`  - If the user doesn't have the specified role.
     pub fn revoke_role(
         env: Env,
         admin_caller: Address,
@@ -137,9 +136,9 @@ impl AccessControl {
     ) -> Result<(), Error> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            panic!("Unauthorized");
+            return Err(Error::Unauthorized);
         }
 
         if !env
@@ -174,19 +173,25 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
-    /// * `from` - The address currently holding the role.
-    /// * `to` - The address to receive the role.
-    /// * `role` - The role to be transferred.
+    /// * `from`         - The address currently holding the role.
+    /// * `to`           - The address to receive the role.
+    /// * `role`         - The role to be transferred.
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
     /// * `RoleNotFound` - If the `from` address doesn't have the specified role.
-    pub fn transfer_role(env: Env, admin_caller: Address, from: Address, to: Address, role: Role) {
+    pub fn transfer_role(
+        env: Env,
+        admin_caller: Address,
+        from: Address,
+        to: Address,
+        role: Role,
+    ) -> Result<(), Error> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            panic!("Unauthorized");
+            return Err(Error::Unauthorized);
         }
 
         if !env
@@ -212,7 +217,7 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the current admin.
-    /// * `new_admin` - The address to become the new super admin.
+    /// * `new_admin`    - The address to become the new super admin.
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the current super admin.
@@ -223,15 +228,15 @@ impl AccessControl {
     ) -> Result<(), Error> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            panic!("Unauthorized");
+            return Err(Error::Unauthorized);
         }
 
-        // Update the admin address
+        // Update the admin address.
         env.storage().instance().set(&DataKey::Admin, &new_admin);
 
-        // Transfer the Admin role record
+        // Transfer the Admin role record.
         env.storage()
             .persistent()
             .remove(&DataKey::Role(current_admin, Role::Admin));
@@ -250,9 +255,10 @@ impl AccessControl {
     /// # Returns
     /// `true` if the user is the current super admin, `false` otherwise.
     pub fn is_admin(env: Env, user: Address) -> bool {
-        match Self::get_admin(env) {
-            Ok(admin) => admin == user,
-            Err(_) => false,
+        let stored: Option<Address> = env.storage().instance().get(&DataKey::Admin);
+        match stored {
+            Some(admin) => admin == user,
+            None        => false,
         }
     }
 
@@ -262,19 +268,19 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
-    /// * `user` - The address from which all roles will be revoked.
+    /// * `user`         - The address from which all roles will be revoked.
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
     pub fn revoke_all_roles(env: Env, admin_caller: Address, user: Address) -> Result<(), Error> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
             return Err(Error::Unauthorized);
         }
 
-        // Revoke all possible roles
+        // Revoke all possible roles.
         for role in [
             Role::Admin,
             Role::Operator,
@@ -296,7 +302,7 @@ impl AccessControl {
     /// Checks if a user has any of the specified roles.
     ///
     /// # Arguments
-    /// * `user` - The address to check.
+    /// * `user`  - The address to check.
     /// * `roles` - A vector of roles to check.
     ///
     /// # Returns
