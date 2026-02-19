@@ -1,7 +1,7 @@
 #![no_std]
 use predifi_errors::PrediFiError;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
-type Error = PrediFiError;
+
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,7 +63,7 @@ impl AccessControl {
     /// * Panics with `"AlreadyInitialized"` if the contract has already been initialized.
     pub fn init(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
-            panic!("AlreadyInitialized");
+            soroban_sdk::panic_with_error!(&env, PrediFiError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         // Also grant the Admin role to the admin address.
@@ -102,12 +102,12 @@ impl AccessControl {
         admin_caller: Address,
         user: Address,
         role: Role,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
         env.storage()
@@ -133,12 +133,12 @@ impl AccessControl {
         admin_caller: Address,
         user: Address,
         role: Role,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
         if !env
@@ -146,7 +146,7 @@ impl AccessControl {
             .persistent()
             .has(&DataKey::Role(user.clone(), role.clone()))
         {
-            return Err(Error::RoleNotFound);
+            return Err(PrediFiError::RoleNotFound);
         }
 
         env.storage()
@@ -186,12 +186,12 @@ impl AccessControl {
         from: Address,
         to: Address,
         role: Role,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
         if !env
@@ -199,7 +199,7 @@ impl AccessControl {
             .persistent()
             .has(&DataKey::Role(from.clone(), role.clone()))
         {
-            return Err(Error::RoleNotFound);
+            return Err(PrediFiError::RoleNotFound);
         }
 
         env.storage()
@@ -225,12 +225,12 @@ impl AccessControl {
         env: Env,
         admin_caller: Address,
         new_admin: Address,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
         // Update the admin address.
@@ -272,12 +272,12 @@ impl AccessControl {
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
-    pub fn revoke_all_roles(env: Env, admin_caller: Address, user: Address) -> Result<(), Error> {
+    pub fn revoke_all_roles(env: Env, admin_caller: Address, user: Address) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
         let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
         // Revoke all possible roles.
