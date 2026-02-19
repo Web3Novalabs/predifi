@@ -102,57 +102,57 @@ impl PrediFiError {
     pub fn as_str(&self) -> &'static str {
         match self {
             // Initialization & Configuration
-            PrediFiError::NotInitialized       => "Contract not initialized",
-            PrediFiError::AlreadyInitialized   => "Contract already initialized",
+            PrediFiError::NotInitialized => "Contract not initialized",
+            PrediFiError::AlreadyInitialized => "Contract already initialized",
 
             // Authorization & Access Control
-            PrediFiError::Unauthorized             => "Unauthorized access",
-            PrediFiError::RoleNotFound             => "Role not found",
-            PrediFiError::InsufficientPermissions  => "Insufficient permissions",
+            PrediFiError::Unauthorized => "Unauthorized access",
+            PrediFiError::RoleNotFound => "Role not found",
+            PrediFiError::InsufficientPermissions => "Insufficient permissions",
 
             // Pool State
-            PrediFiError::PoolNotFound             => "Pool not found",
-            PrediFiError::PoolAlreadyResolved      => "Pool already resolved",
-            PrediFiError::PoolNotResolved          => "Pool not resolved",
-            PrediFiError::PoolExpired              => "Pool has expired",
-            PrediFiError::PoolNotExpired           => "Pool has not expired",
-            PrediFiError::InvalidPoolState         => "Invalid pool state",
-            PrediFiError::InvalidOutcome           => "Invalid outcome",
-            PrediFiError::ResolutionWindowExpired  => "Resolution window has expired",
-            PrediFiError::InvalidOptionsCount      => "Invalid options count",
+            PrediFiError::PoolNotFound => "Pool not found",
+            PrediFiError::PoolAlreadyResolved => "Pool already resolved",
+            PrediFiError::PoolNotResolved => "Pool not resolved",
+            PrediFiError::PoolExpired => "Pool has expired",
+            PrediFiError::PoolNotExpired => "Pool has not expired",
+            PrediFiError::InvalidPoolState => "Invalid pool state",
+            PrediFiError::InvalidOutcome => "Invalid outcome",
+            PrediFiError::ResolutionWindowExpired => "Resolution window has expired",
+            PrediFiError::InvalidOptionsCount => "Invalid options count",
 
             // Prediction & Betting
-            PrediFiError::PredictionNotFound       => "Prediction not found",
-            PrediFiError::PredictionAlreadyExists  => "Prediction already exists",
-            PrediFiError::InvalidPredictionAmount  => "Invalid prediction amount",
-            PrediFiError::PredictionTooLate        => "Cannot predict after pool end time",
-            PrediFiError::InsufficientBalance      => "Insufficient balance",
+            PrediFiError::PredictionNotFound => "Prediction not found",
+            PrediFiError::PredictionAlreadyExists => "Prediction already exists",
+            PrediFiError::InvalidPredictionAmount => "Invalid prediction amount",
+            PrediFiError::PredictionTooLate => "Cannot predict after pool end time",
+            PrediFiError::InsufficientBalance => "Insufficient balance",
 
             // Claiming & Rewards
-            PrediFiError::AlreadyClaimed    => "Already claimed",
-            PrediFiError::NotAWinner        => "User did not win",
-            PrediFiError::WinningStakeZero  => "Critical: winning stake is zero",
+            PrediFiError::AlreadyClaimed => "Already claimed",
+            PrediFiError::NotAWinner => "User did not win",
+            PrediFiError::WinningStakeZero => "Critical: winning stake is zero",
 
             // Timestamp & Time Validation
-            PrediFiError::InvalidTimestamp    => "Invalid timestamp",
+            PrediFiError::InvalidTimestamp => "Invalid timestamp",
             PrediFiError::EndTimeMustBeFuture => "End time must be in the future",
-            PrediFiError::EndTimeTooFar       => "End time too far in the future",
+            PrediFiError::EndTimeTooFar => "End time too far in the future",
 
             // Data & Validation
-            PrediFiError::InvalidData     => "Invalid data",
-            PrediFiError::InvalidAddress  => "Invalid address",
-            PrediFiError::InvalidToken    => "Invalid token",
-            PrediFiError::InvalidOffset   => "Invalid offset",
-            PrediFiError::InvalidLimit    => "Invalid limit",
+            PrediFiError::InvalidData => "Invalid data",
+            PrediFiError::InvalidAddress => "Invalid address",
+            PrediFiError::InvalidToken => "Invalid token",
+            PrediFiError::InvalidOffset => "Invalid offset",
+            PrediFiError::InvalidLimit => "Invalid limit",
 
             // Arithmetic & Calculation
-            PrediFiError::ArithmeticOverflow   => "Arithmetic overflow",
-            PrediFiError::ArithmeticUnderflow  => "Arithmetic underflow",
-            PrediFiError::DivisionByZero       => "Division by zero",
+            PrediFiError::ArithmeticOverflow => "Arithmetic overflow",
+            PrediFiError::ArithmeticUnderflow => "Arithmetic underflow",
+            PrediFiError::DivisionByZero => "Division by zero",
 
             // Storage & State
             PrediFiError::StorageKeyNotFound => "Storage key not found",
-            PrediFiError::StorageCorrupted   => "Storage corrupted",
+            PrediFiError::StorageCorrupted => "Storage corrupted",
         }
     }
 }

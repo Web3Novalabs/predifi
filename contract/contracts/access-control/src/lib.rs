@@ -258,7 +258,7 @@ impl AccessControl {
         let stored: Option<Address> = env.storage().instance().get(&DataKey::Admin);
         match stored {
             Some(admin) => admin == user,
-            None        => false,
+            None => false,
         }
     }
 
