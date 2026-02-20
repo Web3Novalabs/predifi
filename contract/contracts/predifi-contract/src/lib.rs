@@ -234,7 +234,9 @@ impl PredifiContract {
         let new_outcome_stake = current_stake
             .checked_add(amount)
             .ok_or(PrediFiError::ArithmeticError)?;
-        env.storage().instance().set(&outcome_key, &new_outcome_stake);
+        env.storage()
+            .instance()
+            .set(&outcome_key, &new_outcome_stake);
 
         // Index prediction for pagination
         let count: u32 = env
@@ -373,6 +375,6 @@ impl PredifiContract {
     }
 }
 
+mod integration_test;
 mod test;
 mod test_utils;
-mod integration_test;

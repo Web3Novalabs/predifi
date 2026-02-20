@@ -2,7 +2,10 @@
 #![allow(deprecated)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token, Address, Env,
+};
 
 mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
@@ -75,7 +78,7 @@ fn test_claim_winnings() {
 
     let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
     let _contract_id = env.register(PredifiContract, ()); // get contract address for balance check
-                                                         // Re-derive contract address from client
+                                                          // Re-derive contract address from client
     let contract_addr = client.address.clone();
 
     let user1 = Address::generate(&env);
@@ -119,10 +122,10 @@ fn test_double_claim() {
 
     let pool_id = client.create_pool(&100u64, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
-    
+
     // Advance time past pool end_time
     env.ledger().with_mut(|li| li.timestamp = 101);
-    
+
     client.resolve_pool(&operator, &pool_id, &1u32);
 
     client.claim_winnings(&user1, &pool_id);
@@ -285,7 +288,7 @@ fn test_multiple_pools_independent() {
     // Advance time past pool_a end_time
     env.ledger().with_mut(|li| li.timestamp = 101);
     client.resolve_pool(&operator, &pool_a, &1u32);
-    
+
     // Advance time past pool_b end_time
     env.ledger().with_mut(|li| li.timestamp = 201);
     client.resolve_pool(&operator, &pool_b, &2u32); // user2 loses

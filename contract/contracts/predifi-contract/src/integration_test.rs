@@ -2,7 +2,10 @@
 
 use super::*;
 use crate::test_utils::TokenTestContext;
-use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    Address, Env,
+};
 
 mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
@@ -27,7 +30,9 @@ mod dummy_access_control {
 const ROLE_ADMIN: u32 = 0;
 const ROLE_OPERATOR: u32 = 1;
 
-fn setup_integration(env: &Env) -> (
+fn setup_integration(
+    env: &Env,
+) -> (
     PredifiContractClient<'static>,
     TokenTestContext,
     Address, // Admin
@@ -111,13 +116,16 @@ fn test_multi_user_betting_and_balance_verification() {
     let (client, token_ctx, _admin, operator, _treasury) = setup_integration(&env);
 
     // 5 users
-    let users: soroban_sdk::Vec<Address> = soroban_sdk::Vec::from_array(&env, [
-        Address::generate(&env),
-        Address::generate(&env),
-        Address::generate(&env),
-        Address::generate(&env),
-        Address::generate(&env),
-    ]);
+    let users: soroban_sdk::Vec<Address> = soroban_sdk::Vec::from_array(
+        &env,
+        [
+            Address::generate(&env),
+            Address::generate(&env),
+            Address::generate(&env),
+            Address::generate(&env),
+            Address::generate(&env),
+        ],
+    );
 
     for user in users.iter() {
         token_ctx.mint(&user, 5000);
@@ -132,7 +140,7 @@ fn test_multi_user_betting_and_balance_verification() {
     // U3: 1500 on 3
     // U4: 500 on 1
     // Total 1: 1500, Total 2: 1000, Total 3: 1500. Total Stake: 4000.
-    
+
     client.place_prediction(&users.get(0).unwrap(), &pool_id, &500, &1);
     client.place_prediction(&users.get(1).unwrap(), &pool_id, &1000, &2);
     client.place_prediction(&users.get(2).unwrap(), &pool_id, &500, &1);
@@ -181,7 +189,7 @@ fn test_market_resolution_multiple_winners() {
     // U2: 300 on 1
     // U3: 500 on 2
     // Total 1: 500, Total 2: 500. Total Stake: 1000.
-    
+
     client.place_prediction(&user1, &pool_id, &200, &1);
     client.place_prediction(&user2, &pool_id, &300, &1);
     client.place_prediction(&user3, &pool_id, &500, &2);
@@ -192,7 +200,7 @@ fn test_market_resolution_multiple_winners() {
 
     // U1 Winnings: (200 / 500) * 1000 = 400
     // U2 Winnings: (300 / 500) * 1000 = 600
-    
+
     let w1 = client.claim_winnings(&user1, &pool_id);
     let w2 = client.claim_winnings(&user2, &pool_id);
 

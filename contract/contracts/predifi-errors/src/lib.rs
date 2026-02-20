@@ -3,10 +3,10 @@
 //! # PrediFi Errors
 //!
 //! This crate provides a comprehensive error handling system for PrediFi smart contracts.
-//! 
+//!
 //! ## Features
-//! 
-//! - **Granular Error Codes**: Specific error variants for validation failures, arithmetic 
+//!
+//! - **Granular Error Codes**: Specific error variants for validation failures, arithmetic
 //!   overflows, state inconsistencies, and more
 //! - **Gap-Based Numbering**: Error codes are organized in ranges (e.g., 1-5 for initialization,
 //!   10-15 for authorization) allowing future additions without breaking existing mappings

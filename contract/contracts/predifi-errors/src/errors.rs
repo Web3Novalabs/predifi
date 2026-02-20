@@ -4,7 +4,7 @@ use soroban_sdk::contracterror;
 /// The error type covers all cases across Predifi contracts.
 /// Gap-based numbering allows future error codes to be added without
 /// renumbering existing ones or breaking client-side mappings.
-/// 
+///
 /// Note: Soroban limits the number of error variants to 32.
 /// This enum is optimized to stay within that limit while providing
 /// comprehensive error coverage through consolidated error variants.
@@ -214,9 +214,7 @@ impl PrediFiError {
 
             // Timestamp & Time Validation
             Self::InvalidTimestamp => "Invalid timestamp or time constraints not met",
-            Self::TimeConstraintError => {
-                "End time or resolution time constraints are not met"
-            }
+            Self::TimeConstraintError => "End time or resolution time constraints are not met",
 
             // Data & Validation
             Self::InvalidData => "Invalid data",
@@ -245,9 +243,7 @@ impl PrediFiError {
             }
 
             // Emergency & Admin
-            Self::AdminError => {
-                "Contract pause, emergency, version mismatch, or upgrade error"
-            }
+            Self::AdminError => "Contract pause, emergency, version mismatch, or upgrade error",
 
             // Rate Limiting & Spam Prevention
             Self::RateLimitOrSuspiciousActivity => {
