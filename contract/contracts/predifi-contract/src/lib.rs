@@ -1,6 +1,11 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol};
 
+// Import access-control contract interface
+mod access_control {
+    soroban_sdk::contractimport!(file = "/Users/iamtechhunter/Documents/workspace/predifi/contract/contracts/access-control/target/wasm32-unknown-unknown/release/access_control.wasm");
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
@@ -9,6 +14,14 @@ pub struct Pool {
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct Config {
+    pub fee_bps: u32,
+    pub treasury: Address,
+    pub access_control: Address,
 }
 
 #[contracttype]
@@ -32,6 +45,7 @@ pub enum DataKey {
     OutcomeStake(u64, u32),   // PoolId, Outcome -> Total stake for this outcome
     UserPredictionCount(Address),
     UserPredictionIndex(Address, u32), // User, Index -> PoolId
+    Config,
 }
 
 #[contracttype]
@@ -46,10 +60,61 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
-    pub fn init(env: Env) {
+    pub fn init(env: Env, access_control: Address, treasury: Address, fee_bps: u32) {
         if !env.storage().instance().has(&DataKey::PoolIdCounter) {
             env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
         }
+        let config = Config {
+            fee_bps,
+            treasury,
+            access_control,
+        };
+        env.storage().instance().set(&DataKey::Config, &config);
+    }
+
+    fn require_role(env: &Env, user: &Address, role: u32) {
+        let config: Config = env
+            .storage()
+            .instance()
+            .get(&DataKey::Config)
+            .expect("Config not set");
+        let ac = access_control::Client::new(env, &config.access_control);
+        let role_enum = match role {
+            0 => access_control::Role::Admin,
+            1 => access_control::Role::Operator,
+            2 => access_control::Role::Moderator,
+            _ => panic!("Unknown role"),
+        };
+        let has_role = ac.has_role(user, &role_enum);
+        if !has_role {
+            panic!("Unauthorized: missing required role");
+        }
+    }
+
+    /// Only callable by Admin
+    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0); // 0 = Admin
+        let mut config: Config = env
+            .storage()
+            .instance()
+            .get(&DataKey::Config)
+            .expect("Config not set");
+        config.fee_bps = fee_bps;
+        env.storage().instance().set(&DataKey::Config, &config);
+    }
+
+    /// Only callable by Admin
+    pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0); // 0 = Admin
+        let mut config: Config = env
+            .storage()
+            .instance()
+            .get(&DataKey::Config)
+            .expect("Config not set");
+        config.treasury = treasury;
+        env.storage().instance().set(&DataKey::Config, &config);
     }
 
     pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
@@ -72,7 +137,10 @@ impl PredifiContract {
         pool_id
     }
 
-    pub fn resolve_pool(env: Env, pool_id: u64, outcome: u32) {
+    /// Only callable by Operator
+    pub fn resolve_pool(env: Env, operator: Address, pool_id: u64, outcome: u32) {
+        operator.require_auth();
+        Self::require_role(&env, &operator, 1); // 1 = Operator
         let mut pool: Pool = env
             .storage()
             .instance()
