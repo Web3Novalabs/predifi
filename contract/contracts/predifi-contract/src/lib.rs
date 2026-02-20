@@ -659,7 +659,7 @@ impl PredifiContract {
                 let fee_paid_key = DataKey::HasClaimed(marker_addr, pool_id);
 
                 if !env.storage().instance().has(&fee_paid_key) {
-                    let treasury = Self::get_treasury(env)?;
+                    let treasury = Self::get_treasury(env.clone())?;
 
                     token_client.transfer(&env.current_contract_address(), &treasury, &total_fee);
                     env.storage().instance().set(&fee_paid_key, &true);
