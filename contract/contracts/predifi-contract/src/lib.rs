@@ -1,6 +1,8 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
+};
 
 #[contracttype]
 #[derive(Clone)]
@@ -207,10 +209,7 @@ impl PredifiContract {
             .expect("Pool not found");
 
         assert!(!pool.resolved, "Pool already resolved");
-        assert!(
-            env.ledger().timestamp() < pool.end_time,
-            "Pool has ended"
-        );
+        assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&user, env.current_contract_address(), &amount);
@@ -234,10 +233,9 @@ impl PredifiContract {
             .instance()
             .get(&DataKey::UserPredictionCount(user.clone()))
             .unwrap_or(0);
-        env.storage().instance().set(
-            &DataKey::UserPredictionIndex(user.clone(), count),
-            &pool_id,
-        );
+        env.storage()
+            .instance()
+            .set(&DataKey::UserPredictionIndex(user.clone(), count), &pool_id);
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionCount(user.clone()), &(count + 1));
