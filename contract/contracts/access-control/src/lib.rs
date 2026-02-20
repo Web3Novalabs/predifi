@@ -1,15 +1,52 @@
 #![no_std]
 use predifi_errors::PrediFiError;
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+use soroban_sdk::{
+    contract, contractevent, contractimpl, contracttype, Address, Env, IntoVal, Symbol, Vec,
+};
 
-#[contracttype]
+#[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Role {
-    Admin = 0,
-    Operator = 1,
-    Moderator = 2,
-    Oracle = 3,
-    User = 4,
+pub struct AdminInitEvent {
+    pub admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoleAssignedEvent {
+    pub admin: Address,
+    pub user: Address,
+    pub role: Role,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoleRevokedEvent {
+    pub admin: Address,
+    pub user: Address,
+    pub role: Role,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RoleTransferredEvent {
+    pub admin: Address,
+    pub from: Address,
+    pub to: Address,
+    pub role: Role,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferredEvent {
+    pub admin: Address,
+    pub new_admin: Address,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AllRolesRevokedEvent {
+    pub admin: Address,
+    pub user: Address,
 }
 
 #[contracttype]
@@ -68,7 +105,9 @@ impl AccessControl {
         // Also grant the Admin role to the admin address.
         env.storage()
             .persistent()
-            .set(&DataKey::Role(admin, Role::Admin), &());
+            .set(&DataKey::Role(admin.clone(), Role::Admin), &());
+
+        env.events().publish((), AdminInitEvent { admin });
     }
 
     /// Returns the current super admin address.
@@ -111,7 +150,16 @@ impl AccessControl {
 
         env.storage()
             .persistent()
-            .set(&DataKey::Role(user, role), &());
+            .set(&DataKey::Role(user.clone(), role.clone()), &());
+
+        env.events().publish(
+            (),
+            RoleAssignedEvent {
+                admin: admin_caller,
+                user,
+                role,
+            },
+        );
         Ok(())
     }
 
@@ -150,7 +198,16 @@ impl AccessControl {
 
         env.storage()
             .persistent()
-            .remove(&DataKey::Role(user, role));
+            .remove(&DataKey::Role(user.clone(), role.clone()));
+
+        env.events().publish(
+            (),
+            RoleRevokedEvent {
+                admin: admin_caller,
+                user,
+                role,
+            },
+        );
         Ok(())
     }
 
@@ -203,10 +260,20 @@ impl AccessControl {
 
         env.storage()
             .persistent()
-            .remove(&DataKey::Role(from, role.clone()));
+            .remove(&DataKey::Role(from.clone(), role.clone()));
         env.storage()
             .persistent()
-            .set(&DataKey::Role(to, role), &());
+            .set(&DataKey::Role(to.clone(), role.clone()), &());
+
+        env.events().publish(
+            (),
+            RoleTransferredEvent {
+                admin: admin_caller,
+                from,
+                to,
+                role,
+            },
+        );
         Ok(())
     }
 
@@ -241,7 +308,15 @@ impl AccessControl {
             .remove(&DataKey::Role(current_admin, Role::Admin));
         env.storage()
             .persistent()
-            .set(&DataKey::Role(new_admin, Role::Admin), &());
+            .set(&DataKey::Role(new_admin.clone(), Role::Admin), &());
+
+        env.events().publish(
+            (),
+            AdminTransferredEvent {
+                admin: admin_caller,
+                new_admin,
+            },
+        );
 
         Ok(())
     }
@@ -299,6 +374,14 @@ impl AccessControl {
             }
         }
 
+        env.events().publish(
+            (),
+            AllRolesRevokedEvent {
+                admin: admin_caller,
+                user,
+            },
+        );
+
         Ok(())
     }
 
@@ -322,6 +405,16 @@ impl AccessControl {
         }
         false
     }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Role {
+    Admin = 0,
+    Operator = 1,
+    Moderator = 2,
+    Oracle = 3,
+    User = 4,
 }
 
 mod test;

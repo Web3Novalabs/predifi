@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+    IntoVal, Symbol, Vec,
 };
 
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -64,6 +65,20 @@ pub enum DataKey {
 pub struct Prediction {
     pub amount: i128,
     pub outcome: u32,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PredifiEvent {
+    Init(Address, Address, u32),
+    Pause(Address),
+    Unpause(Address),
+    FeeUpdate(Address, u32),
+    TreasuryUpdate(Address, Address),
+    PoolCreated(u64, u64, Address),
+    PoolResolved(u64, Address, u32),
+    PredictionPlaced(u64, Address, i128, u32),
+    WinningsClaimed(u64, Address, i128),
 }
 
 #[contract]
@@ -140,6 +155,15 @@ impl PredifiContract {
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
             Self::extend_instance(&env);
+
+            env.storage().instance().set(&DataKey::Config, &config);
+            env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
+            Self::extend_instance(&env);
+
+            env.events().publish(
+                (),
+                PredifiEvent::Init(access_control.clone(), treasury.clone(), fee_bps),
+            );
         }
     }
 
@@ -150,6 +174,8 @@ impl PredifiContract {
             .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &true);
         Self::extend_instance(&env);
+
+        env.events().publish((), PredifiEvent::Pause(admin));
     }
 
     /// Unpause the contract. Only callable by Admin (role 0).
@@ -159,6 +185,8 @@ impl PredifiContract {
             .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &false);
         Self::extend_instance(&env);
+
+        env.events().publish((), PredifiEvent::Unpause(admin));
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
@@ -171,6 +199,9 @@ impl PredifiContract {
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
         Self::extend_instance(&env);
+
+        env.events()
+            .publish((), PredifiEvent::FeeUpdate(admin, fee_bps));
         Ok(())
     }
 
@@ -183,6 +214,9 @@ impl PredifiContract {
         config.treasury = treasury;
         env.storage().instance().set(&DataKey::Config, &config);
         Self::extend_instance(&env);
+
+        env.events()
+            .publish((), PredifiEvent::TreasuryUpdate(admin, treasury));
         Ok(())
     }
 
@@ -218,6 +252,9 @@ impl PredifiContract {
             .set(&DataKey::PoolIdCounter, &(pool_id + 1));
         Self::extend_instance(&env);
 
+        env.events()
+            .publish((), PredifiEvent::PoolCreated(pool_id, end_time, token));
+
         pool_id
     }
 
@@ -246,6 +283,9 @@ impl PredifiContract {
 
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
+
+        env.events()
+            .publish((), PredifiEvent::PoolResolved(pool_id, operator, outcome));
         Ok(())
     }
 
@@ -295,6 +335,11 @@ impl PredifiContract {
 
         env.storage().persistent().set(&count_key, &(count + 1));
         Self::extend_persistent(&env, &count_key);
+
+        env.events().publish(
+            (),
+            PredifiEvent::PredictionPlaced(pool_id, user, amount, outcome),
+        );
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
@@ -359,6 +404,9 @@ impl PredifiContract {
 
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
+
+        env.events()
+            .publish((), PredifiEvent::WinningsClaimed(pool_id, user, winnings));
 
         Ok(winnings)
     }
