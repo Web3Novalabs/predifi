@@ -31,11 +31,11 @@ const ROLE_OPERATOR: u32 = 1;
 fn setup(
     env: &Env,
 ) -> (
-    dummy_access_control::DummyAccessControlClient,
-    PredifiContractClient,
+    dummy_access_control::DummyAccessControlClient<'_>,
+    PredifiContractClient<'_>,
     Address, // token_address
-    token::Client,
-    token::StellarAssetClient,
+    token::Client<'_>,
+    token::StellarAssetClient<'_>,
     Address, // treasury
     Address, // operator
 ) {
@@ -73,8 +73,8 @@ fn test_claim_winnings() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
-    let contract_id = env.register(PredifiContract, ()); // get contract address for balance check
+    let (_, client, token_address, _token, token_admin_client, _, operator) = setup(&env);
+    let _contract_id = env.register(PredifiContract, ()); // get contract address for balance check
                                                          // Re-derive contract address from client
     let contract_addr = client.address.clone();
 
@@ -262,7 +262,7 @@ fn test_multiple_pools_independent() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
+    let (_, client, token_address, _token, token_admin_client, _, operator) = setup(&env);
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
