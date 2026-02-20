@@ -156,3 +156,45 @@ fn test_multi_user_betting_and_balance_verification() {
 
     assert_eq!(token_ctx.token.balance(&client.address), 0);
 }
+
+#[test]
+fn test_market_resolution_multiple_winners() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, token_ctx, _admin, operator, _treasury) = setup_integration(&env);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    token_ctx.mint(&user1, 1000);
+    token_ctx.mint(&user2, 1000);
+    token_ctx.mint(&user3, 1000);
+
+    let pool_id = client.create_pool(&1500u64, &token_ctx.token_address);
+
+    // Bets:
+    // U1: 200 on 1
+    // U2: 300 on 1
+    // U3: 500 on 2
+    // Total 1: 500, Total 2: 500. Total Stake: 1000.
+    
+    client.place_prediction(&user1, &pool_id, &200, &1);
+    client.place_prediction(&user2, &pool_id, &300, &1);
+    client.place_prediction(&user3, &pool_id, &500, &2);
+
+    client.resolve_pool(&operator, &pool_id, &1u32); // Outcome 1 wins
+
+    // U1 Winnings: (200 / 500) * 1000 = 400
+    // U2 Winnings: (300 / 500) * 1000 = 600
+    
+    let w1 = client.claim_winnings(&user1, &pool_id);
+    let w2 = client.claim_winnings(&user2, &pool_id);
+
+    assert_eq!(w1, 400);
+    assert_eq!(w2, 600);
+    assert_eq!(token_ctx.token.balance(&user1), 1200); // 1000 - 200 + 400
+    assert_eq!(token_ctx.token.balance(&user2), 1300); // 1000 - 300 + 600
+    assert_eq!(token_ctx.token.balance(&client.address), 0);
+}
