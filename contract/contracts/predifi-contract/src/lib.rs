@@ -43,6 +43,7 @@ pub enum DataKey {
     UserPredictionCount(Address),
     UserPredictionIndex(Address, u32),
     Config,
+    Paused,
 }
 
 #[contracttype]
@@ -57,6 +58,27 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
+    /// Pause the contract. Only callable by Admin (role 0).
+    pub fn pause(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0);
+        env.storage().instance().set(&DataKey::Paused, &true);
+    }
+
+    /// Unpause the contract. Only callable by Admin (role 0).
+    pub fn unpause(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0);
+        env.storage().instance().set(&DataKey::Paused, &false);
+    }
+
+    /// Returns true if the contract is paused.
+    fn is_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
     /// Cross-contract call to access control using u32 role,
     /// matching the dummy and real contract's external ABI.
     fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> bool {
@@ -100,6 +122,9 @@ impl PredifiContract {
 
     /// Set fee in basis points. Caller must have Admin role (0).
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         admin.require_auth();
         Self::require_role(&env, &admin, 0);
         let mut config = Self::get_config(&env);
@@ -109,6 +134,9 @@ impl PredifiContract {
 
     /// Set treasury address. Caller must have Admin role (0).
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         admin.require_auth();
         Self::require_role(&env, &admin, 0);
         let mut config = Self::get_config(&env);
@@ -118,6 +146,9 @@ impl PredifiContract {
 
     /// Create a new prediction pool. Returns the new pool ID.
     pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         let pool_id: u64 = env
             .storage()
             .instance()
@@ -142,6 +173,9 @@ impl PredifiContract {
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
     pub fn resolve_pool(env: Env, operator: Address, pool_id: u64, outcome: u32) {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         operator.require_auth();
         Self::require_role(&env, &operator, 1);
 
@@ -161,6 +195,9 @@ impl PredifiContract {
 
     /// Place a prediction on a pool.
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         user.require_auth();
 
         let mut pool: Pool = env
@@ -208,6 +245,9 @@ impl PredifiContract {
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> i128 {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         user.require_auth();
 
         let pool: Pool = env
