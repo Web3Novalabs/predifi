@@ -404,7 +404,7 @@ fn test_place_prediction_min_stake() {
 
     // Try to place prediction with amount 50 (should fail)
     let result = client.try_place_prediction(&user, &user, &pool_id, &50, &1);
-    assert_eq!(result, Err(Ok(PrediFiError::InvalidPredictionAmount)));
+    assert_eq!(result, Err(Ok(PrediFiError::MinStakeNotMet)));
 
     // Place prediction with amount 100 (should succeed)
     let result = client.try_place_prediction(&user, &user, &pool_id, &100, &1);
