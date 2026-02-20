@@ -45,6 +45,7 @@ pub enum DataKey {
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
+    Paused,
 }
 
 #[contracttype]
@@ -73,6 +74,27 @@ impl PredifiContract {
         Self::require_role(&env, &admin, 0)?;
         env.storage().instance().set(&DataKey::Paused, &false);
         Ok(())
+    }
+
+    /// Returns true if the contract is paused.
+    fn is_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+    /// Pause the contract. Only callable by Admin (role 0).
+    pub fn pause(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0);
+        env.storage().instance().set(&DataKey::Paused, &true);
+    }
+
+    /// Unpause the contract. Only callable by Admin (role 0).
+    pub fn unpause(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0);
+        env.storage().instance().set(&DataKey::Paused, &false);
     }
 
     /// Returns true if the contract is paused.
@@ -122,6 +144,10 @@ impl PredifiContract {
 
     /// Set fee in basis points. Caller must have Admin role (0).
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PrediFiError> {
+    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         admin.require_auth();
         Self::require_role(&env, &admin, 0)?;
 
@@ -137,6 +163,10 @@ impl PredifiContract {
 
     /// Set treasury address. Caller must have Admin role (0).
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PrediFiError> {
+    pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         admin.require_auth();
         Self::require_role(&env, &admin, 0)?;
         let mut config = Self::get_config(&env)?;
@@ -151,6 +181,10 @@ impl PredifiContract {
             return Err(PrediFiError::TimeConstraintError);
         }
 
+    pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         let pool_id: u64 = env
             .storage()
             .instance()
@@ -183,6 +217,10 @@ impl PredifiContract {
         pool_id: u64,
         outcome: u32,
     ) -> Result<(), PrediFiError> {
+    pub fn resolve_pool(env: Env, operator: Address, pool_id: u64, outcome: u32) {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         operator.require_auth();
         Self::require_role(&env, &operator, 1)?;
 
@@ -215,6 +253,10 @@ impl PredifiContract {
         amount: i128,
         outcome: u32,
     ) -> Result<(), PrediFiError> {
+    pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
+        }
         user.require_auth();
 
         if amount <= 0 {
@@ -282,6 +324,10 @@ impl PredifiContract {
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PrediFiError> {
         if Self::is_paused(&env) {
             return Err(PrediFiError::AdminError);
+        }
+    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> i128 {
+        if Self::is_paused(&env) {
+            panic!("Contract is paused");
         }
         user.require_auth();
 
