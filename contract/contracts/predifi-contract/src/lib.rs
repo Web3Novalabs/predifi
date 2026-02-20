@@ -44,6 +44,7 @@ pub enum DataKey {
     UserPredictionCount(Address),
     UserPredictionIndex(Address, u32),
     Config,
+    Paused,
 }
 
 #[contracttype]
@@ -58,6 +59,29 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
+    /// Pause the contract. Only callable by Admin (role 0).
+    pub fn pause(env: Env, admin: Address) -> Result<(), PrediFiError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Ok(())
+    }
+
+    /// Unpause the contract. Only callable by Admin (role 0).
+    pub fn unpause(env: Env, admin: Address) -> Result<(), PrediFiError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+        env.storage().instance().set(&DataKey::Paused, &false);
+        Ok(())
+    }
+
+    /// Returns true if the contract is paused.
+    fn is_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
     /// Cross-contract call to access control using u32 role,
     /// matching the dummy and real contract's external ABI.
     fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> bool {
@@ -256,6 +280,9 @@ impl PredifiContract {
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PrediFiError> {
+        if Self::is_paused(&env) {
+            return Err(PrediFiError::AdminError);
+        }
         user.require_auth();
 
         let pool: Pool = env
