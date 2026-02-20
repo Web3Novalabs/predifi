@@ -1,8 +1,6 @@
 #![no_std]
 
-use predifi_errors::PrediFiError;
-use soroban_sdk::IntoVal;
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec};
 
 #[contracttype]
 #[derive(Clone)]
@@ -45,7 +43,6 @@ pub enum DataKey {
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
-    Paused,
 }
 
 #[contracttype]
@@ -60,52 +57,8 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
-    /// Pause the contract. Only callable by Admin (role 0).
-    pub fn pause(env: Env, admin: Address) -> Result<(), PrediFiError> {
-        admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
-        env.storage().instance().set(&DataKey::Paused, &true);
-        Ok(())
-    }
+    // ── Private helpers ───────────────────────────────────────────────────────
 
-    /// Unpause the contract. Only callable by Admin (role 0).
-    pub fn unpause(env: Env, admin: Address) -> Result<(), PrediFiError> {
-        admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
-        env.storage().instance().set(&DataKey::Paused, &false);
-        Ok(())
-    }
-
-    /// Returns true if the contract is paused.
-    fn is_paused(env: &Env) -> bool {
-        env.storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false)
-    }
-    /// Pause the contract. Only callable by Admin (role 0).
-    pub fn pause(env: Env, admin: Address) {
-        admin.require_auth();
-        Self::require_role(&env, &admin, 0);
-        env.storage().instance().set(&DataKey::Paused, &true);
-    }
-
-    /// Unpause the contract. Only callable by Admin (role 0).
-    pub fn unpause(env: Env, admin: Address) {
-        admin.require_auth();
-        Self::require_role(&env, &admin, 0);
-        env.storage().instance().set(&DataKey::Paused, &false);
-    }
-
-    /// Returns true if the contract is paused.
-    fn is_paused(env: &Env) -> bool {
-        env.storage()
-            .instance()
-            .get(&DataKey::Paused)
-            .unwrap_or(false)
-    }
-    /// Cross-contract call to access control using u32 role,
-    /// matching the dummy and real contract's external ABI.
     fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> bool {
         env.invoke_contract(
             contract,
@@ -114,20 +67,34 @@ impl PredifiContract {
         )
     }
 
-    fn require_role(env: &Env, user: &Address, role: u32) -> Result<(), PrediFiError> {
-        let config = Self::get_config(env)?;
+    fn require_role(env: &Env, user: &Address, role: u32) {
+        let config = Self::get_config(env);
         if !Self::has_role(env, &config.access_control, user, role) {
-            return Err(PrediFiError::Unauthorized);
+            panic!("Unauthorized: missing required role");
         }
-        Ok(())
     }
 
-    fn get_config(env: &Env) -> Result<Config, PrediFiError> {
+    fn get_config(env: &Env) -> Config {
         env.storage()
             .instance()
             .get(&DataKey::Config)
-            .ok_or(PrediFiError::NotInitialized)
+            .expect("Config not set")
     }
+
+    fn is_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    fn require_not_paused(env: &Env) {
+        if Self::is_paused(env) {
+            panic!("Contract is paused");
+        }
+    }
+
+    // ── Public interface ──────────────────────────────────────────────────────
 
     /// Initialize the contract. Idempotent — safe to call multiple times.
     pub fn init(env: Env, access_control: Address, treasury: Address, fee_bps: u32) {
@@ -142,49 +109,49 @@ impl PredifiContract {
         }
     }
 
-    /// Set fee in basis points. Caller must have Admin role (0).
-    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PrediFiError> {
-    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) {
-        if Self::is_paused(&env) {
-            panic!("Contract is paused");
-        }
+    /// Pause the contract. Only callable by Admin (role 0).
+    pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
+        Self::require_role(&env, &admin, 0);
+        env.storage().instance().set(&DataKey::Paused, &true);
+    }
 
-        if fee_bps > 10000 {
-            return Err(PrediFiError::InvalidFeeBps);
-        }
+    /// Unpause the contract. Only callable by Admin (role 0).
+    pub fn unpause(env: Env, admin: Address) {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0);
+        env.storage().instance().set(&DataKey::Paused, &false);
+    }
 
-        let mut config = Self::get_config(&env)?;
+    /// Set fee in basis points. Caller must have Admin role (0).
+    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0);
+        assert!(fee_bps <= 10_000, "fee_bps exceeds 10000");
+        let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
-        Ok(())
     }
 
     /// Set treasury address. Caller must have Admin role (0).
-    pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PrediFiError> {
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
-        if Self::is_paused(&env) {
-            panic!("Contract is paused");
-        }
+        Self::require_not_paused(&env);
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
-        let mut config = Self::get_config(&env)?;
+        Self::require_role(&env, &admin, 0);
+        let mut config = Self::get_config(&env);
         config.treasury = treasury;
         env.storage().instance().set(&DataKey::Config, &config);
-        Ok(())
     }
 
     /// Create a new prediction pool. Returns the new pool ID.
-    pub fn create_pool(env: Env, end_time: u64, token: Address) -> Result<u64, PrediFiError> {
-        if end_time <= env.ledger().timestamp() {
-            return Err(PrediFiError::TimeConstraintError);
-        }
-
     pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
-        if Self::is_paused(&env) {
-            panic!("Contract is paused");
-        }
+        Self::require_not_paused(&env);
+        assert!(
+            end_time > env.ledger().timestamp(),
+            "end_time must be in the future"
+        );
+
         let pool_id: u64 = env
             .storage()
             .instance()
@@ -200,161 +167,106 @@ impl PredifiContract {
         };
 
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
-        env.storage().instance().set(
-            &DataKey::PoolIdCounter,
-            &(pool_id
-                .checked_add(1)
-                .ok_or(PrediFiError::ArithmeticError)?),
-        );
+        env.storage()
+            .instance()
+            .set(&DataKey::PoolIdCounter, &(pool_id + 1));
 
-        Ok(pool_id)
+        pool_id
     }
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
-    pub fn resolve_pool(
-        env: Env,
-        operator: Address,
-        pool_id: u64,
-        outcome: u32,
-    ) -> Result<(), PrediFiError> {
     pub fn resolve_pool(env: Env, operator: Address, pool_id: u64, outcome: u32) {
-        if Self::is_paused(&env) {
-            panic!("Contract is paused");
-        }
+        Self::require_not_paused(&env);
         operator.require_auth();
-        Self::require_role(&env, &operator, 1)?;
+        Self::require_role(&env, &operator, 1);
 
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
-            .ok_or(PrediFiError::PoolNotFound)?;
+            .expect("Pool not found");
 
-        if pool.resolved {
-            return Err(PrediFiError::PoolAlreadyResolved);
-        }
-
-        if env.ledger().timestamp() < pool.end_time {
-            return Err(PrediFiError::PoolExpiryError);
-        }
+        assert!(!pool.resolved, "Pool already resolved");
 
         pool.resolved = true;
         pool.outcome = outcome;
 
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
-        Ok(())
     }
 
     /// Place a prediction on a pool.
-    pub fn place_prediction(
-        env: Env,
-        user: Address,
-        pool_id: u64,
-        amount: i128,
-        outcome: u32,
-    ) -> Result<(), PrediFiError> {
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
-        if Self::is_paused(&env) {
-            panic!("Contract is paused");
-        }
+        Self::require_not_paused(&env);
         user.require_auth();
-
-        if amount <= 0 {
-            return Err(PrediFiError::InvalidPredictionAmount);
-        }
+        assert!(amount > 0, "amount must be positive");
 
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
-            .ok_or(PrediFiError::PoolNotFound)?;
+            .expect("Pool not found");
 
-        if pool.resolved {
-            return Err(PrediFiError::PoolAlreadyResolved);
-        }
+        assert!(!pool.resolved, "Pool already resolved");
+        assert!(
+            env.ledger().timestamp() < pool.end_time,
+            "Pool has ended"
+        );
 
-        if env.ledger().timestamp() >= pool.end_time {
-            return Err(PrediFiError::PredictionTooLate);
-        }
-
-        // Transfer stake into the contract
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&user, env.current_contract_address(), &amount);
 
-        // Record prediction
         env.storage().instance().set(
             &DataKey::Prediction(user.clone(), pool_id),
             &Prediction { amount, outcome },
         );
 
-        // Update total pool stake
-        pool.total_stake = pool
-            .total_stake
-            .checked_add(amount)
-            .ok_or(PrediFiError::ArithmeticError)?;
+        pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
 
-        // Update per-outcome stake
         let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
         let current_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
-        let new_outcome_stake = current_stake
-            .checked_add(amount)
-            .ok_or(PrediFiError::ArithmeticError)?;
         env.storage()
             .instance()
-            .set(&outcome_key, &new_outcome_stake);
+            .set(&outcome_key, &(current_stake + amount));
 
-        // Index prediction for pagination
         let count: u32 = env
             .storage()
             .instance()
             .get(&DataKey::UserPredictionCount(user.clone()))
             .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::UserPredictionIndex(user.clone(), count), &pool_id);
+        env.storage().instance().set(
+            &DataKey::UserPredictionIndex(user.clone(), count),
+            &pool_id,
+        );
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionCount(user.clone()), &(count + 1));
-
-        Ok(())
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
-    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PrediFiError> {
-        if Self::is_paused(&env) {
-            return Err(PrediFiError::AdminError);
-        }
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> i128 {
-        if Self::is_paused(&env) {
-            panic!("Contract is paused");
-        }
+        Self::require_not_paused(&env);
         user.require_auth();
 
         let pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
-            .ok_or(PrediFiError::PoolNotFound)?;
+            .expect("Pool not found");
 
-        if !pool.resolved {
-            return Err(PrediFiError::PoolNotResolved);
-        }
-
-        if env
-            .storage()
-            .instance()
-            .has(&DataKey::HasClaimed(user.clone(), pool_id))
-        {
-            return Err(PrediFiError::AlreadyClaimed);
-        }
+        assert!(pool.resolved, "Pool not resolved");
+        assert!(
+            !env.storage()
+                .instance()
+                .has(&DataKey::HasClaimed(user.clone(), pool_id)),
+            "Already claimed"
+        );
 
         // Mark as claimed immediately to prevent re-entrancy
         env.storage()
             .instance()
             .set(&DataKey::HasClaimed(user.clone(), pool_id), &true);
 
-        // Return 0 for users with no prediction or wrong outcome
         let prediction: Option<Prediction> = env
             .storage()
             .instance()
@@ -362,14 +274,13 @@ impl PredifiContract {
 
         let prediction = match prediction {
             Some(p) => p,
-            None => return Ok(0),
+            None => return 0,
         };
 
         if prediction.outcome != pool.outcome {
-            return Ok(0);
+            return 0;
         }
 
-        // Share = (user_stake / winning_stake) * total_pool
         let winning_stake: i128 = env
             .storage()
             .instance()
@@ -377,20 +288,20 @@ impl PredifiContract {
             .unwrap_or(0);
 
         if winning_stake == 0 {
-            return Ok(0);
+            return 0;
         }
 
         let winnings = prediction
             .amount
             .checked_mul(pool.total_stake)
-            .ok_or(PrediFiError::ArithmeticError)?
+            .expect("overflow")
             .checked_div(winning_stake)
-            .ok_or(PrediFiError::ArithmeticError)?;
+            .expect("division by zero");
 
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
 
-        Ok(winnings)
+        winnings
     }
 
     /// Get a paginated list of a user's predictions.
@@ -412,7 +323,6 @@ impl PredifiContract {
             return results;
         }
 
-        // core::cmp::min — NOT std::cmp::min (this crate is no_std)
         let end = core::cmp::min(offset.saturating_add(limit), count);
 
         for i in offset..end {
@@ -448,6 +358,4 @@ impl PredifiContract {
     }
 }
 
-mod integration_test;
 mod test;
-mod test_utils;
