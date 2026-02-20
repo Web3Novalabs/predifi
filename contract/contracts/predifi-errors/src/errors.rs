@@ -13,6 +13,10 @@ pub enum PrediFiError {
     NotInitialized = 1,
     /// Contract has already been initialized.
     AlreadyInitialized = 2,
+    /// Protocol treasury address is not set.
+    TreasuryNotSet = 3,
+    /// Access control contract is not set.
+    AccessControlNotSet = 4,
 
     // ── Authorization & Access Control (10–15) ────────────────────────────────
     /// The caller is not authorized to perform this action.
@@ -41,6 +45,8 @@ pub enum PrediFiError {
     ResolutionWindowExpired = 27,
     /// The number of options provided is invalid.
     InvalidOptionsCount = 28,
+    /// State inconsistency detected.
+    InconsistentState = 29,
 
     // ── Prediction & Betting (40–50) ──────────────────────────────────────────
     /// The user has no prediction for this pool.
@@ -53,6 +59,8 @@ pub enum PrediFiError {
     PredictionTooLate = 43,
     /// The user has insufficient balance for this prediction.
     InsufficientBalance = 44,
+    /// The prediction amount is below the minimum required stake.
+    MinStakeNotMet = 45,
 
     // ── Claiming & Reward (60–70) ─────────────────────────────────────────────
     /// The user has already claimed winnings for this pool.
@@ -81,6 +89,8 @@ pub enum PrediFiError {
     InvalidOffset = 93,
     /// The pagination limit is invalid (e.g., zero or too large).
     InvalidLimit = 94,
+    /// The fee basis points exceed the maximum allowed value.
+    MaxFeeExceeded = 95,
 
     // ── Arithmetic & Calculation (110–115) ────────────────────────────────────
     /// An arithmetic overflow occurred.
@@ -89,6 +99,10 @@ pub enum PrediFiError {
     ArithmeticUnderflow = 111,
     /// Division by zero attempted.
     DivisionByZero = 112,
+    /// An overflow occurred during addition.
+    AdditionOverflow = 113,
+    /// An overflow occurred during multiplication.
+    MultiplicationOverflow = 114,
 
     // ── Storage & State (120–125) ─────────────────────────────────────────────
     /// The storage key was not found.
@@ -104,6 +118,8 @@ impl PrediFiError {
             // Initialization & Configuration
             PrediFiError::NotInitialized => "Contract not initialized",
             PrediFiError::AlreadyInitialized => "Contract already initialized",
+            PrediFiError::TreasuryNotSet => "Treasury address not set",
+            PrediFiError::AccessControlNotSet => "Access control address not set",
 
             // Authorization & Access Control
             PrediFiError::Unauthorized => "Unauthorized access",
@@ -120,6 +136,7 @@ impl PrediFiError {
             PrediFiError::InvalidOutcome => "Invalid outcome",
             PrediFiError::ResolutionWindowExpired => "Resolution window has expired",
             PrediFiError::InvalidOptionsCount => "Invalid options count",
+            PrediFiError::InconsistentState => "Inconsistent state detected",
 
             // Prediction & Betting
             PrediFiError::PredictionNotFound => "Prediction not found",
@@ -127,6 +144,7 @@ impl PrediFiError {
             PrediFiError::InvalidPredictionAmount => "Invalid prediction amount",
             PrediFiError::PredictionTooLate => "Cannot predict after pool end time",
             PrediFiError::InsufficientBalance => "Insufficient balance",
+            PrediFiError::MinStakeNotMet => "Minimum stake not met",
 
             // Claiming & Rewards
             PrediFiError::AlreadyClaimed => "Already claimed",
@@ -144,15 +162,24 @@ impl PrediFiError {
             PrediFiError::InvalidToken => "Invalid token",
             PrediFiError::InvalidOffset => "Invalid offset",
             PrediFiError::InvalidLimit => "Invalid limit",
+            PrediFiError::MaxFeeExceeded => "Maximum fee exceeded",
 
             // Arithmetic & Calculation
             PrediFiError::ArithmeticOverflow => "Arithmetic overflow",
             PrediFiError::ArithmeticUnderflow => "Arithmetic underflow",
             PrediFiError::DivisionByZero => "Division by zero",
+            PrediFiError::AdditionOverflow => "Addition overflow",
+            PrediFiError::MultiplicationOverflow => "Multiplication overflow",
 
             // Storage & State
             PrediFiError::StorageKeyNotFound => "Storage key not found",
             PrediFiError::StorageCorrupted => "Storage corrupted",
         }
+    }
+}
+
+impl core::fmt::Display for PrediFiError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
     }
 }

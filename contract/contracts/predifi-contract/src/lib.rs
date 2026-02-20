@@ -4,6 +4,7 @@ use predifi_errors::PrediFiError;
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, token, Address, Env};
 
 const RESOLUTION_WINDOW: u64 = 7 * 24 * 60 * 60; // 7 days in seconds
+const MAX_PAGINATION_LIMIT: u32 = 50;
 
 // Event structs for contract events
 #[contractevent]
@@ -116,16 +117,24 @@ impl PredifiContract {
         env.storage()
             .instance()
             .get(&DataKey::AccessControlAddress)
-            .ok_or(PrediFiError::NotInitialized)
+            .ok_or(PrediFiError::AccessControlNotSet)
     }
 
     /// Get the access control client
     ///
     /// # Returns
     /// The AccessControlClient instance
-    fn get_access_control_client(env: &Env) -> access_control::AccessControlClient<'_> {
-        let access_control_addr = Self::get_access_control_address(env).unwrap();
-        access_control::AccessControlClient::new(env, &access_control_addr)
+    ///
+    /// # Errors
+    /// * `AccessControlNotSet` - If access control contract is not set
+    fn get_access_control_client(
+        env: &Env,
+    ) -> Result<access_control::AccessControlClient<'_>, PrediFiError> {
+        let access_control_addr = Self::get_access_control_address(env)?;
+        Ok(access_control::AccessControlClient::new(
+            env,
+            &access_control_addr,
+        ))
     }
 
     /// Set the access control contract address (only callable once)
@@ -155,7 +164,10 @@ impl PredifiContract {
     /// # Arguments
     /// * `treasury` - Address to receive protocol fees
     /// * `fee_bps` - Fee in basis points (e.g., 100 = 1%)
-    pub fn init(env: Env, treasury: Address, fee_bps: u32) {
+    pub fn init(env: Env, treasury: Address, fee_bps: u32) -> Result<(), PrediFiError> {
+        if fee_bps > 10000 {
+            return Err(PrediFiError::MaxFeeExceeded);
+        }
         // Only set if not already initialized
         if !env.storage().instance().has(&DataKey::PoolIdCounter) {
             env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
@@ -166,6 +178,7 @@ impl PredifiContract {
         if !env.storage().instance().has(&DataKey::Treasury) {
             env.storage().instance().set(&DataKey::Treasury, &treasury);
         }
+        Ok(())
     }
 
     /// Set the protocol fee in basis points.
@@ -178,9 +191,13 @@ impl PredifiContract {
     /// * `InsufficientPermissions` - If caller doesn't have Admin role
     pub fn set_fee_bps(env: Env, caller: Address, fee_bps: u32) -> Result<(), PrediFiError> {
         // Check if caller has Admin role
-        let access_control_client = Self::get_access_control_client(&env);
+        let access_control_client = Self::get_access_control_client(&env)?;
         if !access_control_client.has_role(&caller, &Role::Admin) {
             return Err(PrediFiError::InsufficientPermissions);
+        }
+
+        if fee_bps > 10000 {
+            return Err(PrediFiError::MaxFeeExceeded);
         }
 
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
@@ -209,7 +226,7 @@ impl PredifiContract {
     /// * `InsufficientPermissions` - If caller doesn't have Admin role
     pub fn set_treasury(env: Env, caller: Address, treasury: Address) -> Result<(), PrediFiError> {
         // Check if caller has Admin role
-        let access_control_client = Self::get_access_control_client(&env);
+        let access_control_client = Self::get_access_control_client(&env)?;
         if !access_control_client.has_role(&caller, &Role::Admin) {
             return Err(PrediFiError::InsufficientPermissions);
         }
@@ -226,11 +243,11 @@ impl PredifiContract {
     ///
     /// # Returns
     /// The treasury address
-    pub fn get_treasury(env: Env) -> Address {
+    pub fn get_treasury(env: Env) -> Result<Address, PrediFiError> {
         env.storage()
             .instance()
             .get(&DataKey::Treasury)
-            .expect("Treasury not set")
+            .ok_or(PrediFiError::TreasuryNotSet)
     }
 
     /// Create a new prediction pool.
@@ -278,9 +295,12 @@ impl PredifiContract {
 
         // 5. Save State
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
-        env.storage()
-            .instance()
-            .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+        env.storage().instance().set(
+            &DataKey::PoolIdCounter,
+            &(pool_id
+                .checked_add(1)
+                .ok_or(PrediFiError::AdditionOverflow)?),
+        );
 
         // 6. Emit Event
         PoolCreatedEvent {
@@ -317,7 +337,7 @@ impl PredifiContract {
         caller.require_auth();
 
         // Check if caller has Admin or Operator role (oracle/admin authorization)
-        let access_control_client = Self::get_access_control_client(&env);
+        let access_control_client = Self::get_access_control_client(&env)?;
         if !access_control_client.has_role(&caller, &Role::Admin)
             && !access_control_client.has_role(&caller, &Role::Operator)
         {
@@ -344,7 +364,11 @@ impl PredifiContract {
         }
 
         // Resolution must happen within the window
-        if current_time > pool.end_time + RESOLUTION_WINDOW {
+        let resolution_deadline = pool.end_time
+            .checked_add(RESOLUTION_WINDOW)
+            .ok_or(PrediFiError::AdditionOverflow)?;
+            
+        if current_time > resolution_deadline {
             return Err(PrediFiError::ResolutionWindowExpired);
         }
 
@@ -373,8 +397,9 @@ impl PredifiContract {
             let fee = pool
                 .total_stake
                 .checked_mul(fee_bps as i128)
-                .and_then(|v| v.checked_div(10_000))
-                .ok_or(PrediFiError::ArithmeticOverflow)?;
+                .ok_or(PrediFiError::MultiplicationOverflow)?
+                .checked_div(10_000)
+                .ok_or(PrediFiError::DivisionByZero)?;
 
             env.storage()
                 .instance()
@@ -434,8 +459,11 @@ impl PredifiContract {
             .ok_or(PrediFiError::PoolNotFound)?;
 
         // Validate amount
-        if amount <= 0 || amount < pool.min_stake {
+        if amount <= 0 {
             return Err(PrediFiError::InvalidPredictionAmount);
+        }
+        if amount < pool.min_stake {
+            return Err(PrediFiError::MinStakeNotMet);
         }
 
         // Check if pool is resolved
@@ -473,7 +501,7 @@ impl PredifiContract {
         pool.total_stake = pool
             .total_stake
             .checked_add(amount)
-            .ok_or(PrediFiError::ArithmeticOverflow)?;
+            .ok_or(PrediFiError::AdditionOverflow)?;
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
 
         // Update stake specific to this outcome
@@ -481,7 +509,7 @@ impl PredifiContract {
         let current_outcome_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
         let new_outcome_stake = current_outcome_stake
             .checked_add(amount)
-            .ok_or(PrediFiError::ArithmeticOverflow)?;
+            .ok_or(PrediFiError::AdditionOverflow)?;
         env.storage()
             .instance()
             .set(&outcome_key, &new_outcome_stake);
@@ -497,7 +525,7 @@ impl PredifiContract {
             .set(&DataKey::UserPredictionIndex(user.clone(), count), &pool_id);
         let new_count = count
             .checked_add(1)
-            .ok_or(PrediFiError::ArithmeticOverflow)?;
+            .ok_or(PrediFiError::AdditionOverflow)?;
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionCount(user.clone()), &new_count);
@@ -543,6 +571,10 @@ impl PredifiContract {
             return Err(PrediFiError::PoolNotResolved);
         }
 
+        if pool.outcome >= pool.options_count {
+            return Err(PrediFiError::InconsistentState);
+        }
+
         // 2. Prevent double claiming
         if env
             .storage()
@@ -569,13 +601,16 @@ impl PredifiContract {
         let winning_outcome_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
 
         if winning_outcome_stake == 0 {
+            if pool.total_stake > 0 {
+                return Err(PrediFiError::InconsistentState);
+            }
             return Err(PrediFiError::WinningStakeZero);
         }
 
         let gross_winnings = prediction
             .amount
             .checked_mul(pool.total_stake)
-            .ok_or(PrediFiError::ArithmeticOverflow)?
+            .ok_or(PrediFiError::MultiplicationOverflow)?
             .checked_div(winning_outcome_stake)
             .ok_or(PrediFiError::DivisionByZero)?;
 
@@ -593,14 +628,14 @@ impl PredifiContract {
             // User's share of fee = (user's gross winnings / total pool stake) * total_fee
             fee_share = gross_winnings
                 .checked_mul(total_fee)
-                .ok_or(PrediFiError::ArithmeticOverflow)?
+                .ok_or(PrediFiError::MultiplicationOverflow)?
                 .checked_div(pool.total_stake)
                 .ok_or(PrediFiError::DivisionByZero)?;
         }
 
         let net_winnings = gross_winnings
             .checked_sub(fee_share)
-            .ok_or(PrediFiError::ArithmeticOverflow)?;
+            .ok_or(PrediFiError::ArithmeticUnderflow)?;
 
         // 7. Transfer net winnings to user
         let token_client = token::Client::new(&env, &pool.token);
@@ -625,11 +660,7 @@ impl PredifiContract {
                 let fee_paid_key = DataKey::HasClaimed(marker_addr, pool_id);
 
                 if !env.storage().instance().has(&fee_paid_key) {
-                    let treasury: Address = env
-                        .storage()
-                        .instance()
-                        .get(&DataKey::Treasury)
-                        .expect("Treasury not set");
+                    let treasury = Self::get_treasury(env)?;
 
                     token_client.transfer(&env.current_contract_address(), &treasury, &total_fee);
                     env.storage().instance().set(&fee_paid_key, &true);
@@ -670,6 +701,9 @@ impl PredifiContract {
         if limit == 0 {
             return Err(PrediFiError::InvalidLimit);
         }
+        if limit > MAX_PAGINATION_LIMIT {
+            return Err(PrediFiError::InvalidLimit);
+        }
 
         let count: u32 = env
             .storage()
@@ -686,7 +720,7 @@ impl PredifiContract {
         let end = core::cmp::min(
             offset
                 .checked_add(limit)
-                .ok_or(PrediFiError::ArithmeticOverflow)?,
+                .ok_or(PrediFiError::AdditionOverflow)?,
             count,
         );
 
@@ -707,7 +741,7 @@ impl PredifiContract {
                 .storage()
                 .instance()
                 .get(&DataKey::Pool(pool_id))
-                .ok_or(PrediFiError::PoolNotFound)?;
+                .ok_or(PrediFiError::InconsistentState)?;
 
             results.push_back(UserPredictionDetail {
                 pool_id,
