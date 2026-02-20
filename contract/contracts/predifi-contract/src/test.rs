@@ -67,7 +67,7 @@ fn setup(
     )
 }
 
-// ── Core prediction tests ────────────────────────────────────────────────────
+// ── Core prediction tests ─────────────────────────────────────────────────────
 
 #[test]
 fn test_claim_winnings() {
@@ -165,7 +165,7 @@ fn test_multiple_pools_independent() {
     assert_eq!(w2, 0); // lost
 }
 
-// ── Access control tests ─────────────────────────────────────────────────────
+// ── Access control tests ──────────────────────────────────────────────────────
 
 #[test]
 #[should_panic(expected = "Unauthorized: missing required role")]
