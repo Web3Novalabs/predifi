@@ -1,5 +1,6 @@
 #![no_std]
 
+use predifi_errors::PrediFiError;
 use soroban_sdk::IntoVal;
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Symbol, Vec};
 
@@ -67,22 +68,19 @@ impl PredifiContract {
         )
     }
 
-    fn require_role(env: &Env, user: &Address, role: u32) {
-        let config: Config = env
-            .storage()
-            .instance()
-            .get(&DataKey::Config)
-            .expect("Config not set");
+    fn require_role(env: &Env, user: &Address, role: u32) -> Result<(), PrediFiError> {
+        let config = Self::get_config(env)?;
         if !Self::has_role(env, &config.access_control, user, role) {
-            panic!("Unauthorized: missing required role");
+            return Err(PrediFiError::Unauthorized);
         }
+        Ok(())
     }
 
-    fn get_config(env: &Env) -> Config {
+    fn get_config(env: &Env) -> Result<Config, PrediFiError> {
         env.storage()
             .instance()
             .get(&DataKey::Config)
-            .expect("Config not set")
+            .ok_or(PrediFiError::NotInitialized)
     }
 
     /// Initialize the contract. Idempotent — safe to call multiple times.
@@ -99,25 +97,36 @@ impl PredifiContract {
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
-    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) {
+    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PrediFiError> {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0);
-        let mut config = Self::get_config(&env);
+        Self::require_role(&env, &admin, 0)?;
+
+        if fee_bps > 10000 {
+            return Err(PrediFiError::InvalidFeeBps);
+        }
+
+        let mut config = Self::get_config(&env)?;
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
+        Ok(())
     }
 
     /// Set treasury address. Caller must have Admin role (0).
-    pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
+    pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PrediFiError> {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0);
-        let mut config = Self::get_config(&env);
+        Self::require_role(&env, &admin, 0)?;
+        let mut config = Self::get_config(&env)?;
         config.treasury = treasury;
         env.storage().instance().set(&DataKey::Config, &config);
+        Ok(())
     }
 
     /// Create a new prediction pool. Returns the new pool ID.
-    pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
+    pub fn create_pool(env: Env, end_time: u64, token: Address) -> Result<u64, PrediFiError> {
+        if end_time <= env.ledger().timestamp() {
+            return Err(PrediFiError::TimeConstraintError);
+        }
+
         let pool_id: u64 = env
             .storage()
             .instance()
@@ -133,43 +142,74 @@ impl PredifiContract {
         };
 
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
-        env.storage()
-            .instance()
-            .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+        env.storage().instance().set(
+            &DataKey::PoolIdCounter,
+            &(pool_id
+                .checked_add(1)
+                .ok_or(PrediFiError::ArithmeticError)?),
+        );
 
-        pool_id
+        Ok(pool_id)
     }
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
-    pub fn resolve_pool(env: Env, operator: Address, pool_id: u64, outcome: u32) {
+    pub fn resolve_pool(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        outcome: u32,
+    ) -> Result<(), PrediFiError> {
         operator.require_auth();
-        Self::require_role(&env, &operator, 1);
+        Self::require_role(&env, &operator, 1)?;
 
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
-            .expect("Pool not found");
+            .ok_or(PrediFiError::PoolNotFound)?;
 
-        assert!(!pool.resolved, "Pool already resolved");
+        if pool.resolved {
+            return Err(PrediFiError::PoolAlreadyResolved);
+        }
+
+        if env.ledger().timestamp() < pool.end_time {
+            return Err(PrediFiError::PoolExpiryError);
+        }
 
         pool.resolved = true;
         pool.outcome = outcome;
 
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        Ok(())
     }
 
     /// Place a prediction on a pool.
-    pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
+    pub fn place_prediction(
+        env: Env,
+        user: Address,
+        pool_id: u64,
+        amount: i128,
+        outcome: u32,
+    ) -> Result<(), PrediFiError> {
         user.require_auth();
+
+        if amount <= 0 {
+            return Err(PrediFiError::InvalidPredictionAmount);
+        }
 
         let mut pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
-            .expect("Pool not found");
+            .ok_or(PrediFiError::PoolNotFound)?;
 
-        assert!(!pool.resolved, "Pool already resolved");
+        if pool.resolved {
+            return Err(PrediFiError::PoolAlreadyResolved);
+        }
+
+        if env.ledger().timestamp() >= pool.end_time {
+            return Err(PrediFiError::PredictionTooLate);
+        }
 
         // Transfer stake into the contract
         let token_client = token::Client::new(&env, &pool.token);
@@ -182,15 +222,21 @@ impl PredifiContract {
         );
 
         // Update total pool stake
-        pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
+        pool.total_stake = pool
+            .total_stake
+            .checked_add(amount)
+            .ok_or(PrediFiError::ArithmeticError)?;
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
 
         // Update per-outcome stake
         let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
         let current_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
+        let new_outcome_stake = current_stake
+            .checked_add(amount)
+            .ok_or(PrediFiError::ArithmeticError)?;
         env.storage()
             .instance()
-            .set(&outcome_key, &(current_stake + amount));
+            .set(&outcome_key, &new_outcome_stake);
 
         // Index prediction for pagination
         let count: u32 = env
@@ -204,25 +250,31 @@ impl PredifiContract {
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionCount(user.clone()), &(count + 1));
+
+        Ok(())
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
-    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> i128 {
+    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PrediFiError> {
         user.require_auth();
 
         let pool: Pool = env
             .storage()
             .instance()
             .get(&DataKey::Pool(pool_id))
-            .expect("Pool not found");
+            .ok_or(PrediFiError::PoolNotFound)?;
 
-        assert!(pool.resolved, "Pool not resolved");
-        assert!(
-            !env.storage()
-                .instance()
-                .has(&DataKey::HasClaimed(user.clone(), pool_id)),
-            "Already claimed"
-        );
+        if !pool.resolved {
+            return Err(PrediFiError::PoolNotResolved);
+        }
+
+        if env
+            .storage()
+            .instance()
+            .has(&DataKey::HasClaimed(user.clone(), pool_id))
+        {
+            return Err(PrediFiError::AlreadyClaimed);
+        }
 
         // Mark as claimed immediately to prevent re-entrancy
         env.storage()
@@ -237,11 +289,11 @@ impl PredifiContract {
 
         let prediction = match prediction {
             Some(p) => p,
-            None => return 0,
+            None => return Ok(0),
         };
 
         if prediction.outcome != pool.outcome {
-            return 0;
+            return Ok(0);
         }
 
         // Share = (user_stake / winning_stake) * total_pool
@@ -252,20 +304,20 @@ impl PredifiContract {
             .unwrap_or(0);
 
         if winning_stake == 0 {
-            return 0;
+            return Ok(0);
         }
 
         let winnings = prediction
             .amount
             .checked_mul(pool.total_stake)
-            .expect("overflow")
+            .ok_or(PrediFiError::ArithmeticError)?
             .checked_div(winning_stake)
-            .expect("division by zero");
+            .ok_or(PrediFiError::ArithmeticError)?;
 
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
 
-        winnings
+        Ok(winnings)
     }
 
     /// Get a paginated list of a user's predictions.
@@ -323,6 +375,6 @@ impl PredifiContract {
     }
 }
 
+mod integration_test;
 mod test;
 mod test_utils;
-mod integration_test;

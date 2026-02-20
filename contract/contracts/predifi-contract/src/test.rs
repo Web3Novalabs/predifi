@@ -2,7 +2,10 @@
 #![allow(deprecated)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, token, Address, Env};
+use soroban_sdk::{
+    testutils::{Address as _, Ledger},
+    token, Address, Env,
+};
 
 mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
@@ -73,9 +76,9 @@ fn test_claim_winnings() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _token, token_admin_client, _, operator) = setup(&env);
+    let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
     let _contract_id = env.register(PredifiContract, ()); // get contract address for balance check
-                                                         // Re-derive contract address from client
+                                                          // Re-derive contract address from client
     let contract_addr = client.address.clone();
 
     let user1 = Address::generate(&env);
@@ -89,6 +92,9 @@ fn test_claim_winnings() {
     client.place_prediction(&user2, &pool_id, &100, &2);
 
     assert_eq!(token.balance(&contract_addr), 200);
+
+    // Advance time past pool end_time
+    env.ledger().with_mut(|li| li.timestamp = 101);
 
     client.resolve_pool(&operator, &pool_id, &1u32);
 
@@ -104,7 +110,7 @@ fn test_claim_winnings() {
 }
 
 #[test]
-#[should_panic(expected = "Already claimed")]
+#[should_panic(expected = "Error(Contract, #60)")]
 fn test_double_claim() {
     let env = Env::default();
     env.mock_all_auths();
@@ -116,6 +122,10 @@ fn test_double_claim() {
 
     let pool_id = client.create_pool(&100u64, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
+
+    // Advance time past pool end_time
+    env.ledger().with_mut(|li| li.timestamp = 101);
+
     client.resolve_pool(&operator, &pool_id, &1u32);
 
     client.claim_winnings(&user1, &pool_id);
@@ -123,7 +133,7 @@ fn test_double_claim() {
 }
 
 #[test]
-#[should_panic(expected = "Pool not resolved")]
+#[should_panic(expected = "Error(Contract, #22)")]
 fn test_claim_unresolved() {
     let env = Env::default();
     env.mock_all_auths();
@@ -141,7 +151,7 @@ fn test_claim_unresolved() {
 }
 
 #[test]
-#[should_panic(expected = "Unauthorized: missing required role")]
+#[should_panic(expected = "Error(Contract, #10)")]
 fn test_unauthorized_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
@@ -153,7 +163,7 @@ fn test_unauthorized_set_fee_bps() {
 }
 
 #[test]
-#[should_panic(expected = "Unauthorized: missing required role")]
+#[should_panic(expected = "Error(Contract, #10)")]
 fn test_unauthorized_set_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -166,7 +176,7 @@ fn test_unauthorized_set_treasury() {
 }
 
 #[test]
-#[should_panic(expected = "Unauthorized: missing required role")]
+#[should_panic(expected = "Error(Contract, #10)")]
 fn test_unauthorized_resolve_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -275,7 +285,12 @@ fn test_multiple_pools_independent() {
     client.place_prediction(&user1, &pool_a, &100, &1);
     client.place_prediction(&user2, &pool_b, &100, &1);
 
+    // Advance time past pool_a end_time
+    env.ledger().with_mut(|li| li.timestamp = 101);
     client.resolve_pool(&operator, &pool_a, &1u32);
+
+    // Advance time past pool_b end_time
+    env.ledger().with_mut(|li| li.timestamp = 201);
     client.resolve_pool(&operator, &pool_b, &2u32); // user2 loses
 
     let w1 = client.claim_winnings(&user1, &pool_a);
