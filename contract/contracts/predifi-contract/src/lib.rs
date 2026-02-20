@@ -364,10 +364,11 @@ impl PredifiContract {
         }
 
         // Resolution must happen within the window
-        let resolution_deadline = pool.end_time
+        let resolution_deadline = pool
+            .end_time
             .checked_add(RESOLUTION_WINDOW)
             .ok_or(PrediFiError::AdditionOverflow)?;
-            
+
         if current_time > resolution_deadline {
             return Err(PrediFiError::ResolutionWindowExpired);
         }
@@ -523,9 +524,7 @@ impl PredifiContract {
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionIndex(user.clone(), count), &pool_id);
-        let new_count = count
-            .checked_add(1)
-            .ok_or(PrediFiError::AdditionOverflow)?;
+        let new_count = count.checked_add(1).ok_or(PrediFiError::AdditionOverflow)?;
         env.storage()
             .instance()
             .set(&DataKey::UserPredictionCount(user.clone()), &new_count);
