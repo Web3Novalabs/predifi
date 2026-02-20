@@ -374,3 +374,5 @@ impl PredifiContract {
 }
 
 mod test;
+mod test_utils;
+mod integration_test;
