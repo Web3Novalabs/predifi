@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::test_utils::TokenTestContext;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::{Address as _, Ledger}, Address, Env};
 
 mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
@@ -79,7 +79,8 @@ fn test_full_market_lifecycle() {
     // Total stake = 100 + 200 + 300 = 600
     assert_eq!(token_ctx.token.balance(&client.address), 600);
 
-    // 3. Resolve Pool
+    // 3. Resolve Pool (advance time past end_time=1000)
+    env.ledger().with_mut(|li| li.timestamp = 1001);
     client.resolve_pool(&operator, &pool_id, &1u32); // Outcome 1 wins
 
     // 4. Claim Winnings
@@ -140,7 +141,8 @@ fn test_multi_user_betting_and_balance_verification() {
 
     assert_eq!(token_ctx.token.balance(&client.address), 4000);
 
-    // Resolve to Outcome 3
+    // Resolve to Outcome 3 (advance time past end_time=2000)
+    env.ledger().with_mut(|li| li.timestamp = 2001);
     client.resolve_pool(&operator, &pool_id, &3u32);
 
     // Winner: U3
@@ -184,6 +186,8 @@ fn test_market_resolution_multiple_winners() {
     client.place_prediction(&user2, &pool_id, &300, &1);
     client.place_prediction(&user3, &pool_id, &500, &2);
 
+    // Advance time past end_time=1500, then resolve
+    env.ledger().with_mut(|li| li.timestamp = 1501);
     client.resolve_pool(&operator, &pool_id, &1u32); // Outcome 1 wins
 
     // U1 Winnings: (200 / 500) * 1000 = 400
