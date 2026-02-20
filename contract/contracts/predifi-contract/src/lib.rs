@@ -250,6 +250,7 @@ impl PredifiContract {
     }
 
     /// Place a prediction on a pool.
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
         user.require_auth();
@@ -297,6 +298,7 @@ impl PredifiContract {
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env);
         user.require_auth();
