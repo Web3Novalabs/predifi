@@ -4,6 +4,10 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
 };
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
+const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
@@ -69,6 +73,18 @@ pub struct PredifiContract;
 impl PredifiContract {
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    fn extend_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
+    fn extend_persistent(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
     fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> bool {
         env.invoke_contract(
             contract,
@@ -86,17 +102,23 @@ impl PredifiContract {
     }
 
     fn get_config(env: &Env) -> Config {
-        env.storage()
+        let config = env
+            .storage()
             .instance()
             .get(&DataKey::Config)
-            .expect("Config not set")
+            .expect("Config not set");
+        Self::extend_instance(env);
+        config
     }
 
     fn is_paused(env: &Env) -> bool {
-        env.storage()
+        let paused = env
+            .storage()
             .instance()
             .get(&DataKey::Paused)
-            .unwrap_or(false)
+            .unwrap_or(false);
+        Self::extend_instance(env);
+        paused
     }
 
     fn require_not_paused(env: &Env) {
@@ -117,6 +139,7 @@ impl PredifiContract {
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
+            Self::extend_instance(&env);
         }
     }
 
@@ -126,6 +149,7 @@ impl PredifiContract {
         Self::require_role(&env, &admin, 0)
             .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &true);
+        Self::extend_instance(&env);
     }
 
     /// Unpause the contract. Only callable by Admin (role 0).
@@ -134,6 +158,7 @@ impl PredifiContract {
         Self::require_role(&env, &admin, 0)
             .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &false);
+        Self::extend_instance(&env);
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
@@ -145,6 +170,7 @@ impl PredifiContract {
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
         Ok(())
     }
 
@@ -156,6 +182,7 @@ impl PredifiContract {
         let mut config = Self::get_config(&env);
         config.treasury = treasury;
         env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
         Ok(())
     }
 
@@ -172,6 +199,7 @@ impl PredifiContract {
             .instance()
             .get(&DataKey::PoolIdCounter)
             .unwrap_or(0);
+        Self::extend_instance(&env);
 
         let pool = Pool {
             end_time,
@@ -181,10 +209,14 @@ impl PredifiContract {
             total_stake: 0,
         };
 
-        env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        let pool_key = DataKey::Pool(pool_id);
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
         env.storage()
             .instance()
             .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+        Self::extend_instance(&env);
 
         pool_id
     }
@@ -200,10 +232,11 @@ impl PredifiContract {
         operator.require_auth();
         Self::require_role(&env, &operator, 1)?;
 
+        let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
             .storage()
-            .instance()
-            .get(&DataKey::Pool(pool_id))
+            .persistent()
+            .get(&pool_key)
             .expect("Pool not found");
 
         assert!(!pool.resolved, "Pool already resolved");
@@ -211,87 +244,92 @@ impl PredifiContract {
         pool.resolved = true;
         pool.outcome = outcome;
 
-        env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
         Ok(())
     }
 
     /// Place a prediction on a pool.
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 
+        let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
             .storage()
-            .instance()
-            .get(&DataKey::Pool(pool_id))
+            .persistent()
+            .get(&pool_key)
             .expect("Pool not found");
 
         assert!(!pool.resolved, "Pool already resolved");
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&user, env.current_contract_address(), &amount);
+        token_client.transfer(&user, &env.current_contract_address(), &amount);
 
-        env.storage().instance().set(
-            &DataKey::Prediction(user.clone(), pool_id),
-            &Prediction { amount, outcome },
-        );
+        let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        env.storage()
+            .persistent()
+            .set(&pred_key, &Prediction { amount, outcome });
+        Self::extend_persistent(&env, &pred_key);
 
         pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
-        env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
 
         let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let current_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
+        let current_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
         env.storage()
-            .instance()
+            .persistent()
             .set(&outcome_key, &(current_stake + amount));
+        Self::extend_persistent(&env, &outcome_key);
 
-        let count: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::UserPredictionCount(user.clone()))
-            .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::UserPredictionIndex(user.clone(), count), &pool_id);
-        env.storage()
-            .instance()
-            .set(&DataKey::UserPredictionCount(user.clone()), &(count + 1));
+        let count_key = DataKey::UserPredictionCount(user.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+        let index_key = DataKey::UserPredictionIndex(user.clone(), count);
+        env.storage().persistent().set(&index_key, &pool_id);
+        Self::extend_persistent(&env, &index_key);
+
+        env.storage().persistent().set(&count_key, &(count + 1));
+        Self::extend_persistent(&env, &count_key);
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env);
         user.require_auth();
 
+        let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
             .storage()
-            .instance()
-            .get(&DataKey::Pool(pool_id))
+            .persistent()
+            .get(&pool_key)
             .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
 
         if !pool.resolved {
             return Err(PredifiError::PoolNotResolved);
         }
 
-        if env
-            .storage()
-            .instance()
-            .has(&DataKey::HasClaimed(user.clone(), pool_id))
-        {
+        let claimed_key = DataKey::HasClaimed(user.clone(), pool_id);
+        if env.storage().persistent().has(&claimed_key) {
             return Err(PredifiError::AlreadyClaimed);
         }
 
         // Mark as claimed immediately to prevent re-entrancy
-        env.storage()
-            .instance()
-            .set(&DataKey::HasClaimed(user.clone(), pool_id), &true);
+        env.storage().persistent().set(&claimed_key, &true);
+        Self::extend_persistent(&env, &claimed_key);
 
-        let prediction: Option<Prediction> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Prediction(user.clone(), pool_id));
+        let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
+
+        if env.storage().persistent().has(&pred_key) {
+            Self::extend_persistent(&env, &pred_key);
+        }
 
         let prediction = match prediction {
             Some(p) => p,
@@ -302,11 +340,11 @@ impl PredifiContract {
             return Ok(0);
         }
 
-        let winning_stake: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::OutcomeStake(pool_id, pool.outcome))
-            .unwrap_or(0);
+        let outcome_key = DataKey::OutcomeStake(pool_id, pool.outcome);
+        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+        if env.storage().persistent().has(&outcome_key) {
+            Self::extend_persistent(&env, &outcome_key);
+        }
 
         if winning_stake == 0 {
             return Ok(0);
@@ -332,11 +370,11 @@ impl PredifiContract {
         offset: u32,
         limit: u32,
     ) -> Vec<UserPredictionDetail> {
-        let count: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::UserPredictionCount(user.clone()))
-            .unwrap_or(0);
+        let count_key = DataKey::UserPredictionCount(user.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if env.storage().persistent().has(&count_key) {
+            Self::extend_persistent(&env, &count_key);
+        }
 
         let mut results = Vec::new(&env);
 
@@ -347,23 +385,29 @@ impl PredifiContract {
         let end = core::cmp::min(offset.saturating_add(limit), count);
 
         for i in offset..end {
+            let index_key = DataKey::UserPredictionIndex(user.clone(), i);
             let pool_id: u64 = env
                 .storage()
-                .instance()
-                .get(&DataKey::UserPredictionIndex(user.clone(), i))
+                .persistent()
+                .get(&index_key)
                 .expect("index not found");
+            Self::extend_persistent(&env, &index_key);
 
+            let pred_key = DataKey::Prediction(user.clone(), pool_id);
             let prediction: Prediction = env
                 .storage()
-                .instance()
-                .get(&DataKey::Prediction(user.clone(), pool_id))
+                .persistent()
+                .get(&pred_key)
                 .expect("prediction not found");
+            Self::extend_persistent(&env, &pred_key);
 
+            let pool_key = DataKey::Pool(pool_id);
             let pool: Pool = env
                 .storage()
-                .instance()
-                .get(&DataKey::Pool(pool_id))
+                .persistent()
+                .get(&pool_key)
                 .expect("pool not found");
+            Self::extend_persistent(&env, &pool_key);
 
             results.push_back(UserPredictionDetail {
                 pool_id,
