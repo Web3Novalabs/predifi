@@ -1,7 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+    IntoVal, Symbol, Vec,
 };
 
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -65,6 +66,77 @@ pub struct Prediction {
     pub amount: i128,
     pub outcome: u32,
 }
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+#[contractevent(topics = ["init"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitEvent {
+    pub access_control: Address,
+    pub treasury: Address,
+    pub fee_bps: u32,
+}
+
+#[contractevent(topics = ["pause"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PauseEvent {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["unpause"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnpauseEvent {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["fee_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeUpdateEvent {
+    pub admin: Address,
+    pub fee_bps: u32,
+}
+
+#[contractevent(topics = ["treasury_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryUpdateEvent {
+    pub admin: Address,
+    pub treasury: Address,
+}
+
+#[contractevent(topics = ["pool_created"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolCreatedEvent {
+    pub pool_id: u64,
+    pub end_time: u64,
+    pub token: Address,
+}
+
+#[contractevent(topics = ["pool_resolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolResolvedEvent {
+    pub pool_id: u64,
+    pub operator: Address,
+    pub outcome: u32,
+}
+
+#[contractevent(topics = ["prediction_placed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+}
+
+#[contractevent(topics = ["winnings_claimed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WinningsClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[contract]
 pub struct PredifiContract;
@@ -134,12 +206,19 @@ impl PredifiContract {
         if !env.storage().instance().has(&DataKey::Config) {
             let config = Config {
                 fee_bps,
-                treasury,
-                access_control,
+                treasury: treasury.clone(),
+                access_control: access_control.clone(),
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
             Self::extend_instance(&env);
+
+            InitEvent {
+                access_control,
+                treasury,
+                fee_bps,
+            }
+            .publish(&env);
         }
     }
 
@@ -150,6 +229,8 @@ impl PredifiContract {
             .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &true);
         Self::extend_instance(&env);
+
+        PauseEvent { admin }.publish(&env);
     }
 
     /// Unpause the contract. Only callable by Admin (role 0).
@@ -159,6 +240,8 @@ impl PredifiContract {
             .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &false);
         Self::extend_instance(&env);
+
+        UnpauseEvent { admin }.publish(&env);
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
@@ -171,6 +254,8 @@ impl PredifiContract {
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
         Self::extend_instance(&env);
+
+        FeeUpdateEvent { admin, fee_bps }.publish(&env);
         Ok(())
     }
 
@@ -180,9 +265,11 @@ impl PredifiContract {
         admin.require_auth();
         Self::require_role(&env, &admin, 0)?;
         let mut config = Self::get_config(&env);
-        config.treasury = treasury;
+        config.treasury = treasury.clone();
         env.storage().instance().set(&DataKey::Config, &config);
         Self::extend_instance(&env);
+
+        TreasuryUpdateEvent { admin, treasury }.publish(&env);
         Ok(())
     }
 
@@ -205,7 +292,7 @@ impl PredifiContract {
             end_time,
             resolved: false,
             outcome: 0,
-            token,
+            token: token.clone(),
             total_stake: 0,
         };
 
@@ -217,6 +304,13 @@ impl PredifiContract {
             .instance()
             .set(&DataKey::PoolIdCounter, &(pool_id + 1));
         Self::extend_instance(&env);
+
+        PoolCreatedEvent {
+            pool_id,
+            end_time,
+            token,
+        }
+        .publish(&env);
 
         pool_id
     }
@@ -246,6 +340,13 @@ impl PredifiContract {
 
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
+
+        PoolResolvedEvent {
+            pool_id,
+            operator,
+            outcome,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -295,6 +396,14 @@ impl PredifiContract {
 
         env.storage().persistent().set(&count_key, &(count + 1));
         Self::extend_persistent(&env, &count_key);
+
+        PredictionPlacedEvent {
+            pool_id,
+            user,
+            amount,
+            outcome,
+        }
+        .publish(&env);
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
@@ -359,6 +468,13 @@ impl PredifiContract {
 
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
+
+        WinningsClaimedEvent {
+            pool_id,
+            user,
+            amount: winnings,
+        }
+        .publish(&env);
 
         Ok(winnings)
     }
