@@ -101,3 +101,58 @@ fn test_full_market_lifecycle() {
     // Contract balance should be 0
     assert_eq!(token_ctx.token.balance(&client.address), 0);
 }
+
+#[test]
+fn test_multi_user_betting_and_balance_verification() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, token_ctx, _admin, operator, _treasury) = setup_integration(&env);
+
+    // 5 users
+    let users: soroban_sdk::Vec<Address> = soroban_sdk::Vec::from_array(&env, [
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+    ]);
+
+    for user in users.iter() {
+        token_ctx.mint(&user, 5000);
+    }
+
+    let pool_id = client.create_pool(&2000u64, &token_ctx.token_address);
+
+    // Bets:
+    // U0: 500 on 1
+    // U1: 1000 on 2
+    // U2: 500 on 1
+    // U3: 1500 on 3
+    // U4: 500 on 1
+    // Total 1: 1500, Total 2: 1000, Total 3: 1500. Total Stake: 4000.
+    
+    client.place_prediction(&users.get(0).unwrap(), &pool_id, &500, &1);
+    client.place_prediction(&users.get(1).unwrap(), &pool_id, &1000, &2);
+    client.place_prediction(&users.get(2).unwrap(), &pool_id, &500, &1);
+    client.place_prediction(&users.get(3).unwrap(), &pool_id, &1500, &3);
+    client.place_prediction(&users.get(4).unwrap(), &pool_id, &500, &1);
+
+    assert_eq!(token_ctx.token.balance(&client.address), 4000);
+
+    // Resolve to Outcome 3
+    client.resolve_pool(&operator, &pool_id, &3u32);
+
+    // Winner: U3
+    // Winnings: (1500 / 1500) * 4000 = 4000
+    let w3 = client.claim_winnings(&users.get(3).unwrap(), &pool_id);
+    assert_eq!(w3, 4000);
+    assert_eq!(token_ctx.token.balance(&users.get(3).unwrap()), 7500); // 5000 - 1500 + 4000
+
+    // Losers check
+    let w0 = client.claim_winnings(&users.get(0).unwrap(), &pool_id);
+    assert_eq!(w0, 0);
+    assert_eq!(token_ctx.token.balance(&users.get(0).unwrap()), 4500); // 5000 - 500
+
+    assert_eq!(token_ctx.token.balance(&client.address), 0);
+}
