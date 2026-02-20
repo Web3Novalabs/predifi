@@ -59,10 +59,10 @@ impl AccessControl {
     /// * `admin` - The address to be appointed as the initial super admin.
     ///
     /// # Errors
-    /// * Panics with `"AlreadyInitialized"` if the contract has already been initialized.
+    /// * Panics with `"AlreadyInitializedOrConfigNotSet"` if the contract has already been initialized.
     pub fn init(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
-            soroban_sdk::panic_with_error!(&env, PrediFiError::AlreadyInitialized);
+            soroban_sdk::panic_with_error!(&env, PrediFiError::AlreadyInitializedOrConfigNotSet);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
         // Also grant the Admin role to the admin address.
@@ -126,7 +126,7 @@ impl AccessControl {
     ///
     /// # Errors
     /// * `Unauthorized`  - If the caller is not the super admin.
-    /// * `RoleNotFound`  - If the user doesn't have the specified role.
+    /// * `InsufficientPermissions`  - If the user doesn't have the specified role.
     pub fn revoke_role(
         env: Env,
         admin_caller: Address,
@@ -145,7 +145,7 @@ impl AccessControl {
             .persistent()
             .has(&DataKey::Role(user.clone(), role.clone()))
         {
-            return Err(PrediFiError::RoleNotFound);
+            return Err(PrediFiError::InsufficientPermissions);
         }
 
         env.storage()
@@ -178,7 +178,7 @@ impl AccessControl {
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
-    /// * `RoleNotFound` - If the `from` address doesn't have the specified role.
+    /// * `InsufficientPermissions` - If the `from` address doesn't have the specified role.
     pub fn transfer_role(
         env: Env,
         admin_caller: Address,
@@ -198,7 +198,7 @@ impl AccessControl {
             .persistent()
             .has(&DataKey::Role(from.clone(), role.clone()))
         {
-            return Err(PrediFiError::RoleNotFound);
+            return Err(PrediFiError::InsufficientPermissions);
         }
 
         env.storage()
