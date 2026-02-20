@@ -4,7 +4,7 @@
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, Env,
+    token, Address, Env, String,
 };
 
 mod dummy_access_control {
@@ -85,7 +85,15 @@ fn test_claim_winnings() {
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
 
-    let pool_id = client.create_pool(&100u64, &token_address);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     client.place_prediction(&user1, &pool_id, &100, &1);
     client.place_prediction(&user2, &pool_id, &100, &2);
 
@@ -115,7 +123,15 @@ fn test_double_claim() {
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
-    let pool_id = client.create_pool(&100u64, &token_address);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
     env.ledger().with_mut(|li| li.timestamp = 101);
@@ -137,7 +153,15 @@ fn test_claim_unresolved() {
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
-    let pool_id = client.create_pool(&100u64, &token_address);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
     client.claim_winnings(&user1, &pool_id);
@@ -155,8 +179,24 @@ fn test_multiple_pools_independent() {
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
 
-    let pool_a = client.create_pool(&100u64, &token_address);
-    let pool_b = client.create_pool(&200u64, &token_address);
+    let pool_a = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+    let pool_b = client.create_pool(
+        &200u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
 
     client.place_prediction(&user1, &pool_a, &100, &1);
     client.place_prediction(&user2, &pool_b, &100, &1);
@@ -203,7 +243,15 @@ fn test_unauthorized_resolve_pool() {
     env.mock_all_auths();
 
     let (_, client, token_address, _, _, _, _) = setup(&env);
-    let pool_id = client.create_pool(&100u64, &token_address);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     let not_operator = Address::generate(&env);
     client.resolve_pool(&not_operator, &pool_id, &1u32);
 }
@@ -341,7 +389,15 @@ fn test_paused_blocks_create_pool() {
     client.init(&ac_id, &treasury, &0u32);
 
     client.pause(&admin);
-    client.create_pool(&100u64, &token);
+    client.create_pool(
+        &100u64,
+        &token,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
 }
 
 #[test]
@@ -432,7 +488,15 @@ fn test_unpause_restores_functionality() {
     client.pause(&admin);
     client.unpause(&admin);
 
-    let pool_id = client.create_pool(&100u64, &token_contract);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_contract,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     client.place_prediction(&user, &pool_id, &10, &1);
 }
 
@@ -448,9 +512,33 @@ fn test_get_user_predictions() {
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
-    let pool0 = client.create_pool(&100u64, &token_address);
-    let pool1 = client.create_pool(&200u64, &token_address);
-    let pool2 = client.create_pool(&300u64, &token_address);
+    let pool0 = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+    let pool1 = client.create_pool(
+        &200u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+    let pool2 = client.create_pool(
+        &300u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
 
     client.place_prediction(&user, &pool0, &10, &1);
     client.place_prediction(&user, &pool1, &20, &2);

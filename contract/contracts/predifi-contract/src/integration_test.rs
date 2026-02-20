@@ -4,7 +4,7 @@ use super::*;
 use crate::test_utils::TokenTestContext;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    Address, Env,
+    Address, Env, String,
 };
 
 mod dummy_access_control {
@@ -74,7 +74,7 @@ fn test_full_market_lifecycle() {
 
     // 1. Create Pool
     let end_time = 1000u64;
-    let pool_id = client.create_pool(&end_time, &token_ctx.token_address);
+    let pool_id = client.create_pool(&end_time, &token_ctx.token_address, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
 
     // 2. Place Predictions
     client.place_prediction(&user1, &pool_id, &100, &1); // User 1 bets 100 on Outcome 1
@@ -131,7 +131,7 @@ fn test_multi_user_betting_and_balance_verification() {
         token_ctx.mint(&user, 5000);
     }
 
-    let pool_id = client.create_pool(&2000u64, &token_ctx.token_address);
+    let pool_id = client.create_pool(&2000u64, &token_ctx.token_address, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
 
     // Bets:
     // U0: 500 on 1
@@ -182,7 +182,7 @@ fn test_market_resolution_multiple_winners() {
     token_ctx.mint(&user2, 1000);
     token_ctx.mint(&user3, 1000);
 
-    let pool_id = client.create_pool(&1500u64, &token_ctx.token_address);
+    let pool_id = client.create_pool(&1500u64, &token_ctx.token_address, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
 
     // Bets:
     // U1: 200 on 1

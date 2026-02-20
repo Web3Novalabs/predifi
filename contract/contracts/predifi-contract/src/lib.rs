@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
-    IntoVal, Symbol, Vec,
+    IntoVal, String, Symbol, Vec,
 };
 
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -25,6 +25,10 @@ pub struct Pool {
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    /// A short human-readable description of the event being predicted.
+    pub description: String,
+    /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
+    pub metadata_url: String,
 }
 
 #[contracttype]
@@ -109,6 +113,8 @@ pub struct PoolCreatedEvent {
     pub pool_id: u64,
     pub end_time: u64,
     pub token: Address,
+    /// Metadata URL included so off-chain indexers can immediately fetch context.
+    pub metadata_url: String,
 }
 
 #[contractevent(topics = ["pool_resolved"])]
@@ -274,12 +280,26 @@ impl PredifiContract {
     }
 
     /// Create a new prediction pool. Returns the new pool ID.
-    pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
+    ///
+    /// # Arguments
+    /// * `end_time`     - Unix timestamp after which no more predictions are accepted.
+    /// * `token`        - The Stellar token contract address used for staking.
+    /// * `description`  - Short human-readable description of the event (max 256 bytes).
+    /// * `metadata_url` - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    pub fn create_pool(
+        env: Env,
+        end_time: u64,
+        token: Address,
+        description: String,
+        metadata_url: String,
+    ) -> u64 {
         Self::require_not_paused(&env);
         assert!(
             end_time > env.ledger().timestamp(),
             "end_time must be in the future"
         );
+        assert!(description.len() <= 256, "description exceeds 256 bytes");
+        assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
 
         let pool_id: u64 = env
             .storage()
@@ -294,6 +314,8 @@ impl PredifiContract {
             outcome: 0,
             token: token.clone(),
             total_stake: 0,
+            description,
+            metadata_url: metadata_url.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -309,6 +331,7 @@ impl PredifiContract {
             pool_id,
             end_time,
             token,
+            metadata_url,
         }
         .publish(&env);
 
