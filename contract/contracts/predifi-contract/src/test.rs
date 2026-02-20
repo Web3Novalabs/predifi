@@ -2,9 +2,8 @@
 #![allow(deprecated)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, token, Env, Symbol};
+use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
-// Dummy access control contract for testing
 mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
@@ -25,69 +24,120 @@ mod dummy_access_control {
     }
 }
 
-// Role constants
 const ROLE_ADMIN: u32 = 0;
 const ROLE_OPERATOR: u32 = 1;
+
+/// Registers all standard contracts and returns commonly needed handles.
+fn setup(
+    env: &Env,
+) -> (
+    dummy_access_control::DummyAccessControlClient,
+    PredifiContractClient,
+    Address, // token_address
+    token::Client,
+    token::StellarAssetClient,
+    Address, // treasury
+    Address, // operator
+) {
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(env, &ac_id);
+
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(env, &contract_id);
+
+    let token_admin = Address::generate(env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token = token::Client::new(env, &token_contract);
+    let token_admin_client = token::StellarAssetClient::new(env, &token_contract);
+    let token_address = token_contract;
+
+    let treasury = Address::generate(env);
+    let operator = Address::generate(env);
+
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    client.init(&ac_id, &treasury, &0u32);
+
+    (
+        ac_client,
+        client,
+        token_address,
+        token,
+        token_admin_client,
+        treasury,
+        operator,
+    )
+}
 
 #[test]
 fn test_claim_winnings() {
     let env = Env::default();
     env.mock_all_auths();
 
-    // Register dummy access control contract
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
+    let contract_id = env.register(PredifiContract, ()); // get contract address for balance check
+                                                         // Re-derive contract address from client
+    let contract_addr = client.address.clone();
 
-    // Register contract
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
-
-    // Setup Token
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
-    let token = token::Client::new(&env, &token_contract);
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
-    let token_address = token_contract;
-
-    // Setup Users
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
-    let operator = Address::generate(&env);
-
-    // Mint tokens to users
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
 
-    // Grant operator role
-    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    let pool_id = client.create_pool(&100u64, &token_address);
 
-    // Init contract
-    client.init(&ac_id, &user1, &100u32);
-
-    // Create Pool
-    let pool_id = client.create_pool(&100, &token_address);
-
-    // Place Predictions
     client.place_prediction(&user1, &pool_id, &100, &1);
     client.place_prediction(&user2, &pool_id, &100, &2);
 
-    // Check balances (contract should have 200)
-    assert_eq!(token.balance(&contract_id), 200);
+    assert_eq!(token.balance(&contract_addr), 200);
 
-    // Resolve Pool - Outcome 1 wins
     client.resolve_pool(&operator, &pool_id, &1u32);
 
-    // User 1 Claims
+    // User1 wins: (100 / 100) * 200 = 200
     let winnings = client.claim_winnings(&user1, &pool_id);
-    // Total pool is 200. Winning stake is 100. User 1 stake is 100.
-    // Share = (100 / 100) * 200 = 200.
     assert_eq!(winnings, 200);
-    assert_eq!(token.balance(&user1), 1100); // Initial 1000 - 100 bet + 200 winnings
+    assert_eq!(token.balance(&user1), 1100); // 1000 - 100 + 200
 
-    // User 2 Claims (Expect 0)
+    // User2 lost: gets 0
     let winnings2 = client.claim_winnings(&user2, &pool_id);
     assert_eq!(winnings2, 0);
-    assert_eq!(token.balance(&user2), 900); // Initial 1000 - 100 bet
+    assert_eq!(token.balance(&user2), 900); // 1000 - 100
+}
+
+#[test]
+#[should_panic(expected = "Already claimed")]
+fn test_double_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+
+    let pool_id = client.create_pool(&100u64, &token_address);
+    client.place_prediction(&user1, &pool_id, &100, &1);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    client.claim_winnings(&user1, &pool_id);
+    client.claim_winnings(&user1, &pool_id); // Should panic: "Already claimed"
+}
+
+#[test]
+#[should_panic(expected = "Pool not resolved")]
+fn test_claim_unresolved() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+
+    let pool_id = client.create_pool(&100u64, &token_address);
+    client.place_prediction(&user1, &pool_id, &100, &1);
+
+    // Do NOT resolve — should panic
+    client.claim_winnings(&user1, &pool_id);
 }
 
 #[test]
@@ -96,14 +146,9 @@ fn test_unauthorized_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
+    let (_, client, _, _, _, _, _) = setup(&env);
 
     let not_admin = Address::generate(&env); // No role granted
-    let treasury = Address::generate(&env);
-
-    client.init(&ac_id, &treasury, &100u32);
     client.set_fee_bps(&not_admin, &999u32); // Should panic
 }
 
@@ -113,15 +158,9 @@ fn test_unauthorized_set_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
+    let (_, client, _, _, _, _, _) = setup(&env);
 
     let not_admin = Address::generate(&env); // No role granted
-    let treasury = Address::generate(&env);
-
-    client.init(&ac_id, &treasury, &100u32);
-
     let new_treasury = Address::generate(&env);
     client.set_treasury(&not_admin, &new_treasury); // Should panic
 }
@@ -132,83 +171,11 @@ fn test_unauthorized_resolve_pool() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
+    let (_, client, token_address, _, _, _, _) = setup(&env);
 
-    let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &100u32);
-
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin);
-    let token_address = token_contract;
-
-    let pool_id = client.create_pool(&100, &token_address);
-
+    let pool_id = client.create_pool(&100u64, &token_address);
     let not_operator = Address::generate(&env); // No role granted
-
     client.resolve_pool(&not_operator, &pool_id, &1u32); // Should panic
-}
-
-#[test]
-#[should_panic(expected = "Already claimed")]
-fn test_double_claim() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
-
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
-
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin);
-    let token_address = token_contract;
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
-
-    let user1 = Address::generate(&env);
-    let operator = Address::generate(&env);
-
-    token_admin_client.mint(&user1, &1000);
-    ac_client.grant_role(&operator, &ROLE_OPERATOR);
-
-    client.init(&ac_id, &user1, &100u32);
-
-    let pool_id = client.create_pool(&100, &token_address);
-    client.place_prediction(&user1, &pool_id, &100, &1);
-    client.resolve_pool(&operator, &pool_id, &1u32);
-
-    client.claim_winnings(&user1, &pool_id);
-    client.claim_winnings(&user1, &pool_id); // Should panic
-}
-
-#[test]
-#[should_panic(expected = "Pool not resolved")]
-fn test_claim_unresolved() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
-
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin);
-    let token_address = token_contract;
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
-
-    let user1 = Address::generate(&env);
-    token_admin_client.mint(&user1, &1000);
-
-    client.init(&ac_id, &user1, &100u32);
-
-    let pool_id = client.create_pool(&100, &token_address);
-    client.place_prediction(&user1, &pool_id, &100, &1);
-
-    // Do NOT resolve
-    client.claim_winnings(&user1, &pool_id); // Should panic
 }
 
 #[test]
@@ -216,48 +183,104 @@ fn test_get_user_predictions() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
-
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin);
-    let token_address = token_contract;
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_address);
+    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
-    client.init(&ac_id, &user, &100u32);
-
-    // Create 3 pools and place predictions
-    let pool0 = client.create_pool(&100, &token_address);
-    let pool1 = client.create_pool(&200, &token_address);
-    let pool2 = client.create_pool(&300, &token_address);
+    let pool0 = client.create_pool(&100u64, &token_address);
+    let pool1 = client.create_pool(&200u64, &token_address);
+    let pool2 = client.create_pool(&300u64, &token_address);
 
     client.place_prediction(&user, &pool0, &10, &1);
     client.place_prediction(&user, &pool1, &20, &2);
     client.place_prediction(&user, &pool2, &30, &1);
 
-    // Test pagination: Offset 0, Limit 2
+    // Offset 0, Limit 2
     let first_two = client.get_user_predictions(&user, &0, &2);
     assert_eq!(first_two.len(), 2);
     assert_eq!(first_two.get(0).unwrap().pool_id, pool0);
     assert_eq!(first_two.get(1).unwrap().pool_id, pool1);
 
-    // Test pagination: Offset 1, Limit 2
+    // Offset 1, Limit 2
     let last_two = client.get_user_predictions(&user, &1, &2);
     assert_eq!(last_two.len(), 2);
     assert_eq!(last_two.get(0).unwrap().pool_id, pool1);
     assert_eq!(last_two.get(1).unwrap().pool_id, pool2);
 
-    // Test pagination: Offset 2, Limit 1
+    // Offset 2, Limit 1
     let last_one = client.get_user_predictions(&user, &2, &1);
     assert_eq!(last_one.len(), 1);
     assert_eq!(last_one.get(0).unwrap().pool_id, pool2);
 
-    // Test pagination: Out of bounds
+    // Out of bounds
     let empty = client.get_user_predictions(&user, &3, &1);
     assert_eq!(empty.len(), 0);
+}
+
+#[test]
+fn test_admin_can_set_fee_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32);
+
+    client.set_fee_bps(&admin, &500u32); // 5% — should not panic
+}
+
+#[test]
+fn test_admin_can_set_treasury() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let new_treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32);
+
+    client.set_treasury(&admin, &new_treasury); // Should not panic
+}
+
+#[test]
+fn test_multiple_pools_independent() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    token_admin_client.mint(&user2, &1000);
+
+    let pool_a = client.create_pool(&100u64, &token_address);
+    let pool_b = client.create_pool(&200u64, &token_address);
+
+    client.place_prediction(&user1, &pool_a, &100, &1);
+    client.place_prediction(&user2, &pool_b, &100, &1);
+
+    client.resolve_pool(&operator, &pool_a, &1u32);
+    client.resolve_pool(&operator, &pool_b, &2u32); // user2 loses
+
+    let w1 = client.claim_winnings(&user1, &pool_a);
+    assert_eq!(w1, 100); // only winner in pool_a, gets back their own stake
+
+    let w2 = client.claim_winnings(&user2, &pool_b);
+    assert_eq!(w2, 0); // lost in pool_b
 }

@@ -6,6 +6,7 @@ version = 4
 name = "access-control"
 version = "0.0.0"
 dependencies = [
+ "predifi-errors",
  "soroban-sdk",
 ]
 
@@ -932,6 +933,15 @@ dependencies = [
 [[package]]
 name = "predifi-contract"
 version = "0.0.0"
+dependencies = [
+ "access-control",
+ "predifi-errors",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "predifi-errors"
+version = "0.1.0"
 dependencies = [
  "soroban-sdk",
 ]

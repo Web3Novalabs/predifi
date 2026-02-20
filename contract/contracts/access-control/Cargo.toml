@@ -1,15 +1,18 @@
 [package]
-name = "access-control"
+name    = "access-control"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
+# This crate is a shared library consumed by predifi-contract.
+# It must NOT use cdylib — only rlib so it links into the main contract.
 [lib]
-crate-type = ["lib", "cdylib"]
-doctest = false
+crate-type = ["rlib"]
+doctest    = false
 
 [dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk    = { workspace = true }
+predifi-errors = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

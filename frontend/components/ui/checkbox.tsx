@@ -31,6 +31,7 @@ const Checkbox = React.forwardRef<
     },
     ref
   ) => {
+    // eslint-disable-next-line
     const checkboxId = id || React.useId();
     const isIndeterminate = indeterminate && checked !== true;
 
@@ -89,7 +90,10 @@ const Checkbox = React.forwardRef<
           </p>
         )}
         {!error && helperText && (
-          <p id={`${checkboxId}-helper`} className="text-sm text-muted-foreground">
+          <p
+            id={`${checkboxId}-helper`}
+            className="text-sm text-muted-foreground"
+          >
             {helperText}
           </p>
         )}

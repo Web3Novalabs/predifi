@@ -1,15 +1,6 @@
 #![no_std]
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env};
-
-#[contracterror]
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
-#[repr(u32)]
-pub enum Error {
-    NotInitialized = 1,
-    AlreadyInitialized = 2,
-    Unauthorized = 3,
-    RoleNotFound = 4,
-}
+use predifi_errors::PrediFiError;
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,12 +8,44 @@ pub enum Role {
     Admin = 0,
     Operator = 1,
     Moderator = 2,
+    Oracle = 3,
+    User = 4,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PoolStatus {
+    /// The pool is open for predictions.
+    Active,
+    /// The event has occurred and the outcome is determined.
+    Resolved,
+    /// The pool is closed for new predictions but not yet resolved.
+    Closed,
+    /// The outcome is being disputed.
+    Disputed,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PoolCategory {
+    /// Sports-related predictions.
+    Sports,
+    /// Political predictions.
+    Politics,
+    /// Financial predictions.
+    Finance,
+    /// Entertainment predictions.
+    Entertainment,
+    /// Other categories.
+    Other,
 }
 
 #[contracttype]
 pub enum DataKey {
     Admin,
     Role(Address, Role),
+    Pool(u64),
+    PoolCount,
 }
 
 #[contract]
@@ -36,17 +59,16 @@ impl AccessControl {
     /// * `admin` - The address to be appointed as the initial super admin.
     ///
     /// # Errors
-    /// * `AlreadyInitialized` - If the contract has already been initialized.
-    pub fn init(env: Env, admin: Address) -> Result<(), Error> {
+    /// * Panics with `"AlreadyInitialized"` if the contract has already been initialized.
+    pub fn init(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
-            return Err(Error::AlreadyInitialized);
+            soroban_sdk::panic_with_error!(&env, PrediFiError::AlreadyInitialized);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
-        // Also grant the Admin role to the admin address
+        // Also grant the Admin role to the admin address.
         env.storage()
             .persistent()
             .set(&DataKey::Role(admin, Role::Admin), &());
-        Ok(())
     }
 
     /// Returns the current super admin address.
@@ -55,12 +77,12 @@ impl AccessControl {
     /// The address of the current super admin.
     ///
     /// # Errors
-    /// * `NotInitialized` - If the contract hasn't been initialized yet.
-    pub fn get_admin(env: Env) -> Result<Address, Error> {
+    /// * Panics with `"NotInitialized"` if the contract hasn't been initialized yet.
+    pub fn get_admin(env: Env) -> Address {
         env.storage()
             .instance()
             .get(&DataKey::Admin)
-            .ok_or(Error::NotInitialized)
+            .expect("NotInitialized")
     }
 
     /// Assigns a specific role to a user.
@@ -69,8 +91,8 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
-    /// * `user` - The address to receive the role.
-    /// * `role` - The role to be assigned.
+    /// * `user`         - The address to receive the role.
+    /// * `role`         - The role to be assigned.
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
@@ -79,12 +101,12 @@ impl AccessControl {
         admin_caller: Address,
         user: Address,
         role: Role,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
         env.storage()
@@ -99,23 +121,23 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
-    /// * `user` - The address from which the role will be revoked.
-    /// * `role` - The role to be revoked.
+    /// * `user`         - The address from which the role will be revoked.
+    /// * `role`         - The role to be revoked.
     ///
     /// # Errors
-    /// * `Unauthorized` - If the caller is not the super admin.
-    /// * `RoleNotFound` - If the user doesn't have the specified role.
+    /// * `Unauthorized`  - If the caller is not the super admin.
+    /// * `RoleNotFound`  - If the user doesn't have the specified role.
     pub fn revoke_role(
         env: Env,
         admin_caller: Address,
         user: Address,
         role: Role,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
         if !env
@@ -123,7 +145,7 @@ impl AccessControl {
             .persistent()
             .has(&DataKey::Role(user.clone(), role.clone()))
         {
-            return Err(Error::RoleNotFound);
+            return Err(PrediFiError::RoleNotFound);
         }
 
         env.storage()
@@ -150,9 +172,9 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the admin calling the function.
-    /// * `from` - The address currently holding the role.
-    /// * `to` - The address to receive the role.
-    /// * `role` - The role to be transferred.
+    /// * `from`         - The address currently holding the role.
+    /// * `to`           - The address to receive the role.
+    /// * `role`         - The role to be transferred.
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the super admin.
@@ -163,12 +185,12 @@ impl AccessControl {
         from: Address,
         to: Address,
         role: Role,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
         if !env
@@ -176,7 +198,7 @@ impl AccessControl {
             .persistent()
             .has(&DataKey::Role(from.clone(), role.clone()))
         {
-            return Err(Error::RoleNotFound);
+            return Err(PrediFiError::RoleNotFound);
         }
 
         env.storage()
@@ -194,7 +216,7 @@ impl AccessControl {
     ///
     /// # Arguments
     /// * `admin_caller` - The address of the current admin.
-    /// * `new_admin` - The address to become the new super admin.
+    /// * `new_admin`    - The address to become the new super admin.
     ///
     /// # Errors
     /// * `Unauthorized` - If the caller is not the current super admin.
@@ -202,18 +224,18 @@ impl AccessControl {
         env: Env,
         admin_caller: Address,
         new_admin: Address,
-    ) -> Result<(), Error> {
+    ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone())?;
+        let current_admin = Self::get_admin(env.clone());
         if admin_caller != current_admin {
-            return Err(Error::Unauthorized);
+            return Err(PrediFiError::Unauthorized);
         }
 
-        // Update the admin address
+        // Update the admin address.
         env.storage().instance().set(&DataKey::Admin, &new_admin);
 
-        // Transfer the Admin role record
+        // Transfer the Admin role record.
         env.storage()
             .persistent()
             .remove(&DataKey::Role(current_admin, Role::Admin));
@@ -222,6 +244,83 @@ impl AccessControl {
             .set(&DataKey::Role(new_admin, Role::Admin), &());
 
         Ok(())
+    }
+
+    /// Checks if a user is the current super admin.
+    ///
+    /// # Arguments
+    /// * `user` - The address to check.
+    ///
+    /// # Returns
+    /// `true` if the user is the current super admin, `false` otherwise.
+    pub fn is_admin(env: Env, user: Address) -> bool {
+        let stored: Option<Address> = env.storage().instance().get(&DataKey::Admin);
+        match stored {
+            Some(admin) => admin == user,
+            None => false,
+        }
+    }
+
+    /// Revokes all roles from a user.
+    ///
+    /// Only the current super admin can call this function.
+    ///
+    /// # Arguments
+    /// * `admin_caller` - The address of the admin calling the function.
+    /// * `user`         - The address from which all roles will be revoked.
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If the caller is not the super admin.
+    pub fn revoke_all_roles(
+        env: Env,
+        admin_caller: Address,
+        user: Address,
+    ) -> Result<(), PrediFiError> {
+        admin_caller.require_auth();
+
+        let current_admin = Self::get_admin(env.clone());
+        if admin_caller != current_admin {
+            return Err(PrediFiError::Unauthorized);
+        }
+
+        // Revoke all possible roles.
+        for role in [
+            Role::Admin,
+            Role::Operator,
+            Role::Moderator,
+            Role::Oracle,
+            Role::User,
+        ]
+        .iter()
+        {
+            let key = DataKey::Role(user.clone(), role.clone());
+            if env.storage().persistent().has(&key) {
+                env.storage().persistent().remove(&key);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Checks if a user has any of the specified roles.
+    ///
+    /// # Arguments
+    /// * `user`  - The address to check.
+    /// * `roles` - A vector of roles to check.
+    ///
+    /// # Returns
+    /// `true` if the user has at least one of the specified roles, `false` otherwise.
+    pub fn has_any_role(env: Env, user: Address, roles: soroban_sdk::Vec<Role>) -> bool {
+        for role in roles.iter() {
+            if env
+                .storage()
+                .persistent()
+                .has(&DataKey::Role(user.clone(), role))
+            {
+                return true;
+            }
+        }
+        false
     }
 }
 

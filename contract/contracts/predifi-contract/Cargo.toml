@@ -1,14 +1,17 @@
 [package]
-name = "predifi-contract"
+name    = "predifi-contract"
 version = "0.0.0"
 edition = "2021"
 publish = false
 
+# cdylib produces the WASM binary; lib allows Rust tests to import the contract.
 [lib]
 crate-type = ["cdylib", "lib"]
 
 [dependencies]
-soroban-sdk = { workspace = true }
+soroban-sdk    = { workspace = true }
+predifi-errors = { workspace = true }
+access-control = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }

@@ -1,24 +1,29 @@
 [workspace]
 resolver = "2"
 members = [
-  "contracts/*",
+  "contracts/predifi-errors",
+  "contracts/access-control",
   "contracts/predifi-contract",
 ]
 
+# ── Shared workspace dependencies ──────────────────────────────────────────────
 [workspace.dependencies]
-soroban-sdk = "23"
+soroban-sdk     = "23"
+predifi-errors  = { path = "contracts/predifi-errors" }
+access-control  = { path = "contracts/access-control" }
 
+# ── Release profile (optimised for WASM size) ──────────────────────────────────
 [profile.release]
-opt-level = "z"
+opt-level       = "z"
 overflow-checks = true
-debug = 0
-strip = "symbols"
+debug           = 0
+strip           = "symbols"
 debug-assertions = false
-panic = "abort"
-codegen-units = 1
-lto = true
+panic           = "abort"
+codegen-units   = 1
+lto             = true
 
-# For more information about this profile see https://soroban.stellar.org/docs/basic-tutorials/logging#cargotoml-profile
+# ── Release-with-logs profile (for contract debugging) ─────────────────────────
 [profile.release-with-logs]
-inherits = "release"
+inherits         = "release"
 debug-assertions = true

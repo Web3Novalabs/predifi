@@ -3,9 +3,7 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { ChefHat, ChevronRight, Users, Copy } from "lucide-react";
-import Image from "next/image";
 
 interface Prediction {
     id: string;
