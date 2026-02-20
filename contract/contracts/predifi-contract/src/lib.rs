@@ -1,8 +1,16 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
 };
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum PredifiError {
+    Unauthorized = 10,
+    PoolNotResolved = 22,
+    AlreadyClaimed = 60,
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -69,11 +77,12 @@ impl PredifiContract {
         )
     }
 
-    fn require_role(env: &Env, user: &Address, role: u32) {
+    fn require_role(env: &Env, user: &Address, role: u32) -> Result<(), PredifiError> {
         let config = Self::get_config(env);
         if !Self::has_role(env, &config.access_control, user, role) {
-            panic!("Unauthorized: missing required role");
+            return Err(PredifiError::Unauthorized);
         }
+        Ok(())
     }
 
     fn get_config(env: &Env) -> Config {
@@ -114,36 +123,40 @@ impl PredifiContract {
     /// Pause the contract. Only callable by Admin (role 0).
     pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0);
+        Self::require_role(&env, &admin, 0)
+            .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &true);
     }
 
     /// Unpause the contract. Only callable by Admin (role 0).
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0);
+        Self::require_role(&env, &admin, 0)
+            .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &false);
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
-    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) {
+    pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        Self::require_role(&env, &admin, 0);
+        Self::require_role(&env, &admin, 0)?;
         assert!(fee_bps <= 10_000, "fee_bps exceeds 10000");
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
+        Ok(())
     }
 
     /// Set treasury address. Caller must have Admin role (0).
-    pub fn set_treasury(env: Env, admin: Address, treasury: Address) {
+    pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        Self::require_role(&env, &admin, 0);
+        Self::require_role(&env, &admin, 0)?;
         let mut config = Self::get_config(&env);
         config.treasury = treasury;
         env.storage().instance().set(&DataKey::Config, &config);
+        Ok(())
     }
 
     /// Create a new prediction pool. Returns the new pool ID.
@@ -177,10 +190,15 @@ impl PredifiContract {
     }
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
-    pub fn resolve_pool(env: Env, operator: Address, pool_id: u64, outcome: u32) {
+    pub fn resolve_pool(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        outcome: u32,
+    ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
-        Self::require_role(&env, &operator, 1);
+        Self::require_role(&env, &operator, 1)?;
 
         let mut pool: Pool = env
             .storage()
@@ -194,6 +212,7 @@ impl PredifiContract {
         pool.outcome = outcome;
 
         env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        Ok(())
     }
 
     /// Place a prediction on a pool.
@@ -242,7 +261,7 @@ impl PredifiContract {
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
-    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> i128 {
+    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env);
         user.require_auth();
 
@@ -252,13 +271,17 @@ impl PredifiContract {
             .get(&DataKey::Pool(pool_id))
             .expect("Pool not found");
 
-        assert!(pool.resolved, "Pool not resolved");
-        assert!(
-            !env.storage()
-                .instance()
-                .has(&DataKey::HasClaimed(user.clone(), pool_id)),
-            "Already claimed"
-        );
+        if !pool.resolved {
+            return Err(PredifiError::PoolNotResolved);
+        }
+
+        if env
+            .storage()
+            .instance()
+            .has(&DataKey::HasClaimed(user.clone(), pool_id))
+        {
+            return Err(PredifiError::AlreadyClaimed);
+        }
 
         // Mark as claimed immediately to prevent re-entrancy
         env.storage()
@@ -272,11 +295,11 @@ impl PredifiContract {
 
         let prediction = match prediction {
             Some(p) => p,
-            None => return 0,
+            None => return Ok(0),
         };
 
         if prediction.outcome != pool.outcome {
-            return 0;
+            return Ok(0);
         }
 
         let winning_stake: i128 = env
@@ -286,7 +309,7 @@ impl PredifiContract {
             .unwrap_or(0);
 
         if winning_stake == 0 {
-            return 0;
+            return Ok(0);
         }
 
         let winnings = prediction
@@ -299,7 +322,7 @@ impl PredifiContract {
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
 
-        winnings
+        Ok(winnings)
     }
 
     /// Get a paginated list of a user's predictions.

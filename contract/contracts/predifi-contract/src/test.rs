@@ -35,11 +35,11 @@ fn setup(
 ) -> (
     dummy_access_control::DummyAccessControlClient<'_>,
     PredifiContractClient<'_>,
-    Address, // token_address
+    Address,
     token::Client<'_>,
     token::StellarAssetClient<'_>,
-    Address, // treasury
-    Address, // operator
+    Address,
+    Address,
 ) {
     let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
     let ac_client = dummy_access_control::DummyAccessControlClient::new(env, &ac_id);
@@ -78,8 +78,6 @@ fn test_claim_winnings() {
     env.mock_all_auths();
 
     let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
-    let _contract_id = env.register(PredifiContract, ()); // get contract address for balance check
-                                                          // Re-derive contract address from client
     let contract_addr = client.address.clone();
 
     let user1 = Address::generate(&env);
@@ -93,20 +91,17 @@ fn test_claim_winnings() {
 
     assert_eq!(token.balance(&contract_addr), 200);
 
-    // Advance time past pool end_time
     env.ledger().with_mut(|li| li.timestamp = 101);
 
     client.resolve_pool(&operator, &pool_id, &1u32);
 
-    // User1 wins: (100 / 100) * 200 = 200
     let winnings = client.claim_winnings(&user1, &pool_id);
     assert_eq!(winnings, 200);
-    assert_eq!(token.balance(&user1), 1100); // 1000 - 100 + 200
+    assert_eq!(token.balance(&user1), 1100);
 
-    // User2 lost: gets 0
     let winnings2 = client.claim_winnings(&user2, &pool_id);
     assert_eq!(winnings2, 0);
-    assert_eq!(token.balance(&user2), 900); // 1000 - 100
+    assert_eq!(token.balance(&user2), 900);
 }
 
 #[test]
@@ -123,13 +118,12 @@ fn test_double_claim() {
     let pool_id = client.create_pool(&100u64, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
 
-    // Advance time past pool end_time
     env.ledger().with_mut(|li| li.timestamp = 101);
 
     client.resolve_pool(&operator, &pool_id, &1u32);
 
     client.claim_winnings(&user1, &pool_id);
-    client.claim_winnings(&user1, &pool_id); // Should panic
+    client.claim_winnings(&user1, &pool_id);
 }
 
 #[test]
@@ -146,7 +140,7 @@ fn test_claim_unresolved() {
     let pool_id = client.create_pool(&100u64, &token_address);
     client.place_prediction(&user1, &pool_id, &100, &1);
 
-    client.claim_winnings(&user1, &pool_id); // Should panic
+    client.claim_winnings(&user1, &pool_id);
 }
 
 #[test]
@@ -168,13 +162,13 @@ fn test_multiple_pools_independent() {
     client.place_prediction(&user2, &pool_b, &100, &1);
 
     client.resolve_pool(&operator, &pool_a, &1u32);
-    client.resolve_pool(&operator, &pool_b, &2u32); // user2 loses
+    client.resolve_pool(&operator, &pool_b, &2u32);
 
     let w1 = client.claim_winnings(&user1, &pool_a);
-    assert_eq!(w1, 100); // sole winner, gets own stake back
+    assert_eq!(w1, 100);
 
     let w2 = client.claim_winnings(&user2, &pool_b);
-    assert_eq!(w2, 0); // lost
+    assert_eq!(w2, 0);
 }
 
 // ── Access control tests ─────────────────────────────────────────────────────
@@ -229,7 +223,7 @@ fn test_admin_can_set_fee_bps() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     client.init(&ac_id, &treasury, &0u32);
 
-    client.set_fee_bps(&admin, &500u32); // 5% — should not panic
+    client.set_fee_bps(&admin, &500u32);
 }
 
 #[test]
@@ -248,7 +242,7 @@ fn test_admin_can_set_treasury() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     client.init(&ac_id, &treasury, &0u32);
 
-    client.set_treasury(&admin, &new_treasury); // Should not panic
+    client.set_treasury(&admin, &new_treasury);
 }
 
 // ── Pause tests ───────────────────────────────────────────────────────────────
@@ -306,7 +300,7 @@ fn test_paused_blocks_set_fee_bps() {
     client.init(&ac_id, &treasury, &0u32);
 
     client.pause(&admin);
-    client.set_fee_bps(&admin, &100u32); // Should panic
+    client.set_fee_bps(&admin, &100u32);
 }
 
 #[test]
@@ -326,7 +320,7 @@ fn test_paused_blocks_set_treasury() {
     client.init(&ac_id, &treasury, &0u32);
 
     client.pause(&admin);
-    client.set_treasury(&admin, &Address::generate(&env)); // Should panic
+    client.set_treasury(&admin, &Address::generate(&env));
 }
 
 #[test]
@@ -347,7 +341,7 @@ fn test_paused_blocks_create_pool() {
     client.init(&ac_id, &treasury, &0u32);
 
     client.pause(&admin);
-    client.create_pool(&100u64, &token); // Should panic
+    client.create_pool(&100u64, &token);
 }
 
 #[test]
@@ -368,7 +362,7 @@ fn test_paused_blocks_place_prediction() {
     client.init(&ac_id, &treasury, &0u32);
 
     client.pause(&admin);
-    client.place_prediction(&user, &0u64, &10, &1); // Should panic
+    client.place_prediction(&user, &0u64, &10, &1);
 }
 
 #[test]
@@ -390,7 +384,7 @@ fn test_paused_blocks_resolve_pool() {
     client.init(&ac_id, &treasury, &0u32);
 
     client.pause(&admin);
-    client.resolve_pool(&operator, &0u64, &1u32); // Should panic
+    client.resolve_pool(&operator, &0u64, &1u32);
 }
 
 #[test]
@@ -411,7 +405,7 @@ fn test_paused_blocks_claim_winnings() {
     client.init(&ac_id, &treasury, &0u32);
 
     client.pause(&admin);
-    client.claim_winnings(&user, &0u64); // Should panic
+    client.claim_winnings(&user, &0u64);
 }
 
 #[test]
@@ -438,7 +432,6 @@ fn test_unpause_restores_functionality() {
     client.pause(&admin);
     client.unpause(&admin);
 
-    // After unpause these should work fine
     let pool_id = client.create_pool(&100u64, &token_contract);
     client.place_prediction(&user, &pool_id, &10, &1);
 }
@@ -463,24 +456,20 @@ fn test_get_user_predictions() {
     client.place_prediction(&user, &pool1, &20, &2);
     client.place_prediction(&user, &pool2, &30, &1);
 
-    // Offset 0, Limit 2
     let first_two = client.get_user_predictions(&user, &0, &2);
     assert_eq!(first_two.len(), 2);
     assert_eq!(first_two.get(0).unwrap().pool_id, pool0);
     assert_eq!(first_two.get(1).unwrap().pool_id, pool1);
 
-    // Offset 1, Limit 2
     let last_two = client.get_user_predictions(&user, &1, &2);
     assert_eq!(last_two.len(), 2);
     assert_eq!(last_two.get(0).unwrap().pool_id, pool1);
     assert_eq!(last_two.get(1).unwrap().pool_id, pool2);
 
-    // Offset 2, Limit 1
     let last_one = client.get_user_predictions(&user, &2, &1);
     assert_eq!(last_one.len(), 1);
     assert_eq!(last_one.get(0).unwrap().pool_id, pool2);
 
-    // Out of bounds
     let empty = client.get_user_predictions(&user, &3, &1);
     assert_eq!(empty.len(), 0);
 }
