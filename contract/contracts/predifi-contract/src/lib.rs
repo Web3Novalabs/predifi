@@ -21,6 +21,16 @@ pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
     AlreadyClaimed = 60,
+    PoolNotCanceled = 23,
+    AlreadyRefunded = 61,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PoolStatus {
+    Active = 0,
+    Resolved = 1,
+    Canceled = 2,
 }
 
 #[contracttype]
@@ -35,6 +45,8 @@ pub struct Pool {
     pub description: String,
     /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
     pub metadata_url: String,
+    /// Pool status: Active, Resolved, or Canceled
+    pub status: PoolStatus,
 }
 
 #[contracttype]
@@ -63,6 +75,7 @@ pub enum DataKey {
     Prediction(Address, u64),
     PoolIdCounter,
     HasClaimed(Address, u64),
+    HasRefunded(Address, u64),
     OutcomeStake(u64, u32),
     UserPredictionCount(Address),
     UserPredictionIndex(Address, u32),
@@ -143,6 +156,21 @@ pub struct PredictionPlacedEvent {
 #[contractevent(topics = ["winnings_claimed"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WinningsClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["pool_canceled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolCanceledEvent {
+    pub pool_id: u64,
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["refund_claimed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundClaimedEvent {
     pub pool_id: u64,
     pub user: Address,
     pub amount: i128,
@@ -322,6 +350,7 @@ impl PredifiContract {
             total_stake: 0,
             description,
             metadata_url: metadata_url.clone(),
+            status: PoolStatus::Active,
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -366,6 +395,7 @@ impl PredifiContract {
 
         pool.resolved = true;
         pool.outcome = outcome;
+        pool.status = PoolStatus::Resolved;
 
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
@@ -374,6 +404,35 @@ impl PredifiContract {
             pool_id,
             operator,
             outcome,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Cancel a pool. Only callable by Admin (role 0).
+    /// Users can then claim full refunds of their stakes without protocol fees.
+    pub fn cancel_pool(env: Env, admin: Address, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        // Pool must not already be resolved
+        assert!(!pool.resolved, "Cannot cancel a resolved pool");
+
+        pool.status = PoolStatus::Canceled;
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        PoolCanceledEvent {
+            pool_id,
+            admin,
         }
         .publish(&env);
         Ok(())
@@ -506,6 +565,65 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(winnings)
+    }
+
+    /// Claim refund from a canceled pool. Returns the full original stake amount.
+    /// Only available for canceled pools. Each user can claim their refund only once.
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    pub fn claim_refund(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
+        Self::require_not_paused(&env);
+        user.require_auth();
+
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        // Verify pool is canceled
+        if pool.status != PoolStatus::Canceled {
+            return Err(PredifiError::PoolNotCanceled);
+        }
+
+        // Check if user already claimed refund
+        let refund_key = DataKey::HasRefunded(user.clone(), pool_id);
+        if env.storage().persistent().has(&refund_key) {
+            return Err(PredifiError::AlreadyRefunded);
+        }
+
+        // Mark as refunded immediately to prevent re-entrancy
+        env.storage().persistent().set(&refund_key, &true);
+        Self::extend_persistent(&env, &refund_key);
+
+        // Get user's prediction
+        let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
+
+        if env.storage().persistent().has(&pred_key) {
+            Self::extend_persistent(&env, &pred_key);
+        }
+
+        let prediction = match prediction {
+            Some(p) => p,
+            None => return Ok(0),
+        };
+
+        // Return full stake amount without protocol fees
+        let refund_amount = prediction.amount;
+
+        let token_client = token::Client::new(&env, &pool.token);
+        token_client.transfer(&env.current_contract_address(), &user, &refund_amount);
+
+        RefundClaimedEvent {
+            pool_id,
+            user,
+            amount: refund_amount,
+        }
+        .publish(&env);
+
+        Ok(refund_amount)
     }
 
     /// Get a paginated list of a user's predictions.

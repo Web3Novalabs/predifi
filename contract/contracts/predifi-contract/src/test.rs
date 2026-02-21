@@ -561,3 +561,352 @@ fn test_get_user_predictions() {
     let empty = client.get_user_predictions(&user, &3, &1);
     assert_eq!(empty.len(), 0);
 }
+
+// ── Refund tests (canceled pools) ─────────────────────────────────────────────
+
+#[test]
+fn test_cancel_pool_and_claim_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, _, _) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    token_admin_client.mint(&user2, &1000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.place_prediction(&user1, &pool_id, &250, &1);
+    client.place_prediction(&user2, &pool_id, &150, &2);
+
+    assert_eq!(token.balance(&contract_addr), 400);
+    assert_eq!(token.balance(&user1), 750);
+    assert_eq!(token.balance(&user2), 850);
+
+    // Cancel the pool
+    client.cancel_pool(&admin, &pool_id);
+
+    // Both users claim refunds
+    let refund1 = client.claim_refund(&user1, &pool_id);
+    assert_eq!(refund1, 250);
+    assert_eq!(token.balance(&user1), 1000);
+
+    let refund2 = client.claim_refund(&user2, &pool_id);
+    assert_eq!(refund2, 150);
+    assert_eq!(token.balance(&user2), 1000);
+
+    assert_eq!(token.balance(&contract_addr), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #23)")]
+fn test_claim_refund_on_non_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.place_prediction(&user, &pool_id, &100, &1);
+
+    // Try to claim refund on active pool (should fail)
+    client.claim_refund(&user, &pool_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #61)")]
+fn test_double_refund_prevention() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.place_prediction(&user, &pool_id, &100, &1);
+    client.cancel_pool(&admin, &pool_id);
+
+    // First refund should succeed
+    client.claim_refund(&user, &pool_id);
+
+    // Second refund should fail
+    client.claim_refund(&user, &pool_id);
+}
+
+#[test]
+fn test_refund_for_user_with_no_prediction() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.place_prediction(&user1, &pool_id, &100, &1);
+    client.cancel_pool(&admin, &pool_id);
+
+    // User2 never placed a prediction, should get 0 refund
+    let refund = client.claim_refund(&user2, &pool_id);
+    assert_eq!(refund, 0);
+}
+
+#[test]
+#[should_panic(expected = "Cannot cancel a resolved pool")]
+fn test_cannot_cancel_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.place_prediction(&user, &pool_id, &100, &1);
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+
+    // Resolve the pool
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // Try to cancel resolved pool (should fail)
+    client.cancel_pool(&admin, &pool_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_unauthorized_cancel_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _) = setup(&env);
+
+    let not_admin = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    // Non-admin tries to cancel pool (should fail)
+    client.cancel_pool(&not_admin, &pool_id);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_cancel_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.pause(&admin);
+    client.cancel_pool(&admin, &pool_id);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_claim_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32);
+
+    client.pause(&admin);
+    client.claim_refund(&user, &0u64);
+}
+
+#[test]
+fn test_refund_full_stake_without_fees() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, _, _) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &5000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    let stake_amount = 1234i128;
+    client.place_prediction(&user, &pool_id, &stake_amount, &1);
+
+    assert_eq!(token.balance(&contract_addr), stake_amount);
+    assert_eq!(token.balance(&user), 5000 - stake_amount);
+
+    client.cancel_pool(&admin, &pool_id);
+
+    let refund = client.claim_refund(&user, &pool_id);
+
+    // Verify full stake is returned without any fee deduction
+    assert_eq!(refund, stake_amount);
+    assert_eq!(token.balance(&user), 5000);
+    assert_eq!(token.balance(&contract_addr), 0);
+}
+
+#[test]
+fn test_multiple_users_refund_independently() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, _, _) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    token_admin_client.mint(&user1, &1000);
+    token_admin_client.mint(&user2, &2000);
+    token_admin_client.mint(&user3, &3000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.place_prediction(&user1, &pool_id, &100, &1);
+    client.place_prediction(&user2, &pool_id, &500, &2);
+    client.place_prediction(&user3, &pool_id, &750, &1);
+
+    assert_eq!(token.balance(&contract_addr), 1350);
+
+    client.cancel_pool(&admin, &pool_id);
+
+    // User1 claims refund
+    let refund1 = client.claim_refund(&user1, &pool_id);
+    assert_eq!(refund1, 100);
+    assert_eq!(token.balance(&user1), 1000);
+
+    // User3 claims refund
+    let refund3 = client.claim_refund(&user3, &pool_id);
+    assert_eq!(refund3, 750);
+    assert_eq!(token.balance(&user3), 3000);
+
+    // User2 claims refund
+    let refund2 = client.claim_refund(&user2, &pool_id);
+    assert_eq!(refund2, 500);
+    assert_eq!(token.balance(&user2), 2000);
+
+    assert_eq!(token.balance(&contract_addr), 0);
+}
