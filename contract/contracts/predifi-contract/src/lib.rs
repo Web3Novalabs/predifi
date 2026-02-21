@@ -15,6 +15,7 @@ pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
     AlreadyClaimed = 60,
+    PoolCanceled = 70,
 }
 
 #[contracttype]
@@ -22,6 +23,7 @@ pub enum PredifiError {
 pub struct Pool {
     pub end_time: u64,
     pub resolved: bool,
+    pub canceled: bool,
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
@@ -123,6 +125,14 @@ pub struct PoolResolvedEvent {
     pub pool_id: u64,
     pub operator: Address,
     pub outcome: u32,
+}
+
+#[contractevent(topics = ["pool_canceled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolCanceledEvent {
+    pub pool_id: u64,
+    pub caller: Address,
+    pub reason: String,
 }
 
 #[contractevent(topics = ["prediction_placed"])]
@@ -311,6 +321,7 @@ impl PredifiContract {
         let pool = Pool {
             end_time,
             resolved: false,
+            canceled: false,
             outcome: 0,
             token: token.clone(),
             total_stake: 0,
@@ -339,6 +350,7 @@ impl PredifiContract {
     }
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
+    /// Cannot resolve a canceled pool.
     pub fn resolve_pool(
         env: Env,
         operator: Address,
@@ -357,6 +369,7 @@ impl PredifiContract {
             .expect("Pool not found");
 
         assert!(!pool.resolved, "Pool already resolved");
+        assert!(!pool.canceled, "Cannot resolve a canceled pool");
 
         pool.resolved = true;
         pool.outcome = outcome;
@@ -373,7 +386,61 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Place a prediction on a pool.
+    /// Cancel a pool, freezing all betting and enabling refund process.
+    /// Only callable by Admin (role 0) - can cancel any pool for any reason.
+    ///
+    /// # Arguments
+    /// * `caller`  - The address requesting the cancellation (must be admin).
+    /// * `pool_id` - The ID of the pool to cancel.
+    /// * `reason`  - A short description of why the pool is being canceled.
+    ///
+    /// # Errors
+    /// - `Unauthorized` if caller is not admin.
+    /// - `PoolNotResolved` error (code 22) is returned if trying to cancel an already resolved pool.
+    pub fn cancel_pool(
+        env: Env,
+        caller: Address,
+        pool_id: u64,
+        reason: String,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        // Check authorization: caller must be admin (role 0)
+        Self::require_role(&env, &caller, 0)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        // Ensure resolved pools cannot be canceled
+        if pool.resolved {
+            return Err(PredifiError::PoolNotResolved);
+        }
+
+        // Prevent double cancellation
+        assert!(!pool.canceled, "Pool already canceled");
+
+        // Mark pool as canceled
+        pool.canceled = true;
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        PoolCanceledEvent {
+            pool_id,
+            caller,
+            reason,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Place a prediction on a pool. Cannot predict on canceled pools.
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
@@ -388,6 +455,7 @@ impl PredifiContract {
             .expect("Pool not found");
 
         assert!(!pool.resolved, "Pool already resolved");
+        assert!(!pool.canceled, "Cannot place prediction on canceled pool");
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         let token_client = token::Client::new(&env, &pool.token);
