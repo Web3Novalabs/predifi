@@ -7,7 +7,7 @@ publish = false
 # This crate is a shared library consumed by predifi-contract.
 # It must NOT use cdylib — only rlib so it links into the main contract.
 [lib]
-crate-type = ["rlib"]
+crate-type = ["cdylib", "rlib"]
 doctest    = false
 
 [dependencies]
