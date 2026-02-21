@@ -1,8 +1,27 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
+    IntoVal, String, Symbol, Vec,
 };
+
+const DAY_IN_LEDGERS: u32 = 17280;
+const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
+const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+
+/// Represents the explicit state machine for prediction markets.
+/// Valid transitions:
+/// - Active -> Resolved
+/// - Active -> Canceled
+/// - Resolved (terminal state - no transitions allowed)
+/// - Canceled (terminal state - no transitions allowed)
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MarketState {
+    Active = 0,
+    Resolved = 1,
+    Canceled = 2,
+}
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -10,16 +29,22 @@ pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
     AlreadyClaimed = 60,
+    InvalidStateTransition = 70,
+    MarketAlreadyClosed = 71,
 }
 
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
     pub end_time: u64,
-    pub resolved: bool,
+    pub state: MarketState,
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    /// A short human-readable description of the event being predicted.
+    pub description: String,
+    /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
+    pub metadata_url: String,
 }
 
 #[contracttype]
@@ -37,7 +62,7 @@ pub struct UserPredictionDetail {
     pub amount: i128,
     pub user_outcome: u32,
     pub pool_end_time: u64,
-    pub pool_resolved: bool,
+    pub pool_state: MarketState,
     pub pool_outcome: u32,
 }
 
@@ -53,6 +78,7 @@ pub enum DataKey {
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
+    PoolState(u64),
 }
 
 #[contracttype]
@@ -62,12 +88,104 @@ pub struct Prediction {
     pub outcome: u32,
 }
 
+// ── Events ───────────────────────────────────────────────────────────────────
+
+#[contractevent(topics = ["init"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitEvent {
+    pub access_control: Address,
+    pub treasury: Address,
+    pub fee_bps: u32,
+}
+
+#[contractevent(topics = ["pause"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PauseEvent {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["unpause"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnpauseEvent {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["fee_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeUpdateEvent {
+    pub admin: Address,
+    pub fee_bps: u32,
+}
+
+#[contractevent(topics = ["treasury_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryUpdateEvent {
+    pub admin: Address,
+    pub treasury: Address,
+}
+
+#[contractevent(topics = ["pool_created"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolCreatedEvent {
+    pub pool_id: u64,
+    pub end_time: u64,
+    pub token: Address,
+    /// Metadata URL included so off-chain indexers can immediately fetch context.
+    pub metadata_url: String,
+}
+
+#[contractevent(topics = ["pool_resolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolResolvedEvent {
+    pub pool_id: u64,
+    pub operator: Address,
+    pub outcome: u32,
+}
+
+#[contractevent(topics = ["pool_canceled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolCanceledEvent {
+    pub pool_id: u64,
+    pub operator: Address,
+}
+
+#[contractevent(topics = ["prediction_placed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+}
+
+#[contractevent(topics = ["winnings_claimed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WinningsClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[contract]
 pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
     // ── Private helpers ───────────────────────────────────────────────────────
+
+    fn extend_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
+    fn extend_persistent(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
 
     fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> bool {
         env.invoke_contract(
@@ -86,23 +204,79 @@ impl PredifiContract {
     }
 
     fn get_config(env: &Env) -> Config {
-        env.storage()
+        let config = env
+            .storage()
             .instance()
             .get(&DataKey::Config)
-            .expect("Config not set")
+            .expect("Config not set");
+        Self::extend_instance(env);
+        config
     }
 
     fn is_paused(env: &Env) -> bool {
-        env.storage()
+        let paused = env
+            .storage()
             .instance()
             .get(&DataKey::Paused)
-            .unwrap_or(false)
+            .unwrap_or(false);
+        Self::extend_instance(env);
+        paused
     }
 
     fn require_not_paused(env: &Env) {
         if Self::is_paused(env) {
             panic!("Contract is paused");
         }
+    }
+
+    /// Get the current state of a market. Defaults to Active if not explicitly stored.
+    fn get_market_state(env: &Env, pool_id: u64) -> MarketState {
+        let state_key = DataKey::PoolState(pool_id);
+        let state = env
+            .storage()
+            .persistent()
+            .get(&state_key)
+            .unwrap_or(MarketState::Active);
+        Self::extend_persistent(env, &state_key);
+        state
+    }
+
+    /// Validate and set the market state with explicit state transition rules.
+    /// Returns InvalidStateTransition if transition is not allowed.
+    fn set_market_state(
+        env: &Env,
+        pool_id: u64,
+        new_state: MarketState,
+    ) -> Result<(), PredifiError> {
+        let current_state = Self::get_market_state(env, pool_id);
+        
+        // Validate state transition
+        let transition_valid = match (current_state, new_state) {
+            // Active can transition to Resolved or Canceled
+            (MarketState::Active, MarketState::Resolved) => true,
+            (MarketState::Active, MarketState::Canceled) => true,
+            // Terminal states cannot transition
+            (MarketState::Resolved, _) => false,
+            (MarketState::Canceled, _) => false,
+            // Same state is not allowed
+            (s1, s2) if s1 == s2 => false,
+            _ => false,
+        };
+
+        if !transition_valid {
+            return Err(PredifiError::InvalidStateTransition);
+        }
+
+        let state_key = DataKey::PoolState(pool_id);
+        env.storage().persistent().set(&state_key, &new_state);
+        Self::extend_persistent(env, &state_key);
+        Ok(())
+    }
+
+    /// Check if market is in a terminal state (resolved or canceled).
+    fn is_market_closed(env: &Env, pool_id: u64) -> bool {
+        let state = Self::get_market_state(env, pool_id);
+        state == MarketState::Resolved || state == MarketState::Canceled
     }
 
     // ── Public interface ──────────────────────────────────────────────────────
@@ -112,11 +286,19 @@ impl PredifiContract {
         if !env.storage().instance().has(&DataKey::Config) {
             let config = Config {
                 fee_bps,
-                treasury,
-                access_control,
+                treasury: treasury.clone(),
+                access_control: access_control.clone(),
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
+            Self::extend_instance(&env);
+
+            InitEvent {
+                access_control,
+                treasury,
+                fee_bps,
+            }
+            .publish(&env);
         }
     }
 
@@ -126,6 +308,9 @@ impl PredifiContract {
         Self::require_role(&env, &admin, 0)
             .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &true);
+        Self::extend_instance(&env);
+
+        PauseEvent { admin }.publish(&env);
     }
 
     /// Unpause the contract. Only callable by Admin (role 0).
@@ -134,6 +319,9 @@ impl PredifiContract {
         Self::require_role(&env, &admin, 0)
             .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
         env.storage().instance().set(&DataKey::Paused, &false);
+        Self::extend_instance(&env);
+
+        UnpauseEvent { admin }.publish(&env);
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
@@ -145,6 +333,9 @@ impl PredifiContract {
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        FeeUpdateEvent { admin, fee_bps }.publish(&env);
         Ok(())
     }
 
@@ -154,37 +345,76 @@ impl PredifiContract {
         admin.require_auth();
         Self::require_role(&env, &admin, 0)?;
         let mut config = Self::get_config(&env);
-        config.treasury = treasury;
+        config.treasury = treasury.clone();
         env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        TreasuryUpdateEvent { admin, treasury }.publish(&env);
         Ok(())
     }
 
     /// Create a new prediction pool. Returns the new pool ID.
-    pub fn create_pool(env: Env, end_time: u64, token: Address) -> u64 {
+    ///
+    /// # Arguments
+    /// * `end_time`     - Unix timestamp after which no more predictions are accepted.
+    /// * `token`        - The Stellar token contract address used for staking.
+    /// * `description`  - Short human-readable description of the event (max 256 bytes).
+    /// * `metadata_url` - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    pub fn create_pool(
+        env: Env,
+        end_time: u64,
+        token: Address,
+        description: String,
+        metadata_url: String,
+    ) -> u64 {
         Self::require_not_paused(&env);
         assert!(
             end_time > env.ledger().timestamp(),
             "end_time must be in the future"
         );
+        assert!(description.len() <= 256, "description exceeds 256 bytes");
+        assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
 
         let pool_id: u64 = env
             .storage()
             .instance()
             .get(&DataKey::PoolIdCounter)
             .unwrap_or(0);
+        Self::extend_instance(&env);
 
         let pool = Pool {
             end_time,
-            resolved: false,
+            state: MarketState::Active,
             outcome: 0,
-            token,
+            token: token.clone(),
             total_stake: 0,
+            description,
+            metadata_url: metadata_url.clone(),
         };
 
-        env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        let pool_key = DataKey::Pool(pool_id);
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        // Initialize state as Active
+        let state_key = DataKey::PoolState(pool_id);
+        env.storage()
+            .persistent()
+            .set(&state_key, &MarketState::Active);
+        Self::extend_persistent(&env, &state_key);
+
         env.storage()
             .instance()
             .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+        Self::extend_instance(&env);
+
+        PoolCreatedEvent {
+            pool_id,
+            end_time,
+            token,
+            metadata_url,
+        }
+        .publish(&env);
 
         pool_id
     }
@@ -200,98 +430,164 @@ impl PredifiContract {
         operator.require_auth();
         Self::require_role(&env, &operator, 1)?;
 
+        let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
             .storage()
-            .instance()
-            .get(&DataKey::Pool(pool_id))
+            .persistent()
+            .get(&pool_key)
             .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
 
-        assert!(!pool.resolved, "Pool already resolved");
+        // Validate state transition: only Active -> Resolved is allowed
+        // This will return InvalidStateTransition if not allowed
+        Self::set_market_state(&env, pool_id, MarketState::Resolved)?;
 
-        pool.resolved = true;
+        // Update pool with resolved state and outcome
+        pool.state = MarketState::Resolved;
         pool.outcome = outcome;
 
-        env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        // Atomically update pool storage
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        PoolResolvedEvent {
+            pool_id,
+            operator,
+            outcome,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Cancel a pool. Caller must have Operator role (1).
+    /// This transitions the market from Active -> Canceled.
+    pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        operator.require_auth();
+        Self::require_role(&env, &operator, 1)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        // Validate state transition: only Active -> Canceled is allowed
+        // This will return InvalidStateTransition if not allowed
+        Self::set_market_state(&env, pool_id, MarketState::Canceled)?;
+
+        // Update pool state
+        pool.state = MarketState::Canceled;
+
+        // Atomically update pool storage
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        PoolCanceledEvent {
+            pool_id,
+            operator,
+        }
+        .publish(&env);
         Ok(())
     }
 
     /// Place a prediction on a pool.
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 
+        let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
             .storage()
-            .instance()
-            .get(&DataKey::Pool(pool_id))
+            .persistent()
+            .get(&pool_key)
             .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
 
-        assert!(!pool.resolved, "Pool already resolved");
+        // Guard: Ensure market is not in terminal state
+        if Self::is_market_closed(&env, pool_id) {
+            panic!("Cannot place prediction on a closed market");
+        }
+
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&user, env.current_contract_address(), &amount);
+        token_client.transfer(&user, &env.current_contract_address(), &amount);
 
-        env.storage().instance().set(
-            &DataKey::Prediction(user.clone(), pool_id),
-            &Prediction { amount, outcome },
-        );
+        let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        env.storage()
+            .persistent()
+            .set(&pred_key, &Prediction { amount, outcome });
+        Self::extend_persistent(&env, &pred_key);
 
         pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
-        env.storage().instance().set(&DataKey::Pool(pool_id), &pool);
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
 
         let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let current_stake: i128 = env.storage().instance().get(&outcome_key).unwrap_or(0);
+        let current_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
         env.storage()
-            .instance()
+            .persistent()
             .set(&outcome_key, &(current_stake + amount));
+        Self::extend_persistent(&env, &outcome_key);
 
-        let count: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::UserPredictionCount(user.clone()))
-            .unwrap_or(0);
-        env.storage()
-            .instance()
-            .set(&DataKey::UserPredictionIndex(user.clone(), count), &pool_id);
-        env.storage()
-            .instance()
-            .set(&DataKey::UserPredictionCount(user.clone()), &(count + 1));
+        let count_key = DataKey::UserPredictionCount(user.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+        let index_key = DataKey::UserPredictionIndex(user.clone(), count);
+        env.storage().persistent().set(&index_key, &pool_id);
+        Self::extend_persistent(&env, &index_key);
+
+        env.storage().persistent().set(&count_key, &(count + 1));
+        Self::extend_persistent(&env, &count_key);
+
+        PredictionPlacedEvent {
+            pool_id,
+            user,
+            amount,
+            outcome,
+        }
+        .publish(&env);
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
+    #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env);
         user.require_auth();
 
+        let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
             .storage()
-            .instance()
-            .get(&DataKey::Pool(pool_id))
+            .persistent()
+            .get(&pool_key)
             .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
 
-        if !pool.resolved {
+        // Guard: Ensure pool is in Resolved state
+        if pool.state != MarketState::Resolved {
             return Err(PredifiError::PoolNotResolved);
         }
 
-        if env
-            .storage()
-            .instance()
-            .has(&DataKey::HasClaimed(user.clone(), pool_id))
-        {
+        let claimed_key = DataKey::HasClaimed(user.clone(), pool_id);
+        if env.storage().persistent().has(&claimed_key) {
             return Err(PredifiError::AlreadyClaimed);
         }
 
         // Mark as claimed immediately to prevent re-entrancy
-        env.storage()
-            .instance()
-            .set(&DataKey::HasClaimed(user.clone(), pool_id), &true);
+        env.storage().persistent().set(&claimed_key, &true);
+        Self::extend_persistent(&env, &claimed_key);
 
-        let prediction: Option<Prediction> = env
-            .storage()
-            .instance()
-            .get(&DataKey::Prediction(user.clone(), pool_id));
+        let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
+
+        if env.storage().persistent().has(&pred_key) {
+            Self::extend_persistent(&env, &pred_key);
+        }
 
         let prediction = match prediction {
             Some(p) => p,
@@ -302,11 +598,11 @@ impl PredifiContract {
             return Ok(0);
         }
 
-        let winning_stake: i128 = env
-            .storage()
-            .instance()
-            .get(&DataKey::OutcomeStake(pool_id, pool.outcome))
-            .unwrap_or(0);
+        let outcome_key = DataKey::OutcomeStake(pool_id, pool.outcome);
+        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+        if env.storage().persistent().has(&outcome_key) {
+            Self::extend_persistent(&env, &outcome_key);
+        }
 
         if winning_stake == 0 {
             return Ok(0);
@@ -322,6 +618,13 @@ impl PredifiContract {
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
 
+        WinningsClaimedEvent {
+            pool_id,
+            user,
+            amount: winnings,
+        }
+        .publish(&env);
+
         Ok(winnings)
     }
 
@@ -332,11 +635,11 @@ impl PredifiContract {
         offset: u32,
         limit: u32,
     ) -> Vec<UserPredictionDetail> {
-        let count: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::UserPredictionCount(user.clone()))
-            .unwrap_or(0);
+        let count_key = DataKey::UserPredictionCount(user.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if env.storage().persistent().has(&count_key) {
+            Self::extend_persistent(&env, &count_key);
+        }
 
         let mut results = Vec::new(&env);
 
@@ -347,30 +650,36 @@ impl PredifiContract {
         let end = core::cmp::min(offset.saturating_add(limit), count);
 
         for i in offset..end {
+            let index_key = DataKey::UserPredictionIndex(user.clone(), i);
             let pool_id: u64 = env
                 .storage()
-                .instance()
-                .get(&DataKey::UserPredictionIndex(user.clone(), i))
+                .persistent()
+                .get(&index_key)
                 .expect("index not found");
+            Self::extend_persistent(&env, &index_key);
 
+            let pred_key = DataKey::Prediction(user.clone(), pool_id);
             let prediction: Prediction = env
                 .storage()
-                .instance()
-                .get(&DataKey::Prediction(user.clone(), pool_id))
+                .persistent()
+                .get(&pred_key)
                 .expect("prediction not found");
+            Self::extend_persistent(&env, &pred_key);
 
+            let pool_key = DataKey::Pool(pool_id);
             let pool: Pool = env
                 .storage()
-                .instance()
-                .get(&DataKey::Pool(pool_id))
+                .persistent()
+                .get(&pool_key)
                 .expect("pool not found");
+            Self::extend_persistent(&env, &pool_key);
 
             results.push_back(UserPredictionDetail {
                 pool_id,
                 amount: prediction.amount,
                 user_outcome: prediction.outcome,
                 pool_end_time: pool.end_time,
-                pool_resolved: pool.resolved,
+                pool_state: pool.state,
                 pool_outcome: pool.outcome,
             });
         }

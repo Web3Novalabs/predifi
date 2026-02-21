@@ -4,7 +4,7 @@
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, Env,
+    token, Address, Env, String,
 };
 
 mod dummy_access_control {
@@ -85,7 +85,15 @@ fn test_claim_winnings() {
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
 
-    let pool_id = client.create_pool(&100u64, &token_address);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     client.place_prediction(&user1, &pool_id, &100, &1);
     client.place_prediction(&user2, &pool_id, &100, &2);
 
@@ -115,7 +123,15 @@ fn test_double_claim() {
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
-    let pool_id = client.create_pool(&100u64, &token_address);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
     env.ledger().with_mut(|li| li.timestamp = 101);
@@ -137,7 +153,15 @@ fn test_claim_unresolved() {
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
-    let pool_id = client.create_pool(&100u64, &token_address);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
     client.claim_winnings(&user1, &pool_id);
@@ -155,8 +179,24 @@ fn test_multiple_pools_independent() {
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
 
-    let pool_a = client.create_pool(&100u64, &token_address);
-    let pool_b = client.create_pool(&200u64, &token_address);
+    let pool_a = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+    let pool_b = client.create_pool(
+        &200u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
 
     client.place_prediction(&user1, &pool_a, &100, &1);
     client.place_prediction(&user2, &pool_b, &100, &1);
@@ -203,7 +243,15 @@ fn test_unauthorized_resolve_pool() {
     env.mock_all_auths();
 
     let (_, client, token_address, _, _, _, _) = setup(&env);
-    let pool_id = client.create_pool(&100u64, &token_address);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     let not_operator = Address::generate(&env);
     client.resolve_pool(&not_operator, &pool_id, &1u32);
 }
@@ -341,7 +389,15 @@ fn test_paused_blocks_create_pool() {
     client.init(&ac_id, &treasury, &0u32);
 
     client.pause(&admin);
-    client.create_pool(&100u64, &token);
+    client.create_pool(
+        &100u64,
+        &token,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
 }
 
 #[test]
@@ -432,7 +488,15 @@ fn test_unpause_restores_functionality() {
     client.pause(&admin);
     client.unpause(&admin);
 
-    let pool_id = client.create_pool(&100u64, &token_contract);
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_contract,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
     client.place_prediction(&user, &pool_id, &10, &1);
 }
 
@@ -448,9 +512,33 @@ fn test_get_user_predictions() {
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
-    let pool0 = client.create_pool(&100u64, &token_address);
-    let pool1 = client.create_pool(&200u64, &token_address);
-    let pool2 = client.create_pool(&300u64, &token_address);
+    let pool0 = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+    let pool1 = client.create_pool(
+        &200u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+    let pool2 = client.create_pool(
+        &300u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
 
     client.place_prediction(&user, &pool0, &10, &1);
     client.place_prediction(&user, &pool1, &20, &2);
@@ -473,3 +561,262 @@ fn test_get_user_predictions() {
     let empty = client.get_user_predictions(&user, &3, &1);
     assert_eq!(empty.len(), 0);
 }
+
+// ── State Machine / State Transition Tests ───────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Cannot place prediction on a closed market")]
+fn test_cannot_predict_on_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // Should fail: cannot predict on resolved pool
+    client.place_prediction(&user1, &pool_id, &100, &1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #70)")]
+fn test_cannot_resolve_already_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // Should fail: cannot resolve already resolved pool (invalid state transition)
+    client.resolve_pool(&operator, &pool_id, &2u32);
+}
+
+#[test]
+#[should_panic(expected = "Cannot place prediction on a closed market")]
+fn test_cannot_predict_on_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    client.cancel_pool(&operator, &pool_id);
+
+    // Should fail: cannot predict on canceled pool
+    client.place_prediction(&user1, &pool_id, &100, &1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #70)")]
+fn test_cannot_cancel_already_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    client.cancel_pool(&operator, &pool_id);
+
+    // Should fail: cannot cancel already canceled pool (invalid state transition)
+    client.cancel_pool(&operator, &pool_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #70)")]
+fn test_cannot_resolve_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    client.cancel_pool(&operator, &pool_id);
+
+    // Should fail: cannot resolve canceled pool (invalid state transition)
+    client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #70)")]
+fn test_cannot_cancel_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // Should fail: cannot cancel resolved pool (invalid state transition)
+    client.cancel_pool(&operator, &pool_id);
+}
+
+#[test]
+fn test_valid_transition_active_to_resolved() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    
+    // This should succeed: valid transition from Active to Resolved
+    client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+fn test_valid_transition_active_to_canceled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    
+    // This should succeed: valid transition from Active to Canceled
+    client.cancel_pool(&operator, &pool_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_unauthorized_cancel_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _) = setup(&env);
+    let not_operator = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    client.cancel_pool(&not_operator, &pool_id);
+}
+
+#[test]
+fn test_get_user_predictions_includes_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool0 = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.place_prediction(&user, &pool0, &10, &1);
+
+    let predictions = client.get_user_predictions(&user, &0, &10);
+    assert_eq!(predictions.len(), 1);
+    
+    let detail = predictions.get(0).unwrap();
+    assert_eq!(detail.pool_id, pool0);
+    // Verify the new state field exists and is correct
+    assert_eq!(detail.pool_state, MarketState::Active);
+}
+
