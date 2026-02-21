@@ -1,9 +1,15 @@
 #![no_std]
 
+mod safe_math;
+#[cfg(test)]
+mod safe_math_examples;
+
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
     IntoVal, String, Symbol, Vec,
 };
+
+pub use safe_math::{RoundingMode, SafeMath};
 
 const DAY_IN_LEDGERS: u32 = 17280;
 const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
