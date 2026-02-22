@@ -9,6 +9,8 @@ use soroban_sdk::{
     token, Address, Env, String,
 };
 
+use proptest::prelude::*;
+
 mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
