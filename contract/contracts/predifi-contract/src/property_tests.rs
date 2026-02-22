@@ -1,5 +1,4 @@
 #![cfg(test)]
-
 //! Property-based tests for payout and fee logic using proptest.
 //!
 //! This module verifies key invariants that must hold for any valid combination
