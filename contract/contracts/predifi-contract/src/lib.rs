@@ -3,11 +3,16 @@
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
+#[cfg(test)]
+mod property_tests;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
     IntoVal, String, Symbol, Vec,
 };
+
+// bring safe math helpers into scope for payout/fee calculations
+use safe_math::{RoundingMode, SafeMath};
 
 pub use safe_math::{RoundingMode, SafeMath};
 
@@ -488,24 +493,38 @@ impl PredifiContract {
             return Ok(0);
         }
 
-        let winnings = prediction
-            .amount
-            .checked_mul(pool.total_stake)
-            .expect("overflow")
-            .checked_div(winning_stake)
-            .expect("division by zero");
+        // compute gross share using safe math (floor/ProtocolFavor to keep dust in contract)
+        let share = SafeMath::proportion(
+            prediction.amount,
+            winning_stake,
+            pool.total_stake,
+            RoundingMode::ProtocolFavor,
+        )?;
+
+        // fetch fee configuration before doing transfers
+        let config = Self::get_config(&env);
+        let fee_bps = config.fee_bps as i128;
+        let fee = SafeMath::percentage(share, fee_bps, RoundingMode::ProtocolFavor)?;
+        let payout = share.checked_sub(fee).expect("fee exceeded share");
 
         let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&env.current_contract_address(), &user, &winnings);
+        // transfer fee to treasury first (may be zero)
+        if fee > 0 {
+            token_client.transfer(&env.current_contract_address(), &config.treasury, &fee);
+        }
+        // then send remaining to user
+        if payout > 0 {
+            token_client.transfer(&env.current_contract_address(), &user, &payout);
+        }
 
         WinningsClaimedEvent {
             pool_id,
             user,
-            amount: winnings,
+            amount: payout,
         }
         .publish(&env);
 
-        Ok(winnings)
+        Ok(payout)
     }
 
     /// Get a paginated list of a user's predictions.

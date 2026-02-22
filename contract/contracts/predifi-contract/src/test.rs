@@ -2,6 +2,8 @@
 #![allow(deprecated)]
 
 use super::*;
+// bring safe math helpers into test scope
+use crate::safe_math::{RoundingMode, SafeMath};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token, Address, Env, String,
@@ -104,6 +106,7 @@ fn test_claim_winnings() {
     client.resolve_pool(&operator, &pool_id, &1u32);
 
     let winnings = client.claim_winnings(&user1, &pool_id);
+    // no fee configured, user should get full 200 back
     assert_eq!(winnings, 200);
     assert_eq!(token.balance(&user1), 1100);
 
@@ -209,6 +212,51 @@ fn test_multiple_pools_independent() {
 
     let w2 = client.claim_winnings(&user2, &pool_b);
     assert_eq!(w2, 0);
+}
+
+// ── Fee / payout tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_claim_winnings_with_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (
+        ac_client,
+        client,
+        token_address,
+        token,
+        token_admin_client,
+        treasury,
+        operator,
+    ) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    // configure a 5% fee (500 bps)
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.set_fee_bps(&admin, &500u32).unwrap();
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Fee Pool"),
+        &String::from_str(&env, "meta"),
+    );
+    client.place_prediction(&user, &pool_id, &100, &1);
+
+    env.ledger().with_mut(|li| li.timestamp = 101);
+    client.resolve_pool(&operator, &pool_id, &1u32).unwrap();
+
+    let treasury_before = token.balance(&treasury);
+    let payouts = client.claim_winnings(&user, &pool_id);
+    // gross share is 100% of 100 = 100, fee 5 = 5, net 95
+    assert_eq!(payouts, 95);
+    assert_eq!(token.balance(&user), 1095);
+    assert_eq!(token.balance(&treasury), treasury_before + 5);
 }
 
 // ── Access control tests ─────────────────────────────────────────────────────
@@ -561,3 +609,88 @@ fn test_get_user_predictions() {
     let empty = client.get_user_predictions(&user, &3, &1);
     assert_eq!(empty.len(), 0);
 }
+
+// ── Property‑based tests ─────────────────────────────────────────────────────
+
+use proptest::prelude::*;
+
+prop_compose! {
+    fn stakes_and_outcomes()
+        (len in 1..6usize)
+        (pairs in prop::collection::vec((1i128..1000, 1u32..3), len)) -> Vec<(i128, u32)> {
+            pairs
+        }
+}
+
+proptest! {
+    #[test]
+    fn prop_payout_fee_consistency(pairs in stakes_and_outcomes(), fee_bps in 0u32..10001, winning_outcome in 1u32..3) {
+        // compute totals
+        let total_stake: i128 = pairs.iter().map(|(s, _)| *s).sum();
+        let winning_stake: i128 = pairs.iter().filter(|(_, o)| *o == winning_outcome).map(|(s, _)| *s).sum();
+
+        // calculate expected shares/fees using SafeMath
+        let mut expected_payouts = vec![];
+        let mut expected_fees = 0i128;
+        for (stake, outcome) in &pairs {
+            if *outcome == winning_outcome && winning_stake > 0 {
+                let share = SafeMath::proportion(*stake, winning_stake, total_stake, RoundingMode::ProtocolFavor)?;
+                let fee = SafeMath::percentage(share, fee_bps as i128, RoundingMode::ProtocolFavor)?;
+                expected_fees = expected_fees.checked_add(fee).unwrap();
+                expected_payouts.push(share.checked_sub(fee).unwrap());
+            } else {
+                expected_payouts.push(0);
+            }
+        }
+        let expected_total_payout: i128 = expected_payouts.iter().sum();
+
+        // now drive contract simulation
+        let env = Env::default();
+        env.mock_all_auths();
+        let (ac_client, client, token_address, token, token_admin_client, treasury, operator) = setup(&env);
+        let admin = Address::generate(&env);
+        ac_client.grant_role(&admin, &ROLE_ADMIN);
+        // make admin and set fee
+        client
+            .set_fee_bps(&admin, &fee_bps)
+            .unwrap_or_else(|_| panic!("failed setting fee"));
+
+        // create users and predictions
+        let mut user_addrs = vec![];
+        for _ in 0..pairs.len() {
+            user_addrs.push(Address::generate(&env));
+        }
+        // mint tokens for each user
+        for (i, (stake, _)) in pairs.iter().enumerate() {
+            token_admin_client.mint(&user_addrs[i], stake);
+        }
+        let pool_id = client.create_pool(
+            &100u64,
+            &token_address,
+            &String::from_str(&env, "Prop Pool"),
+            &String::from_str(&env, "meta"),
+        );
+        for (i, (stake, outcome)) in pairs.iter().enumerate() {
+            client.place_prediction(&user_addrs[i], &pool_id, stake, outcome);
+        }
+        // resolve
+        env.ledger().with_mut(|li| li.timestamp = 101);
+        client.resolve_pool(&operator, &pool_id, &winning_outcome).unwrap();
+
+        let treasury_before = token.balance(&treasury);
+        let mut actual_payouts = vec![];
+        for addr in &user_addrs {
+            let r = client.claim_winnings(addr, &pool_id);
+            actual_payouts.push(r);
+        }
+        let treasury_after = token.balance(&treasury);
+        let actual_total_payout: i128 = actual_payouts.iter().sum();
+        let actual_total_fees = treasury_after.checked_sub(treasury_before).unwrap();
+
+        // compare
+        prop_assert_eq!(actual_total_payout, expected_total_payout);
+        prop_assert_eq!(actual_total_fees, expected_fees);
+        prop_assert!(actual_total_payout + actual_total_fees <= total_stake);
+    }
+}
+
