@@ -20,14 +20,23 @@ const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
+    InvalidPoolState = 24,
     AlreadyClaimed = 60,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarketState {
+    Active = 0,
+    Resolved = 1,
+    Canceled = 2,
 }
 
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
     pub end_time: u64,
-    pub resolved: bool,
+    pub state: MarketState,
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
@@ -52,7 +61,7 @@ pub struct UserPredictionDetail {
     pub amount: i128,
     pub user_outcome: u32,
     pub pool_end_time: u64,
-    pub pool_resolved: bool,
+    pub pool_state: MarketState,
     pub pool_outcome: u32,
 }
 
@@ -129,6 +138,13 @@ pub struct PoolResolvedEvent {
     pub pool_id: u64,
     pub operator: Address,
     pub outcome: u32,
+}
+
+#[contractevent(topics = ["pool_canceled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolCanceledEvent {
+    pub pool_id: u64,
+    pub operator: Address,
 }
 
 #[contractevent(topics = ["prediction_placed"])]
@@ -316,7 +332,7 @@ impl PredifiContract {
 
         let pool = Pool {
             end_time,
-            resolved: false,
+            state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
             total_stake: 0,
@@ -362,9 +378,11 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        assert!(!pool.resolved, "Pool already resolved");
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
 
-        pool.resolved = true;
+        pool.state = MarketState::Resolved;
         pool.outcome = outcome;
 
         env.storage().persistent().set(&pool_key, &pool);
@@ -376,6 +394,32 @@ impl PredifiContract {
             outcome,
         }
         .publish(&env);
+        Ok(())
+    }
+
+    /// Cancel an active pool. Caller must have Operator role (1).
+    pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        operator.require_auth();
+        Self::require_role(&env, &operator, 1)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        pool.state = MarketState::Canceled;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        PoolCanceledEvent { pool_id, operator }.publish(&env);
         Ok(())
     }
 
@@ -393,7 +437,7 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        assert!(!pool.resolved, "Pool already resolved");
+        assert!(pool.state == MarketState::Active, "Pool is not active");
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         let token_client = token::Client::new(&env, &pool.token);
@@ -449,7 +493,7 @@ impl PredifiContract {
             .expect("Pool not found");
         Self::extend_persistent(&env, &pool_key);
 
-        if !pool.resolved {
+        if pool.state == MarketState::Active {
             return Err(PredifiError::PoolNotResolved);
         }
 
@@ -473,6 +517,21 @@ impl PredifiContract {
             Some(p) => p,
             None => return Ok(0),
         };
+
+        if pool.state == MarketState::Canceled {
+            // Refunds: user gets exactly what they put in.
+            let token_client = token::Client::new(&env, &pool.token);
+            token_client.transfer(&env.current_contract_address(), &user, &prediction.amount);
+
+            WinningsClaimedEvent {
+                pool_id,
+                user: user.clone(),
+                amount: prediction.amount,
+            }
+            .publish(&env);
+
+            return Ok(prediction.amount);
+        }
 
         if prediction.outcome != pool.outcome {
             return Ok(0);
@@ -559,7 +618,7 @@ impl PredifiContract {
                 amount: prediction.amount,
                 user_outcome: prediction.outcome,
                 pool_end_time: pool.end_time,
-                pool_resolved: pool.resolved,
+                pool_state: pool.state,
                 pool_outcome: pool.outcome,
             });
         }
