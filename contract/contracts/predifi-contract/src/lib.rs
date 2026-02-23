@@ -34,6 +34,8 @@ const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 const MIN_POOL_DURATION: u64 = 3600;
 /// Maximum number of options allowed in a pool
 const MAX_OPTIONS_COUNT: u32 = 100;
+/// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
+const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_00000;
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
@@ -74,6 +76,11 @@ pub struct Pool {
     pub metadata_url: String,
     /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT)
     pub options_count: u32,
+    /// Initial liquidity provided by the pool creator (house money).
+    /// This is part of total_stake but excluded from fee calculations.
+    pub initial_liquidity: i128,
+    /// Address of the pool creator.
+    pub creator: Address,
 }
 
 #[contracttype]
