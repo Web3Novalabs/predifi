@@ -515,10 +515,7 @@ impl PredifiContract {
         let current_time = env.ledger().timestamp();
 
         // Validate: end_time must be in the future
-        assert!(
-            end_time > current_time,
-            "end_time must be in the future"
-        );
+        assert!(end_time > current_time, "end_time must be in the future");
 
         // Validate: minimum pool duration (1 hour)
         assert!(
@@ -527,10 +524,7 @@ impl PredifiContract {
         );
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
-        assert!(
-            options_count >= 2,
-            "options_count must be at least 2"
-        );
+        assert!(options_count >= 2, "options_count must be at least 2");
 
         // Validate: options_count must not exceed maximum limit
         assert!(
