@@ -658,15 +658,23 @@ impl PredifiContract {
             state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
-            total_stake: 0,
+            total_stake: initial_liquidity, // Initial liquidity is part of total stake
             description,
             metadata_url: metadata_url.clone(),
             options_count,
+            initial_liquidity,
+            creator: creator.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
+
+        // Transfer initial liquidity from creator to contract if provided
+        if initial_liquidity > 0 {
+            let token_client = token::Client::new(&env, &token);
+            token_client.transfer(&creator, &env.current_contract_address(), &initial_liquidity);
+        }
 
         env.storage()
             .instance()
@@ -679,8 +687,19 @@ impl PredifiContract {
             token,
             options_count,
             metadata_url,
+            initial_liquidity,
         }
         .publish(&env);
+
+        // Emit initial liquidity event if liquidity was provided
+        if initial_liquidity > 0 {
+            InitialLiquidityProvidedEvent {
+                pool_id,
+                creator,
+                amount: initial_liquidity,
+            }
+            .publish(&env);
+        }
 
         pool_id
     }
