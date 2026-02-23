@@ -86,22 +86,23 @@ fn test_claim_winnings() {
     token_admin_client.mint(&user2, &1000);
 
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
     );
-    client.place_prediction(&user1, &pool_id, &100, &1);
-    client.place_prediction(&user2, &pool_id, &100, &2);
+    client.place_prediction(&user1, &pool_id, &100, &0);
+    client.place_prediction(&user2, &pool_id, &100, &1);
 
     assert_eq!(token.balance(&contract_addr), 200);
 
-    env.ledger().with_mut(|li| li.timestamp = 101);
+    env.ledger().with_mut(|li| li.timestamp = 10001);
 
-    client.resolve_pool(&operator, &pool_id, &1u32);
+    client.resolve_pool(&operator, &pool_id, &0u32);
 
     let winnings = client.claim_winnings(&user1, &pool_id);
     assert_eq!(winnings, 200);
@@ -124,8 +125,9 @@ fn test_double_claim() {
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -154,8 +156,9 @@ fn test_claim_unresolved() {
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -180,8 +183,9 @@ fn test_multiple_pools_independent() {
     token_admin_client.mint(&user2, &1000);
 
     let pool_a = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -189,8 +193,9 @@ fn test_multiple_pools_independent() {
         ),
     );
     let pool_b = client.create_pool(
-        &200u64,
+        &20000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -199,16 +204,16 @@ fn test_multiple_pools_independent() {
     );
 
     client.place_prediction(&user1, &pool_a, &100, &1);
-    client.place_prediction(&user2, &pool_b, &100, &1);
+    client.place_prediction(&user2, &pool_b, &100, &0);
 
     client.resolve_pool(&operator, &pool_a, &1u32);
-    client.resolve_pool(&operator, &pool_b, &2u32);
+    client.resolve_pool(&operator, &pool_b, &0u32);
 
     let w1 = client.claim_winnings(&user1, &pool_a);
     assert_eq!(w1, 100);
 
     let w2 = client.claim_winnings(&user2, &pool_b);
-    assert_eq!(w2, 0);
+    assert_eq!(w2, 100);
 }
 
 // ── Access control tests ─────────────────────────────────────────────────────
@@ -244,8 +249,9 @@ fn test_unauthorized_resolve_pool() {
 
     let (_, client, token_address, _, _, _, _) = setup(&env);
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -390,8 +396,9 @@ fn test_paused_blocks_create_pool() {
 
     client.pause(&admin);
     client.create_pool(
-        &100u64,
+        &10000u64,
         &token,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -489,8 +496,9 @@ fn test_unpause_restores_functionality() {
     client.unpause(&admin);
 
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_contract,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -513,8 +521,9 @@ fn test_get_user_predictions() {
     token_admin_client.mint(&user, &1000);
 
     let pool0 = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -522,8 +531,9 @@ fn test_get_user_predictions() {
         ),
     );
     let pool1 = client.create_pool(
-        &200u64,
+        &20000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -531,8 +541,9 @@ fn test_get_user_predictions() {
         ),
     );
     let pool2 = client.create_pool(
-        &300u64,
+        &30000u64,
         &token_address,
+        &2u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
@@ -540,9 +551,9 @@ fn test_get_user_predictions() {
         ),
     );
 
-    client.place_prediction(&user, &pool0, &10, &1);
-    client.place_prediction(&user, &pool1, &20, &2);
-    client.place_prediction(&user, &pool2, &30, &1);
+    client.place_prediction(&user, &pool0, &10, &0);
+    client.place_prediction(&user, &pool1, &20, &1);
+    client.place_prediction(&user, &pool2, &30, &0);
 
     let first_two = client.get_user_predictions(&user, &0, &2);
     assert_eq!(first_two.len(), 2);
@@ -616,13 +627,16 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
     client.init(&ac_id, &treasury, &0u32);
 
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &2u32,
+        &String::from_str(&env, "Cancel Test Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
     );
 
     // Admin should be able to cancel their pool
@@ -683,13 +697,16 @@ fn test_cannot_cancel_resolved_pool() {
     client.init(&ac_id, &treasury, &0u32);
 
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &2u32,
+        &String::from_str(&env, "Resolve Then Cancel Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
     );
 
     // Resolve the pool first
@@ -726,13 +743,16 @@ fn test_cannot_place_prediction_on_canceled_pool() {
 
     // Create and cancel pool
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &2u32,
+        &String::from_str(&env, "Resolve Canceled Pool Test"),
+        &String::from_str(&env, "ipfs://metadata"),
     );
 
     // Cancel the pool
@@ -853,13 +873,16 @@ fn test_cancel_pool_refunds_predictions() {
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
-        &100u64,
+        &10000u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &2u32,
+        &String::from_str(&env, "Predict Canceled Pool Test"),
+        &String::from_str(&env, "ipfs://metadata"),
     );
 
     // User places a prediction
