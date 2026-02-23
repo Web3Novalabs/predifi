@@ -29,6 +29,7 @@ mod dummy_access_control {
 
 const ROLE_ADMIN: u32 = 0;
 const ROLE_OPERATOR: u32 = 1;
+const ROLE_ORACLE: u32 = 3;
 
 fn setup(
     env: &Env,
@@ -263,6 +264,85 @@ fn test_unauthorized_resolve_pool() {
     let not_operator = Address::generate(&env);
     env.ledger().with_mut(|li| li.timestamp = 10001);
     client.resolve_pool(&not_operator, &pool_id, &1u32);
+}
+
+#[test]
+fn test_oracle_can_resolve() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let oracle = Address::generate(&env);
+
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &3u32,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Call oracle_resolve which should succeed
+    client.oracle_resolve(
+        &oracle,
+        &pool_id,
+        &1u32,
+        &String::from_str(&env, "proof_123"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_unauthorized_oracle_resolve() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let not_oracle = Address::generate(&env);
+
+    // Give them OPERATOR instead of ORACLE, they still shouldn't be able to call oracle_resolve
+    ac_client.grant_role(&not_oracle, &ROLE_OPERATOR);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &3u32,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    client.oracle_resolve(
+        &not_oracle,
+        &pool_id,
+        &1u32,
+        &String::from_str(&env, "proof_123"),
+    );
 }
 
 #[test]
