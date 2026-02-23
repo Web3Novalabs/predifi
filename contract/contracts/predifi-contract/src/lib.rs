@@ -784,9 +784,9 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
-        // Retrieve winning-outcome stake for the diagnostic event.
-        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+        // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
 
         PoolResolvedEvent {
             pool_id,
@@ -936,13 +936,14 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
-        // Update outcome stake (INV-1)
-        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let current_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&outcome_key, &(current_stake + amount));
-        Self::extend_persistent(&env, &outcome_key);
+        // Update outcome stake (INV-1) - using optimized batch storage
+        let _stakes = Self::update_outcome_stake(
+            &env,
+            pool_id,
+            outcome,
+            amount,
+            pool.options_count,
+        );
 
         let count_key = DataKey::UserPredictionCount(user.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
@@ -970,6 +971,18 @@ impl PredifiContract {
                 amount,
                 outcome,
                 threshold: HIGH_VALUE_THRESHOLD,
+            }
+            .publish(&env);
+        }
+
+        // 🟢 INFO: For markets with many outcomes (16+), emit batch stake update event
+        // to avoid emitting individual events per outcome which would be impractical
+        // for large tournaments (e.g., 32-team bracket).
+        if pool.options_count >= 16 {
+            OutcomeStakesUpdatedEvent {
+                pool_id,
+                options_count: pool.options_count,
+                total_stake: pool.total_stake,
             }
             .publish(&env);
         }
@@ -1042,11 +1055,9 @@ impl PredifiContract {
             return Ok(0);
         }
 
-        let outcome_key = DataKey::OutcomeStake(pool_id, pool.outcome);
-        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
-        if env.storage().persistent().has(&outcome_key) {
-            Self::extend_persistent(&env, &outcome_key);
-        }
+        // Get winning stake using optimized batch storage
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(pool.outcome).unwrap_or(0);
 
         if winning_stake == 0 {
             return Ok(0);
@@ -1129,6 +1140,47 @@ impl PredifiContract {
 
         results
     }
+
+    /// Get all outcome stakes for a pool using optimized batch storage.
+    /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
+    /// Instead of making N storage reads (one per outcome), it makes a single read.
+    ///
+    /// Returns a Vec of stakes where index corresponds to outcome index.
+    /// For example, stake[0] is the total amount bet on outcome 0.
+    pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        Self::get_outcome_stakes(&env, pool_id, pool.options_count)
+    }
+
+    /// Get a specific outcome's stake (backward compatible).
+    /// For markets with many outcomes, consider using get_pool_outcome_stakes() instead.
+    pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
+        let pool_key = DataKey::Pool(pool_id);
+        if !env.storage().persistent().has(&pool_key) {
+            return 0;
+        }
+
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if outcome >= pool.options_count {
+            return 0;
+        }
+
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        stakes.get(outcome).unwrap_or(0)
+    }
 }
 
 #[contractimpl]
@@ -1190,9 +1242,9 @@ impl OracleCallback for PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         PredifiContract::extend_persistent(&env, &pool_key);
 
-        // Retrieve winning-outcome stake for the diagnostic event.
-        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+        // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
+        let stakes = PredifiContract::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
 
         OracleResolvedEvent {
             pool_id,
