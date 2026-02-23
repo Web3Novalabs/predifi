@@ -185,6 +185,16 @@ pub struct PoolCreatedEvent {
     pub options_count: u32,
     /// Metadata URL included so off-chain indexers can immediately fetch context.
     pub metadata_url: String,
+    /// Initial liquidity provided by the pool creator (optional, 0 if not provided).
+    pub initial_liquidity: i128,
+}
+
+#[contractevent(topics = ["initial_liquidity_provided"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitialLiquidityProvidedEvent {
+    pub pool_id: u64,
+    pub creator: Address,
+    pub amount: i128,
 }
 
 #[contractevent(topics = ["pool_resolved"])]
