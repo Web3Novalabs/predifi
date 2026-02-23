@@ -432,7 +432,9 @@ impl PredifiContract {
 
         // Also update individual key for backward compatibility
         let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        env.storage().persistent().set(&outcome_key, &(current + amount));
+        env.storage()
+            .persistent()
+            .set(&outcome_key, &(current + amount));
         Self::extend_persistent(env, &outcome_key);
 
         stakes
@@ -937,13 +939,8 @@ impl PredifiContract {
         Self::extend_persistent(&env, &pool_key);
 
         // Update outcome stake (INV-1) - using optimized batch storage
-        let _stakes = Self::update_outcome_stake(
-            &env,
-            pool_id,
-            outcome,
-            amount,
-            pool.options_count,
-        );
+        let _stakes =
+            Self::update_outcome_stake(&env, pool_id, outcome, amount, pool.options_count);
 
         let count_key = DataKey::UserPredictionCount(user.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
