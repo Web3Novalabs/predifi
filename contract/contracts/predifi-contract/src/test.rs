@@ -100,7 +100,7 @@ fn test_claim_winnings() {
 
     assert_eq!(token.balance(&contract_addr), 200);
 
-    env.ledger().with_mut(|li| li.timestamp = 101);
+    env.ledger().with_mut(|li| li.timestamp = 100001);
 
     client.resolve_pool(&operator, &pool_id, &1u32);
 
@@ -136,7 +136,7 @@ fn test_double_claim() {
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
-    env.ledger().with_mut(|li| li.timestamp = 10001);
+    env.ledger().with_mut(|li| li.timestamp = 100001);
 
     client.resolve_pool(&operator, &pool_id, &1u32);
 
@@ -206,7 +206,7 @@ fn test_multiple_pools_independent() {
     client.place_prediction(&user1, &pool_a, &100, &1);
     client.place_prediction(&user2, &pool_b, &100, &1);
 
-    env.ledger().with_mut(|li| li.timestamp = 20001);
+    env.ledger().with_mut(|li| li.timestamp = 100001);
 
     client.resolve_pool(&operator, &pool_a, &1u32);
     client.resolve_pool(&operator, &pool_b, &2u32);
@@ -594,7 +594,7 @@ fn test_admin_can_cancel_pool() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let pool_id = client.create_pool(
         &100000u64,
@@ -628,7 +628,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
     let creator = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&creator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let pool_id = client.create_pool(
         &100000u64,
@@ -689,7 +689,7 @@ fn test_cannot_cancel_resolved_pool() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let pool_id = client.create_pool(
         &100000u64,
@@ -702,7 +702,7 @@ fn test_cannot_cancel_resolved_pool() {
         ),
     );
 
-    env.ledger().with_mut(|li| li.timestamp = 10001);
+    env.ledger().with_mut(|li| li.timestamp = 100001);
     client.resolve_pool(&operator, &pool_id, &1u32);
 
     // Now try to cancel - should fail
@@ -728,7 +728,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
@@ -770,7 +770,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let pool_id = client.create_pool(
         &100000u64,
@@ -789,10 +789,6 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
     // Attempt to cancel again should fail (already canceled)
     let non_admin = Address::generate(&env);
     client.cancel_pool(&non_admin, &pool_id);
-    client.cancel_pool(&operator, &pool_id);
-    env.ledger().with_mut(|li| li.timestamp = 10001);
-    // Should panic because pool is not active
-    client.resolve_pool(&operator, &pool_id, &1u32);
 }
 
 #[test]
@@ -814,7 +810,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
@@ -859,7 +855,7 @@ fn test_cancel_pool_refunds_predictions() {
     let user1 = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let contract_addr = client.address.clone();
     token_admin_client.mint(&user1, &1000);
@@ -908,7 +904,7 @@ fn test_cannot_resolve_canceled_pool() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let pool_id = client.create_pool(
         &100000u64,
