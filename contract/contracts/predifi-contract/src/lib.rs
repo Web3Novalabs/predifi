@@ -672,20 +672,14 @@ impl PredifiContract {
     /// # Errors
     /// - `Unauthorized` if caller is not admin.
     /// - `PoolNotResolved` error (code 22) is returned if trying to cancel an already resolved pool.
-    pub fn cancel_pool(
-        env: Env,
-        caller: Address,
-        pool_id: u64,
-        reason: String,
-    ) -> Result<(), PredifiError> {
     /// PRE: pool.state = Active, operator has role 1
     /// POST: pool.state = Canceled, state transition valid (INV-2)
     pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
-        caller.require_auth();
+        operator.require_auth();
 
-        // Check authorization: caller must be admin (role 0)
-        Self::require_role(&env, &caller, 0)?;
+        // Check authorization: operator must have role 1
+        Self::require_role(&env, &operator, 1)?;
 
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
@@ -717,9 +711,9 @@ impl PredifiContract {
 
         PoolCanceledEvent {
             pool_id,
-            caller: caller.clone(),
-            reason,
-            operator: caller,
+            caller: operator.clone(),
+            reason: String::from_str(&env, ""),
+            operator,
         }
         .publish(&env);
 
@@ -727,9 +721,6 @@ impl PredifiContract {
     }
 
     /// Place a prediction on a pool. Cannot predict on canceled pools.
-    /// Place a prediction on a pool.
-    /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
-    /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
