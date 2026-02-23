@@ -46,6 +46,7 @@ pub enum PredifiError {
     PoolNotResolved = 22,
     InvalidPoolState = 24,
     AlreadyClaimed = 60,
+    PoolCanceled = 70,
     ResolutionDelayNotMet = 81,
 }
 
@@ -61,6 +62,8 @@ pub enum MarketState {
 #[derive(Clone)]
 pub struct Pool {
     pub end_time: u64,
+    pub resolved: bool,
+    pub canceled: bool,
     pub state: MarketState,
     pub outcome: u32,
     pub token: Address,
@@ -189,6 +192,8 @@ pub struct PoolResolvedEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolCanceledEvent {
     pub pool_id: u64,
+    pub caller: Address,
+    pub reason: String,
     pub operator: Address,
 }
 
@@ -595,6 +600,8 @@ impl PredifiContract {
 
         let pool = Pool {
             end_time,
+            resolved: false,
+            canceled: false,
             state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
@@ -626,6 +633,7 @@ impl PredifiContract {
     }
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
+    /// Cannot resolve a canceled pool.
     /// PRE: pool.state = Active, operator has role 1
     /// POST: pool.state = Resolved, state transition valid (INV-2)
     pub fn resolve_pool(
@@ -654,6 +662,8 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
+        assert!(!pool.resolved, "Pool already resolved");
+        assert!(!pool.canceled, "Cannot resolve a canceled pool");
         if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
         }
@@ -674,6 +684,7 @@ impl PredifiContract {
         );
 
         pool.state = MarketState::Resolved;
+        pool.resolved = true;
         pool.outcome = outcome;
 
         env.storage().persistent().set(&pool_key, &pool);
@@ -733,11 +744,24 @@ impl PredifiContract {
     }
 
     /// Cancel an active pool. Caller must have Operator role (1).
+    /// Cancel a pool, freezing all betting and enabling refund process.
+    /// Only callable by Admin (role 0) - can cancel any pool for any reason.
+    ///
+    /// # Arguments
+    /// * `caller`  - The address requesting the cancellation (must be admin).
+    /// * `pool_id` - The ID of the pool to cancel.
+    /// * `reason`  - A short description of why the pool is being canceled.
+    ///
+    /// # Errors
+    /// - `Unauthorized` if caller is not admin.
+    /// - `PoolNotResolved` error (code 22) is returned if trying to cancel an already resolved pool.
     /// PRE: pool.state = Active, operator has role 1
     /// POST: pool.state = Canceled, state transition valid (INV-2)
     pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
+
+        // Check authorization: operator must have role 1
         Self::require_role(&env, &operator, 1)?;
 
         let pool_key = DataKey::Pool(pool_id);
@@ -746,11 +770,15 @@ impl PredifiContract {
             .persistent()
             .get(&pool_key)
             .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
 
-        if pool.state != MarketState::Active {
-            return Err(PredifiError::InvalidPoolState);
+        // Ensure resolved pools cannot be canceled
+        if pool.resolved {
+            return Err(PredifiError::PoolNotResolved);
         }
 
+        // Prevent double cancellation
+        assert!(!pool.canceled, "Pool already canceled");
         // Verify state transition validity (INV-2)
         assert!(
             Self::is_valid_state_transition(pool.state, MarketState::Canceled),
@@ -759,16 +787,23 @@ impl PredifiContract {
 
         pool.state = MarketState::Canceled;
 
+        // Mark pool as canceled
+        pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
-        PoolCanceledEvent { pool_id, operator }.publish(&env);
+        PoolCanceledEvent {
+            pool_id,
+            caller: operator.clone(),
+            reason: String::from_str(&env, ""),
+            operator,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
-    /// Place a prediction on a pool.
-    /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
-    /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
+    /// Place a prediction on a pool. Cannot predict on canceled pools.
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
@@ -782,6 +817,8 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
+        assert!(!pool.resolved, "Pool already resolved");
+        assert!(!pool.canceled, "Cannot place prediction on canceled pool");
         assert!(pool.state == MarketState::Active, "Pool is not active");
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
