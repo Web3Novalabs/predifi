@@ -2,348 +2,402 @@
 #![allow(deprecated)]
 
 use super::*;
+// bring safe math helpers into test scope
+use crate::safe_math::{RoundingMode, SafeMath};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token, Address, Env, String,
 };
 
+use proptest::prelude::*;
+
 mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
-    #[contract]
-    pub struct DummyAccessControl;
+    // ── Property‑based tests ─────────────────────────────────────────────────────
 
-    #[contractimpl]
-    impl DummyAccessControl {
-        pub fn grant_role(env: Env, user: Address, role: u32) {
-            let key = (Symbol::new(&env, "role"), user, role);
-            env.storage().instance().set(&key, &true);
-        }
+    prop_compose! {
+        fn stakes_and_outcomes()
+            (len in 1..6usize)
+            (pairs in prop::collection::vec((1i128..1000, 1u32..3), len)) -> Vec<(i128, u32)> {
+                pairs
+            }
+    }
 
-        pub fn has_role(env: Env, user: Address, role: u32) -> bool {
-            let key = (Symbol::new(&env, "role"), user, role);
-            env.storage().instance().get(&key).unwrap_or(false)
+    proptest! {
+        #[test]
+        fn prop_payout_fee_consistency(pairs in stakes_and_outcomes(), fee_bps in 0u32..10001, winning_outcome in 1u32..3) {
+            // compute totals
+            let total_stake: i128 = pairs.iter().map(|(s, _)| *s).sum();
+            let winning_stake: i128 = pairs.iter().filter(|(_, o)| *o == winning_outcome).map(|(s, _)| *s).sum();
+
+            // calculate expected shares/fees using SafeMath
+            let mut expected_payouts = vec![];
+            let mut expected_fees = 0i128;
+            for (stake, outcome) in &pairs {
+                if *outcome == winning_outcome && winning_stake > 0 {
+                    let share = SafeMath::proportion(*stake, winning_stake, total_stake, RoundingMode::ProtocolFavor)?;
+                    let fee = SafeMath::percentage(share, fee_bps as i128, RoundingMode::ProtocolFavor)?;
+                    expected_fees = expected_fees.checked_add(fee).unwrap();
+                    expected_payouts.push(share.checked_sub(fee).unwrap());
+                } else {
+                    expected_payouts.push(0);
+                }
+            }
+            let expected_total_payout: i128 = expected_payouts.iter().sum();
+
+            // now drive contract simulation
+            let env = Env::default();
+            env.mock_all_auths();
+            let (ac_client, client, token_address, token, token_admin_client, treasury, operator) = setup(&env);
+            let admin = Address::generate(&env);
+            ac_client.grant_role(&admin, &ROLE_ADMIN);
+            // make admin and set fee
+            client
+                .set_fee_bps(&admin, &fee_bps)
+                .unwrap_or_else(|_| panic!("failed setting fee"));
+
+            // create users and predictions
+            let mut user_addrs = vec![];
+            for _ in 0..pairs.len() {
+                user_addrs.push(Address::generate(&env));
+            }
+            // mint tokens for each user
+            for (i, (stake, _)) in pairs.iter().enumerate() {
+                token_admin_client.mint(&user_addrs[i], stake);
+            }
+            let pool_id = client.create_pool(
+                &100u64,
+                &token_address,
+                &String::from_str(&env, "Prop Pool"),
+                &String::from_str(&env, "meta"),
+            );
+            for (i, (stake, outcome)) in pairs.iter().enumerate() {
+                client.place_prediction(&user_addrs[i], &pool_id, stake, outcome);
+            }
+            // resolve
+            env.ledger().with_mut(|li| li.timestamp = 101);
+            client.resolve_pool(&operator, &pool_id, &winning_outcome).unwrap();
+
+            let treasury_before = token.balance(&treasury);
+            let mut actual_payouts = vec![];
+            for addr in &user_addrs {
+                let r = client.claim_winnings(addr, &pool_id);
+                actual_payouts.push(r);
+            }
+            let treasury_after = token.balance(&treasury);
+            let actual_total_payout: i128 = actual_payouts.iter().sum();
+            let actual_total_fees = treasury_after.checked_sub(treasury_before).unwrap();
+
+            // compare
+            prop_assert_eq!(actual_total_payout, expected_total_payout);
+            prop_assert_eq!(actual_total_fees, expected_fees);
+            prop_assert!(actual_total_payout + actual_total_fees <= total_stake);
         }
     }
-}
 
-const ROLE_ADMIN: u32 = 0;
-const ROLE_OPERATOR: u32 = 1;
-const ROLE_ORACLE: u32 = 3;
 
-fn setup(
-    env: &Env,
-) -> (
-    dummy_access_control::DummyAccessControlClient<'_>,
-    PredifiContractClient<'_>,
-    Address,
-    token::Client<'_>,
-    token::StellarAssetClient<'_>,
-    Address,
-    Address,
-) {
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-    let ac_client = dummy_access_control::DummyAccessControlClient::new(env, &ac_id);
 
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(env, &contract_id);
+    // ── Pool Cancelation & State Guard Tests ────────────────────────────────────────
 
-    let token_admin = Address::generate(env);
-    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
-    let token = token::Client::new(env, &token_contract);
-    let token_admin_client = token::StellarAssetClient::new(env, &token_contract);
-    let token_address = token_contract;
+    #[test]
+    fn test_admin_can_cancel_pool() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    let treasury = Address::generate(env);
-    let operator = Address::generate(env);
+        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+        let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+        let contract_id = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(&env, &contract_id);
 
-    ac_client.grant_role(&operator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_address = token_contract;
 
-    (
-        ac_client,
-        client,
-        token_address,
-        token,
-        token_admin_client,
-        treasury,
-        operator,
-    )
-}
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        ac_client.grant_role(&admin, &ROLE_OPERATOR);
+        client.init(&ac_id, &treasury, &0u32, &0u64);
 
-// ── Core prediction tests ────────────────────────────────────────────────────
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+        );
 
-#[test]
-fn test_claim_winnings() {
-    let env = Env::default();
-    env.mock_all_auths();
+        // Admin should be able to cancel
+        client.cancel_pool(&admin, &pool_id);
+    }
 
-    let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
-    let contract_addr = client.address.clone();
+    #[test]
+    fn test_pool_creator_can_cancel_unresolved_pool() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
-    token_admin_client.mint(&user1, &1000);
-    token_admin_client.mint(&user2, &1000);
+        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+        let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+        let contract_id = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(&env, &contract_id);
 
-    let pool_id = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-    );
-    client.place_prediction(&user1, &pool_id, &100, &1);
-    client.place_prediction(&user2, &pool_id, &100, &2);
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_address = token_contract;
 
-    assert_eq!(token.balance(&contract_addr), 200);
+        let creator = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        ac_client.grant_role(&creator, &ROLE_OPERATOR);
+        client.init(&ac_id, &treasury, &0u32, &0u64);
 
-    env.ledger().with_mut(|li| li.timestamp = 100001);
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+        );
 
-    client.resolve_pool(&operator, &pool_id, &1u32);
+        // Admin should be able to cancel their pool
+        client.cancel_pool(&creator, &pool_id);
+    }
 
-    let winnings = client.claim_winnings(&user1, &pool_id);
-    assert_eq!(winnings, 200);
-    assert_eq!(token.balance(&user1), 1100);
+    #[test]
+    #[should_panic(expected = "Error(Contract, #10)")]
+    fn test_non_admin_non_creator_cannot_cancel() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    let winnings2 = client.claim_winnings(&user2, &pool_id);
-    assert_eq!(winnings2, 0);
-    assert_eq!(token.balance(&user2), 900);
-}
+        let (_, client, token_address, _, _, _, _) = setup(&env);
 
-#[test]
-#[should_panic(expected = "Error(Contract, #60)")]
-fn test_double_claim() {
-    let env = Env::default();
-    env.mock_all_auths();
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+        );
 
-    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+        let unauthorized = Address::generate(&env);
+        // This should fail - user is not admin
+        client.cancel_pool(&unauthorized, &pool_id);
+    }
 
-    let user1 = Address::generate(&env);
-    token_admin_client.mint(&user1, &1000);
+    #[test]
+    #[should_panic(expected = "Error(Contract, #22)")]
+    fn test_cannot_cancel_resolved_pool() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    let pool_id = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-    );
-    client.place_prediction(&user1, &pool_id, &100, &1);
+        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+        let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+        let contract_id = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(&env, &contract_id);
 
-    env.ledger().with_mut(|li| li.timestamp = 100001);
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_address = token_contract;
 
-    client.resolve_pool(&operator, &pool_id, &1u32);
+        let admin = Address::generate(&env);
+        let operator = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        ac_client.grant_role(&admin, &ROLE_OPERATOR);
+        ac_client.grant_role(&operator, &ROLE_OPERATOR);
+        client.init(&ac_id, &treasury, &0u32, &0u64);
 
-    client.claim_winnings(&user1, &pool_id);
-    client.claim_winnings(&user1, &pool_id);
-}
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+        );
 
-#[test]
-#[should_panic(expected = "Error(Contract, #22)")]
-fn test_claim_unresolved() {
-    let env = Env::default();
-    env.mock_all_auths();
+        env.ledger().with_mut(|li| li.timestamp = 100001);
+        client.resolve_pool(&operator, &pool_id, &1u32);
 
-    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+        // Now try to cancel - should fail
+        client.cancel_pool(&admin, &pool_id);
+    }
 
-    let user1 = Address::generate(&env);
-    token_admin_client.mint(&user1, &1000);
+    #[test]
+    #[should_panic(expected = "Cannot place prediction on canceled pool")]
+    fn test_cannot_place_prediction_on_canceled_pool() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    let pool_id = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-    );
-    client.place_prediction(&user1, &pool_id, &100, &1);
+        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+        let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+        let contract_id = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(&env, &contract_id);
 
-    client.claim_winnings(&user1, &pool_id);
-}
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+        let token_address = token_contract;
 
-#[test]
-fn test_multiple_pools_independent() {
-    let env = Env::default();
-    env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        ac_client.grant_role(&admin, &ROLE_OPERATOR);
+        client.init(&ac_id, &treasury, &0u32, &0u64);
 
-    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+        let user = Address::generate(&env);
+        token_admin_client.mint(&user, &1000);
 
-    let user1 = Address::generate(&env);
-    let user2 = Address::generate(&env);
-    token_admin_client.mint(&user1, &1000);
-    token_admin_client.mint(&user2, &1000);
+        // Create and cancel pool
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+        );
 
-    let pool_a = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-    );
-    let pool_b = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-    );
+        // Cancel the pool
+        client.cancel_pool(&admin, &pool_id);
 
-    client.place_prediction(&user1, &pool_a, &100, &1);
-    client.place_prediction(&user2, &pool_b, &100, &1);
+        // Try to place prediction on canceled pool - should panic
+        client.place_prediction(&user, &pool_id, &100, &1);
+    }
 
-    env.ledger().with_mut(|li| li.timestamp = 100001);
+    #[test]
+    #[should_panic(expected = "Error(Contract, #10)")]
+    fn test_pool_creator_cannot_cancel_after_admin_cancels() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    client.resolve_pool(&operator, &pool_a, &1u32);
-    client.resolve_pool(&operator, &pool_b, &2u32);
+        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+        let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+        let contract_id = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(&env, &contract_id);
 
-    let w1 = client.claim_winnings(&user1, &pool_a);
-    assert_eq!(w1, 100);
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_address = token_contract;
 
-    let w2 = client.claim_winnings(&user2, &pool_b);
-    assert_eq!(w2, 0);
-}
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        ac_client.grant_role(&admin, &ROLE_OPERATOR);
+        client.init(&ac_id, &treasury, &0u32, &0u64);
 
-// ── Access control tests ─────────────────────────────────────────────────────
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+        );
 
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_unauthorized_set_fee_bps() {
-    let env = Env::default();
-    env.mock_all_auths();
+        // Admin cancels the pool
+        client.cancel_pool(&admin, &pool_id);
 
-    let (_, client, _, _, _, _, _) = setup(&env);
-    let not_admin = Address::generate(&env);
-    client.set_fee_bps(&not_admin, &999u32);
-}
+        // Attempt to cancel again should fail (already canceled)
+        let non_admin = Address::generate(&env);
+        client.cancel_pool(&non_admin, &pool_id);
+    }
 
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_unauthorized_set_treasury() {
-    let env = Env::default();
-    env.mock_all_auths();
+    #[test]
+    #[should_panic(expected = "Cannot place prediction on canceled pool")]
+    fn test_admin_can_cancel_pool_with_predictions() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    let (_, client, _, _, _, _, _) = setup(&env);
-    let not_admin = Address::generate(&env);
-    let new_treasury = Address::generate(&env);
-    client.set_treasury(&not_admin, &new_treasury);
-}
+        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+        let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+        let contract_id = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(&env, &contract_id);
 
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_unauthorized_resolve_pool() {
-    let env = Env::default();
-    env.mock_all_auths();
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+        let token_address = token_contract;
 
-    let (_, client, token_address, _, _, _, _) = setup(&env);
-    let pool_id = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-    );
-    let not_operator = Address::generate(&env);
-    env.ledger().with_mut(|li| li.timestamp = 10001);
-    client.resolve_pool(&not_operator, &pool_id, &1u32);
-}
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        ac_client.grant_role(&admin, &ROLE_OPERATOR);
+        client.init(&ac_id, &treasury, &0u32, &0u64);
 
-#[test]
-fn test_oracle_can_resolve() {
-    let env = Env::default();
-    env.mock_all_auths();
+        let user = Address::generate(&env);
+        token_admin_client.mint(&user, &1000);
 
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+        );
 
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
-    let token_address = token_contract;
+        // User places a prediction
+        client.place_prediction(&user, &pool_id, &100, &1);
 
-    let treasury = Address::generate(&env);
-    let oracle = Address::generate(&env);
+        // Admin cancels the pool - this freezes betting
+        client.cancel_pool(&admin, &pool_id);
 
-    ac_client.grant_role(&oracle, &ROLE_ORACLE);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+        // Verify no more predictions can be placed - should panic
+        client.place_prediction(&user, &pool_id, &50, &2);
+    }
 
-    let pool_id = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(&env, "ipfs://metadata"),
-    );
+    #[test]
+    #[should_panic(expected = "Error(Contract, #10)")]
+    fn test_unauthorized_oracle_resolve() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    env.ledger().with_mut(|li| li.timestamp = 100001);
+        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+        let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+        let contract_id = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(&env, &contract_id);
 
-    // Call oracle_resolve which should succeed
-    client.oracle_resolve(
-        &oracle,
-        &pool_id,
-        &1u32,
-        &String::from_str(&env, "proof_123"),
-    );
-}
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_address = token_contract;
 
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_unauthorized_oracle_resolve() {
-    let env = Env::default();
-    env.mock_all_auths();
+        let treasury = Address::generate(&env);
+        let not_oracle = Address::generate(&env);
 
-    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
-    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
-    let contract_id = env.register(PredifiContract, ());
-    let client = PredifiContractClient::new(&env, &contract_id);
+        // Give them OPERATOR instead of ORACLE, they still shouldn't be able to call oracle_resolve
+        ac_client.grant_role(&not_oracle, &ROLE_OPERATOR);
+        client.init(&ac_id, &treasury, &0u32, &0u64);
 
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
-    let token_address = token_contract;
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(&env, "ipfs://metadata"),
+        );
 
-    let treasury = Address::generate(&env);
-    let not_oracle = Address::generate(&env);
+        env.ledger().with_mut(|li| li.timestamp = 100001);
 
-    // Give them OPERATOR instead of ORACLE, they still shouldn't be able to call oracle_resolve
-    ac_client.grant_role(&not_oracle, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
-
-    let pool_id = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(&env, "ipfs://metadata"),
-    );
-
-    env.ledger().with_mut(|li| li.timestamp = 100001);
-
-    client.oracle_resolve(
-        &not_oracle,
-        &pool_id,
-        &1u32,
-        &String::from_str(&env, "proof_123"),
-    );
-}
+        client.oracle_resolve(
+            &not_oracle,
+            &pool_id,
+            &1u32,
+            &String::from_str(&env, "proof_123"),
+        );
+    }
 
 #[test]
 fn test_admin_can_set_fee_bps() {
@@ -656,7 +710,93 @@ fn test_get_user_predictions() {
     assert_eq!(empty.len(), 0);
 }
 // ── Pool cancellation tests ───────────────────────────────────────────────────
+// ── Property‑based tests ─────────────────────────────────────────────────────
 
+use proptest::prelude::*;
+
+prop_compose! {
+    fn stakes_and_outcomes()
+        (len in 1..6usize)
+        (pairs in prop::collection::vec((1i128..1000, 1u32..3), len)) -> Vec<(i128, u32)> {
+            pairs
+        }
+}
+
+proptest! {
+    #[test]
+    fn prop_payout_fee_consistency(pairs in stakes_and_outcomes(), fee_bps in 0u32..10001, winning_outcome in 1u32..3) {
+        // compute totals
+        let total_stake: i128 = pairs.iter().map(|(s, _)| *s).sum();
+        let winning_stake: i128 = pairs.iter().filter(|(_, o)| *o == winning_outcome).map(|(s, _)| *s).sum();
+
+        // calculate expected shares/fees using SafeMath
+        let mut expected_payouts = vec![];
+        let mut expected_fees = 0i128;
+        for (stake, outcome) in &pairs {
+            if *outcome == winning_outcome && winning_stake > 0 {
+                let share = SafeMath::proportion(*stake, winning_stake, total_stake, RoundingMode::ProtocolFavor)?;
+                let fee = SafeMath::percentage(share, fee_bps as i128, RoundingMode::ProtocolFavor)?;
+                expected_fees = expected_fees.checked_add(fee).unwrap();
+                expected_payouts.push(share.checked_sub(fee).unwrap());
+            } else {
+                expected_payouts.push(0);
+            }
+        }
+        let expected_total_payout: i128 = expected_payouts.iter().sum();
+
+        // now drive contract simulation
+        let env = Env::default();
+        env.mock_all_auths();
+        let (ac_client, client, token_address, token, token_admin_client, treasury, operator) = setup(&env);
+        let admin = Address::generate(&env);
+        ac_client.grant_role(&admin, &ROLE_ADMIN);
+        // make admin and set fee
+        client
+            .set_fee_bps(&admin, &fee_bps)
+            .unwrap_or_else(|_| panic!("failed setting fee"));
+
+        // create users and predictions
+        let mut user_addrs = vec![];
+        for _ in 0..pairs.len() {
+            user_addrs.push(Address::generate(&env));
+        }
+        // mint tokens for each user
+        for (i, (stake, _)) in pairs.iter().enumerate() {
+            token_admin_client.mint(&user_addrs[i], stake);
+        }
+        let pool_id = client.create_pool(
+            &100u64,
+            &token_address,
+            &String::from_str(&env, "Prop Pool"),
+            &String::from_str(&env, "meta"),
+        );
+        for (i, (stake, outcome)) in pairs.iter().enumerate() {
+            client.place_prediction(&user_addrs[i], &pool_id, stake, outcome);
+        }
+        // resolve
+        env.ledger().with_mut(|li| li.timestamp = 101);
+        client.resolve_pool(&operator, &pool_id, &winning_outcome).unwrap();
+
+        let treasury_before = token.balance(&treasury);
+        let mut actual_payouts = vec![];
+        for addr in &user_addrs {
+            let r = client.claim_winnings(addr, &pool_id);
+            actual_payouts.push(r);
+        }
+        let treasury_after = token.balance(&treasury);
+        let actual_total_payout: i128 = actual_payouts.iter().sum();
+        let actual_total_fees = treasury_after.checked_sub(treasury_before).unwrap();
+
+        // compare
+        prop_assert_eq!(actual_total_payout, expected_total_payout);
+        prop_assert_eq!(actual_total_fees, expected_fees);
+        prop_assert!(actual_total_payout + actual_total_fees <= total_stake);
+    }
+}
+
+
+// ── Pool Cancelation & State Guard Tests ────────────────────────────────────────
+=======
 #[test]
 fn test_admin_can_cancel_pool() {
     let env = Env::default();
@@ -915,6 +1055,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
     // Verify no more predictions can be placed - should panic
     client.place_prediction(&user, &pool_id, &50, &2);
 }
+>>>>>>> 83d8c3331bdec8b6cfd33dc82b3bf301eeb9db57
 
 #[test]
 fn test_cancel_pool_refunds_predictions() {

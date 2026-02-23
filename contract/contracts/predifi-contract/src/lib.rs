@@ -3,11 +3,16 @@
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
+#[cfg(test)]
+mod property_tests;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
     IntoVal, String, Symbol, Vec,
 };
+
+// bring safe math helpers into scope for payout/fee calculations
+use safe_math::{RoundingMode, SafeMath};
 
 pub use safe_math::{RoundingMode, SafeMath};
 
@@ -39,16 +44,7 @@ const MAX_OPTIONS_COUNT: u32 = 100;
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
 const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 
-#[contracterror]
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub enum PredifiError {
-    Unauthorized = 10,
-    PoolNotResolved = 22,
-    InvalidPoolState = 24,
-    AlreadyClaimed = 60,
-    PoolCanceled = 70,
-    ResolutionDelayNotMet = 81,
-}
+use predifi_errors::PrediFiError as PredifiError;
 
 #[contracttype]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -980,23 +976,41 @@ impl PredifiContract {
             return Ok(0);
         }
 
-        // Use pure function for winnings calculation (verifiable)
-        let winnings = Self::calculate_winnings(prediction.amount, winning_stake, pool.total_stake);
+        // compute gross share using safe math (floor/ProtocolFavor to keep dust in contract)
+        let share = SafeMath::proportion(
+            prediction.amount,
+            winning_stake,
+            pool.total_stake,
+            RoundingMode::ProtocolFavor,
+        )?;
 
-        // Verify invariant: winnings ≤ total_stake (INV-4)
-        assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
+        // fetch fee configuration before doing transfers
+        let config = Self::get_config(&env);
+        let fee_bps = config.fee_bps as i128;
+        let fee = SafeMath::percentage(share, fee_bps, RoundingMode::ProtocolFavor)?;
+        let payout = share.checked_sub(fee).expect("fee exceeded share");
+
+        // Verify invariant: payout ≤ total_stake (INV-4)
+        assert!(payout <= pool.total_stake, "Payout exceeds total stake");
 
         let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&env.current_contract_address(), &user, &winnings);
+        // transfer fee to treasury first (may be zero)
+        if fee > 0 {
+            token_client.transfer(&env.current_contract_address(), &config.treasury, &fee);
+        }
+        // then send remaining to user
+        if payout > 0 {
+            token_client.transfer(&env.current_contract_address(), &user, &payout);
+        }
 
         WinningsClaimedEvent {
             pool_id,
             user,
-            amount: winnings,
+            amount: payout,
         }
         .publish(&env);
 
-        Ok(winnings)
+        Ok(payout)
     }
 
     /// Get a paginated list of a user's predictions.

@@ -26,8 +26,9 @@ jobs:
             - name: Checkout code
               uses: actions/checkout@v3
             - name: Install Rust
-              uses: dtolnay/rust-toolchain@stable
+              uses: actions-rs/toolchain@v1
               with:
+                toolchain: stable
                 targets: wasm32-unknown-unknown
                 components: clippy, rustfmt
             - name: Cache Cargo Dependencies
@@ -45,7 +46,7 @@ jobs:
             - name: Build Contract (WASM)
               run: cargo build --target wasm32-unknown-unknown --release
             - name: Run Tests
-              run: cargo test
+              run: cargo test -- --nocapture --test-threads=1
 
             # ── WASM size checks ────────────────────────────────────────────
             - name: Check WASM size
