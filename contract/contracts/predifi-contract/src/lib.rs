@@ -585,23 +585,28 @@ impl PredifiContract {
     /// Create a new prediction pool. Returns the new pool ID.
     ///
     /// PRE: end_time > current_time (INV-8)
-    /// POST: Pool.state = Active, Pool.total_stake = 0
+    /// POST: Pool.state = Active, Pool.total_stake = initial_liquidity (if provided)
     ///
     /// # Arguments
-    /// * `end_time`      - Unix timestamp after which no more predictions are accepted.
-    /// * `token`        - The Stellar token contract address used for staking.
-    /// * `options_count` - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
-    /// * `description`  - Short human-readable description of the event (max 256 bytes).
-    /// * `metadata_url` - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `creator`           - Address of the pool creator (must provide auth).
+    /// * `end_time`          - Unix timestamp after which no more predictions are accepted.
+    /// * `token`             - The Stellar token contract address used for staking.
+    /// * `options_count`     - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
+    /// * `description`       - Short human-readable description of the event (max 256 bytes).
+    /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
     pub fn create_pool(
         env: Env,
+        creator: Address,
         end_time: u64,
         token: Address,
         options_count: u32,
         description: String,
         metadata_url: String,
+        initial_liquidity: i128,
     ) -> u64 {
         Self::require_not_paused(&env);
+        creator.require_auth();
 
         let current_time = env.ledger().timestamp();
 
@@ -621,6 +626,15 @@ impl PredifiContract {
         assert!(
             options_count <= MAX_OPTIONS_COUNT,
             "options_count exceeds maximum allowed value"
+        );
+
+        // Validate: initial_liquidity must be non-negative if provided
+        assert!(initial_liquidity >= 0, "initial_liquidity must be non-negative");
+
+        // Validate: initial_liquidity must not exceed maximum limit
+        assert!(
+            initial_liquidity <= MAX_INITIAL_LIQUIDITY,
+            "initial_liquidity exceeds maximum allowed value"
         );
 
         // Note: Token address validation is deferred to when the token is actually used.
