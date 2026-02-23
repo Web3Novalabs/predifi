@@ -629,7 +629,10 @@ impl PredifiContract {
         );
 
         // Validate: initial_liquidity must be non-negative if provided
-        assert!(initial_liquidity >= 0, "initial_liquidity must be non-negative");
+        assert!(
+            initial_liquidity >= 0,
+            "initial_liquidity must be non-negative"
+        );
 
         // Validate: initial_liquidity must not exceed maximum limit
         assert!(
@@ -673,7 +676,11 @@ impl PredifiContract {
         // Transfer initial liquidity from creator to contract if provided
         if initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
-            token_client.transfer(&creator, &env.current_contract_address(), &initial_liquidity);
+            token_client.transfer(
+                &creator,
+                &env.current_contract_address(),
+                &initial_liquidity,
+            );
         }
 
         env.storage()
