@@ -11,6 +11,21 @@ use soroban_sdk::{
 
 pub use safe_math::{RoundingMode, SafeMath};
 
+// ═══════════════════════════════════════════════════════════════════════════
+// PROTOCOL INVARIANTS (for formal verification)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// INV-1: Pool.total_stake = Σ(OutcomeStake(pool_id, outcome)) for all outcomes
+// INV-2: Pool.state transitions: Active → {Resolved | Canceled}, never reversed
+// INV-3: HasClaimed(user, pool) is write-once (prevents double-claim)
+// INV-4: Winnings ≤ Pool.total_stake (no value creation)
+// INV-5: For resolved pools: Σ(claimed_winnings) ≤ Pool.total_stake
+// INV-6: Config.fee_bps ≤ 10_000 (max 100%)
+// INV-7: Prediction.amount > 0 (no zero-stakes)
+// INV-8: Pool.end_time > creation_time (pools must have future end)
+//
+// ═══════════════════════════════════════════════════════════════════════════
+
 const DAY_IN_LEDGERS: u32 = 17280;
 const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
@@ -265,7 +280,41 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ── Pure Helper Functions (side-effect free, verifiable) ──────────────────
+
+    /// Pure: Calculate winnings for a user given pool state
+    /// PRE: winning_stake > 0
+    /// POST: result ≤ total_stake (INV-4)
+    fn calculate_winnings(user_stake: i128, winning_stake: i128, total_stake: i128) -> i128 {
+        if winning_stake == 0 {
+            return 0;
+        }
+        // (user_stake / winning_stake) * total_stake
+        user_stake
+            .checked_mul(total_stake)
+            .expect("overflow in winnings calculation")
+            .checked_div(winning_stake)
+            .expect("division by zero")
+    }
+
+    /// Pure: Check if pool state transition is valid
+    /// PRE: current_state is valid MarketState
+    /// POST: returns true only for valid transitions (INV-2)
+    fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
+        matches!(
+            (current, next),
+            (MarketState::Active, MarketState::Resolved)
+                | (MarketState::Active, MarketState::Canceled)
+        )
+    }
+
+    /// Pure: Validate fee basis points
+    /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
+    fn is_valid_fee_bps(fee_bps: u32) -> bool {
+        fee_bps <= 10_000
+    }
+
+    // ── Storage & Side-Effect Functions ───────────────────────────────────────
 
     fn extend_instance(env: &Env) {
         env.storage()
@@ -388,6 +437,8 @@ impl PredifiContract {
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
+    /// PRE: admin has role 0
+    /// POST: Config.fee_bps ≤ 10_000 (INV-6)
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
@@ -400,7 +451,7 @@ impl PredifiContract {
             .publish(&env);
             return Err(e);
         }
-        assert!(fee_bps <= 10_000, "fee_bps exceeds 10000");
+        assert!(Self::is_valid_fee_bps(fee_bps), "fee_bps exceeds 10000");
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
@@ -433,6 +484,9 @@ impl PredifiContract {
     }
 
     /// Create a new prediction pool. Returns the new pool ID.
+    ///
+    /// PRE: end_time > current_time (INV-8)
+    /// POST: Pool.state = Active, Pool.total_stake = 0
     ///
     /// # Arguments
     /// * `end_time`     - Unix timestamp after which no more predictions are accepted.
@@ -492,6 +546,8 @@ impl PredifiContract {
     }
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
+    /// PRE: pool.state = Active, operator has role 1
+    /// POST: pool.state = Resolved, state transition valid (INV-2)
     pub fn resolve_pool(
         env: Env,
         operator: Address,
@@ -521,6 +577,12 @@ impl PredifiContract {
         if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
         }
+
+        // Verify state transition validity (INV-2)
+        assert!(
+            Self::is_valid_state_transition(pool.state, MarketState::Resolved),
+            "Invalid state transition"
+        );
 
         pool.state = MarketState::Resolved;
         pool.outcome = outcome;
@@ -553,6 +615,8 @@ impl PredifiContract {
     }
 
     /// Cancel an active pool. Caller must have Operator role (1).
+    /// PRE: pool.state = Active, operator has role 1
+    /// POST: pool.state = Canceled, state transition valid (INV-2)
     pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
@@ -569,6 +633,12 @@ impl PredifiContract {
             return Err(PredifiError::InvalidPoolState);
         }
 
+        // Verify state transition validity (INV-2)
+        assert!(
+            Self::is_valid_state_transition(pool.state, MarketState::Canceled),
+            "Invalid state transition"
+        );
+
         pool.state = MarketState::Canceled;
 
         env.storage().persistent().set(&pool_key, &pool);
@@ -579,6 +649,8 @@ impl PredifiContract {
     }
 
     /// Place a prediction on a pool.
+    /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
+    /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
@@ -604,10 +676,12 @@ impl PredifiContract {
             .set(&pred_key, &Prediction { amount, outcome });
         Self::extend_persistent(&env, &pred_key);
 
+        // Update total stake (INV-1)
         pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
+        // Update outcome stake (INV-1)
         let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
         let current_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
         env.storage()
@@ -647,6 +721,8 @@ impl PredifiContract {
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
+    /// PRE: pool.state ≠ Active
+    /// POST: HasClaimed(user, pool) = true (INV-3), payout ≤ pool.total_stake (INV-4)
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env);
@@ -676,7 +752,7 @@ impl PredifiContract {
             return Err(PredifiError::AlreadyClaimed);
         }
 
-        // Mark as claimed immediately to prevent re-entrancy
+        // Mark as claimed immediately to prevent re-entrancy (INV-3)
         env.storage().persistent().set(&claimed_key, &true);
         Self::extend_persistent(&env, &claimed_key);
 
@@ -721,12 +797,11 @@ impl PredifiContract {
             return Ok(0);
         }
 
-        let winnings = prediction
-            .amount
-            .checked_mul(pool.total_stake)
-            .expect("overflow")
-            .checked_div(winning_stake)
-            .expect("division by zero");
+        // Use pure function for winnings calculation (verifiable)
+        let winnings = Self::calculate_winnings(prediction.amount, winning_stake, pool.total_stake);
+
+        // Verify invariant: winnings ≤ total_stake (INV-4)
+        assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
 
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
