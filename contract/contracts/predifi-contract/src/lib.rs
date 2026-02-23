@@ -179,7 +179,7 @@ pub struct WinningsClaimedEvent {
 /// misconfigured access-control contract.
 #[contractevent(topics = ["unauthorized_resolution"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnauthorizedResolutionAttemptEvent {
+pub struct UnauthorizedResolveAttemptEvent {
     /// The address that attempted to resolve without authorization.
     pub caller: Address,
     /// The pool that was targeted.
@@ -502,7 +502,7 @@ impl PredifiContract {
         operator.require_auth();
         if let Err(e) = Self::require_role(&env, &operator, 1) {
             // 🔴 HIGH ALERT: unauthorized attempt to resolve a pool.
-            UnauthorizedResolutionAttemptEvent {
+            UnauthorizedResolveAttemptEvent {
                 caller: operator,
                 pool_id,
                 timestamp: env.ledger().timestamp(),
