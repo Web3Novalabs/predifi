@@ -35,7 +35,7 @@ const MIN_POOL_DURATION: u64 = 3600;
 /// Maximum number of options allowed in a pool
 const MAX_OPTIONS_COUNT: u32 = 100;
 /// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
-const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_00000;
+const MAX_INITIAL_LIQUIDITY: i128 = 10_000_000_000_0000;
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
