@@ -50,7 +50,7 @@ fn setup_integration(
 
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(env, &contract_id);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let token_ctx = TokenTestContext::deploy(env, &admin);
 
@@ -74,7 +74,7 @@ fn test_full_market_lifecycle() {
 
     // 1. Create Pool
     let end_time = 10000u64;
-    let pool_id = client.create_pool(&end_time, &token_ctx.token_address, &2u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
+    let pool_id = client.create_pool(&user1, &end_time, &token_ctx.token_address, &2u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"), &0i128);
 
     // 2. Place Predictions
     client.place_prediction(&user1, &pool_id, &100, &1); // User 1 bets 100 on Outcome 1
@@ -131,7 +131,8 @@ fn test_multi_user_betting_and_balance_verification() {
         token_ctx.mint(&user, 5000);
     }
 
-    let pool_id = client.create_pool(&20000u64, &token_ctx.token_address, &3u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(&creator, &20000u64, &token_ctx.token_address, &3u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"), &0i128);
 
     // Bets:
     // U0: 500 on 1
@@ -182,7 +183,8 @@ fn test_market_resolution_multiple_winners() {
     token_ctx.mint(&user2, 1000);
     token_ctx.mint(&user3, 1000);
 
-    let pool_id = client.create_pool(&15000u64, &token_ctx.token_address, &2u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"));
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(&creator, &15000u64, &token_ctx.token_address, &2u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"), &0i128);
 
     // Bets:
     // U1: 200 on 1
