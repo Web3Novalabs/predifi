@@ -1,3 +1,48 @@
+//! # PrediFi Error Code Reference
+//!
+//! This module defines all error codes emitted by PrediFi smart contracts.
+//! Error codes are designed to be machine-readable so that off-chain monitoring
+//! tools (Grafana, SIEM, PagerDuty) can automatically route alerts.
+//!
+//! ## Alert Severity Tiers
+//!
+//! ### 🔴 HIGH — Page immediately; potential attack or critical bug
+//! | Code | Variant | Meaning |
+//! |------|---------|---------|
+//! | 10 | `Unauthorized` | Caller lacks required role; pair with `unauthorized_resolution` / `unauthorized_admin_op` on-chain events |
+//! | 11 | `InsufficientPermissions` | Role not found in access-control contract |
+//! | 120 | `StorageError` | Storage key missing or corrupted |
+//! | 121 | `ConsistencyError` | Stake or index inconsistency — state may be corrupt |
+//! | 122 | `BalanceMismatch` | Contract holds unexpected token balance |
+//! | 160 | `OracleError` | Oracle not set, invalid, or stale |
+//! | 161 | `ResolutionError` | Unauthorized or duplicate resolution attempt |
+//! | 180 | `AdminError` | Pause / upgrade / version error |
+//! | 190 | `RateLimitOrSuspiciousActivity` | Possible spam or abuse detected |
+//!
+//! ### 🟡 MEDIUM — Alert within 15 minutes; user-impacting but not critical
+//! | Code | Variant | Meaning |
+//! |------|---------|---------|
+//! | 60 | `AlreadyClaimed` | Double-claim attempt; pair with `double_claim_attempt` on-chain event |
+//! | 62 | `RewardError` | Reward calc failed or winning stake is zero |
+//! | 110 | `ArithmeticError` | Overflow / underflow / division by zero |
+//! | 111 | `FeeExceedsAmount` | Fee configuration issue |
+//! | 150 | `TokenError` | Token transfer or contract call failed |
+//! | 151 | `WithdrawalOrTreasuryError` | Treasury transfer failed |
+//!
+//! ### 🟢 LOW — Log and review during business hours
+//! All remaining codes (1, 2, 20–26, 40–44, 61, 80–81, 90–94) represent
+//! expected user-facing validation errors (pool not found, prediction too late,
+//! not a winner, etc.) and require no immediate action.
+//!
+//! ## Log Pattern for External Scrapers
+//!
+//! Horizon returns contract errors as `Error(Contract, #<code>)` in the
+//! transaction result XDR.  Match with:
+//! ```text
+//! Error\(Contract, #(10|11|120|121|122|160|161|180|190)\)
+//! ```
+//! to catch all HIGH-severity errors in a single regex rule.
+
 use soroban_sdk::contracterror;
 
 /// Global error enum for PrediFi smart contracts.
