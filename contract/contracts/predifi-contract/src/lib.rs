@@ -108,6 +108,7 @@ pub enum DataKey {
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
+    ReentrancyGuard,
 }
 
 #[contracttype]
@@ -420,6 +421,18 @@ impl PredifiContract {
         if Self::is_paused(env) {
             panic!("Contract is paused");
         }
+    }
+
+    fn enter_reentrancy_guard(env: &Env) {
+        let key = DataKey::ReentrancyGuard;
+        if env.storage().temporary().has(&key) {
+            panic!("Reentrancy detected");
+        }
+        env.storage().temporary().set(&key, &true);
+    }
+
+    fn exit_reentrancy_guard(env: &Env) {
+        env.storage().temporary().remove(&DataKey::ReentrancyGuard);
     }
 
     // ── Public interface ──────────────────────────────────────────────────────
@@ -832,6 +845,8 @@ impl PredifiContract {
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 
+        Self::enter_reentrancy_guard(&env);
+
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
             .storage()
@@ -850,8 +865,7 @@ impl PredifiContract {
             "outcome exceeds options_count"
         );
 
-        let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&user, &env.current_contract_address(), &amount);
+        // --- INTERNAL CHECKS & EFFECTS ---
 
         let pred_key = DataKey::Prediction(user.clone(), pool_id);
         env.storage()
@@ -882,6 +896,13 @@ impl PredifiContract {
         env.storage().persistent().set(&count_key, &(count + 1));
         Self::extend_persistent(&env, &count_key);
 
+        // --- INTERACTIONS ---
+
+        let token_client = token::Client::new(&env, &pool.token);
+        token_client.transfer(&user, &env.current_contract_address(), &amount);
+
+        Self::exit_reentrancy_guard(&env);
+
         PredictionPlacedEvent {
             pool_id,
             user: user.clone(),
@@ -911,6 +932,8 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         user.require_auth();
 
+        Self::enter_reentrancy_guard(&env);
+
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
             .storage()
@@ -920,6 +943,7 @@ impl PredifiContract {
         Self::extend_persistent(&env, &pool_key);
 
         if pool.state == MarketState::Active {
+            Self::exit_reentrancy_guard(&env);
             return Err(PredifiError::PoolNotResolved);
         }
 
@@ -932,12 +956,11 @@ impl PredifiContract {
                 timestamp: env.ledger().timestamp(),
             }
             .publish(&env);
+            Self::exit_reentrancy_guard(&env);
             return Err(PredifiError::AlreadyClaimed);
         }
 
-        // Mark as claimed immediately to prevent re-entrancy (INV-3)
-        env.storage().persistent().set(&claimed_key, &true);
-        Self::extend_persistent(&env, &claimed_key);
+        // --- CHECKS ---
 
         let pred_key = DataKey::Prediction(user.clone(), pool_id);
         let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
@@ -948,13 +971,24 @@ impl PredifiContract {
 
         let prediction = match prediction {
             Some(p) => p,
-            None => return Ok(0),
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Ok(0);
+            }
         };
 
+        // --- EFFECTS ---
+
+        // Mark as claimed immediately to prevent re-entrancy (INV-3)
+        env.storage().persistent().set(&claimed_key, &true);
+        Self::extend_persistent(&env, &claimed_key);
+
         if pool.state == MarketState::Canceled {
-            // Refunds: user gets exactly what they put in.
+            // --- INTERACTIONS (Refund) ---
             let token_client = token::Client::new(&env, &pool.token);
             token_client.transfer(&env.current_contract_address(), &user, &prediction.amount);
+
+            Self::exit_reentrancy_guard(&env);
 
             WinningsClaimedEvent {
                 pool_id,
@@ -967,6 +1001,7 @@ impl PredifiContract {
         }
 
         if prediction.outcome != pool.outcome {
+            Self::exit_reentrancy_guard(&env);
             return Ok(0);
         }
 
@@ -977,6 +1012,7 @@ impl PredifiContract {
         }
 
         if winning_stake == 0 {
+            Self::exit_reentrancy_guard(&env);
             return Ok(0);
         }
 
@@ -986,8 +1022,11 @@ impl PredifiContract {
         // Verify invariant: winnings ≤ total_stake (INV-4)
         assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
 
+        // --- INTERACTIONS (Winnings Payout) ---
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
+
+        Self::exit_reentrancy_guard(&env);
 
         WinningsClaimedEvent {
             pool_id,
