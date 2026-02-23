@@ -533,6 +533,7 @@ impl PredifiContract {
         }
 
         pool.state = MarketState::Resolved;
+        pool.resolved = true;
         pool.outcome = outcome;
 
         env.storage().persistent().set(&pool_key, &pool);
@@ -563,31 +564,6 @@ impl PredifiContract {
     }
 
     /// Cancel an active pool. Caller must have Operator role (1).
-    pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
-        operator.require_auth();
-        Self::require_role(&env, &operator, 1)?;
-
-        let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
-            .storage()
-            .persistent()
-            .get(&pool_key)
-            .expect("Pool not found");
-
-        if pool.state != MarketState::Active {
-            return Err(PredifiError::InvalidPoolState);
-        }
-
-        pool.state = MarketState::Canceled;
-
-        env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
-
-        PoolCanceledEvent { pool_id, operator }.publish(&env);
-        Ok(())
-    }
-
     /// Cancel a pool, freezing all betting and enabling refund process.
     /// Only callable by Admin (role 0) - can cancel any pool for any reason.
     ///
@@ -634,8 +610,9 @@ impl PredifiContract {
 
         PoolCanceledEvent {
             pool_id,
-            caller,
+            caller: caller.clone(),
             reason,
+            operator: caller,
         }
         .publish(&env);
 
