@@ -15,6 +15,11 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 
+/// Stake amount (in base token units) above which a `HighValuePredictionEvent`
+/// is emitted so off-chain monitors can apply extra scrutiny.
+/// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
+const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
@@ -148,6 +153,95 @@ pub struct WinningsClaimedEvent {
     pub amount: i128,
 }
 
+// ── Monitoring & Alert Events ─────────────────────────────────────────────────
+// These events are classified by severity and are intended for consumption by
+// off-chain monitoring tools (Horizon event streaming, Grafana, SIEM, etc.).
+// See MONITORING.md at the repo root for scraping patterns and alert rules.
+
+/// 🔴 HIGH ALERT — emitted when `resolve_pool` is called by an address that
+/// does not hold the Operator role.  Indicates a potential attack or
+/// misconfigured access-control contract.
+#[contractevent(topics = ["unauthorized_resolution"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnauthorizedResolutionAttemptEvent {
+    /// The address that attempted to resolve without authorization.
+    pub caller: Address,
+    /// The pool that was targeted.
+    pub pool_id: u64,
+    /// Ledger timestamp at the time of the attempt.
+    pub timestamp: u64,
+}
+
+/// 🔴 HIGH ALERT — emitted when an admin-restricted operation (`set_fee_bps`,
+/// `set_treasury`, `pause`, `unpause`) is called by an address that does not
+/// hold the Admin role.
+#[contractevent(topics = ["unauthorized_admin_op"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnauthorizedAdminAttemptEvent {
+    /// The address that attempted the restricted operation.
+    pub caller: Address,
+    /// Short name of the operation that was attempted.
+    pub operation: Symbol,
+    /// Ledger timestamp at the time of the attempt.
+    pub timestamp: u64,
+}
+
+/// 🔴 HIGH ALERT — emitted when `claim_winnings` is called after winnings have
+/// already been claimed for the same (user, pool) pair.  Repeated attempts may
+/// indicate a re-entrancy probe or a front-end bug worth investigating.
+#[contractevent(topics = ["double_claim_attempt"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SuspiciousDoubleClaimEvent {
+    /// The address that attempted to double-claim.
+    pub user: Address,
+    /// The pool for which the claim was already made.
+    pub pool_id: u64,
+    /// Ledger timestamp at the time of the attempt.
+    pub timestamp: u64,
+}
+
+/// 🔴 HIGH ALERT — emitted alongside `PauseEvent` whenever the contract is
+/// successfully paused.  Having a dedicated alert topic makes it easy to set
+/// a zero-tolerance PagerDuty rule that fires on any pause.
+#[contractevent(topics = ["contract_paused_alert"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractPausedAlertEvent {
+    /// The admin that triggered the pause.
+    pub admin: Address,
+    /// Ledger timestamp at pause time.
+    pub timestamp: u64,
+}
+
+/// 🟡 MEDIUM ALERT — emitted in `place_prediction` when the staked amount
+/// meets or exceeds `HIGH_VALUE_THRESHOLD`.  Useful for liquidity monitoring
+/// and detecting unusual betting patterns.
+#[contractevent(topics = ["high_value_prediction"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HighValuePredictionEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+    /// The threshold that was breached (aids display in dashboards).
+    pub threshold: i128,
+}
+
+/// 🟢 INFO — emitted alongside `PoolResolvedEvent` with enriched numeric
+/// context so monitors can calculate implied payouts and flag anomalies
+/// (e.g., winning_stake == 0 meaning no winners).
+#[contractevent(topics = ["pool_resolved_diag"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolResolvedDiagEvent {
+    pub pool_id: u64,
+    pub outcome: u32,
+    /// Total stake across all outcomes at resolution time.
+    pub total_stake: i128,
+    /// Stake on the winning outcome (0 ⟹ no winners — notable anomaly).
+    pub winning_stake: i128,
+    /// Ledger timestamp at resolution time.
+    pub timestamp: u64,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[contract]
@@ -237,19 +331,40 @@ impl PredifiContract {
     /// Pause the contract. Only callable by Admin (role 0).
     pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)
-            .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
+        if Self::require_role(&env, &admin, 0).is_err() {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "pause"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            panic!("Unauthorized: missing required role");
+        }
         env.storage().instance().set(&DataKey::Paused, &true);
         Self::extend_instance(&env);
 
+        // Emit dedicated pause-alert event so monitors can apply zero-tolerance
+        // rules independently of the generic PauseEvent.
+        ContractPausedAlertEvent {
+            admin: admin.clone(),
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
         PauseEvent { admin }.publish(&env);
     }
 
     /// Unpause the contract. Only callable by Admin (role 0).
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)
-            .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
+        if Self::require_role(&env, &admin, 0).is_err() {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "unpause"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            panic!("Unauthorized: missing required role");
+        }
         env.storage().instance().set(&DataKey::Paused, &false);
         Self::extend_instance(&env);
 
@@ -260,7 +375,15 @@ impl PredifiContract {
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_fee_bps"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
         assert!(fee_bps <= 10_000, "fee_bps exceeds 10000");
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
@@ -275,7 +398,15 @@ impl PredifiContract {
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_treasury"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
         let mut config = Self::get_config(&env);
         config.treasury = treasury.clone();
         env.storage().instance().set(&DataKey::Config, &config);
@@ -353,7 +484,16 @@ impl PredifiContract {
     ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
-        Self::require_role(&env, &operator, 1)?;
+        if let Err(e) = Self::require_role(&env, &operator, 1) {
+            // 🔴 HIGH ALERT: unauthorized attempt to resolve a pool.
+            UnauthorizedResolutionAttemptEvent {
+                caller: operator,
+                pool_id,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
 
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
@@ -370,12 +510,27 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
+        // Retrieve winning-outcome stake for the diagnostic event.
+        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
+        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+
         PoolResolvedEvent {
             pool_id,
             operator,
             outcome,
         }
         .publish(&env);
+
+        // 🟢 INFO: enriched diagnostics alongside the standard resolved event.
+        PoolResolvedDiagEvent {
+            pool_id,
+            outcome,
+            total_stake: pool.total_stake,
+            winning_stake,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -428,11 +583,23 @@ impl PredifiContract {
 
         PredictionPlacedEvent {
             pool_id,
-            user,
+            user: user.clone(),
             amount,
             outcome,
         }
         .publish(&env);
+
+        // 🟡 MEDIUM ALERT: large stake detected — emit supplementary event.
+        if amount >= HIGH_VALUE_THRESHOLD {
+            HighValuePredictionEvent {
+                pool_id,
+                user,
+                amount,
+                outcome,
+                threshold: HIGH_VALUE_THRESHOLD,
+            }
+            .publish(&env);
+        }
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
@@ -455,6 +622,13 @@ impl PredifiContract {
 
         let claimed_key = DataKey::HasClaimed(user.clone(), pool_id);
         if env.storage().persistent().has(&claimed_key) {
+            // 🔴 HIGH ALERT: repeated claim attempt on an already-claimed pool.
+            SuspiciousDoubleClaimEvent {
+                user: user.clone(),
+                pool_id,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
             return Err(PredifiError::AlreadyClaimed);
         }
 
