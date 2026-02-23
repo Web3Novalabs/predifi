@@ -5,11 +5,42 @@ mod safe_math;
 mod safe_math_examples;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
-    IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, Env, IntoVal, String, Symbol, Vec,
 };
 
 pub use safe_math::{RoundingMode, SafeMath};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MARKET CATEGORY CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Canonical set of market category symbols. All categories use PascalCase
+// convention and are ≤9 characters for compile-time symbol optimization.
+//
+// These constants define the allowed categories for prediction pools.
+// Any pool creation must specify one of these categories.
+
+/// Sports-related prediction markets (e.g., game outcomes, tournaments)
+pub const CATEGORY_SPORTS: Symbol = symbol_short!("Sports");
+
+/// Financial markets and economic predictions (e.g., stock prices, indices)
+pub const CATEGORY_FINANCE: Symbol = symbol_short!("Finance");
+
+/// Cryptocurrency and blockchain-related predictions (e.g., token prices, network events)
+pub const CATEGORY_CRYPTO: Symbol = symbol_short!("Crypto");
+
+/// Political events and elections
+pub const CATEGORY_POLITICS: Symbol = symbol_short!("Politics");
+
+/// Entertainment industry predictions (e.g., awards, box office)
+pub const CATEGORY_ENTERTAIN: Symbol = symbol_short!("Entertain");
+
+/// Technology and innovation predictions (e.g., product launches, tech trends)
+pub const CATEGORY_TECH: Symbol = symbol_short!("Tech");
+
+/// Miscellaneous predictions that don't fit other categories
+pub const CATEGORY_OTHER: Symbol = symbol_short!("Other");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PROTOCOL INVARIANTS (for formal verification)
@@ -41,6 +72,8 @@ pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
     InvalidPoolState = 24,
+    /// The provided category symbol is not in the allowed list
+    InvalidCategory = 25,
     AlreadyClaimed = 60,
 }
 
@@ -60,6 +93,8 @@ pub struct Pool {
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    /// Market category for this pool (e.g., Sports, Finance, Crypto)
+    pub category: Symbol,
     /// A short human-readable description of the event being predicted.
     pub description: String,
     /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
@@ -97,6 +132,8 @@ pub enum DataKey {
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
+    /// Index mapping category to list of pool IDs in that category
+    PoolsByCategory(Symbol),
 }
 
 #[contracttype]
@@ -281,6 +318,34 @@ pub struct PredifiContract;
 #[contractimpl]
 impl PredifiContract {
     // ── Pure Helper Functions (side-effect free, verifiable) ──────────────────
+
+    /// Validate that a category symbol is in the allowed list.
+    /// 
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `category` - The category symbol to validate
+    /// 
+    /// # Returns
+    /// `true` if the category is valid, `false` otherwise
+    fn validate_category(env: &Env, category: &Symbol) -> bool {
+        let mut allowed = Vec::new(env);
+        allowed.push_back(CATEGORY_SPORTS);
+        allowed.push_back(CATEGORY_FINANCE);
+        allowed.push_back(CATEGORY_CRYPTO);
+        allowed.push_back(CATEGORY_POLITICS);
+        allowed.push_back(CATEGORY_ENTERTAIN);
+        allowed.push_back(CATEGORY_TECH);
+        allowed.push_back(CATEGORY_OTHER);
+
+        for i in 0..allowed.len() {
+            if let Some(allowed_cat) = allowed.get(i) {
+                if &allowed_cat == category {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 
     /// Pure: Calculate winnings for a user given pool state
     /// PRE: winning_stake > 0
@@ -485,22 +550,30 @@ impl PredifiContract {
 
     /// Create a new prediction pool. Returns the new pool ID.
     ///
-    /// PRE: end_time > current_time (INV-8)
-    /// POST: Pool.state = Active, Pool.total_stake = 0
+    /// PRE: end_time > current_time (INV-8), category is valid
+    /// POST: Pool.state = Active, Pool.total_stake = 0, pool added to category index
     ///
     /// # Arguments
+    /// * `category`     - Market category symbol (must be one of the predefined categories).
     /// * `end_time`     - Unix timestamp after which no more predictions are accepted.
     /// * `token`        - The Stellar token contract address used for staking.
     /// * `description`  - Short human-readable description of the event (max 256 bytes).
     /// * `metadata_url` - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
     pub fn create_pool(
         env: Env,
+        category: Symbol,
         end_time: u64,
         token: Address,
         description: String,
         metadata_url: String,
     ) -> u64 {
         Self::require_not_paused(&env);
+        
+        // Validate category first
+        if !Self::validate_category(&env, &category) {
+            panic!("Invalid category");
+        }
+        
         assert!(
             end_time > env.ledger().timestamp(),
             "end_time must be in the future"
@@ -521,6 +594,7 @@ impl PredifiContract {
             outcome: 0,
             token: token.clone(),
             total_stake: 0,
+            category: category.clone(),
             description,
             metadata_url: metadata_url.clone(),
         };
@@ -528,6 +602,19 @@ impl PredifiContract {
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
+
+        // Update category index
+        let category_key = DataKey::PoolsByCategory(category.clone());
+        let mut pools_in_category: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&category_key)
+            .unwrap_or(Vec::new(&env));
+        pools_in_category.push_back(pool_id);
+        env.storage()
+            .persistent()
+            .set(&category_key, &pools_in_category);
+        Self::extend_persistent(&env, &category_key);
 
         env.storage()
             .instance()
@@ -873,6 +960,35 @@ impl PredifiContract {
         }
 
         results
+    }
+
+    /// Get all pool IDs for a specific category.
+    /// 
+    /// # Arguments
+    /// * `category` - The category symbol to query
+    /// 
+    /// # Returns
+    /// A vector of pool IDs in the specified category
+    /// 
+    /// # Panics
+    /// Panics if the category is not valid
+    pub fn get_pools_by_category(env: Env, category: Symbol) -> Vec<u64> {
+        if !Self::validate_category(&env, &category) {
+            panic!("Invalid category");
+        }
+
+        let category_key = DataKey::PoolsByCategory(category);
+        let pools: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&category_key)
+            .unwrap_or(Vec::new(&env));
+        
+        if env.storage().persistent().has(&category_key) {
+            Self::extend_persistent(&env, &category_key);
+        }
+
+        pools
     }
 }
 

@@ -86,6 +86,7 @@ fn test_claim_winnings() {
     token_admin_client.mint(&user2, &1000);
 
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -124,6 +125,7 @@ fn test_double_claim() {
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -154,6 +156,7 @@ fn test_claim_unresolved() {
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -180,6 +183,7 @@ fn test_multiple_pools_independent() {
     token_admin_client.mint(&user2, &1000);
 
     let pool_a = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -189,6 +193,7 @@ fn test_multiple_pools_independent() {
         ),
     );
     let pool_b = client.create_pool(
+        &CATEGORY_SPORTS,
         &200u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -244,6 +249,7 @@ fn test_unauthorized_resolve_pool() {
 
     let (_, client, token_address, _, _, _, _) = setup(&env);
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -390,6 +396,7 @@ fn test_paused_blocks_create_pool() {
 
     client.pause(&admin);
     client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token,
         &String::from_str(&env, "Test Pool"),
@@ -489,6 +496,7 @@ fn test_unpause_restores_functionality() {
     client.unpause(&admin);
 
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_contract,
         &String::from_str(&env, "Test Pool"),
@@ -513,6 +521,7 @@ fn test_get_user_predictions() {
     token_admin_client.mint(&user, &1000);
 
     let pool0 = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -522,6 +531,7 @@ fn test_get_user_predictions() {
         ),
     );
     let pool1 = client.create_pool(
+        &CATEGORY_SPORTS,
         &200u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -531,6 +541,7 @@ fn test_get_user_predictions() {
         ),
     );
     let pool2 = client.create_pool(
+        &CATEGORY_SPORTS,
         &300u64,
         &token_address,
         &String::from_str(&env, "Test Pool"),
@@ -576,6 +587,7 @@ fn test_cancel_pool_refunds_predictions() {
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Cancel Test Pool"),
@@ -604,6 +616,7 @@ fn test_cannot_cancel_resolved_pool() {
     let (_, client, token_address, _, _, _, operator) = setup(&env);
 
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Resolve Then Cancel Pool"),
@@ -624,6 +637,7 @@ fn test_cannot_resolve_canceled_pool() {
     let (_, client, token_address, _, _, _, operator) = setup(&env);
 
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Resolve Canceled Pool Test"),
@@ -646,6 +660,7 @@ fn test_cannot_predict_on_canceled_pool() {
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
+        &CATEGORY_SPORTS,
         &100u64,
         &token_address,
         &String::from_str(&env, "Predict Canceled Pool Test"),
@@ -656,3 +671,188 @@ fn test_cannot_predict_on_canceled_pool() {
     // Should panic
     client.place_prediction(&user1, &pool_id, &100, &1);
 }
+
+// ── Category Validation Tests ────────────────────────────────────────────────
+
+#[test]
+fn test_create_pool_with_valid_category() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _) = setup(&env);
+
+    // Test all valid categories
+    let sports_pool = client.create_pool(
+        &CATEGORY_SPORTS,
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Sports Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+    assert_eq!(sports_pool, 0);
+
+    let finance_pool = client.create_pool(
+        &CATEGORY_FINANCE,
+        &200u64,
+        &token_address,
+        &String::from_str(&env, "Finance Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+    assert_eq!(finance_pool, 1);
+
+    let crypto_pool = client.create_pool(
+        &CATEGORY_CRYPTO,
+        &300u64,
+        &token_address,
+        &String::from_str(&env, "Crypto Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+    assert_eq!(crypto_pool, 2);
+
+    let politics_pool = client.create_pool(
+        &CATEGORY_POLITICS,
+        &400u64,
+        &token_address,
+        &String::from_str(&env, "Politics Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+    assert_eq!(politics_pool, 3);
+
+    let entertain_pool = client.create_pool(
+        &CATEGORY_ENTERTAIN,
+        &500u64,
+        &token_address,
+        &String::from_str(&env, "Entertainment Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+    assert_eq!(entertain_pool, 4);
+
+    let tech_pool = client.create_pool(
+        &CATEGORY_TECH,
+        &600u64,
+        &token_address,
+        &String::from_str(&env, "Tech Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+    assert_eq!(tech_pool, 5);
+
+    let other_pool = client.create_pool(
+        &CATEGORY_OTHER,
+        &700u64,
+        &token_address,
+        &String::from_str(&env, "Other Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+    assert_eq!(other_pool, 6);
+}
+
+#[test]
+#[should_panic(expected = "Invalid category")]
+fn test_create_pool_with_invalid_category() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _) = setup(&env);
+
+    // Try to create pool with an unknown category symbol
+    let invalid_category = Symbol::new(&env, "InvalidCat");
+    client.create_pool(
+        &invalid_category,
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Invalid Category Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Invalid category")]
+fn test_create_pool_with_too_long_symbol() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _) = setup(&env);
+
+    // Try to create pool with a symbol that's too long (>32 chars)
+    let long_category = Symbol::new(&env, "ThisIsAVeryLongCategoryNameThatExceedsLimit");
+    client.create_pool(
+        &long_category,
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Long Category Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+}
+
+#[test]
+fn test_get_pools_by_category() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _) = setup(&env);
+
+    // Create pools in different categories
+    let sports_pool_1 = client.create_pool(
+        &CATEGORY_SPORTS,
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Sports Pool 1"),
+        &String::from_str(&env, "ipfs://metadata1"),
+    );
+
+    let finance_pool = client.create_pool(
+        &CATEGORY_FINANCE,
+        &200u64,
+        &token_address,
+        &String::from_str(&env, "Finance Pool"),
+        &String::from_str(&env, "ipfs://metadata2"),
+    );
+
+    let sports_pool_2 = client.create_pool(
+        &CATEGORY_SPORTS,
+        &300u64,
+        &token_address,
+        &String::from_str(&env, "Sports Pool 2"),
+        &String::from_str(&env, "ipfs://metadata3"),
+    );
+
+    let crypto_pool = client.create_pool(
+        &CATEGORY_CRYPTO,
+        &400u64,
+        &token_address,
+        &String::from_str(&env, "Crypto Pool"),
+        &String::from_str(&env, "ipfs://metadata4"),
+    );
+
+    // Query pools by category
+    let sports_pools = client.get_pools_by_category(&CATEGORY_SPORTS);
+    assert_eq!(sports_pools.len(), 2);
+    assert_eq!(sports_pools.get(0).unwrap(), sports_pool_1);
+    assert_eq!(sports_pools.get(1).unwrap(), sports_pool_2);
+
+    let finance_pools = client.get_pools_by_category(&CATEGORY_FINANCE);
+    assert_eq!(finance_pools.len(), 1);
+    assert_eq!(finance_pools.get(0).unwrap(), finance_pool);
+
+    let crypto_pools = client.get_pools_by_category(&CATEGORY_CRYPTO);
+    assert_eq!(crypto_pools.len(), 1);
+    assert_eq!(crypto_pools.get(0).unwrap(), crypto_pool);
+
+    // Query category with no pools
+    let politics_pools = client.get_pools_by_category(&CATEGORY_POLITICS);
+    assert_eq!(politics_pools.len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Invalid category")]
+fn test_get_pools_by_invalid_category() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _) = setup(&env);
+
+    // Try to query with an invalid category
+    let invalid_category = Symbol::new(&env, "BadCategory");
+    client.get_pools_by_category(&invalid_category);
+}
+
