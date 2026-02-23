@@ -615,6 +615,19 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
     ac_client.grant_role(&creator, &ROLE_ADMIN);
     client.init(&ac_id, &treasury, &0u32);
 
+// ── Pool Cancelation & State Guard Tests ────────────────────────────────────────
+
+#[test]
+fn test_cancel_pool_refunds_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+
     let pool_id = client.create_pool(
         &100u64,
         &token_address,
@@ -662,6 +675,25 @@ fn test_non_admin_non_creator_cannot_cancel() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #22)")]
+        &String::from_str(&env, "Cancel Test Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+    client.place_prediction(&user1, &pool_id, &100, &1);
+
+    assert_eq!(token.balance(&contract_addr), 100);
+
+    // Cancel pool before end time
+    client.cancel_pool(&operator, &pool_id);
+
+    // Claim refunds
+    let refund = client.claim_winnings(&user1, &pool_id);
+    assert_eq!(refund, 100);
+    assert_eq!(token.balance(&user1), 1000);
+    assert_eq!(token.balance(&contract_addr), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #24)")]
 fn test_cannot_cancel_resolved_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -681,6 +713,7 @@ fn test_cannot_cancel_resolved_pool() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32);
+    let (_, client, token_address, _, _, _, operator) = setup(&env);
 
     let pool_id = client.create_pool(
         &100u64,
@@ -807,6 +840,44 @@ fn test_admin_can_cancel_pool_with_predictions() {
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
+        &String::from_str(&env, "Resolve Then Cancel Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    client.resolve_pool(&operator, &pool_id, &1u32);
+    // Should panic because pool is not active
+    client.cancel_pool(&operator, &pool_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #24)")]
+fn test_cannot_resolve_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &100u64,
+        &token_address,
+        &String::from_str(&env, "Resolve Canceled Pool Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+    // Should panic because pool is not active
+    client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+#[should_panic(expected = "Pool is not active")]
+fn test_cannot_predict_on_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
         &100u64,
@@ -826,4 +897,11 @@ fn test_admin_can_cancel_pool_with_predictions() {
 
     // Verify no more predictions can be placed - should panic
     client.place_prediction(&user, &pool_id, &50, &2);
+        &String::from_str(&env, "Predict Canceled Pool Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+    // Should panic
+    client.place_prediction(&user1, &pool_id, &100, &1);
 }
