@@ -358,36 +358,46 @@ mod dummy_access_control {
         // Verify no more predictions can be placed - should panic
         client.place_prediction(&user, &pool_id, &50, &2);
     }
-    let client = PredifiContractClient::new(&env, &contract_id);
 
-    let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
-    let token_address = token_contract;
+    #[test]
+    #[should_panic(expected = "Error(Contract, #10)")]
+    fn test_unauthorized_oracle_resolve() {
+        let env = Env::default();
+        env.mock_all_auths();
 
-    let treasury = Address::generate(&env);
-    let not_oracle = Address::generate(&env);
+        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+        let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+        let contract_id = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(&env, &contract_id);
 
-    // Give them OPERATOR instead of ORACLE, they still shouldn't be able to call oracle_resolve
-    ac_client.grant_role(&not_oracle, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+        let token_admin = Address::generate(&env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_address = token_contract;
 
-    let pool_id = client.create_pool(
-        &100000u64,
-        &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(&env, "ipfs://metadata"),
-    );
+        let treasury = Address::generate(&env);
+        let not_oracle = Address::generate(&env);
 
-    env.ledger().with_mut(|li| li.timestamp = 100001);
+        // Give them OPERATOR instead of ORACLE, they still shouldn't be able to call oracle_resolve
+        ac_client.grant_role(&not_oracle, &ROLE_OPERATOR);
+        client.init(&ac_id, &treasury, &0u32, &0u64);
 
-    client.oracle_resolve(
-        &not_oracle,
-        &pool_id,
-        &1u32,
-        &String::from_str(&env, "proof_123"),
-    );
-}
+        let pool_id = client.create_pool(
+            &100000u64,
+            &token_address,
+            &3u32,
+            &String::from_str(&env, "Test Pool"),
+            &String::from_str(&env, "ipfs://metadata"),
+        );
+
+        env.ledger().with_mut(|li| li.timestamp = 100001);
+
+        client.oracle_resolve(
+            &not_oracle,
+            &pool_id,
+            &1u32,
+            &String::from_str(&env, "proof_123"),
+        );
+    }
 
 #[test]
 fn test_admin_can_set_fee_bps() {
