@@ -46,6 +46,7 @@ pub enum PredifiError {
     PoolNotResolved = 22,
     InvalidPoolState = 24,
     AlreadyClaimed = 60,
+    ResolutionDelayNotMet = 81,
 }
 
 #[contracttype]
@@ -78,6 +79,7 @@ pub struct Config {
     pub fee_bps: u32,
     pub treasury: Address,
     pub access_control: Address,
+    pub resolution_delay: u64,
 }
 
 #[contracttype]
@@ -120,6 +122,7 @@ pub struct InitEvent {
     pub access_control: Address,
     pub treasury: Address,
     pub fee_bps: u32,
+    pub resolution_delay: u64,
 }
 
 #[contractevent(topics = ["pause"])]
@@ -146,6 +149,20 @@ pub struct FeeUpdateEvent {
 pub struct TreasuryUpdateEvent {
     pub admin: Address,
     pub treasury: Address,
+}
+
+#[contractevent(topics = ["resolution_delay_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionDelayUpdateEvent {
+    pub admin: Address,
+    pub delay: u64,
+}
+
+#[contractevent(topics = ["pool_ready"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolReadyForResolutionEvent {
+    pub pool_id: u64,
+    pub timestamp: u64,
 }
 
 #[contractevent(topics = ["pool_created"])]
@@ -381,12 +398,19 @@ impl PredifiContract {
     // ── Public interface ──────────────────────────────────────────────────────
 
     /// Initialize the contract. Idempotent — safe to call multiple times.
-    pub fn init(env: Env, access_control: Address, treasury: Address, fee_bps: u32) {
+    pub fn init(
+        env: Env,
+        access_control: Address,
+        treasury: Address,
+        fee_bps: u32,
+        resolution_delay: u64,
+    ) {
         if !env.storage().instance().has(&DataKey::Config) {
             let config = Config {
                 fee_bps,
                 treasury: treasury.clone(),
                 access_control: access_control.clone(),
+                resolution_delay,
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
@@ -396,6 +420,7 @@ impl PredifiContract {
                 access_control,
                 treasury,
                 fee_bps,
+                resolution_delay,
             }
             .publish(&env);
         }
@@ -488,6 +513,28 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         TreasuryUpdateEvent { admin, treasury }.publish(&env);
+        Ok(())
+    }
+
+    /// Set resolution delay in seconds. Caller must have Admin role (0).
+    pub fn set_resolution_delay(env: Env, admin: Address, delay: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_resolution_delay"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let mut config = Self::get_config(&env);
+        config.resolution_delay = delay;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        ResolutionDelayUpdateEvent { admin, delay }.publish(&env);
         Ok(())
     }
 
@@ -611,6 +658,13 @@ impl PredifiContract {
             return Err(PredifiError::InvalidPoolState);
         }
 
+        let current_time = env.ledger().timestamp();
+        let config = Self::get_config(&env);
+
+        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+            return Err(PredifiError::ResolutionDelayNotMet);
+        }
+
         // Validate: outcome must be within the valid options range
         // Verify state transition validity (INV-2)
         assert!(
@@ -647,6 +701,35 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(())
+    }
+
+    /// Mark a pool as ready for resolution and emit an event.
+    /// Can be called by anyone once the resolution delay has passed.
+    pub fn mark_pool_ready(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let config = Self::get_config(&env);
+        let current_time = env.ledger().timestamp();
+
+        if current_time >= pool.end_time.saturating_add(config.resolution_delay) {
+            PoolReadyForResolutionEvent {
+                pool_id,
+                timestamp: current_time,
+            }
+            .publish(&env);
+            Ok(())
+        } else {
+            Err(PredifiError::ResolutionDelayNotMet)
+        }
     }
 
     /// Cancel an active pool. Caller must have Operator role (1).

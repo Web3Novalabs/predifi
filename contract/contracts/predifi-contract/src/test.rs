@@ -57,7 +57,7 @@ fn setup(
     let operator = Address::generate(env);
 
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     (
         ac_client,
@@ -136,7 +136,7 @@ fn test_double_claim() {
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
-    env.ledger().with_mut(|li| li.timestamp = 101);
+    env.ledger().with_mut(|li| li.timestamp = 10001);
 
     client.resolve_pool(&operator, &pool_id, &1u32);
 
@@ -206,6 +206,8 @@ fn test_multiple_pools_independent() {
     client.place_prediction(&user1, &pool_a, &100, &1);
     client.place_prediction(&user2, &pool_b, &100, &0);
 
+    env.ledger().with_mut(|li| li.timestamp = 20001);
+
     client.resolve_pool(&operator, &pool_a, &1u32);
     client.resolve_pool(&operator, &pool_b, &0u32);
 
@@ -259,6 +261,7 @@ fn test_unauthorized_resolve_pool() {
         ),
     );
     let not_operator = Address::generate(&env);
+    env.ledger().with_mut(|li| li.timestamp = 10001);
     client.resolve_pool(&not_operator, &pool_id, &1u32);
 }
 
@@ -275,7 +278,7 @@ fn test_admin_can_set_fee_bps() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.set_fee_bps(&admin, &500u32);
 }
@@ -294,7 +297,7 @@ fn test_admin_can_set_treasury() {
     let treasury = Address::generate(&env);
     let new_treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.set_treasury(&admin, &new_treasury);
 }
@@ -314,7 +317,7 @@ fn test_admin_can_pause_and_unpause() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&admin);
     client.unpause(&admin);
@@ -332,7 +335,7 @@ fn test_non_admin_cannot_pause() {
 
     let not_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&not_admin);
 }
@@ -351,7 +354,7 @@ fn test_paused_blocks_set_fee_bps() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&admin);
     client.set_fee_bps(&admin, &100u32);
@@ -371,7 +374,7 @@ fn test_paused_blocks_set_treasury() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&admin);
     client.set_treasury(&admin, &Address::generate(&env));
@@ -392,7 +395,7 @@ fn test_paused_blocks_create_pool() {
     let treasury = Address::generate(&env);
     let token = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&admin);
     client.create_pool(
@@ -422,7 +425,7 @@ fn test_paused_blocks_place_prediction() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&admin);
     client.place_prediction(&user, &0u64, &10, &1);
@@ -444,7 +447,7 @@ fn test_paused_blocks_resolve_pool() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&admin);
     client.resolve_pool(&operator, &0u64, &1u32);
@@ -465,7 +468,7 @@ fn test_paused_blocks_claim_winnings() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&admin);
     client.claim_winnings(&user, &0u64);
@@ -489,7 +492,7 @@ fn test_unpause_restores_functionality() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
     token_admin_client.mint(&user, &1000);
 
     client.pause(&admin);
@@ -623,6 +626,7 @@ fn test_cannot_cancel_resolved_pool() {
         &String::from_str(&env, "ipfs://metadata"),
     );
 
+    env.ledger().with_mut(|li| li.timestamp = 10001);
     client.resolve_pool(&operator, &pool_id, &1u32);
     // Should panic because pool is not active
     client.cancel_pool(&operator, &pool_id);
@@ -645,6 +649,7 @@ fn test_cannot_resolve_canceled_pool() {
     );
 
     client.cancel_pool(&operator, &pool_id);
+    env.ledger().with_mut(|li| li.timestamp = 10001);
     // Should panic because pool is not active
     client.resolve_pool(&operator, &pool_id, &1u32);
 }
@@ -670,4 +675,115 @@ fn test_cannot_predict_on_canceled_pool() {
     client.cancel_pool(&operator, &pool_id);
     // Should panic
     client.place_prediction(&user1, &pool_id, &100, &1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #81)")]
+fn test_resolve_pool_before_delay() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Init with 3600s delay
+    client.init(&ac_id, &treasury, &0u32, &3600u64);
+
+    let end_time = 10000;
+    let pool_id = client.create_pool(
+        &end_time,
+        &token,
+        &2u32,
+        &String::from_str(&env, "Delay Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    // Set time to end_time + MIN_POOL_DURATION (to allow creation)
+    // Wait, create_pool checks end_time > current_time + MIN_POOL_DURATION.
+    // In setup, current_time is 0. So 10000 is fine.
+
+    // Set time to end_time + 10s (less than delay)
+    env.ledger().with_mut(|li| li.timestamp = end_time + 10);
+
+    // Should panic with ResolutionDelayNotMet (81)
+    client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+fn test_resolve_pool_after_delay() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Init with 3600s delay
+    client.init(&ac_id, &treasury, &0u32, &3600u64);
+
+    let end_time = 10000;
+    let pool_id = client.create_pool(
+        &end_time,
+        &token,
+        &2u32,
+        &String::from_str(&env, "Delay Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    // Set time to end_time + 3601s (more than delay)
+    env.ledger().with_mut(|li| li.timestamp = end_time + 3601);
+
+    // Should succeed
+    client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+fn test_mark_pool_ready() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.init(&ac_id, &treasury, &0u32, &3600u64);
+
+    let end_time = 10000;
+    let pool_id = client.create_pool(
+        &end_time,
+        &token,
+        &2u32,
+        &String::from_str(&env, "Ready Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+    );
+
+    // Test before delay
+    env.ledger().with_mut(|li| li.timestamp = end_time + 10);
+    let res = client.try_mark_pool_ready(&pool_id);
+    assert!(res.is_err());
+
+    // Test after delay
+    env.ledger().with_mut(|li| li.timestamp = end_time + 3600);
+    let res = client.try_mark_pool_ready(&pool_id);
+    assert!(res.is_ok());
 }
