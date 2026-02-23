@@ -188,6 +188,15 @@ pub struct PoolResolvedEvent {
     pub outcome: u32,
 }
 
+#[contractevent(topics = ["oracle_resolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleResolvedEvent {
+    pub pool_id: u64,
+    pub oracle: Address,
+    pub outcome: u32,
+    pub proof: String,
+}
+
 #[contractevent(topics = ["pool_canceled"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolCanceledEvent {
@@ -304,6 +313,19 @@ pub struct PoolResolvedDiagEvent {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
+pub trait OracleCallback {
+    /// Resolve a pool based on external oracle data.
+    /// Caller must have Oracle role (3).
+    /// Cannot resolve a canceled pool.
+    fn oracle_resolve(
+        env: Env,
+        oracle: Address,
+        pool_id: u64,
+        outcome: u32,
+        proof: String,
+    ) -> Result<(), PredifiError>;
+}
 
 #[contract]
 pub struct PredifiContract;
@@ -1034,6 +1056,99 @@ impl PredifiContract {
         }
 
         results
+    }
+}
+
+#[contractimpl]
+impl OracleCallback for PredifiContract {
+    fn oracle_resolve(
+        env: Env,
+        oracle: Address,
+        pool_id: u64,
+        outcome: u32,
+        proof: String,
+    ) -> Result<(), PredifiError> {
+        PredifiContract::require_not_paused(&env);
+        oracle.require_auth();
+
+        // Check authorization: oracle must have role 3
+        if let Err(e) = PredifiContract::require_role(&env, &oracle, 3) {
+            // 🔴 HIGH ALERT: unauthorized attempt to resolve a pool by an oracle
+            UnauthorizedResolveAttemptEvent {
+                caller: oracle,
+                pool_id,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        assert!(!pool.resolved, "Pool already resolved");
+        assert!(!pool.canceled, "Cannot resolve a canceled pool");
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let current_time = env.ledger().timestamp();
+        let config = PredifiContract::get_config(&env);
+
+        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+            return Err(PredifiError::ResolutionDelayNotMet);
+        }
+
+        // Validate: outcome must be within the valid options range
+        // Verify state transition validity (INV-2)
+        assert!(
+            outcome < pool.options_count
+                && PredifiContract::is_valid_state_transition(pool.state, MarketState::Resolved),
+            "outcome exceeds options_count or invalid state transition"
+        );
+
+        pool.state = MarketState::Resolved;
+        pool.resolved = true;
+        pool.outcome = outcome;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        PredifiContract::extend_persistent(&env, &pool_key);
+
+        // Retrieve winning-outcome stake for the diagnostic event.
+        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
+        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+
+        OracleResolvedEvent {
+            pool_id,
+            oracle: oracle.clone(),
+            outcome,
+            proof,
+        }
+        .publish(&env);
+
+        // Emit standard resolved event to maintain compatibility
+        PoolResolvedEvent {
+            pool_id,
+            operator: oracle,
+            outcome,
+        }
+        .publish(&env);
+
+        // 🟢 INFO: enriched diagnostics alongside the standard resolved event.
+        PoolResolvedDiagEvent {
+            pool_id,
+            outcome,
+            total_stake: pool.total_stake,
+            winning_stake,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
+        Ok(())
     }
 }
 
