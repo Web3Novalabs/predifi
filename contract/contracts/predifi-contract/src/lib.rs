@@ -301,11 +301,11 @@ impl PredifiContract {
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
-        match (current, next) {
-            (MarketState::Active, MarketState::Resolved) => true,
-            (MarketState::Active, MarketState::Canceled) => true,
-            _ => false,
-        }
+        matches!(
+            (current, next),
+            (MarketState::Active, MarketState::Resolved)
+                | (MarketState::Active, MarketState::Canceled)
+        )
     }
 
     /// Pure: Validate fee basis points
