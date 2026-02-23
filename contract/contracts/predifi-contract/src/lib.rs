@@ -104,6 +104,9 @@ pub enum DataKey {
     PoolIdCounter,
     HasClaimed(Address, u64),
     OutcomeStake(u64, u32),
+    /// Optimized storage for markets with many outcomes (e.g., 32+ teams).
+    /// Stores all outcome stakes as a single Vec<i128> to reduce storage reads.
+    OutcomeStakes(u64),
     UserPredictionCount(Address),
     UserPredictionIndex(Address, u32),
     Config,
