@@ -35,7 +35,7 @@ const MIN_POOL_DURATION: u64 = 3600;
 /// Maximum number of options allowed in a pool
 const MAX_OPTIONS_COUNT: u32 = 100;
 /// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
-const MAX_INITIAL_LIQUIDITY: i128 = 10_000_000_000_0000;
+const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
@@ -595,6 +595,7 @@ impl PredifiContract {
     /// * `description`       - Short human-readable description of the event (max 256 bytes).
     /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
     /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
         env: Env,
         creator: Address,
@@ -676,11 +677,7 @@ impl PredifiContract {
         // Transfer initial liquidity from creator to contract if provided
         if initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
-            token_client.transfer(
-                &creator,
-                &env.current_contract_address(),
-                &initial_liquidity,
-            );
+            token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
         }
 
         env.storage()
