@@ -34,6 +34,8 @@ const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 const MIN_POOL_DURATION: u64 = 3600;
 /// Maximum number of options allowed in a pool
 const MAX_OPTIONS_COUNT: u32 = 100;
+/// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
+const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
@@ -74,6 +76,11 @@ pub struct Pool {
     pub metadata_url: String,
     /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT)
     pub options_count: u32,
+    /// Initial liquidity provided by the pool creator (house money).
+    /// This is part of total_stake but excluded from fee calculations.
+    pub initial_liquidity: i128,
+    /// Address of the pool creator.
+    pub creator: Address,
 }
 
 #[contracttype]
@@ -181,6 +188,16 @@ pub struct PoolCreatedEvent {
     pub options_count: u32,
     /// Metadata URL included so off-chain indexers can immediately fetch context.
     pub metadata_url: String,
+    /// Initial liquidity provided by the pool creator (optional, 0 if not provided).
+    pub initial_liquidity: i128,
+}
+
+#[contractevent(topics = ["initial_liquidity_provided"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitialLiquidityProvidedEvent {
+    pub pool_id: u64,
+    pub creator: Address,
+    pub amount: i128,
 }
 
 #[contractevent(topics = ["pool_resolved"])]
@@ -642,23 +659,29 @@ impl PredifiContract {
     /// Create a new prediction pool. Returns the new pool ID.
     ///
     /// PRE: end_time > current_time (INV-8)
-    /// POST: Pool.state = Active, Pool.total_stake = 0
+    /// POST: Pool.state = Active, Pool.total_stake = initial_liquidity (if provided)
     ///
     /// # Arguments
-    /// * `end_time`      - Unix timestamp after which no more predictions are accepted.
-    /// * `token`        - The Stellar token contract address used for staking.
-    /// * `options_count` - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
-    /// * `description`  - Short human-readable description of the event (max 256 bytes).
-    /// * `metadata_url` - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `creator`           - Address of the pool creator (must provide auth).
+    /// * `end_time`          - Unix timestamp after which no more predictions are accepted.
+    /// * `token`             - The Stellar token contract address used for staking.
+    /// * `options_count`     - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
+    /// * `description`       - Short human-readable description of the event (max 256 bytes).
+    /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
         env: Env,
+        creator: Address,
         end_time: u64,
         token: Address,
         options_count: u32,
         description: String,
         metadata_url: String,
+        initial_liquidity: i128,
     ) -> u64 {
         Self::require_not_paused(&env);
+        creator.require_auth();
 
         let current_time = env.ledger().timestamp();
 
@@ -678,6 +701,18 @@ impl PredifiContract {
         assert!(
             options_count <= MAX_OPTIONS_COUNT,
             "options_count exceeds maximum allowed value"
+        );
+
+        // Validate: initial_liquidity must be non-negative if provided
+        assert!(
+            initial_liquidity >= 0,
+            "initial_liquidity must be non-negative"
+        );
+
+        // Validate: initial_liquidity must not exceed maximum limit
+        assert!(
+            initial_liquidity <= MAX_INITIAL_LIQUIDITY,
+            "initial_liquidity exceeds maximum allowed value"
         );
 
         // Note: Token address validation is deferred to when the token is actually used.
@@ -701,15 +736,23 @@ impl PredifiContract {
             state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
-            total_stake: 0,
+            total_stake: initial_liquidity, // Initial liquidity is part of total stake
             description,
             metadata_url: metadata_url.clone(),
             options_count,
+            initial_liquidity,
+            creator: creator.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
+
+        // Transfer initial liquidity from creator to contract if provided
+        if initial_liquidity > 0 {
+            let token_client = token::Client::new(&env, &token);
+            token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
+        }
 
         env.storage()
             .instance()
@@ -722,8 +765,19 @@ impl PredifiContract {
             token,
             options_count,
             metadata_url,
+            initial_liquidity,
         }
         .publish(&env);
+
+        // Emit initial liquidity event if liquidity was provided
+        if initial_liquidity > 0 {
+            InitialLiquidityProvidedEvent {
+                pool_id,
+                creator,
+                amount: initial_liquidity,
+            }
+            .publish(&env);
+        }
 
         pool_id
     }
