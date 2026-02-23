@@ -382,6 +382,62 @@ impl PredifiContract {
         fee_bps <= 10_000
     }
 
+    /// Pure: Initialize outcome stakes vector with zeros
+    /// Used for markets with many outcomes (e.g., 32+ teams tournament)
+    #[allow(dead_code)]
+    fn init_outcome_stakes(env: &Env, options_count: u32) -> Vec<i128> {
+        let mut stakes = Vec::new(env);
+        for _ in 0..options_count {
+            stakes.push_back(0);
+        }
+        stakes
+    }
+
+    /// Get outcome stakes for a pool using optimized batch storage.
+    /// Falls back to individual storage keys for backward compatibility.
+    fn get_outcome_stakes(env: &Env, pool_id: u64, options_count: u32) -> Vec<i128> {
+        let key = DataKey::OutcomeStakes(pool_id);
+        if let Some(stakes) = env.storage().persistent().get(&key) {
+            Self::extend_persistent(env, &key);
+            stakes
+        } else {
+            // Fallback: reconstruct from individual outcome stakes (backward compatibility)
+            let mut stakes = Vec::new(env);
+            for i in 0..options_count {
+                let outcome_key = DataKey::OutcomeStake(pool_id, i);
+                let stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+                stakes.push_back(stake);
+            }
+            stakes
+        }
+    }
+
+    /// Update outcome stake at a specific index and persist using optimized batch storage.
+    /// Also maintains backward compatibility with individual outcome stake keys.
+    fn update_outcome_stake(
+        env: &Env,
+        pool_id: u64,
+        outcome: u32,
+        amount: i128,
+        options_count: u32,
+    ) -> Vec<i128> {
+        let mut stakes = Self::get_outcome_stakes(env, pool_id, options_count);
+        let current = stakes.get(outcome).unwrap_or(0);
+        stakes.set(outcome, current + amount);
+
+        // Store using optimized batch key
+        let key = DataKey::OutcomeStakes(pool_id);
+        env.storage().persistent().set(&key, &stakes);
+        Self::extend_persistent(env, &key);
+
+        // Also update individual key for backward compatibility
+        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
+        env.storage().persistent().set(&outcome_key, &(current + amount));
+        Self::extend_persistent(env, &outcome_key);
+
+        stakes
+    }
+
     // ── Storage & Side-Effect Functions ───────────────────────────────────────
 
     fn extend_instance(env: &Env) {
