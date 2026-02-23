@@ -30,6 +30,10 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 
+/// Minimum pool duration in seconds (1 hour)
+const MIN_POOL_DURATION: u64 = 3600;
+/// Maximum number of options allowed in a pool
+const MAX_OPTIONS_COUNT: u32 = 100;
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
@@ -64,6 +68,8 @@ pub struct Pool {
     pub description: String,
     /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
     pub metadata_url: String,
+    /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT)
+    pub options_count: u32,
 }
 
 #[contracttype]
@@ -148,6 +154,8 @@ pub struct PoolCreatedEvent {
     pub pool_id: u64,
     pub end_time: u64,
     pub token: Address,
+    /// Number of options/outcomes for this pool.
+    pub options_count: u32,
     /// Metadata URL included so off-chain indexers can immediately fetch context.
     pub metadata_url: String,
 }
@@ -489,22 +497,45 @@ impl PredifiContract {
     /// POST: Pool.state = Active, Pool.total_stake = 0
     ///
     /// # Arguments
-    /// * `end_time`     - Unix timestamp after which no more predictions are accepted.
+    /// * `end_time`      - Unix timestamp after which no more predictions are accepted.
     /// * `token`        - The Stellar token contract address used for staking.
+    /// * `options_count` - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
     /// * `description`  - Short human-readable description of the event (max 256 bytes).
     /// * `metadata_url` - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
     pub fn create_pool(
         env: Env,
         end_time: u64,
         token: Address,
+        options_count: u32,
         description: String,
         metadata_url: String,
     ) -> u64 {
         Self::require_not_paused(&env);
+
+        let current_time = env.ledger().timestamp();
+
+        // Validate: end_time must be in the future
+        assert!(end_time > current_time, "end_time must be in the future");
+
+        // Validate: minimum pool duration (1 hour)
         assert!(
-            end_time > env.ledger().timestamp(),
-            "end_time must be in the future"
+            end_time >= current_time + MIN_POOL_DURATION,
+            "end_time must be at least 1 hour in the future"
         );
+
+        // Validate: options_count must be at least 2 (binary or more outcomes)
+        assert!(options_count >= 2, "options_count must be at least 2");
+
+        // Validate: options_count must not exceed maximum limit
+        assert!(
+            options_count <= MAX_OPTIONS_COUNT,
+            "options_count exceeds maximum allowed value"
+        );
+
+        // Note: Token address validation is deferred to when the token is actually used.
+        // This is the standard pattern in Soroban - invalid tokens will fail when
+        // transfers are attempted during place_prediction.
+
         assert!(description.len() <= 256, "description exceeds 256 bytes");
         assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
 
@@ -523,6 +554,7 @@ impl PredifiContract {
             total_stake: 0,
             description,
             metadata_url: metadata_url.clone(),
+            options_count,
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -538,6 +570,7 @@ impl PredifiContract {
             pool_id,
             end_time,
             token,
+            options_count,
             metadata_url,
         }
         .publish(&env);
@@ -578,10 +611,12 @@ impl PredifiContract {
             return Err(PredifiError::InvalidPoolState);
         }
 
+        // Validate: outcome must be within the valid options range
         // Verify state transition validity (INV-2)
         assert!(
-            Self::is_valid_state_transition(pool.state, MarketState::Resolved),
-            "Invalid state transition"
+            outcome < pool.options_count
+                && Self::is_valid_state_transition(pool.state, MarketState::Resolved),
+            "outcome exceeds options_count or invalid state transition"
         );
 
         pool.state = MarketState::Resolved;
@@ -666,6 +701,12 @@ impl PredifiContract {
 
         assert!(pool.state == MarketState::Active, "Pool is not active");
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
+
+        // Validate: outcome must be within the valid options range
+        assert!(
+            outcome < pool.options_count,
+            "outcome exceeds options_count"
+        );
 
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&user, &env.current_contract_address(), &amount);
