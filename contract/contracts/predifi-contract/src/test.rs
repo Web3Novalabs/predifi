@@ -100,6 +100,7 @@ fn test_claim_winnings() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
     client.place_prediction(&user2, &pool_id, &100, &2);
@@ -141,6 +142,7 @@ fn test_double_claim() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
@@ -174,6 +176,7 @@ fn test_claim_unresolved() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
@@ -203,6 +206,7 @@ fn test_multiple_pools_independent() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
     let pool_b = client.create_pool(
         &creator,
@@ -215,6 +219,7 @@ fn test_multiple_pools_independent() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     client.place_prediction(&user1, &pool_a, &100, &1);
@@ -275,6 +280,7 @@ fn test_unauthorized_resolve_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
     let not_operator = Address::generate(&env);
     env.ledger().with_mut(|li| li.timestamp = 10001);
@@ -310,6 +316,7 @@ fn test_oracle_can_resolve() {
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
@@ -354,6 +361,7 @@ fn test_unauthorized_oracle_resolve() {
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
@@ -511,6 +519,7 @@ fn test_paused_blocks_create_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 }
 
@@ -614,6 +623,7 @@ fn test_unpause_restores_functionality() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
     client.place_prediction(&user, &pool_id, &10, &1);
 }
@@ -641,6 +651,7 @@ fn test_get_user_predictions() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
     let pool1 = client.create_pool(
         &creator,
@@ -653,6 +664,7 @@ fn test_get_user_predictions() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
     let pool2 = client.create_pool(
         &creator,
@@ -665,6 +677,7 @@ fn test_get_user_predictions() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     client.place_prediction(&user, &pool0, &10, &1);
@@ -721,6 +734,7 @@ fn test_admin_can_cancel_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Admin should be able to cancel
@@ -757,6 +771,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Admin should be able to cancel their pool
@@ -782,6 +797,7 @@ fn test_non_admin_non_creator_cannot_cancel() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     let unauthorized = Address::generate(&env);
@@ -823,6 +839,7 @@ fn test_cannot_cancel_resolved_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
@@ -869,6 +886,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Cancel the pool
@@ -910,6 +928,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Admin cancels the pool
@@ -956,6 +975,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // User places a prediction
@@ -1004,6 +1024,7 @@ fn test_cancel_pool_refunds_predictions() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // User places a prediction
@@ -1050,6 +1071,7 @@ fn test_cannot_resolve_canceled_pool() {
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     client.cancel_pool(&admin, &pool_id);
@@ -1088,6 +1110,7 @@ fn test_resolve_pool_before_delay() {
         &String::from_str(&env, "Delay Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Set time to end_time + MIN_POOL_DURATION (to allow creation)
@@ -1131,6 +1154,7 @@ fn test_resolve_pool_after_delay() {
         &String::from_str(&env, "Delay Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Set time to end_time + 3601s (more than delay)
@@ -1164,6 +1188,7 @@ fn test_mark_pool_ready() {
         &String::from_str(&env, "Ready Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Test before delay
@@ -1175,4 +1200,62 @@ fn test_mark_pool_ready() {
     env.ledger().with_mut(|li| li.timestamp = end_time + 3600);
     let res = client.try_mark_pool_ready(&pool_id);
     assert!(res.is_ok());
+}
+
+#[test]
+fn test_get_pools_by_category() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let cat1 = Symbol::new(&env, "tech");
+    let cat2 = Symbol::new(&env, "sports");
+
+    let pool0 = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool 0"),
+        &String::from_str(&env, "ipfs://0"),
+        &0i128,
+        &cat1,
+    );
+    let pool1 = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool 1"),
+        &String::from_str(&env, "ipfs://1"),
+        &0i128,
+        &cat1,
+    );
+    let pool2 = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool 2"),
+        &String::from_str(&env, "ipfs://2"),
+        &0i128,
+        &cat2,
+    );
+
+    let tech_pools = client.get_pools_by_category(&cat1, &0, &10);
+    assert_eq!(tech_pools.len(), 2);
+    assert_eq!(tech_pools.get(0).unwrap(), pool1);
+    assert_eq!(tech_pools.get(1).unwrap(), pool0);
+
+    let sports_pools = client.get_pools_by_category(&cat2, &0, &10);
+    assert_eq!(sports_pools.len(), 1);
+    assert_eq!(sports_pools.get(0).unwrap(), pool2);
+
+    let paginated = client.get_pools_by_category(&cat1, &1, &1);
+    assert_eq!(paginated.len(), 1);
+    assert_eq!(paginated.get(0).unwrap(), pool0);
+
+    let empty = client.get_pools_by_category(&cat1, &2, &10);
+    assert_eq!(empty.len(), 0);
 }
