@@ -41,6 +41,7 @@ fn setup(
     token::StellarAssetClient<'_>,
     Address,
     Address,
+    Address,
 ) {
     let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
     let ac_client = dummy_access_control::DummyAccessControlClient::new(env, &ac_id);
@@ -56,6 +57,7 @@ fn setup(
 
     let treasury = Address::generate(env);
     let operator = Address::generate(env);
+    let creator = Address::generate(env);
 
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32, &0u64);
@@ -68,6 +70,7 @@ fn setup(
         token_admin_client,
         treasury,
         operator,
+        creator,
     )
 }
 
@@ -78,7 +81,7 @@ fn test_claim_winnings() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, token, token_admin_client, _, operator) = setup(&env);
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
     let contract_addr = client.address.clone();
 
     let user1 = Address::generate(&env);
@@ -87,6 +90,7 @@ fn test_claim_winnings() {
     token_admin_client.mint(&user2, &1000);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -96,6 +100,7 @@ fn test_claim_winnings() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
@@ -122,12 +127,13 @@ fn test_double_claim() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
 
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -137,6 +143,7 @@ fn test_double_claim() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
@@ -155,12 +162,13 @@ fn test_claim_unresolved() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
 
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -170,6 +178,7 @@ fn test_claim_unresolved() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
@@ -182,7 +191,7 @@ fn test_multiple_pools_independent() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
@@ -190,6 +199,7 @@ fn test_multiple_pools_independent() {
     token_admin_client.mint(&user2, &1000);
 
     let pool_a = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -200,8 +210,10 @@ fn test_multiple_pools_independent() {
         ),
         &1i128,
         &0i128,
+        &0i128,
     );
     let pool_b = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -211,6 +223,7 @@ fn test_multiple_pools_independent() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -237,7 +250,7 @@ fn test_unauthorized_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, _, _, _, _, _) = setup(&env);
+    let (_, client, _, _, _, _, _, _creator) = setup(&env);
     let not_admin = Address::generate(&env);
     client.set_fee_bps(&not_admin, &999u32);
 }
@@ -248,7 +261,7 @@ fn test_unauthorized_set_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, _, _, _, _, _) = setup(&env);
+    let (_, client, _, _, _, _, _, _creator) = setup(&env);
     let not_admin = Address::generate(&env);
     let new_treasury = Address::generate(&env);
     client.set_treasury(&not_admin, &new_treasury);
@@ -260,8 +273,9 @@ fn test_unauthorized_resolve_pool() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, _, _, _) = setup(&env);
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -271,6 +285,7 @@ fn test_unauthorized_resolve_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
     let not_operator = Address::generate(&env);
@@ -298,13 +313,16 @@ fn test_oracle_can_resolve() {
     ac_client.grant_role(&oracle, &ROLE_ORACLE);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -341,13 +359,16 @@ fn test_unauthorized_oracle_resolve() {
     ac_client.grant_role(&not_oracle, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -493,8 +514,10 @@ fn test_paused_blocks_create_pool() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
+    let creator = Address::generate(&env);
     client.pause(&admin);
     client.create_pool(
+        &creator,
         &100000u64,
         &token,
         &3u32,
@@ -504,6 +527,7 @@ fn test_paused_blocks_create_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
 }
@@ -593,10 +617,12 @@ fn test_unpause_restores_functionality() {
     client.init(&ac_id, &treasury, &0u32, &0u64);
     token_admin_client.mint(&user, &1000);
 
+    let creator = Address::generate(&env);
     client.pause(&admin);
     client.unpause(&admin);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_contract,
         &3u32,
@@ -606,6 +632,7 @@ fn test_unpause_restores_functionality() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
     client.place_prediction(&user, &pool_id, &10, &1);
@@ -618,12 +645,13 @@ fn test_get_user_predictions() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
     let pool0 = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -633,9 +661,11 @@ fn test_get_user_predictions() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
     let pool1 = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -646,8 +676,10 @@ fn test_get_user_predictions() {
         ),
         &1i128,
         &0i128,
+        &0i128,
     );
     let pool2 = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -657,6 +689,7 @@ fn test_get_user_predictions() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -699,10 +732,12 @@ fn test_admin_can_cancel_pool() {
 
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -712,6 +747,7 @@ fn test_admin_can_cancel_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -739,6 +775,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -748,6 +785,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -761,9 +799,10 @@ fn test_non_admin_non_creator_cannot_cancel() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, _, _, _) = setup(&env);
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -774,11 +813,57 @@ fn test_non_admin_non_creator_cannot_cancel() {
         ),
         &1i128,
         &0i128,
+        &0i128,
     );
 
     let unauthorized = Address::generate(&env);
     // This should fail - user is not admin
     client.cancel_pool(&unauthorized, &pool_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #22)")]
+fn test_cannot_cancel_resolved_pool_by_operator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_OPERATOR);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+        &1i128,
+        &0i128,
+        &0i128,
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // Now try to cancel - should fail
+    client.cancel_pool(&admin, &pool_id);
 }
 
 #[test]
@@ -802,11 +887,13 @@ fn test_cannot_place_prediction_on_canceled_pool() {
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
+    let creator = Address::generate(&env);
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
     // Create and cancel pool
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -816,6 +903,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -841,12 +929,14 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
     let token_contract = env.register_stellar_asset_contract(token_admin.clone());
     let token_address = token_contract;
 
+    let creator = Address::generate(&env);
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -856,6 +946,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -888,10 +979,12 @@ fn test_admin_can_cancel_pool_with_predictions() {
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
+    let creator = Address::generate(&env);
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
@@ -901,6 +994,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -935,16 +1029,19 @@ fn test_cancel_pool_refunds_predictions() {
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
+    let creator = Address::generate(&env);
     let contract_addr = client.address.clone();
     token_admin_client.mint(&user1, &1000);
 
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &2u32,
         &String::from_str(&env, "Cancel Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -967,15 +1064,18 @@ fn test_cannot_cancel_resolved_pool() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, _, _, operator) = setup(&env);
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
 
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &10000u64,
         &token_address,
         &2u32,
         &String::from_str(&env, "Resolve Then Cancel Pool"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -1007,13 +1107,16 @@ fn test_cannot_resolve_canceled_pool() {
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &100000u64,
         &token_address,
         &3u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -1028,17 +1131,20 @@ fn test_cannot_predict_on_canceled_pool() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, operator, _) = setup(&env);
     let user1 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
 
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &10000u64,
         &token_address,
         &2u32,
         &String::from_str(&env, "Predict Canceled Pool Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -1069,13 +1175,16 @@ fn test_resolve_pool_before_delay() {
     client.init(&ac_id, &treasury, &0u32, &3600u64);
 
     let end_time = 10000;
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &end_time,
         &token,
         &2u32,
         &String::from_str(&env, "Delay Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -1111,13 +1220,16 @@ fn test_resolve_pool_after_delay() {
     client.init(&ac_id, &treasury, &0u32, &3600u64);
 
     let end_time = 10000;
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &end_time,
         &token,
         &2u32,
         &String::from_str(&env, "Delay Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -1143,13 +1255,16 @@ fn test_mark_pool_ready() {
     client.init(&ac_id, &treasury, &0u32, &3600u64);
 
     let end_time = 10000;
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &end_time,
         &token,
         &2u32,
         &String::from_str(&env, "Ready Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -1172,19 +1287,22 @@ fn test_stake_below_minimum_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, _, _) = setup(&env);
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
+    let creator = Address::generate(&env);
     // Create pool with min_stake = 50
     let pool_id = client.create_pool(
+        &creator,
         &10000u64,
         &token_address,
         &2u32,
         &String::from_str(&env, "Min Stake Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &50i128,
+        &0i128,
         &0i128,
     );
 
@@ -1198,13 +1316,15 @@ fn test_stake_above_maximum_rejected() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, _, _) = setup(&env);
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
+    let creator = Address::generate(&env);
     // Create pool with min_stake = 1, max_stake = 100
     let pool_id = client.create_pool(
+        &creator,
         &10000u64,
         &token_address,
         &2u32,
@@ -1212,6 +1332,7 @@ fn test_stake_above_maximum_rejected() {
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
         &100i128,
+        &0i128,
     );
 
     // Should panic: amount (200) > max_stake (100)
@@ -1223,15 +1344,17 @@ fn test_stake_at_boundaries_accepted() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, _, _) = setup(&env);
 
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
     token_admin_client.mint(&user1, &1000);
     token_admin_client.mint(&user2, &1000);
 
+    let creator = Address::generate(&env);
     // Create pool with min_stake = 10, max_stake = 200
     let pool_id = client.create_pool(
+        &creator,
         &10000u64,
         &token_address,
         &2u32,
@@ -1239,6 +1362,7 @@ fn test_stake_at_boundaries_accepted() {
         &String::from_str(&env, "ipfs://metadata"),
         &10i128,
         &200i128,
+        &0i128,
     );
 
     // Both boundary values should succeed
@@ -1251,19 +1375,22 @@ fn test_set_stake_limits_by_operator() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, operator, _) = setup(&env);
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
 
+    let creator = Address::generate(&env);
     // Create pool with min_stake = 1
     let pool_id = client.create_pool(
+        &creator,
         &10000u64,
         &token_address,
         &2u32,
         &String::from_str(&env, "Update Limits Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
@@ -1280,15 +1407,18 @@ fn test_set_stake_limits_unauthorized() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, _, _, _) = setup(&env);
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
 
+    let creator = Address::generate(&env);
     let pool_id = client.create_pool(
+        &creator,
         &10000u64,
         &token_address,
         &2u32,
         &String::from_str(&env, "Unauthorized Limits Test"),
         &String::from_str(&env, "ipfs://metadata"),
         &1i128,
+        &0i128,
         &0i128,
     );
 
