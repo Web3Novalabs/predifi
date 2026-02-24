@@ -3,6 +3,8 @@
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
+#[cfg(test)]
+mod test_utils;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
@@ -50,6 +52,8 @@ pub enum PredifiError {
     AlreadyClaimed = 60,
     PoolCanceled = 70,
     ResolutionDelayNotMet = 81,
+    /// Token is not on the allowed betting whitelist.
+    TokenNotWhitelisted = 91,
 }
 
 #[contracttype]
@@ -85,6 +89,8 @@ pub struct Pool {
     pub initial_liquidity: i128,
     /// Address of the pool creator.
     pub creator: Address,
+    /// Category symbol for filtering.
+    pub category: Symbol,
 }
 
 #[contracttype]
@@ -122,6 +128,10 @@ pub enum DataKey {
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
+    CategoryPoolCount(Symbol),
+    CategoryPoolIndex(Symbol, u32),
+    /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
+    TokenWhitelist(Address),
 }
 
 #[contracttype]
@@ -188,12 +198,10 @@ pub struct PoolCreatedEvent {
     pub pool_id: u64,
     pub end_time: u64,
     pub token: Address,
-    /// Number of options/outcomes for this pool.
     pub options_count: u32,
-    /// Metadata URL included so off-chain indexers can immediately fetch context.
     pub metadata_url: String,
-    /// Initial liquidity provided by the pool creator (optional, 0 if not provided).
     pub initial_liquidity: i128,
+    pub category: Symbol,
 }
 
 #[contractevent(topics = ["initial_liquidity_provided"])]
@@ -356,6 +364,20 @@ pub struct OutcomeStakesUpdatedEvent {
     pub options_count: u32,
     /// Total stake across all outcomes after the update.
     pub total_stake: i128,
+}
+
+#[contractevent(topics = ["token_whitelist_added"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistAddedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
+#[contractevent(topics = ["token_whitelist_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistRemovedEvent {
+    pub admin: Address,
+    pub token: Address,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -526,6 +548,16 @@ impl PredifiContract {
         }
     }
 
+    /// Returns true if the token is on the allowed betting whitelist.
+    fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
+        let key = DataKey::TokenWhitelist(token.clone());
+        let allowed = env.storage().persistent().get(&key).unwrap_or(false);
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(env, &key);
+        }
+        allowed
+    }
+
     // ── Public interface ──────────────────────────────────────────────────────
 
     /// Initialize the contract. Idempotent — safe to call multiple times.
@@ -669,6 +701,68 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Add a token to the allowed betting whitelist. Caller must have Admin role (0).
+    pub fn add_token_to_whitelist(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "add_token_to_whitelist"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let key = DataKey::TokenWhitelist(token.clone());
+        env.storage().persistent().set(&key, &true);
+        Self::extend_persistent(&env, &key);
+
+        TokenWhitelistAddedEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Remove a token from the allowed betting whitelist. Caller must have Admin role (0).
+    pub fn remove_token_from_whitelist(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "remove_token_from_whitelist"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let key = DataKey::TokenWhitelist(token.clone());
+        env.storage().persistent().remove(&key);
+
+        TokenWhitelistRemovedEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Returns true if the given token is on the allowed betting whitelist.
+    pub fn is_token_allowed(env: Env, token: Address) -> bool {
+        Self::is_token_whitelisted(&env, &token)
+    }
+
     /// Create a new prediction pool. Returns the new pool ID.
     ///
     /// PRE: end_time > current_time (INV-8)
@@ -696,9 +790,15 @@ impl PredifiContract {
         min_stake: i128,
         max_stake: i128,
         initial_liquidity: i128,
+        category: Symbol,
     ) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
+
+        // Validate: token must be on the allowed betting whitelist
+        if !Self::is_token_whitelisted(&env, &token) {
+            soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
+        }
 
         let current_time = env.ledger().timestamp();
 
@@ -768,6 +868,7 @@ impl PredifiContract {
             max_stake,
             initial_liquidity,
             creator: creator.clone(),
+            category: category.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -779,6 +880,17 @@ impl PredifiContract {
             let token_client = token::Client::new(&env, &token);
             token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
         }
+
+        // Update category index
+        let category_count_key = DataKey::CategoryPoolCount(category.clone());
+        let category_count: u32 = env.storage().persistent().get(&category_count_key).unwrap_or(0);
+
+        let category_index_key = DataKey::CategoryPoolIndex(category.clone(), category_count);
+        env.storage().persistent().set(&category_index_key, &pool_id);
+        Self::extend_persistent(&env, &category_index_key);
+
+        env.storage().persistent().set(&category_count_key, &(category_count + 1));
+        Self::extend_persistent(&env, &category_count_key);
 
         env.storage()
             .instance()
@@ -792,6 +904,7 @@ impl PredifiContract {
             options_count,
             metadata_url,
             initial_liquidity,
+            category,
         }
         .publish(&env);
 
@@ -1281,7 +1394,6 @@ impl PredifiContract {
         results
     }
 
-    /// Get all outcome stakes for a pool using optimized batch storage.
     /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
     /// Instead of making N storage reads (one per outcome), it makes a single read.
     ///
@@ -1320,6 +1432,44 @@ impl PredifiContract {
 
         let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
         stakes.get(outcome).unwrap_or(0)
+    }
+
+    /// Get a paginated list of pool IDs by category.
+    pub fn get_pools_by_category(
+        env: Env,
+        category: Symbol,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<u64> {
+        let count_key = DataKey::CategoryPoolCount(category.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if env.storage().persistent().has(&count_key) {
+            Self::extend_persistent(&env, &count_key);
+        }
+
+        let mut results = Vec::new(&env);
+
+        if offset >= count || limit == 0 {
+            return results;
+        }
+
+        let start_index = count.saturating_sub(offset).saturating_sub(1);
+        let num_to_take = core::cmp::min(limit, count.saturating_sub(offset));
+
+        for i in 0..num_to_take {
+            let index = start_index.saturating_sub(i);
+            let index_key = DataKey::CategoryPoolIndex(category.clone(), index);
+            let pool_id: u64 = env
+                .storage()
+                .persistent()
+                .get(&index_key)
+                .expect("index not found");
+            Self::extend_persistent(&env, &index_key);
+
+            results.push_back(pool_id);
+        }
+
+        results
     }
 }
 
@@ -1417,3 +1567,4 @@ impl OracleCallback for PredifiContract {
 }
 
 mod test;
+mod integration_test;
