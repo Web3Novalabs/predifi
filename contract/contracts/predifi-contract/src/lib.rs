@@ -767,11 +767,16 @@ impl PredifiContract {
     }
 
     /// Upgrade the contract Wasm code. Only callable by Admin (role 0).
-    pub fn upgrade_contract(env: Env, admin: Address, new_wasm_hash: BytesN<32>) -> Result<(), PredifiError> {
+    pub fn upgrade_contract(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), PredifiError> {
         admin.require_auth();
         Self::require_role(&env, &admin, 0)?;
 
-        env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
 
         UpgradeEvent {
             admin: admin.clone(),
