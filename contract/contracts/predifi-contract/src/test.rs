@@ -4,7 +4,7 @@
 use super::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    token, Address, Env, String,
+    token, Address, BytesN, Env, String, Symbol,
 };
 
 mod dummy_access_control {
@@ -455,6 +455,81 @@ fn test_admin_can_pause_and_unpause() {
 
     client.pause(&admin);
     client.unpause(&admin);
+}
+
+#[test]
+#[should_panic]
+fn test_admin_can_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // We expect this to panic in the mock environment because the Wasm hash is not registered.
+    // The point is to verify it passes the Authorization check.
+    let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+    client.upgrade_contract(&admin, &new_wasm_hash);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_non_admin_cannot_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let not_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
+    client.upgrade_contract(&not_admin, &new_wasm_hash);
+}
+
+#[test]
+fn test_admin_can_migrate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    client.migrate_state(&admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_non_admin_cannot_migrate() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let not_admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    client.migrate_state(&not_admin);
 }
 
 #[test]

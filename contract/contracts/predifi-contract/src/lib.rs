@@ -8,8 +8,8 @@ mod safe_math_examples;
 mod test_utils;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
-    IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
+    Env, IntoVal, String, Symbol, Vec,
 };
 
 pub use safe_math::{RoundingMode, SafeMath};
@@ -393,6 +393,11 @@ pub struct TreasuryWithdrawnEvent {
     pub amount: i128,
     pub recipient: Address,
     pub timestamp: u64,
+#[contractevent(topics = ["upgrade"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeEvent {
+    pub admin: Address,
+    pub new_wasm_hash: BytesN<32>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -770,6 +775,35 @@ impl PredifiContract {
             token: token.clone(),
         }
         .publish(&env);
+        Ok(())
+    }
+
+    /// Upgrade the contract Wasm code. Only callable by Admin (role 0).
+    pub fn upgrade_contract(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+
+        UpgradeEvent {
+            admin: admin.clone(),
+            new_wasm_hash,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Placeholder for post-upgrade migration logic.
+    pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+        // Initial implementation has no state migration needed.
         Ok(())
     }
 
