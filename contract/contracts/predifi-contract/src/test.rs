@@ -882,7 +882,10 @@ fn test_create_pool_rejects_non_whitelisted_token() {
         &2u32,
         &String::from_str(&env, "Pool"),
         &String::from_str(&env, "ipfs://meta"),
+        &1i128,
         &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
     );
 }
 
@@ -1185,6 +1188,7 @@ fn test_cannot_cancel_resolved_pool() {
         &1i128,
         &0i128,
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 10001);
@@ -1258,6 +1262,7 @@ fn test_cannot_predict_on_canceled_pool() {
         &1i128,
         &0i128,
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     client.cancel_pool(&operator, &pool_id);
@@ -1424,6 +1429,7 @@ fn test_stake_below_minimum_rejected() {
         &50i128,
         &0i128,
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Should panic: amount (10) < min_stake (50)
@@ -1453,6 +1459,7 @@ fn test_stake_above_maximum_rejected() {
         &1i128,
         &100i128,
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Should panic: amount (200) > max_stake (100)
@@ -1483,6 +1490,7 @@ fn test_stake_at_boundaries_accepted() {
         &10i128,
         &200i128,
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Both boundary values should succeed
@@ -1512,6 +1520,7 @@ fn test_set_stake_limits_by_operator() {
         &1i128,
         &0i128,
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Operator updates: min_stake = 50, max_stake = 500
@@ -1540,11 +1549,14 @@ fn test_set_stake_limits_unauthorized() {
         &1i128,
         &0i128,
         &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     // Non-operator should be rejected
     let not_operator = Address::generate(&env);
     client.set_stake_limits(&not_operator, &pool_id, &50i128, &500i128);
+}
+
 #[test]
 fn test_get_pools_by_category() {
     let env = Env::default();
@@ -1562,6 +1574,8 @@ fn test_get_pools_by_category() {
         &2u32,
         &String::from_str(&env, "Pool 0"),
         &String::from_str(&env, "ipfs://0"),
+        &1i128,
+        &0i128,
         &0i128,
         &cat1,
     );
@@ -1572,6 +1586,8 @@ fn test_get_pools_by_category() {
         &2u32,
         &String::from_str(&env, "Pool 1"),
         &String::from_str(&env, "ipfs://1"),
+        &1i128,
+        &0i128,
         &0i128,
         &cat1,
     );
@@ -1582,6 +1598,8 @@ fn test_get_pools_by_category() {
         &2u32,
         &String::from_str(&env, "Pool 2"),
         &String::from_str(&env, "ipfs://2"),
+        &1i128,
+        &0i128,
         &0i128,
         &cat2,
     );

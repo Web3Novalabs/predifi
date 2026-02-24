@@ -883,13 +883,21 @@ impl PredifiContract {
 
         // Update category index
         let category_count_key = DataKey::CategoryPoolCount(category.clone());
-        let category_count: u32 = env.storage().persistent().get(&category_count_key).unwrap_or(0);
+        let category_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&category_count_key)
+            .unwrap_or(0);
 
         let category_index_key = DataKey::CategoryPoolIndex(category.clone(), category_count);
-        env.storage().persistent().set(&category_index_key, &pool_id);
+        env.storage()
+            .persistent()
+            .set(&category_index_key, &pool_id);
         Self::extend_persistent(&env, &category_index_key);
 
-        env.storage().persistent().set(&category_count_key, &(category_count + 1));
+        env.storage()
+            .persistent()
+            .set(&category_count_key, &(category_count + 1));
         Self::extend_persistent(&env, &category_count_key);
 
         env.storage()
@@ -1435,12 +1443,7 @@ impl PredifiContract {
     }
 
     /// Get a paginated list of pool IDs by category.
-    pub fn get_pools_by_category(
-        env: Env,
-        category: Symbol,
-        offset: u32,
-        limit: u32,
-    ) -> Vec<u64> {
+    pub fn get_pools_by_category(env: Env, category: Symbol, offset: u32, limit: u32) -> Vec<u64> {
         let count_key = DataKey::CategoryPoolCount(category.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
         if env.storage().persistent().has(&count_key) {
@@ -1566,5 +1569,5 @@ impl OracleCallback for PredifiContract {
     }
 }
 
-mod test;
 mod integration_test;
+mod test;

@@ -53,6 +53,7 @@ fn setup_integration(
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let token_ctx = TokenTestContext::deploy(env, &admin);
+    client.add_token_to_whitelist(&admin, &token_ctx.token_address);
 
     (client, token_ctx, admin, operator, treasury)
 }
@@ -84,6 +85,8 @@ fn test_full_market_lifecycle() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -154,6 +157,8 @@ fn test_multi_user_betting_and_balance_verification() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -218,6 +223,8 @@ fn test_market_resolution_multiple_winners() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
