@@ -999,6 +999,7 @@ impl PredifiContract {
             category: category.clone(),
         };
 
+        let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
