@@ -34,6 +34,8 @@ const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 const MIN_POOL_DURATION: u64 = 3600;
 /// Maximum number of options allowed in a pool
 const MAX_OPTIONS_COUNT: u32 = 100;
+/// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
+const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
@@ -48,6 +50,8 @@ pub enum PredifiError {
     AlreadyClaimed = 60,
     PoolCanceled = 70,
     ResolutionDelayNotMet = 81,
+    /// Token is not on the allowed betting whitelist.
+    TokenNotWhitelisted = 91,
 }
 
 #[contracttype]
@@ -74,6 +78,11 @@ pub struct Pool {
     pub metadata_url: String,
     /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT)
     pub options_count: u32,
+    /// Initial liquidity provided by the pool creator (house money).
+    /// This is part of total_stake but excluded from fee calculations.
+    pub initial_liquidity: i128,
+    /// Address of the pool creator.
+    pub creator: Address,
 }
 
 #[contracttype]
@@ -104,11 +113,16 @@ pub enum DataKey {
     PoolIdCounter,
     HasClaimed(Address, u64),
     OutcomeStake(u64, u32),
+    /// Optimized storage for markets with many outcomes (e.g., 32+ teams).
+    /// Stores all outcome stakes as a single Vec<i128> to reduce storage reads.
+    OutcomeStakes(u64),
     UserPredictionCount(Address),
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
     ReentrancyGuard,
+    /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
+    TokenWhitelist(Address),
 }
 
 #[contracttype]
@@ -179,6 +193,16 @@ pub struct PoolCreatedEvent {
     pub options_count: u32,
     /// Metadata URL included so off-chain indexers can immediately fetch context.
     pub metadata_url: String,
+    /// Initial liquidity provided by the pool creator (optional, 0 if not provided).
+    pub initial_liquidity: i128,
+}
+
+#[contractevent(topics = ["initial_liquidity_provided"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitialLiquidityProvidedEvent {
+    pub pool_id: u64,
+    pub creator: Address,
+    pub amount: i128,
 }
 
 #[contractevent(topics = ["pool_resolved"])]
@@ -313,6 +337,33 @@ pub struct PoolResolvedDiagEvent {
     pub timestamp: u64,
 }
 
+/// 🟢 INFO — emitted when all outcome stakes are updated in a single operation.
+/// Useful for markets with many outcomes (e.g., 32+ teams tournament) where
+/// emitting individual events per outcome would be impractical.
+#[contractevent(topics = ["outcome_stakes_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutcomeStakesUpdatedEvent {
+    pub pool_id: u64,
+    /// Number of outcomes in this pool.
+    pub options_count: u32,
+    /// Total stake across all outcomes after the update.
+    pub total_stake: i128,
+}
+
+#[contractevent(topics = ["token_whitelist_added"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistAddedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
+#[contractevent(topics = ["token_whitelist_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistRemovedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub trait OracleCallback {
@@ -365,6 +416,64 @@ impl PredifiContract {
     /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
     fn is_valid_fee_bps(fee_bps: u32) -> bool {
         fee_bps <= 10_000
+    }
+
+    /// Pure: Initialize outcome stakes vector with zeros
+    /// Used for markets with many outcomes (e.g., 32+ teams tournament)
+    #[allow(dead_code)]
+    fn init_outcome_stakes(env: &Env, options_count: u32) -> Vec<i128> {
+        let mut stakes = Vec::new(env);
+        for _ in 0..options_count {
+            stakes.push_back(0);
+        }
+        stakes
+    }
+
+    /// Get outcome stakes for a pool using optimized batch storage.
+    /// Falls back to individual storage keys for backward compatibility.
+    fn get_outcome_stakes(env: &Env, pool_id: u64, options_count: u32) -> Vec<i128> {
+        let key = DataKey::OutcomeStakes(pool_id);
+        if let Some(stakes) = env.storage().persistent().get(&key) {
+            Self::extend_persistent(env, &key);
+            stakes
+        } else {
+            // Fallback: reconstruct from individual outcome stakes (backward compatibility)
+            let mut stakes = Vec::new(env);
+            for i in 0..options_count {
+                let outcome_key = DataKey::OutcomeStake(pool_id, i);
+                let stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+                stakes.push_back(stake);
+            }
+            stakes
+        }
+    }
+
+    /// Update outcome stake at a specific index and persist using optimized batch storage.
+    /// Also maintains backward compatibility with individual outcome stake keys.
+    fn update_outcome_stake(
+        env: &Env,
+        pool_id: u64,
+        outcome: u32,
+        amount: i128,
+        options_count: u32,
+    ) -> Vec<i128> {
+        let mut stakes = Self::get_outcome_stakes(env, pool_id, options_count);
+        let current = stakes.get(outcome).unwrap_or(0);
+        stakes.set(outcome, current + amount);
+
+        // Store using optimized batch key
+        let key = DataKey::OutcomeStakes(pool_id);
+        env.storage().persistent().set(&key, &stakes);
+        Self::extend_persistent(env, &key);
+
+        // Also update individual key for backward compatibility
+        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
+        env.storage()
+            .persistent()
+            .set(&outcome_key, &(current + amount));
+        Self::extend_persistent(env, &outcome_key);
+
+        stakes
     }
 
     // ── Storage & Side-Effect Functions ───────────────────────────────────────
@@ -433,6 +542,16 @@ impl PredifiContract {
 
     fn exit_reentrancy_guard(env: &Env) {
         env.storage().temporary().remove(&DataKey::ReentrancyGuard);
+    }
+
+    /// Returns true if the token is on the allowed betting whitelist.
+    fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
+        let key = DataKey::TokenWhitelist(token.clone());
+        let allowed = env.storage().persistent().get(&key).unwrap_or(false);
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(env, &key);
+        }
+        allowed
     }
 
     // ── Public interface ──────────────────────────────────────────────────────
@@ -578,26 +697,99 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Add a token to the allowed betting whitelist. Caller must have Admin role (0).
+    pub fn add_token_to_whitelist(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "add_token_to_whitelist"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let key = DataKey::TokenWhitelist(token.clone());
+        env.storage().persistent().set(&key, &true);
+        Self::extend_persistent(&env, &key);
+
+        TokenWhitelistAddedEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Remove a token from the allowed betting whitelist. Caller must have Admin role (0).
+    pub fn remove_token_from_whitelist(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "remove_token_from_whitelist"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let key = DataKey::TokenWhitelist(token.clone());
+        env.storage().persistent().remove(&key);
+
+        TokenWhitelistRemovedEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Returns true if the given token is on the allowed betting whitelist.
+    pub fn is_token_allowed(env: Env, token: Address) -> bool {
+        Self::is_token_whitelisted(&env, &token)
+    }
+
     /// Create a new prediction pool. Returns the new pool ID.
     ///
     /// PRE: end_time > current_time (INV-8)
-    /// POST: Pool.state = Active, Pool.total_stake = 0
+    /// POST: Pool.state = Active, Pool.total_stake = initial_liquidity (if provided)
     ///
     /// # Arguments
-    /// * `end_time`      - Unix timestamp after which no more predictions are accepted.
-    /// * `token`        - The Stellar token contract address used for staking.
-    /// * `options_count` - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
-    /// * `description`  - Short human-readable description of the event (max 256 bytes).
-    /// * `metadata_url` - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `creator`           - Address of the pool creator (must provide auth).
+    /// * `end_time`          - Unix timestamp after which no more predictions are accepted.
+    /// * `token`             - The Stellar token contract address used for staking.
+    /// * `options_count`     - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
+    /// * `description`       - Short human-readable description of the event (max 256 bytes).
+    /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
         env: Env,
+        creator: Address,
         end_time: u64,
         token: Address,
         options_count: u32,
         description: String,
         metadata_url: String,
+        initial_liquidity: i128,
     ) -> u64 {
         Self::require_not_paused(&env);
+        creator.require_auth();
+
+        // Validate: token must be on the allowed betting whitelist
+        if !Self::is_token_whitelisted(&env, &token) {
+            soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
+        }
 
         let current_time = env.ledger().timestamp();
 
@@ -617,6 +809,18 @@ impl PredifiContract {
         assert!(
             options_count <= MAX_OPTIONS_COUNT,
             "options_count exceeds maximum allowed value"
+        );
+
+        // Validate: initial_liquidity must be non-negative if provided
+        assert!(
+            initial_liquidity >= 0,
+            "initial_liquidity must be non-negative"
+        );
+
+        // Validate: initial_liquidity must not exceed maximum limit
+        assert!(
+            initial_liquidity <= MAX_INITIAL_LIQUIDITY,
+            "initial_liquidity exceeds maximum allowed value"
         );
 
         // Note: Token address validation is deferred to when the token is actually used.
@@ -640,15 +844,23 @@ impl PredifiContract {
             state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
-            total_stake: 0,
+            total_stake: initial_liquidity, // Initial liquidity is part of total stake
             description,
             metadata_url: metadata_url.clone(),
             options_count,
+            initial_liquidity,
+            creator: creator.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
+
+        // Transfer initial liquidity from creator to contract if provided
+        if initial_liquidity > 0 {
+            let token_client = token::Client::new(&env, &token);
+            token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
+        }
 
         env.storage()
             .instance()
@@ -661,8 +873,19 @@ impl PredifiContract {
             token,
             options_count,
             metadata_url,
+            initial_liquidity,
         }
         .publish(&env);
+
+        // Emit initial liquidity event if liquidity was provided
+        if initial_liquidity > 0 {
+            InitialLiquidityProvidedEvent {
+                pool_id,
+                creator,
+                amount: initial_liquidity,
+            }
+            .publish(&env);
+        }
 
         pool_id
     }
@@ -725,9 +948,9 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
-        // Retrieve winning-outcome stake for the diagnostic event.
-        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+        // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
 
         PoolResolvedEvent {
             pool_id,
@@ -878,13 +1101,9 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
-        // Update outcome stake (INV-1)
-        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let current_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&outcome_key, &(current_stake + amount));
-        Self::extend_persistent(&env, &outcome_key);
+        // Update outcome stake (INV-1) - using optimized batch storage
+        let _stakes =
+            Self::update_outcome_stake(&env, pool_id, outcome, amount, pool.options_count);
 
         let count_key = DataKey::UserPredictionCount(user.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
@@ -919,6 +1138,18 @@ impl PredifiContract {
                 amount,
                 outcome,
                 threshold: HIGH_VALUE_THRESHOLD,
+            }
+            .publish(&env);
+        }
+
+        // 🟢 INFO: For markets with many outcomes (16+), emit batch stake update event
+        // to avoid emitting individual events per outcome which would be impractical
+        // for large tournaments (e.g., 32-team bracket).
+        if pool.options_count >= 16 {
+            OutcomeStakesUpdatedEvent {
+                pool_id,
+                options_count: pool.options_count,
+                total_stake: pool.total_stake,
             }
             .publish(&env);
         }
@@ -1005,11 +1236,9 @@ impl PredifiContract {
             return Ok(0);
         }
 
-        let outcome_key = DataKey::OutcomeStake(pool_id, pool.outcome);
-        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
-        if env.storage().persistent().has(&outcome_key) {
-            Self::extend_persistent(&env, &outcome_key);
-        }
+        // Get winning stake using optimized batch storage
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(pool.outcome).unwrap_or(0);
 
         if winning_stake == 0 {
             Self::exit_reentrancy_guard(&env);
@@ -1096,6 +1325,47 @@ impl PredifiContract {
 
         results
     }
+
+    /// Get all outcome stakes for a pool using optimized batch storage.
+    /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
+    /// Instead of making N storage reads (one per outcome), it makes a single read.
+    ///
+    /// Returns a Vec of stakes where index corresponds to outcome index.
+    /// For example, stake[0] is the total amount bet on outcome 0.
+    pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        Self::get_outcome_stakes(&env, pool_id, pool.options_count)
+    }
+
+    /// Get a specific outcome's stake (backward compatible).
+    /// For markets with many outcomes, consider using get_pool_outcome_stakes() instead.
+    pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
+        let pool_key = DataKey::Pool(pool_id);
+        if !env.storage().persistent().has(&pool_key) {
+            return 0;
+        }
+
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if outcome >= pool.options_count {
+            return 0;
+        }
+
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        stakes.get(outcome).unwrap_or(0)
+    }
 }
 
 #[contractimpl]
@@ -1157,9 +1427,9 @@ impl OracleCallback for PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         PredifiContract::extend_persistent(&env, &pool_key);
 
-        // Retrieve winning-outcome stake for the diagnostic event.
-        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+        // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
+        let stakes = PredifiContract::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
 
         OracleResolvedEvent {
             pool_id,
