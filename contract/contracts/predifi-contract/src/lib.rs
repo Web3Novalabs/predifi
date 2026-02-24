@@ -3,9 +3,9 @@
 
 mod safe_math;
 #[cfg(test)]
-mod stress_test;
-#[cfg(test)]
 mod safe_math_examples;
+#[cfg(test)]
+mod stress_test;
 #[cfg(test)]
 mod test_utils;
 

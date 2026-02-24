@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::{PredifiContract, PredifiContractClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
@@ -32,7 +30,14 @@ const ROLE_ADMIN: u32 = 0;
 const ROLE_OPERATOR: u32 = 1;
 
 /// Helper to setup a test environment for stress testing.
-fn stress_setup(env: &Env) -> (PredifiContractClient, Address, token::Client, token::StellarAssetClient) {
+fn stress_setup(
+    env: &Env,
+) -> (
+    PredifiContractClient<'_>,
+    Address,
+    token::Client<'_>,
+    token::StellarAssetClient<'_>,
+) {
     env.mock_all_auths();
 
     // Set protocol version and info
@@ -50,16 +55,17 @@ fn stress_setup(env: &Env) -> (PredifiContractClient, Address, token::Client, to
     let admin = Address::generate(env);
     let operator = Address::generate(env);
     let treasury = Address::generate(env);
-    
+
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     ac_client.grant_role(&admin, &ROLE_OPERATOR); // Grant operator too for convenience
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
-    
+
     client.init(&ac_id, &treasury, &500, &3600);
 
     // Setup Token
     let token_admin = Address::generate(env);
-    let token_id = env.register_stellar_asset_contract(token_admin.clone());
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_id = token_contract.address();
     let token_client = token::Client::new(env, &token_id);
     let token_admin_client = token::StellarAssetClient::new(env, &token_id);
 
@@ -96,7 +102,7 @@ fn test_high_volume_predictions_single_pool() {
     for i in 0..num_users {
         let user = Address::generate(&env);
         token_admin_client.mint(&user, &stake_per_user);
-        
+
         // Split users between outcome 0 and 1
         let outcome = i % 2;
         client.place_prediction(&user, &pool_id, &stake_per_user, &outcome);
