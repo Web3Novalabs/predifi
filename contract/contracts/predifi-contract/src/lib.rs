@@ -393,6 +393,7 @@ pub struct TreasuryWithdrawnEvent {
     pub amount: i128,
     pub recipient: Address,
     pub timestamp: u64,
+}
 #[contractevent(topics = ["upgrade"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UpgradeEvent {
