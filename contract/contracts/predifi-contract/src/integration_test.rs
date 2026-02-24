@@ -72,6 +72,9 @@ fn test_full_market_lifecycle() {
     token_ctx.mint(&user2, 1000);
     token_ctx.mint(&user3, 1000);
 
+    // Whitelist the token
+    client.add_token_to_whitelist(&_admin, &token_ctx.token_address);
+
     // 1. Create Pool
     let end_time = 3600u64;
     let pool_id = client.create_pool(
@@ -143,6 +146,9 @@ fn test_multi_user_betting_and_balance_verification() {
         token_ctx.mint(&user, 5000);
     }
 
+    // Whitelist the token
+    client.add_token_to_whitelist(&_admin, &token_ctx.token_address);
+
     let creator = Address::generate(&env);
     let pool_id = client.create_pool(
         &creator,
@@ -206,6 +212,9 @@ fn test_market_resolution_multiple_winners() {
     token_ctx.mint(&user1, 1000);
     token_ctx.mint(&user2, 1000);
     token_ctx.mint(&user3, 1000);
+
+    // Whitelist the token
+    client.add_token_to_whitelist(&_admin, &token_ctx.token_address);
 
     let creator = Address::generate(&env);
     let pool_id = client.create_pool(
