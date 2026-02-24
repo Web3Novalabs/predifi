@@ -3,6 +3,8 @@
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
+#[cfg(test)]
+mod test_utils;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
@@ -83,6 +85,8 @@ pub struct Pool {
     pub initial_liquidity: i128,
     /// Address of the pool creator.
     pub creator: Address,
+    /// Category symbol for filtering.
+    pub category: Symbol,
 }
 
 #[contracttype]
@@ -120,6 +124,8 @@ pub enum DataKey {
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
+    CategoryPoolCount(Symbol),
+    CategoryPoolIndex(Symbol, u32),
     /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
     TokenWhitelist(Address),
 }
@@ -188,12 +194,10 @@ pub struct PoolCreatedEvent {
     pub pool_id: u64,
     pub end_time: u64,
     pub token: Address,
-    /// Number of options/outcomes for this pool.
     pub options_count: u32,
-    /// Metadata URL included so off-chain indexers can immediately fetch context.
     pub metadata_url: String,
-    /// Initial liquidity provided by the pool creator (optional, 0 if not provided).
     pub initial_liquidity: i128,
+    pub category: Symbol,
 }
 
 #[contractevent(topics = ["initial_liquidity_provided"])]
@@ -769,6 +773,7 @@ impl PredifiContract {
         description: String,
         metadata_url: String,
         initial_liquidity: i128,
+        category: Symbol,
     ) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
@@ -837,6 +842,7 @@ impl PredifiContract {
             options_count,
             initial_liquidity,
             creator: creator.clone(),
+            category: category.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -848,6 +854,17 @@ impl PredifiContract {
             let token_client = token::Client::new(&env, &token);
             token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
         }
+
+        // Update category index
+        let category_count_key = DataKey::CategoryPoolCount(category.clone());
+        let category_count: u32 = env.storage().persistent().get(&category_count_key).unwrap_or(0);
+
+        let category_index_key = DataKey::CategoryPoolIndex(category.clone(), category_count);
+        env.storage().persistent().set(&category_index_key, &pool_id);
+        Self::extend_persistent(&env, &category_index_key);
+
+        env.storage().persistent().set(&category_count_key, &(category_count + 1));
+        Self::extend_persistent(&env, &category_count_key);
 
         env.storage()
             .instance()
@@ -861,6 +878,7 @@ impl PredifiContract {
             options_count,
             metadata_url,
             initial_liquidity,
+            category,
         }
         .publish(&env);
 
@@ -1287,7 +1305,6 @@ impl PredifiContract {
         results
     }
 
-    /// Get all outcome stakes for a pool using optimized batch storage.
     /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
     /// Instead of making N storage reads (one per outcome), it makes a single read.
     ///
@@ -1326,6 +1343,44 @@ impl PredifiContract {
 
         let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
         stakes.get(outcome).unwrap_or(0)
+    }
+
+    /// Get a paginated list of pool IDs by category.
+    pub fn get_pools_by_category(
+        env: Env,
+        category: Symbol,
+        offset: u32,
+        limit: u32,
+    ) -> Vec<u64> {
+        let count_key = DataKey::CategoryPoolCount(category.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if env.storage().persistent().has(&count_key) {
+            Self::extend_persistent(&env, &count_key);
+        }
+
+        let mut results = Vec::new(&env);
+
+        if offset >= count || limit == 0 {
+            return results;
+        }
+
+        let start_index = count.saturating_sub(offset).saturating_sub(1);
+        let num_to_take = core::cmp::min(limit, count.saturating_sub(offset));
+
+        for i in 0..num_to_take {
+            let index = start_index.saturating_sub(i);
+            let index_key = DataKey::CategoryPoolIndex(category.clone(), index);
+            let pool_id: u64 = env
+                .storage()
+                .persistent()
+                .get(&index_key)
+                .expect("index not found");
+            Self::extend_persistent(&env, &index_key);
+
+            results.push_back(pool_id);
+        }
+
+        results
     }
 }
 
@@ -1423,3 +1478,4 @@ impl OracleCallback for PredifiContract {
 }
 
 mod test;
+mod integration_test;
