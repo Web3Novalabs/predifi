@@ -1821,3 +1821,57 @@ fn test_paused_blocks_withdraw_treasury() {
     // Try to withdraw while paused - should panic
     client.withdraw_treasury(&admin, &token_address, &1000, &treasury);
 }
+
+#[test]
+fn test_get_pool_stats() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+    token_admin_client.mint(&user1, &5000);
+    token_admin_client.mint(&user2, &5000);
+    token_admin_client.mint(&user3, &5000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32, // Binary pool
+        &String::from_str(&env, "Stats Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    // Initial stats
+    let stats = client.get_pool_stats(&pool_id);
+    assert_eq!(stats.participants_count, 0);
+    assert_eq!(stats.total_stake, 0);
+
+    // User 1 bets 100 on outcome 0
+    client.place_prediction(&user1, &pool_id, &100, &0);
+    // User 2 bets 200 on outcome 1
+    client.place_prediction(&user2, &pool_id, &200, &1);
+    // User 3 bets 100 on outcome 1
+    client.place_prediction(&user3, &pool_id, &100, &1);
+    // User 1 bets 100 more on outcome 0 (should not increase participants)
+    client.place_prediction(&user1, &pool_id, &100, &0);
+
+    let stats = client.get_pool_stats(&pool_id);
+    assert_eq!(stats.participants_count, 3);
+    assert_eq!(stats.total_stake, 500); // 100+200+100+100
+    assert_eq!(stats.stakes_per_outcome.get(0), Some(200));
+    assert_eq!(stats.stakes_per_outcome.get(1), Some(300));
+
+    // Odds:
+    // Outcome 0: (500 * 10000) / 200 = 25000 (2.5x)
+    // Outcome 1: (500 * 10000) / 300 = 16666 (1.6666x)
+    assert_eq!(stats.current_odds.get(0), Some(25000));
+    assert_eq!(stats.current_odds.get(1), Some(16666));
+}
