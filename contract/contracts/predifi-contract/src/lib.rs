@@ -50,6 +50,8 @@ pub enum PredifiError {
     AlreadyClaimed = 60,
     PoolCanceled = 70,
     ResolutionDelayNotMet = 81,
+    /// Token is not on the allowed betting whitelist.
+    TokenNotWhitelisted = 91,
 }
 
 #[contracttype]
@@ -118,6 +120,8 @@ pub enum DataKey {
     UserPredictionIndex(Address, u32),
     Config,
     Paused,
+    /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
+    TokenWhitelist(Address),
 }
 
 #[contracttype]
@@ -345,6 +349,20 @@ pub struct OutcomeStakesUpdatedEvent {
     pub total_stake: i128,
 }
 
+#[contractevent(topics = ["token_whitelist_added"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistAddedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
+#[contractevent(topics = ["token_whitelist_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistRemovedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub trait OracleCallback {
@@ -513,6 +531,16 @@ impl PredifiContract {
         }
     }
 
+    /// Returns true if the token is on the allowed betting whitelist.
+    fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
+        let key = DataKey::TokenWhitelist(token.clone());
+        let allowed = env.storage().persistent().get(&key).unwrap_or(false);
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(env, &key);
+        }
+        allowed
+    }
+
     // ── Public interface ──────────────────────────────────────────────────────
 
     /// Initialize the contract. Idempotent — safe to call multiple times.
@@ -656,6 +684,68 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Add a token to the allowed betting whitelist. Caller must have Admin role (0).
+    pub fn add_token_to_whitelist(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "add_token_to_whitelist"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let key = DataKey::TokenWhitelist(token.clone());
+        env.storage().persistent().set(&key, &true);
+        Self::extend_persistent(&env, &key);
+
+        TokenWhitelistAddedEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Remove a token from the allowed betting whitelist. Caller must have Admin role (0).
+    pub fn remove_token_from_whitelist(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "remove_token_from_whitelist"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let key = DataKey::TokenWhitelist(token.clone());
+        env.storage().persistent().remove(&key);
+
+        TokenWhitelistRemovedEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Returns true if the given token is on the allowed betting whitelist.
+    pub fn is_token_allowed(env: Env, token: Address) -> bool {
+        Self::is_token_whitelisted(&env, &token)
+    }
+
     /// Create a new prediction pool. Returns the new pool ID.
     ///
     /// PRE: end_time > current_time (INV-8)
@@ -682,6 +772,11 @@ impl PredifiContract {
     ) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
+
+        // Validate: token must be on the allowed betting whitelist
+        if !Self::is_token_whitelisted(&env, &token) {
+            soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
+        }
 
         let current_time = env.ledger().timestamp();
 
