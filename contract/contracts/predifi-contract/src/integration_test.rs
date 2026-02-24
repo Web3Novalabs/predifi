@@ -54,6 +54,9 @@ fn setup_integration(
 
     let token_ctx = TokenTestContext::deploy(env, &admin);
 
+    // Whitelist the token
+    client.add_token_to_whitelist(&admin, &token_ctx.token_address);
+
     (client, token_ctx, admin, operator, treasury)
 }
 

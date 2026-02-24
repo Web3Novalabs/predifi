@@ -851,6 +851,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
         &String::from_str(&env, "Pool"),
         &String::from_str(&env, "ipfs://meta"),
         &0i128,
+        &Symbol::new(&env, "test"),
     );
 }
 
@@ -1353,4 +1354,130 @@ fn test_get_pools_by_category() {
 
     let empty = client.get_pools_by_category(&cat1, &2, &10);
     assert_eq!(empty.len(), 0);
+}
+
+// ================== Treasury withdrawal tests ==================
+
+#[test]
+fn test_admin_can_withdraw_treasury() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, _, creator) =
+        setup(&env);
+    let contract_addr = client.address.clone();
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Mint tokens to contract (simulating accumulated fees)
+    token_admin_client.mint(&contract_addr, &5000);
+
+    // Admin withdraws to treasury
+    client.withdraw_treasury(&admin, &token_address, &3000, &treasury);
+
+    // Verify balances
+    assert_eq!(token.balance(&treasury), 3000);
+    assert_eq!(token.balance(&contract_addr), 2000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_non_admin_cannot_withdraw_treasury() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let contract_addr = client.address.clone();
+    let non_admin = Address::generate(&env);
+
+    token_admin_client.mint(&contract_addr, &5000);
+
+    // Non-admin tries to withdraw - should panic
+    client.withdraw_treasury(&non_admin, &token_address, &3000, &treasury);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #42)")]
+fn test_withdraw_treasury_rejects_zero_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let contract_addr = client.address.clone();
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    token_admin_client.mint(&contract_addr, &5000);
+
+    // Try to withdraw zero amount - should panic
+    client.withdraw_treasury(&admin, &token_address, &0, &treasury);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #44)")]
+fn test_withdraw_treasury_rejects_insufficient_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let contract_addr = client.address.clone();
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    token_admin_client.mint(&contract_addr, &1000);
+
+    // Try to withdraw more than balance - should panic
+    client.withdraw_treasury(&admin, &token_address, &5000, &treasury);
+}
+
+#[test]
+fn test_withdraw_treasury_multiple_tokens() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let contract_addr = client.address.clone();
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Setup second token
+    let token_admin2 = Address::generate(&env);
+    let token_contract2 = env.register_stellar_asset_contract(token_admin2.clone());
+    let token2 = token::Client::new(&env, &token_contract2);
+    let token_admin_client2 = token::StellarAssetClient::new(&env, &token_contract2);
+    client.add_token_to_whitelist(&admin, &token_contract2);
+
+    // Mint both tokens to contract
+    token_admin_client.mint(&contract_addr, &5000);
+    token_admin_client2.mint(&contract_addr, &3000);
+
+    // Withdraw from both tokens
+    client.withdraw_treasury(&admin, &token_address, &2000, &treasury);
+    client.withdraw_treasury(&admin, &token_contract2, &1500, &treasury);
+
+    // Verify balances
+    assert_eq!(token.balance(&treasury), 2000);
+    assert_eq!(token2.balance(&treasury), 1500);
+    assert_eq!(token.balance(&contract_addr), 3000);
+    assert_eq!(token2.balance(&contract_addr), 1500);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_withdraw_treasury() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let contract_addr = client.address.clone();
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    token_admin_client.mint(&contract_addr, &5000);
+
+    // Pause contract
+    client.pause(&admin);
+
+    // Try to withdraw while paused - should panic
+    client.withdraw_treasury(&admin, &token_address, &1000, &treasury);
 }
