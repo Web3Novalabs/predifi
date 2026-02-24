@@ -102,6 +102,8 @@ fn test_claim_winnings() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -144,6 +146,8 @@ fn test_double_claim() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -178,6 +182,8 @@ fn test_claim_unresolved() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -208,6 +214,8 @@ fn test_multiple_pools_independent() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -221,6 +229,8 @@ fn test_multiple_pools_independent() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -248,7 +258,7 @@ fn test_unauthorized_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, _, _, _, _, _, creator) = setup(&env);
+    let (_, client, _, _, _, _, _, _creator) = setup(&env);
     let not_admin = Address::generate(&env);
     client.set_fee_bps(&not_admin, &999u32);
 }
@@ -259,7 +269,7 @@ fn test_unauthorized_set_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, _, _, _, _, _, creator) = setup(&env);
+    let (_, client, _, _, _, _, _, _creator) = setup(&env);
     let not_admin = Address::generate(&env);
     let new_treasury = Address::generate(&env);
     client.set_treasury(&not_admin, &new_treasury);
@@ -282,6 +292,8 @@ fn test_unauthorized_resolve_pool() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -321,6 +333,8 @@ fn test_oracle_can_resolve() {
         &3u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -369,6 +383,8 @@ fn test_unauthorized_oracle_resolve() {
         &3u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -528,6 +544,8 @@ fn test_paused_blocks_create_pool() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -633,6 +651,8 @@ fn test_unpause_restores_functionality() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -661,6 +681,8 @@ fn test_get_user_predictions() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -674,6 +696,8 @@ fn test_get_user_predictions() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -687,6 +711,8 @@ fn test_get_user_predictions() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -747,6 +773,8 @@ fn test_admin_can_cancel_pool() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -787,6 +815,8 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -813,6 +843,8 @@ fn test_non_admin_non_creator_cannot_cancel() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -850,8 +882,11 @@ fn test_create_pool_rejects_non_whitelisted_token() {
         &2u32,
         &String::from_str(&env, "Pool"),
         &String::from_str(&env, "ipfs://meta"),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "test"),
+        &Symbol::new(&env, "tech"),
     );
 }
 
@@ -880,7 +915,7 @@ fn test_token_whitelist_add_remove_and_is_allowed() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #22)")]
-fn test_cannot_cancel_resolved_pool() {
+fn test_cannot_cancel_resolved_pool_by_operator() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -914,6 +949,8 @@ fn test_cannot_cancel_resolved_pool() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -964,6 +1001,8 @@ fn test_cannot_place_prediction_on_canceled_pool() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -1009,6 +1048,8 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -1059,6 +1100,8 @@ fn test_admin_can_cancel_pool_with_predictions() {
             &env,
             "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
         ),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -1105,12 +1148,11 @@ fn test_cancel_pool_refunds_predictions() {
         &creator,
         &100000u64,
         &token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+        &2u32,
+        &String::from_str(&env, "Cancel Test Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -1126,6 +1168,34 @@ fn test_cancel_pool_refunds_predictions() {
     // Verify predictions are refunded (get_user_predictions should show the prediction still exists for potential refund claim)
     let predictions = client.get_user_predictions(&user1, &0u32, &10u32);
     assert_eq!(predictions.len(), 1);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #22)")]
+fn test_cannot_cancel_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Resolve Then Cancel Pool"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 10001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+    // Should panic because pool is already resolved
+    client.cancel_pool(&operator, &pool_id);
 }
 
 #[test]
@@ -1161,6 +1231,8 @@ fn test_cannot_resolve_canceled_pool() {
         &3u32,
         &String::from_str(&env, "Test Pool"),
         &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -1168,6 +1240,35 @@ fn test_cannot_resolve_canceled_pool() {
     client.cancel_pool(&admin, &pool_id);
     // Should panic because pool is not active (canceled)
     client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+#[should_panic(expected = "Cannot place prediction on canceled pool")]
+fn test_cannot_predict_on_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, _) = setup(&env);
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Predict Canceled Pool Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+    // Should panic
+    client.place_prediction(&user1, &pool_id, &100, &1);
 }
 
 #[test]
@@ -1201,6 +1302,8 @@ fn test_resolve_pool_before_delay() {
         &2u32,
         &String::from_str(&env, "Delay Test"),
         &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -1246,6 +1349,8 @@ fn test_resolve_pool_after_delay() {
         &2u32,
         &String::from_str(&env, "Delay Test"),
         &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -1283,6 +1388,8 @@ fn test_mark_pool_ready() {
         &2u32,
         &String::from_str(&env, "Ready Test"),
         &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
         &0i128,
         &Symbol::new(&env, "tech"),
     );
@@ -1296,6 +1403,159 @@ fn test_mark_pool_ready() {
     env.ledger().with_mut(|li| li.timestamp = end_time + 3600);
     let res = client.try_mark_pool_ready(&pool_id);
     assert!(res.is_ok());
+}
+
+// ── Staking Limits Tests ──────────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "amount is below the pool minimum stake")]
+fn test_stake_below_minimum_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, _) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let creator = Address::generate(&env);
+    // Create pool with min_stake = 50
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Min Stake Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &50i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    // Should panic: amount (10) < min_stake (50)
+    client.place_prediction(&user, &pool_id, &10, &0);
+}
+
+#[test]
+#[should_panic(expected = "amount exceeds the pool maximum stake")]
+fn test_stake_above_maximum_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, _) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let creator = Address::generate(&env);
+    // Create pool with min_stake = 1, max_stake = 100
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Max Stake Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &100i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    // Should panic: amount (200) > max_stake (100)
+    client.place_prediction(&user, &pool_id, &200, &0);
+}
+
+#[test]
+fn test_stake_at_boundaries_accepted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, _) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    token_admin_client.mint(&user2, &1000);
+
+    let creator = Address::generate(&env);
+    // Create pool with min_stake = 10, max_stake = 200
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Boundary Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &10i128,
+        &200i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    // Both boundary values should succeed
+    client.place_prediction(&user1, &pool_id, &10, &0); // exactly min_stake
+    client.place_prediction(&user2, &pool_id, &200, &1); // exactly max_stake
+}
+
+#[test]
+fn test_set_stake_limits_by_operator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, _) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let creator = Address::generate(&env);
+    // Create pool with min_stake = 1
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Update Limits Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    // Operator updates: min_stake = 50, max_stake = 500
+    client.set_stake_limits(&operator, &pool_id, &50i128, &500i128);
+
+    // Stake at the new minimum should succeed
+    client.place_prediction(&user, &pool_id, &50, &0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_set_stake_limits_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Unauthorized Limits Test"),
+        &String::from_str(&env, "ipfs://metadata"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    // Non-operator should be rejected
+    let not_operator = Address::generate(&env);
+    client.set_stake_limits(&not_operator, &pool_id, &50i128, &500i128);
 }
 
 #[test]
@@ -1315,6 +1575,8 @@ fn test_get_pools_by_category() {
         &2u32,
         &String::from_str(&env, "Pool 0"),
         &String::from_str(&env, "ipfs://0"),
+        &1i128,
+        &0i128,
         &0i128,
         &cat1,
     );
@@ -1325,6 +1587,8 @@ fn test_get_pools_by_category() {
         &2u32,
         &String::from_str(&env, "Pool 1"),
         &String::from_str(&env, "ipfs://1"),
+        &1i128,
+        &0i128,
         &0i128,
         &cat1,
     );
@@ -1335,6 +1599,8 @@ fn test_get_pools_by_category() {
         &2u32,
         &String::from_str(&env, "Pool 2"),
         &String::from_str(&env, "ipfs://2"),
+        &1i128,
+        &0i128,
         &0i128,
         &cat2,
     );

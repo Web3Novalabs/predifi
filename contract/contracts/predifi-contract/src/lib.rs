@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 mod safe_math;
 #[cfg(test)]
@@ -84,6 +85,10 @@ pub struct Pool {
     pub metadata_url: String,
     /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT)
     pub options_count: u32,
+    /// Minimum stake amount per prediction (must be > 0).
+    pub min_stake: i128,
+    /// Maximum stake amount per prediction (0 = no limit).
+    pub max_stake: i128,
     /// Initial liquidity provided by the pool creator (house money).
     /// This is part of total_stake but excluded from fee calculations.
     pub initial_liquidity: i128,
@@ -236,6 +241,15 @@ pub struct PoolCanceledEvent {
     pub caller: Address,
     pub reason: String,
     pub operator: Address,
+}
+
+#[contractevent(topics = ["stake_limits_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakeLimitsUpdatedEvent {
+    pub pool_id: u64,
+    pub operator: Address,
+    pub min_stake: i128,
+    pub max_stake: i128,
 }
 
 #[contractevent(topics = ["prediction_placed"])]
@@ -843,6 +857,8 @@ impl PredifiContract {
     /// * `options_count`     - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
     /// * `description`       - Short human-readable description of the event (max 256 bytes).
     /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `min_stake`         - Minimum stake amount per prediction (must be > 0).
+    /// * `max_stake`         - Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
     /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
     #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
@@ -853,6 +869,8 @@ impl PredifiContract {
         options_count: u32,
         description: String,
         metadata_url: String,
+        min_stake: i128,
+        max_stake: i128,
         initial_liquidity: i128,
         category: Symbol,
     ) -> u64 {
@@ -903,6 +921,13 @@ impl PredifiContract {
         assert!(description.len() <= 256, "description exceeds 256 bytes");
         assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
 
+        // Validate stake limits
+        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(
+            max_stake == 0 || max_stake >= min_stake,
+            "max_stake must be zero (unlimited) or >= min_stake"
+        );
+
         let pool_id: u64 = env
             .storage()
             .instance()
@@ -921,6 +946,8 @@ impl PredifiContract {
             description,
             metadata_url: metadata_url.clone(),
             options_count,
+            min_stake,
+            max_stake,
             initial_liquidity,
             creator: creator.clone(),
             category: category.clone(),
@@ -1155,7 +1182,10 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Place a prediction on a pool. Cannot predict on canceled pools.
+    /// Place a prediction on a pool. Cannot predict on canceled or resolved pools.
+    /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
+    /// PRE: pool.min_stake <= amount <= pool.max_stake (unless max_stake == 0)
+    /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
@@ -1179,6 +1209,18 @@ impl PredifiContract {
             outcome < pool.options_count,
             "outcome exceeds options_count"
         );
+
+        // Validate: per-pool stake limits
+        assert!(
+            amount >= pool.min_stake,
+            "amount is below the pool minimum stake"
+        );
+        if pool.max_stake > 0 {
+            assert!(
+                amount <= pool.max_stake,
+                "amount exceeds the pool maximum stake"
+            );
+        }
 
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&user, &env.current_contract_address(), &amount);
@@ -1333,6 +1375,54 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(winnings)
+    }
+
+    /// Update the stake limits for an active pool. Caller must have Operator role (1).
+    /// PRE: pool.state = Active, operator has role 1
+    /// POST: pool.min_stake and pool.max_stake updated
+    pub fn set_stake_limits(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        min_stake: i128,
+        max_stake: i128,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        operator.require_auth();
+        Self::require_role(&env, &operator, 1)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(
+            max_stake == 0 || max_stake >= min_stake,
+            "max_stake must be zero (unlimited) or >= min_stake"
+        );
+
+        pool.min_stake = min_stake;
+        pool.max_stake = max_stake;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        StakeLimitsUpdatedEvent {
+            pool_id,
+            operator,
+            min_stake,
+            max_stake,
+        }
+        .publish(&env);
+
+        Ok(())
     }
 
     /// Get a paginated list of a user's predictions.
