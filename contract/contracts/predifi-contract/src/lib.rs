@@ -55,6 +55,10 @@ pub enum PredifiError {
     ResolutionDelayNotMet = 81,
     /// Token is not on the allowed betting whitelist.
     TokenNotWhitelisted = 91,
+    /// Invalid amount provided (e.g., zero or negative).
+    InvalidAmount = 42,
+    /// Insufficient balance for the operation.
+    InsufficientBalance = 44,
 }
 
 #[contracttype]
@@ -381,6 +385,15 @@ pub struct TokenWhitelistRemovedEvent {
     pub token: Address,
 }
 
+#[contractevent(topics = ["treasury_withdrawn"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryWithdrawnEvent {
+    pub admin: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub recipient: Address,
+    pub timestamp: u64,
+}
 #[contractevent(topics = ["upgrade"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UpgradeEvent {
@@ -408,7 +421,7 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
-    // ── Pure Helper Functions (side-effect free, verifiable) ──────────────────
+    // ====== Pure Helper Functions (side-effect free, verifiable) ======
 
     /// Pure: Calculate winnings for a user given pool state
     /// PRE: winning_stake > 0
@@ -798,6 +811,73 @@ impl PredifiContract {
     /// Returns true if the given token is on the allowed betting whitelist.
     pub fn is_token_allowed(env: Env, token: Address) -> bool {
         Self::is_token_whitelisted(&env, &token)
+    }
+
+    /// Withdraw accumulated protocol fees or unused liquidity from the contract.
+    /// Only callable by Admin (role 0).
+    ///
+    /// # Arguments
+    /// * `admin` - Address with Admin role (must provide auth)
+    /// * `token` - The token contract address to withdraw
+    /// * `amount` - Amount to withdraw (must be > 0)
+    /// * `recipient` - Address to receive the withdrawn funds (typically treasury)
+    ///
+    /// # Returns
+    /// Result indicating success or error
+    ///
+    /// # Security
+    /// - Requires Admin role (0)
+    /// - Emits TreasuryWithdrawnEvent for audit trail
+    /// - Validates amount > 0
+    /// - Checks contract has sufficient balance
+    pub fn withdraw_treasury(
+        env: Env,
+        admin: Address,
+        token: Address,
+        amount: i128,
+        recipient: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+
+        // Verify admin role
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "withdraw_treasury"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+
+        // Validate amount
+        if amount <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        // Get token client and check balance
+        let token_client = token::Client::new(&env, &token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+
+        if contract_balance < amount {
+            return Err(PredifiError::InsufficientBalance);
+        }
+
+        // Transfer tokens to recipient
+        token_client.transfer(&env.current_contract_address(), &recipient, &amount);
+
+        // Emit audit event
+        TreasuryWithdrawnEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+            amount,
+            recipient: recipient.clone(),
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
+        Ok(())
     }
 
     /// Create a new prediction pool. Returns the new pool ID.
