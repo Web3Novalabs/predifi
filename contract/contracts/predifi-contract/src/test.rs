@@ -851,6 +851,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
         &String::from_str(&env, "Pool"),
         &String::from_str(&env, "ipfs://meta"),
         &0i128,
+        &Symbol::new(&env, "general"),
     );
 }
 

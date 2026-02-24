@@ -99,6 +99,15 @@ pub struct Config {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTier {
+    /// Minimum total stake (in stroops) to qualify for this tier
+    pub min_stake: i128,
+    /// Fee in basis points for this tier (e.g. 50 = 0.5%)
+    pub fee_bps: u32,
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct UserPredictionDetail {
     pub pool_id: u64,
@@ -128,6 +137,8 @@ pub enum DataKey {
     CategoryPoolIndex(Symbol, u32),
     /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
     TokenWhitelist(Address),
+    /// Dynamic fee tiers ordered by min_stake ascending
+    FeeTiers,
 }
 
 #[contracttype]
@@ -158,6 +169,21 @@ pub struct PauseEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnpauseEvent {
     pub admin: Address,
+}
+
+#[contractevent(topics = ["fee_tier_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTierUpdateEvent {
+    pub admin: Address,
+    pub tiers_count: u32,
+}
+
+#[contractevent(topics = ["fee_tier_applied"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTierAppliedEvent {
+    pub pool_id: u64,
+    pub total_stake: i128,
+    pub fee_bps: u32,
 }
 
 #[contractevent(topics = ["fee_update"])]

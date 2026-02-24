@@ -53,6 +53,7 @@ fn setup_integration(
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let token_ctx = TokenTestContext::deploy(env, &admin);
+    client.add_token_to_whitelist(&admin, &token_ctx.token_address);
 
     (client, token_ctx, admin, operator, treasury)
 }
