@@ -6,6 +6,8 @@ mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
 #[cfg(test)]
+mod stress_test;
+#[cfg(test)]
 mod test_utils;
 
 use soroban_sdk::{
@@ -109,6 +111,16 @@ pub struct Pool {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PoolStats {
+    pub pool_id: u64,
+    pub total_stake: i128,
+    pub stakes_per_outcome: Vec<i128>,
+    pub participants_count: u32,
+    pub current_odds: Vec<u64>, // Fixed-point with 4 decimals (e.g., 10000 = 1.00x)
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct Config {
     pub fee_bps: u32,
@@ -147,6 +159,7 @@ pub enum DataKey {
     CategoryPoolIndex(Symbol, u32),
     /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
     TokenWhitelist(Address),
+    ParticipantsCount(u64),
 }
 
 #[contracttype]
@@ -1042,6 +1055,10 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
+        let pc_key = DataKey::ParticipantsCount(pool_id);
+        env.storage().persistent().set(&pc_key, &0u32);
+        Self::extend_persistent(&env, &pc_key);
+
         // Transfer initial liquidity from creator to contract if provided
         if initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
@@ -1311,6 +1328,12 @@ impl PredifiContract {
         token_client.transfer(&user, &env.current_contract_address(), &amount);
 
         let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        if !env.storage().persistent().has(&pred_key) {
+            let pc_key = DataKey::ParticipantsCount(pool_id);
+            let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+            env.storage().persistent().set(&pc_key, &(pc + 1));
+            Self::extend_persistent(&env, &pc_key);
+        }
         env.storage()
             .persistent()
             .set(&pred_key, &Prediction { amount, outcome });
@@ -1574,6 +1597,17 @@ impl PredifiContract {
     ///
     /// Returns a Vec of stakes where index corresponds to outcome index.
     /// For example, stake[0] is the total amount bet on outcome 0.
+    pub fn get_pool(env: Env, pool_id: u64) -> Pool {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+        pool
+    }
+
     pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -1642,269 +1676,48 @@ impl PredifiContract {
         results
     }
 
-    // ── Price Feed Integration Methods ───────────────────────────────────────────
-
-    /// Initialize the oracle configuration for price feeds. Only callable by Admin (role 0).
-    pub fn init_oracle(
-        env: Env,
-        admin: Address,
-        pyth_contract: Address,
-        max_price_age: u64,
-        min_confidence_ratio: u32,
-    ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
-        admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
-
-        PriceFeedAdapter::init_oracle(
-            &env,
-            &admin,
-            pyth_contract.clone(),
-            max_price_age,
-            min_confidence_ratio,
-        )?;
-
-        OracleInitEvent {
-            admin: admin.clone(),
-            pyth_contract,
-            max_price_age,
-            min_confidence_ratio,
-        }
-        .publish(&env);
-
-        Ok(())
-    }
-
-    /// Update price feed data. Only callable by Oracle (role 3).
-    pub fn update_price_feed(
-        env: Env,
-        oracle: Address,
-        feed_pair: Symbol,
-        price: i128,
-        confidence: i128,
-        timestamp: u64,
-        expires_at: u64,
-    ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
-        oracle.require_auth();
-        Self::require_role(&env, &oracle, 3)?;
-
-        PriceFeedAdapter::update_price_feed(
-            &env,
-            &oracle,
-            feed_pair.clone(),
-            price,
-            confidence,
-            timestamp,
-            expires_at,
-        )?;
-
-        PriceFeedUpdatedEvent {
-            oracle: oracle.clone(),
-            feed_pair: feed_pair.clone(),
-            price,
-            confidence,
-            timestamp,
-            expires_at,
-        }
-        .publish(&env);
-
-        Ok(())
-    }
-
-    /// Batch update multiple price feeds. Only callable by Oracle (role 3).
-    pub fn batch_update_price_feeds(
-        env: Env,
-        oracle: Address,
-        updates: Vec<(Symbol, i128, i128, u64, u64)>,
-    ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
-        oracle.require_auth();
-        Self::require_role(&env, &oracle, 3)?;
-
-        PriceFeedAdapter::batch_update_price_feeds(&env, &oracle, updates.clone())?;
-
-        // Emit individual events for each update for better tracking
-        for i in 0..updates.len() {
-            let (feed_pair, price, confidence, timestamp, expires_at) = updates.get(i).unwrap();
-
-            PriceFeedUpdatedEvent {
-                oracle: oracle.clone(),
-                feed_pair: feed_pair.clone(),
-                price,
-                confidence,
-                timestamp,
-                expires_at,
-            }
-            .publish(&env);
-        }
-
-        Ok(())
-    }
-
-    /// Set price condition for a pool. Only callable by Operator (role 1).
-    pub fn set_price_condition(
-        env: Env,
-        operator: Address,
-        pool_id: u64,
-        feed_pair: Symbol,
-        target_price: i128,
-        operator_type: u32,
-        tolerance_bps: u32,
-    ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
-        operator.require_auth();
-        Self::require_role(&env, &operator, 1)?;
-
-        // Validate operator type
-        if operator_type > 2 {
-            return Err(PredifiError::InvalidPoolState);
-        }
-
-        PriceFeedAdapter::set_price_condition(
-            &env,
-            pool_id,
-            feed_pair.clone(),
-            target_price,
-            operator_type,
-            tolerance_bps,
-        )?;
-
-        PriceConditionSetEvent {
-            pool_id,
-            feed_pair: feed_pair.clone(),
-            target_price,
-            operator: operator_type,
-            tolerance_bps,
-        }
-        .publish(&env);
-
-        Ok(())
-    }
-
-    /// Resolve a pool automatically based on price feed data. Only callable by Oracle (role 3).
-    pub fn resolve_pool_from_price(
-        env: Env,
-        oracle: Address,
-        pool_id: u64,
-    ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
-        oracle.require_auth();
-        Self::require_role(&env, &oracle, 3)?;
-
+    /// Get comprehensive stats for a pool.
+    pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
+        let pool: Pool = env
             .storage()
             .persistent()
             .get(&pool_key)
             .expect("Pool not found");
         Self::extend_persistent(&env, &pool_key);
 
-        // Check pool state
-        if pool.resolved || pool.canceled || pool.state != MarketState::Active {
-            return Err(PredifiError::InvalidPoolState);
-        }
-
-        // Check resolution delay
-        let current_time = env.ledger().timestamp();
-        let config = Self::get_config(&env);
-        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
-            return Err(PredifiError::ResolutionDelayNotMet);
-        }
-
-        // Get price condition
-        let condition = PriceFeedAdapter::get_price_condition(&env, pool_id)
-            .ok_or(PredifiError::PriceConditionNotSet)?;
-
-        // Get oracle config for max age
-        let oracle_config =
-            PriceFeedAdapter::get_oracle_config(&env, &pool.creator).unwrap_or((300, 100)); // Default: 5 minutes, 1% confidence
-
-        // Evaluate price condition and get outcome
-        let outcome = PriceFeedAdapter::resolve_pool_from_price(&env, pool_id, oracle_config.0)?;
-
-        // Get current price for event emission
-        let price_data = PriceFeedAdapter::get_price_feed(&env, &condition.0)
-            .ok_or(PredifiError::PriceFeedNotFound)?;
-
-        // Update pool state
-        pool.state = MarketState::Resolved;
-        pool.resolved = true;
-        pool.outcome = outcome;
-
-        env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
-
-        // Emit price resolution event
-        PriceResolvedEvent {
-            pool_id,
-            feed_pair: condition.0,
-            current_price: price_data.0,
-            target_price: condition.1,
-            outcome,
-        }
-        .publish(&env);
-
-        // Emit standard oracle resolved event for compatibility
-        OracleResolvedEvent {
-            pool_id,
-            oracle: oracle.clone(),
-            outcome,
-            proof: String::from_str(&env, "Price-based resolution"),
-        }
-        .publish(&env);
-
-        // Emit standard pool resolved event
-        PoolResolvedEvent {
-            pool_id,
-            operator: oracle,
-            outcome,
-        }
-        .publish(&env);
-
-        // Emit diagnostic event
         let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
 
-        PoolResolvedDiagEvent {
-            pool_id,
-            outcome,
-            total_stake: pool.total_stake,
-            winning_stake,
-            timestamp: env.ledger().timestamp(),
+        let pc_key = DataKey::ParticipantsCount(pool_id);
+        let participants_count: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+        if env.storage().persistent().has(&pc_key) {
+            Self::extend_persistent(&env, &pc_key);
         }
-        .publish(&env);
 
-        Ok(())
-    }
+        let mut current_odds = Vec::new(&env);
+        for stake in stakes.iter() {
+            if stake == 0 {
+                current_odds.push_back(0);
+            } else {
+                // Calculation: (total_stake * 10000) / stake
+                // Result is fixed-point with 4 decimal places (e.g., 2.5x odds = 25000)
+                let odds = pool
+                    .total_stake
+                    .checked_mul(10000)
+                    .expect("overflow")
+                    .checked_div(stake)
+                    .unwrap_or(0);
+                current_odds.push_back(odds as u64);
+            }
+        }
 
-    /// Get current price feed data for a specific pair.
-    pub fn get_price_feed(env: Env, feed_pair: Symbol) -> Option<(i128, i128, u64, u64)> {
-        PriceFeedAdapter::get_price_feed(&env, &feed_pair)
-    }
-
-    /// Get price condition for a pool.
-    pub fn get_price_condition(env: Env, pool_id: u64) -> Option<(Symbol, i128, u32, u32)> {
-        PriceFeedAdapter::get_price_condition(&env, pool_id)
-    }
-
-    /// Get oracle configuration.
-    pub fn get_oracle_config(env: Env, pyth_contract: Address) -> Option<(u64, u32)> {
-        // Check if oracle is initialized
-        PriceFeedAdapter::get_oracle_config(&env, &pyth_contract)
-    }
-
-    /// Clean up expired price feeds. Only callable by Admin (role 0).
-    pub fn cleanup_expired_feeds(
-        env: Env,
-        admin: Address,
-        max_age: u64,
-    ) -> Result<u32, PredifiError> {
-        Self::require_not_paused(&env);
-        admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
-
-        PriceFeedAdapter::cleanup_expired_feeds(&env, max_age)
+        PoolStats {
+            pool_id,
+            total_stake: pool.total_stake,
+            stakes_per_outcome: stakes,
+            participants_count,
+            current_odds,
+        }
     }
 }
 
