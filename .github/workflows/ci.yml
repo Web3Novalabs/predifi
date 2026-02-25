@@ -2,43 +2,73 @@ name: Smart Contract CI
 
 #trigger on Pull Requests to the 'contract' branch
 on:
-    push:
-        branches: [ main, contract ]
-    pull_request:
-        branches: [ main, contract ]
+  push:
+    branches: [main, contract]
+  pull_request:
+    branches: [main, contract]
 
 env:
-    CARGO_TERM_COLOR: always
+  CARGO_TERM_COLOR: always
+  # Maximum allowed WASM binary size in kibibytes.
+  # Soroban's hard limit is 256 KB; we enforce a tighter budget to catch
+  # regressions early.  Raise this intentionally when the contract grows.
+  WASM_SIZE_THRESHOLD_KB: 200
 
 jobs:
-    contract_checks:
-        name: Contract Checks
-        runs-on: ubuntu-latest
-        
-        defaults:
-            run:
-                working-directory: ./contract
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v3
-            - name: Install Rust
-              uses: dtolnay/rust-toolchain@stable
-              with:
-                targets: wasm32-unknown-unknown
-                components: clippy, rustfmt
-            - name: Cache Cargo Dependencies
-              uses: actions/cache@v3
-              with:
-                path: |
-                  ~/.cargo/registry
-                  ~/.cargo/git
-                  contract/target
-                key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock') }}
-            - name: Check Formatting
-              run: cargo fmt --all -- --check
-            - name: Lint with Clippy
-              run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
-            - name: Build Contract (WASM)
-              run: cargo build --target wasm32-unknown-unknown --release
-            - name: Run Tests
-              run: cargo test
+  contract_checks:
+    name: Contract Checks
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: ./contract
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: clippy, rustfmt
+      - name: Cache Cargo Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contract/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock') }}
+      - name: Check Formatting
+        run: cargo fmt --all -- --check
+      - name: Lint with Clippy
+        run: cargo clippy --target wasm32-unknown-unknown -- -D warnings
+      - name: Build Contract (WASM)
+        run: cargo build --target wasm32-unknown-unknown --release
+      - name: Run Tests
+        run: cargo test
+
+      # ── WASM size checks ────────────────────────────────────────────
+      - name: Check WASM size
+        run: bash scripts/wasm_size_check.sh
+
+      - name: Print WASM size summary
+        if: always() # show the report even when the size check fails
+        run: |
+          WASM="target/wasm32-unknown-unknown/release/predifi_contract.wasm"
+          if [[ -f "$WASM" ]]; then
+            BYTES=$(wc -c < "$WASM")
+            KB=$(( BYTES / 1024 ))
+            echo "### 📦 WASM Size: ${KB} KB (${BYTES} bytes)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Threshold: ${WASM_SIZE_THRESHOLD_KB} KB" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload WASM artifact
+        if: always() # upload even on failure so sizes can be compared
+        uses: actions/upload-artifact@v4
+        with:
+          # Include the short SHA so artifacts from different runs are
+          # kept separately and can be downloaded to compare sizes over time.
+          name: predifi-contract-wasm-${{ github.sha }}
+          path: contract/target/wasm32-unknown-unknown/release/predifi_contract.wasm
+          retention-days: 90
