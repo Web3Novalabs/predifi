@@ -1610,7 +1610,7 @@ impl PredifiContract {
 
     /// Claim a refund from a canceled pool. Returns the refunded amount.
     /// Only available for canceled pools. User receives their full original stake.
-    /// 
+    ///
     /// PRE: pool.state = Canceled, user has a prediction on the pool
     /// POST: HasClaimed(user, pool) = true (INV-3), user receives full stake amount
     ///
