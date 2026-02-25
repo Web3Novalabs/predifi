@@ -16,7 +16,7 @@ impl PriceFeedAdapter {
         admin.require_auth();
 
         // Store oracle config using existing storage keys
-        let config_key = DataKey::TokenWhitelist(pyth_contract.clone());
+        let config_key = DataKey::TokenWl(pyth_contract.clone());
 
         // Store config values as tuple
         env.storage()
@@ -49,7 +49,7 @@ impl PriceFeedAdapter {
 
         // Store price data using existing storage pattern
         // Use OutcomeStake with a fixed pool_id for price data
-        let price_key = DataKey::OutcomeStake(999999, 0); // Fixed pool_id for price feeds
+        let price_key = DataKey::OutStake(999999, 0); // Fixed pool_id for price feeds
         env.storage().persistent().set(
             &price_key,
             &(feed_pair, price, confidence, timestamp, expires_at),
@@ -60,7 +60,7 @@ impl PriceFeedAdapter {
 
     /// Get current price feed data
     pub fn get_price_feed(env: &Env, feed_pair: &Symbol) -> Option<(i128, i128, u64, u64)> {
-        let price_key = DataKey::OutcomeStake(999999, 0); // Fixed pool_id for price feeds
+        let price_key = DataKey::OutStake(999999, 0); // Fixed pool_id for price feeds
 
         // Get all price data and find matching feed
         if let Some(price_data) = env
@@ -110,7 +110,7 @@ impl PriceFeedAdapter {
         tolerance_bps: u32,
     ) -> Result<(), PredifiError> {
         // Store condition using existing storage pattern
-        let condition_key = DataKey::OutcomeStake(pool_id, 1);
+        let condition_key = DataKey::OutStake(pool_id, 1);
         env.storage().persistent().set(
             &condition_key,
             &(feed_pair, target_price, operator, tolerance_bps),
@@ -121,7 +121,7 @@ impl PriceFeedAdapter {
 
     /// Get price condition for a pool
     pub fn get_price_condition(env: &Env, pool_id: u64) -> Option<(Symbol, i128, u32, u32)> {
-        let condition_key = DataKey::OutcomeStake(pool_id, 1);
+        let condition_key = DataKey::OutStake(pool_id, 1);
         env.storage().persistent().get(&condition_key)
     }
 
@@ -183,7 +183,7 @@ impl PriceFeedAdapter {
 
     /// Get oracle configuration
     pub fn get_oracle_config(env: &Env, pyth_contract: &Address) -> Option<(u64, u32)> {
-        let config_key = DataKey::TokenWhitelist(pyth_contract.clone());
+        let config_key = DataKey::TokenWl(pyth_contract.clone());
         env.storage().persistent().get(&config_key)
     }
 
