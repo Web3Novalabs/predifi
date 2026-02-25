@@ -451,6 +451,14 @@ pub struct TreasuryWithdrawnEvent {
     pub recipient: Address,
     pub timestamp: u64,
 }
+#[contractevent(topics = ["refund_claimed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
 #[contractevent(topics = ["upgrade"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UpgradeEvent {
@@ -1598,6 +1606,104 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(winnings)
+    }
+
+    /// Claim a refund from a canceled pool. Returns the refunded amount.
+    /// Only available for canceled pools. User receives their full original stake.
+    /// 
+    /// PRE: pool.state = Canceled, user has a prediction on the pool
+    /// POST: HasClaimed(user, pool) = true (INV-3), user receives full stake amount
+    ///
+    /// # Arguments
+    /// * `user` - Address claiming the refund (must provide auth)
+    /// * `pool_id` - ID of the canceled pool
+    ///
+    /// # Returns
+    /// Ok(amount) - Refund successfully claimed, returns refunded amount
+    /// Err(PredifiError) - Operation failed with specific error code
+    ///
+    /// # Errors
+    /// - `InvalidPoolState` if pool doesn't exist or is not canceled
+    /// - `InsufficientBalance` if user has no prediction or zero stake
+    /// - `AlreadyClaimed` if user already claimed refund for this pool
+    /// - `PoolNotResolved` if pool is resolved (not canceled)
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    pub fn claim_refund(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
+        Self::require_not_paused(&env);
+        user.require_auth();
+
+        Self::enter_reentrancy_guard(&env);
+
+        // --- CHECKS ---
+
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = match env.storage().persistent().get(&pool_key) {
+            Some(p) => p,
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Err(PredifiError::InvalidPoolState);
+            }
+        };
+        Self::extend_persistent(&env, &pool_key);
+
+        // Verify pool is canceled
+        if pool.state != MarketState::Canceled {
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Check if user already claimed refund
+        let claimed_key = DataKey::Claimed(user.clone(), pool_id);
+        if env.storage().persistent().has(&claimed_key) {
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::AlreadyClaimed);
+        }
+
+        // Get user's prediction
+        let pred_key = DataKey::Pred(user.clone(), pool_id);
+        let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
+
+        if env.storage().persistent().has(&pred_key) {
+            Self::extend_persistent(&env, &pred_key);
+        }
+
+        let prediction = match prediction {
+            Some(p) => p,
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Err(PredifiError::InsufficientBalance);
+            }
+        };
+
+        // Verify user has a non-zero stake
+        if prediction.amount <= 0 {
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::InsufficientBalance);
+        }
+
+        // --- EFFECTS ---
+
+        // Mark as claimed immediately to prevent re-entrancy (INV-3)
+        env.storage().persistent().set(&claimed_key, &true);
+        Self::extend_persistent(&env, &claimed_key);
+
+        let refund_amount = prediction.amount;
+
+        // --- INTERACTIONS ---
+
+        let token_client = token::Client::new(&env, &pool.token);
+        token_client.transfer(&env.current_contract_address(), &user, &refund_amount);
+
+        Self::exit_reentrancy_guard(&env);
+
+        RefundClaimedEvent {
+            pool_id,
+            user: user.clone(),
+            amount: refund_amount,
+        }
+        .publish(&env);
+
+        Ok(refund_amount)
     }
 
     /// Update the stake limits for an active pool. Caller must have Operator role (1).
