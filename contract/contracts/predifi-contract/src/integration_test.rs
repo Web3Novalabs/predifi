@@ -53,6 +53,10 @@ fn setup_integration(
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
     let token_ctx = TokenTestContext::deploy(env, &admin);
+    client.add_token_to_whitelist(&admin, &token_ctx.token_address);
+
+    // Whitelist the token
+    client.add_token_to_whitelist(&admin, &token_ctx.token_address);
 
     (client, token_ctx, admin, operator, treasury)
 }
@@ -72,9 +76,26 @@ fn test_full_market_lifecycle() {
     token_ctx.mint(&user2, 1000);
     token_ctx.mint(&user3, 1000);
 
+    // Whitelist the token
+    client.add_token_to_whitelist(&_admin, &token_ctx.token_address);
+
     // 1. Create Pool
-    let end_time = 10000u64;
-    let pool_id = client.create_pool(&user1, &end_time, &token_ctx.token_address, &2u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"), &0i128);
+    let end_time = 3600u64;
+    let pool_id = client.create_pool(
+        &user1,
+        &end_time,
+        &token_ctx.token_address,
+        &3u32,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
 
     // 2. Place Predictions
     client.place_prediction(&user1, &pool_id, &100, &1); // User 1 bets 100 on Outcome 1
@@ -84,8 +105,8 @@ fn test_full_market_lifecycle() {
     // Total stake = 100 + 200 + 300 = 600
     assert_eq!(token_ctx.token.balance(&client.address), 600);
 
-    // 3. Resolve Pool (advance time past end_time=1000)
-    env.ledger().with_mut(|li| li.timestamp = 1001);
+    // 3. Resolve Pool (advance time past end_time=3600)
+    env.ledger().with_mut(|li| li.timestamp = 3601);
     client.resolve_pool(&operator, &pool_id, &1u32); // Outcome 1 wins
 
     // 4. Claim Winnings
@@ -131,8 +152,25 @@ fn test_multi_user_betting_and_balance_verification() {
         token_ctx.mint(&user, 5000);
     }
 
+    // Whitelist the token
+    client.add_token_to_whitelist(&_admin, &token_ctx.token_address);
+
     let creator = Address::generate(&env);
-    let pool_id = client.create_pool(&creator, &20000u64, &token_ctx.token_address, &3u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"), &0i128);
+    let pool_id = client.create_pool(
+        &creator,
+        &4000u64,
+        &token_ctx.token_address,
+        &4u32,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
 
     // Bets:
     // U0: 500 on 1
@@ -150,8 +188,8 @@ fn test_multi_user_betting_and_balance_verification() {
 
     assert_eq!(token_ctx.token.balance(&client.address), 4000);
 
-    // Resolve to Outcome 3 (advance time past end_time=2000)
-    env.ledger().with_mut(|li| li.timestamp = 2001);
+    // Resolve to Outcome 3 (advance time past end_time=4000)
+    env.ledger().with_mut(|li| li.timestamp = 4001);
     client.resolve_pool(&operator, &pool_id, &3u32);
 
     // Winner: U3
@@ -183,8 +221,25 @@ fn test_market_resolution_multiple_winners() {
     token_ctx.mint(&user2, 1000);
     token_ctx.mint(&user3, 1000);
 
+    // Whitelist the token
+    client.add_token_to_whitelist(&_admin, &token_ctx.token_address);
+
     let creator = Address::generate(&env);
-    let pool_id = client.create_pool(&creator, &15000u64, &token_ctx.token_address, &2u32, &String::from_str(&env, "Test Pool"), &String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"), &0i128);
+    let pool_id = client.create_pool(
+        &creator,
+        &3600u64,
+        &token_ctx.token_address,
+        &3u32,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
 
     // Bets:
     // U1: 200 on 1
@@ -196,8 +251,8 @@ fn test_market_resolution_multiple_winners() {
     client.place_prediction(&user2, &pool_id, &300, &1);
     client.place_prediction(&user3, &pool_id, &500, &2);
 
-    // Advance time past end_time=1500, then resolve
-    env.ledger().with_mut(|li| li.timestamp = 1501);
+    // Advance time past end_time=3600, then resolve
+    env.ledger().with_mut(|li| li.timestamp = 3601);
     client.resolve_pool(&operator, &pool_id, &1u32); // Outcome 1 wins
 
     // U1 Winnings: (200 / 500) * 1000 = 400

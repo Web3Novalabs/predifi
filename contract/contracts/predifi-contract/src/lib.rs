@@ -1,12 +1,17 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
+#[cfg(test)]
+mod stress_test;
+#[cfg(test)]
+mod test_utils;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
-    IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
+    Env, IntoVal, String, Symbol, Vec,
 };
 
 pub use safe_math::{RoundingMode, SafeMath};
@@ -52,6 +57,10 @@ pub enum PredifiError {
     ResolutionDelayNotMet = 81,
     /// Token is not on the allowed betting whitelist.
     TokenNotWhitelisted = 91,
+    /// Invalid amount provided (e.g., zero or negative).
+    InvalidAmount = 42,
+    /// Insufficient balance for the operation.
+    InsufficientBalance = 44,
 }
 
 #[contracttype]
@@ -78,11 +87,27 @@ pub struct Pool {
     pub metadata_url: String,
     /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT)
     pub options_count: u32,
+    /// Minimum stake amount per prediction (must be > 0).
+    pub min_stake: i128,
+    /// Maximum stake amount per prediction (0 = no limit).
+    pub max_stake: i128,
     /// Initial liquidity provided by the pool creator (house money).
     /// This is part of total_stake but excluded from fee calculations.
     pub initial_liquidity: i128,
     /// Address of the pool creator.
     pub creator: Address,
+    /// Category symbol for filtering.
+    pub category: Symbol,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PoolStats {
+    pub pool_id: u64,
+    pub total_stake: i128,
+    pub stakes_per_outcome: Vec<i128>,
+    pub participants_count: u32,
+    pub current_odds: Vec<u64>, // Fixed-point with 4 decimals (e.g., 10000 = 1.00x)
 }
 
 #[contracttype]
@@ -121,8 +146,11 @@ pub enum DataKey {
     Config,
     Paused,
     ReentrancyGuard,
+    CategoryPoolCount(Symbol),
+    CategoryPoolIndex(Symbol, u32),
     /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
     TokenWhitelist(Address),
+    ParticipantsCount(u64),
 }
 
 #[contracttype]
@@ -189,12 +217,10 @@ pub struct PoolCreatedEvent {
     pub pool_id: u64,
     pub end_time: u64,
     pub token: Address,
-    /// Number of options/outcomes for this pool.
     pub options_count: u32,
-    /// Metadata URL included so off-chain indexers can immediately fetch context.
     pub metadata_url: String,
-    /// Initial liquidity provided by the pool creator (optional, 0 if not provided).
     pub initial_liquidity: i128,
+    pub category: Symbol,
 }
 
 #[contractevent(topics = ["initial_liquidity_provided"])]
@@ -229,6 +255,15 @@ pub struct PoolCanceledEvent {
     pub caller: Address,
     pub reason: String,
     pub operator: Address,
+}
+
+#[contractevent(topics = ["stake_limits_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakeLimitsUpdatedEvent {
+    pub pool_id: u64,
+    pub operator: Address,
+    pub min_stake: i128,
+    pub max_stake: i128,
 }
 
 #[contractevent(topics = ["prediction_placed"])]
@@ -364,6 +399,22 @@ pub struct TokenWhitelistRemovedEvent {
     pub token: Address,
 }
 
+#[contractevent(topics = ["treasury_withdrawn"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryWithdrawnEvent {
+    pub admin: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub recipient: Address,
+    pub timestamp: u64,
+}
+#[contractevent(topics = ["upgrade"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeEvent {
+    pub admin: Address,
+    pub new_wasm_hash: BytesN<32>,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub trait OracleCallback {
@@ -384,7 +435,7 @@ pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
-    // ── Pure Helper Functions (side-effect free, verifiable) ──────────────────
+    // ====== Pure Helper Functions (side-effect free, verifiable) ======
 
     /// Pure: Calculate winnings for a user given pool state
     /// PRE: winning_stake > 0
@@ -754,9 +805,105 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Upgrade the contract Wasm code. Only callable by Admin (role 0).
+    pub fn upgrade_contract(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+
+        UpgradeEvent {
+            admin: admin.clone(),
+            new_wasm_hash,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Placeholder for post-upgrade migration logic.
+    pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+        // Initial implementation has no state migration needed.
+        Ok(())
+    }
+
     /// Returns true if the given token is on the allowed betting whitelist.
     pub fn is_token_allowed(env: Env, token: Address) -> bool {
         Self::is_token_whitelisted(&env, &token)
+    }
+
+    /// Withdraw accumulated protocol fees or unused liquidity from the contract.
+    /// Only callable by Admin (role 0).
+    ///
+    /// # Arguments
+    /// * `admin` - Address with Admin role (must provide auth)
+    /// * `token` - The token contract address to withdraw
+    /// * `amount` - Amount to withdraw (must be > 0)
+    /// * `recipient` - Address to receive the withdrawn funds (typically treasury)
+    ///
+    /// # Returns
+    /// Result indicating success or error
+    ///
+    /// # Security
+    /// - Requires Admin role (0)
+    /// - Emits TreasuryWithdrawnEvent for audit trail
+    /// - Validates amount > 0
+    /// - Checks contract has sufficient balance
+    pub fn withdraw_treasury(
+        env: Env,
+        admin: Address,
+        token: Address,
+        amount: i128,
+        recipient: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+
+        // Verify admin role
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "withdraw_treasury"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+
+        // Validate amount
+        if amount <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        // Get token client and check balance
+        let token_client = token::Client::new(&env, &token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+
+        if contract_balance < amount {
+            return Err(PredifiError::InsufficientBalance);
+        }
+
+        // Transfer tokens to recipient
+        token_client.transfer(&env.current_contract_address(), &recipient, &amount);
+
+        // Emit audit event
+        TreasuryWithdrawnEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+            amount,
+            recipient: recipient.clone(),
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
+        Ok(())
     }
 
     /// Create a new prediction pool. Returns the new pool ID.
@@ -771,6 +918,8 @@ impl PredifiContract {
     /// * `options_count`     - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
     /// * `description`       - Short human-readable description of the event (max 256 bytes).
     /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `min_stake`         - Minimum stake amount per prediction (must be > 0).
+    /// * `max_stake`         - Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
     /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
     #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
@@ -781,7 +930,10 @@ impl PredifiContract {
         options_count: u32,
         description: String,
         metadata_url: String,
+        min_stake: i128,
+        max_stake: i128,
         initial_liquidity: i128,
+        category: Symbol,
     ) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
@@ -830,6 +982,13 @@ impl PredifiContract {
         assert!(description.len() <= 256, "description exceeds 256 bytes");
         assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
 
+        // Validate stake limits
+        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(
+            max_stake == 0 || max_stake >= min_stake,
+            "max_stake must be zero (unlimited) or >= min_stake"
+        );
+
         let pool_id: u64 = env
             .storage()
             .instance()
@@ -848,19 +1007,45 @@ impl PredifiContract {
             description,
             metadata_url: metadata_url.clone(),
             options_count,
+            min_stake,
+            max_stake,
             initial_liquidity,
             creator: creator.clone(),
+            category: category.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
+        let pc_key = DataKey::ParticipantsCount(pool_id);
+        env.storage().persistent().set(&pc_key, &0u32);
+        Self::extend_persistent(&env, &pc_key);
+
         // Transfer initial liquidity from creator to contract if provided
         if initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
             token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
         }
+
+        // Update category index
+        let category_count_key = DataKey::CategoryPoolCount(category.clone());
+        let category_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&category_count_key)
+            .unwrap_or(0);
+
+        let category_index_key = DataKey::CategoryPoolIndex(category.clone(), category_count);
+        env.storage()
+            .persistent()
+            .set(&category_index_key, &pool_id);
+        Self::extend_persistent(&env, &category_index_key);
+
+        env.storage()
+            .persistent()
+            .set(&category_count_key, &(category_count + 1));
+        Self::extend_persistent(&env, &category_count_key);
 
         env.storage()
             .instance()
@@ -874,6 +1059,7 @@ impl PredifiContract {
             options_count,
             metadata_url,
             initial_liquidity,
+            category,
         }
         .publish(&env);
 
@@ -1061,7 +1247,10 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Place a prediction on a pool. Cannot predict on canceled pools.
+    /// Place a prediction on a pool. Cannot predict on canceled or resolved pools.
+    /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
+    /// PRE: pool.min_stake <= amount <= pool.max_stake (unless max_stake == 0)
+    /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
         Self::require_not_paused(&env);
@@ -1089,8 +1278,25 @@ impl PredifiContract {
         );
 
         // --- INTERNAL CHECKS & EFFECTS ---
+        // Validate: per-pool stake limits
+        assert!(
+            amount >= pool.min_stake,
+            "amount is below the pool minimum stake"
+        );
+        if pool.max_stake > 0 {
+            assert!(
+                amount <= pool.max_stake,
+                "amount exceeds the pool maximum stake"
+            );
+        }
 
         let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        if !env.storage().persistent().has(&pred_key) {
+            let pc_key = DataKey::ParticipantsCount(pool_id);
+            let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+            env.storage().persistent().set(&pc_key, &(pc + 1));
+            Self::extend_persistent(&env, &pc_key);
+        }
         env.storage()
             .persistent()
             .set(&pred_key, &Prediction { amount, outcome });
@@ -1267,6 +1473,54 @@ impl PredifiContract {
         Ok(winnings)
     }
 
+    /// Update the stake limits for an active pool. Caller must have Operator role (1).
+    /// PRE: pool.state = Active, operator has role 1
+    /// POST: pool.min_stake and pool.max_stake updated
+    pub fn set_stake_limits(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        min_stake: i128,
+        max_stake: i128,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        operator.require_auth();
+        Self::require_role(&env, &operator, 1)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(
+            max_stake == 0 || max_stake >= min_stake,
+            "max_stake must be zero (unlimited) or >= min_stake"
+        );
+
+        pool.min_stake = min_stake;
+        pool.max_stake = max_stake;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        StakeLimitsUpdatedEvent {
+            pool_id,
+            operator,
+            min_stake,
+            max_stake,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Get a paginated list of a user's predictions.
     pub fn get_user_predictions(
         env: Env,
@@ -1326,12 +1580,22 @@ impl PredifiContract {
         results
     }
 
-    /// Get all outcome stakes for a pool using optimized batch storage.
     /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
     /// Instead of making N storage reads (one per outcome), it makes a single read.
     ///
     /// Returns a Vec of stakes where index corresponds to outcome index.
     /// For example, stake[0] is the total amount bet on outcome 0.
+    pub fn get_pool(env: Env, pool_id: u64) -> Pool {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+        pool
+    }
+
     pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -1365,6 +1629,83 @@ impl PredifiContract {
 
         let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
         stakes.get(outcome).unwrap_or(0)
+    }
+
+    /// Get a paginated list of pool IDs by category.
+    pub fn get_pools_by_category(env: Env, category: Symbol, offset: u32, limit: u32) -> Vec<u64> {
+        let count_key = DataKey::CategoryPoolCount(category.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if env.storage().persistent().has(&count_key) {
+            Self::extend_persistent(&env, &count_key);
+        }
+
+        let mut results = Vec::new(&env);
+
+        if offset >= count || limit == 0 {
+            return results;
+        }
+
+        let start_index = count.saturating_sub(offset).saturating_sub(1);
+        let num_to_take = core::cmp::min(limit, count.saturating_sub(offset));
+
+        for i in 0..num_to_take {
+            let index = start_index.saturating_sub(i);
+            let index_key = DataKey::CategoryPoolIndex(category.clone(), index);
+            let pool_id: u64 = env
+                .storage()
+                .persistent()
+                .get(&index_key)
+                .expect("index not found");
+            Self::extend_persistent(&env, &index_key);
+
+            results.push_back(pool_id);
+        }
+
+        results
+    }
+
+    /// Get comprehensive stats for a pool.
+    pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+
+        let pc_key = DataKey::ParticipantsCount(pool_id);
+        let participants_count: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+        if env.storage().persistent().has(&pc_key) {
+            Self::extend_persistent(&env, &pc_key);
+        }
+
+        let mut current_odds = Vec::new(&env);
+        for stake in stakes.iter() {
+            if stake == 0 {
+                current_odds.push_back(0);
+            } else {
+                // Calculation: (total_stake * 10000) / stake
+                // Result is fixed-point with 4 decimal places (e.g., 2.5x odds = 25000)
+                let odds = pool
+                    .total_stake
+                    .checked_mul(10000)
+                    .expect("overflow")
+                    .checked_div(stake)
+                    .unwrap_or(0);
+                current_odds.push_back(odds as u64);
+            }
+        }
+
+        PoolStats {
+            pool_id,
+            total_stake: pool.total_stake,
+            stakes_per_outcome: stakes,
+            participants_count,
+            current_odds,
+        }
     }
 }
 
@@ -1461,4 +1802,5 @@ impl OracleCallback for PredifiContract {
     }
 }
 
+mod integration_test;
 mod test;
