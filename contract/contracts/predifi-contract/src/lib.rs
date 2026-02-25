@@ -99,6 +99,16 @@ pub struct Pool {
 }
 
 #[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PoolStats {
+    pub pool_id: u64,
+    pub total_stake: i128,
+    pub stakes_per_outcome: Vec<i128>,
+    pub participants_count: u32,
+    pub current_odds: Vec<u64>, // Fixed-point with 4 decimals (e.g., 10000 = 1.00x)
+}
+
+#[contracttype]
 #[derive(Clone)]
 pub struct Config {
     pub fee_bps: u32,
@@ -137,6 +147,7 @@ pub enum DataKey {
     CategoryPoolIndex(Symbol, u32),
     /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
     TokenWhitelist(Address),
+    ParticipantsCount(u64),
 }
 
 #[contracttype]
@@ -992,6 +1003,10 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
+        let pc_key = DataKey::ParticipantsCount(pool_id);
+        env.storage().persistent().set(&pc_key, &0u32);
+        Self::extend_persistent(&env, &pc_key);
+
         // Transfer initial liquidity from creator to contract if provided
         if initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
@@ -1261,6 +1276,12 @@ impl PredifiContract {
         token_client.transfer(&user, &env.current_contract_address(), &amount);
 
         let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        if !env.storage().persistent().has(&pred_key) {
+            let pc_key = DataKey::ParticipantsCount(pool_id);
+            let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+            env.storage().persistent().set(&pc_key, &(pc + 1));
+            Self::extend_persistent(&env, &pc_key);
+        }
         env.storage()
             .persistent()
             .set(&pred_key, &Prediction { amount, outcome });
@@ -1590,6 +1611,50 @@ impl PredifiContract {
         }
 
         results
+    }
+
+    /// Get comprehensive stats for a pool.
+    pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+
+        let pc_key = DataKey::ParticipantsCount(pool_id);
+        let participants_count: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+        if env.storage().persistent().has(&pc_key) {
+            Self::extend_persistent(&env, &pc_key);
+        }
+
+        let mut current_odds = Vec::new(&env);
+        for stake in stakes.iter() {
+            if stake == 0 {
+                current_odds.push_back(0);
+            } else {
+                // Calculation: (total_stake * 10000) / stake
+                // Result is fixed-point with 4 decimal places (e.g., 2.5x odds = 25000)
+                let odds = pool
+                    .total_stake
+                    .checked_mul(10000)
+                    .expect("overflow")
+                    .checked_div(stake)
+                    .unwrap_or(0);
+                current_odds.push_back(odds as u64);
+            }
+        }
+
+        PoolStats {
+            pool_id,
+            total_stake: pool.total_stake,
+            stakes_per_outcome: stakes,
+            participants_count,
+            current_odds,
+        }
     }
 }
 
