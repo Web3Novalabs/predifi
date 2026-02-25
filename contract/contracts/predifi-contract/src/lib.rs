@@ -5,6 +5,8 @@ mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
 #[cfg(test)]
+mod stress_test;
+#[cfg(test)]
 mod test_utils;
 
 use soroban_sdk::{
@@ -1545,6 +1547,17 @@ impl PredifiContract {
     ///
     /// Returns a Vec of stakes where index corresponds to outcome index.
     /// For example, stake[0] is the total amount bet on outcome 0.
+    pub fn get_pool(env: Env, pool_id: u64) -> Pool {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+        pool
+    }
+
     pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
