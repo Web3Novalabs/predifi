@@ -1891,11 +1891,7 @@ impl PredifiContract {
     /// Get oracle configuration.
     pub fn get_oracle_config(env: Env, pyth_contract: Address) -> Option<(u64, u32)> {
         // Check if oracle is initialized
-        if let Some(config) = PriceFeedAdapter::get_oracle_config(&env, &pyth_contract) {
-            Some(config)
-        } else {
-            None
-        }
+        PriceFeedAdapter::get_oracle_config(&env, &pyth_contract)
     }
 
     /// Clean up expired price feeds. Only callable by Admin (role 0).
