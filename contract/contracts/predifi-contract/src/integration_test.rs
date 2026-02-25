@@ -3,6 +3,7 @@
 use super::*;
 use crate::test_utils::TokenTestContext;
 use soroban_sdk::{
+    symbol_short,
     testutils::{Address as _, Ledger},
     Address, Env, String,
 };
@@ -94,7 +95,7 @@ fn test_full_market_lifecycle() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // 2. Place Predictions
@@ -169,7 +170,7 @@ fn test_multi_user_betting_and_balance_verification() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Bets:
@@ -238,7 +239,7 @@ fn test_market_resolution_multiple_winners() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Bets:

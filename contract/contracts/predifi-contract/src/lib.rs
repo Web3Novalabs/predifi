@@ -10,8 +10,8 @@ mod stress_test;
 mod test_utils;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
-    Env, IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
 pub use safe_math::{RoundingMode, SafeMath};
@@ -131,8 +131,6 @@ pub struct Pool {
     pub initial_liquidity: i128,
     /// Address of the pool creator.
     pub creator: Address,
-    /// Category symbol for filtering.
-    pub category: Symbol,
 }
 
 #[contracttype]
@@ -472,11 +470,11 @@ impl PredifiContract {
     // ====== Pure Helper Functions (side-effect free, verifiable) ======
 
     /// Validate that a category symbol is in the allowed list.
-    /// 
+    ///
     /// # Arguments
     /// * `env` - The contract environment
     /// * `category` - The category symbol to validate
-    /// 
+    ///
     /// # Returns
     /// `true` if the category is valid, `false` otherwise
     fn validate_category(env: &Env, category: &Symbol) -> bool {
@@ -987,6 +985,12 @@ impl PredifiContract {
     ) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
+
+        // Validate: category must be in the allowed list
+        assert!(
+            Self::validate_category(&env, &category),
+            "category must be one of the allowed categories"
+        );
 
         // Validate: token must be on the allowed betting whitelist
         if !Self::is_token_whitelisted(&env, &token) {

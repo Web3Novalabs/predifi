@@ -3,6 +3,7 @@
 
 use super::*;
 use soroban_sdk::{
+    symbol_short,
     testutils::{Address as _, Ledger},
     token, Address, BytesN, Env, String, Symbol,
 };
@@ -105,7 +106,7 @@ fn test_claim_winnings() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
     client.place_prediction(&user2, &pool_id, &100, &2);
@@ -149,7 +150,7 @@ fn test_double_claim() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
@@ -185,7 +186,7 @@ fn test_claim_unresolved() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
     client.place_prediction(&user1, &pool_id, &100, &1);
 
@@ -217,7 +218,7 @@ fn test_multiple_pools_independent() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
     let pool_b = client.create_pool(
         &creator,
@@ -232,7 +233,7 @@ fn test_multiple_pools_independent() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     client.place_prediction(&user1, &pool_a, &100, &1);
@@ -295,7 +296,7 @@ fn test_unauthorized_resolve_pool() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
     let not_operator = Address::generate(&env);
     env.ledger().with_mut(|li| li.timestamp = 10001);
@@ -336,7 +337,7 @@ fn test_oracle_can_resolve() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
@@ -386,7 +387,7 @@ fn test_unauthorized_oracle_resolve() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
@@ -622,7 +623,7 @@ fn test_paused_blocks_create_pool() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 }
 
@@ -729,7 +730,7 @@ fn test_unpause_restores_functionality() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
     client.place_prediction(&user, &pool_id, &10, &1);
 }
@@ -759,7 +760,7 @@ fn test_get_user_predictions() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
     let pool1 = client.create_pool(
         &creator,
@@ -774,7 +775,7 @@ fn test_get_user_predictions() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
     let pool2 = client.create_pool(
         &creator,
@@ -789,7 +790,7 @@ fn test_get_user_predictions() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     client.place_prediction(&user, &pool0, &10, &1);
@@ -851,7 +852,7 @@ fn test_admin_can_cancel_pool() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Admin should be able to cancel
@@ -893,7 +894,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Admin should be able to cancel their pool
@@ -921,7 +922,7 @@ fn test_non_admin_non_creator_cannot_cancel() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     let unauthorized = Address::generate(&env);
@@ -960,7 +961,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
         &0i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "test"),
+        &symbol_short!("Tech"),
     );
 }
 
@@ -1026,7 +1027,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
@@ -1078,7 +1079,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Cancel the pool
@@ -1125,7 +1126,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Admin cancels the pool
@@ -1177,7 +1178,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // User places a prediction
@@ -1228,7 +1229,7 @@ fn test_cancel_pool_refunds_predictions() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // User places a prediction
@@ -1263,7 +1264,7 @@ fn test_cannot_cancel_resolved_pool() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 10001);
@@ -1308,7 +1309,7 @@ fn test_cannot_resolve_canceled_pool() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     client.cancel_pool(&admin, &pool_id);
@@ -1337,7 +1338,7 @@ fn test_cannot_predict_on_canceled_pool() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     client.cancel_pool(&operator, &pool_id);
@@ -1379,7 +1380,7 @@ fn test_resolve_pool_before_delay() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Set time to end_time + MIN_POOL_DURATION (to allow creation)
@@ -1426,7 +1427,7 @@ fn test_resolve_pool_after_delay() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Set time to end_time + 3601s (more than delay)
@@ -1465,7 +1466,7 @@ fn test_mark_pool_ready() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Test before delay
@@ -1504,7 +1505,7 @@ fn test_stake_below_minimum_rejected() {
         &50i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Should panic: amount (10) < min_stake (50)
@@ -1534,7 +1535,7 @@ fn test_stake_above_maximum_rejected() {
         &1i128,
         &100i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Should panic: amount (200) > max_stake (100)
@@ -1565,7 +1566,7 @@ fn test_stake_at_boundaries_accepted() {
         &10i128,
         &200i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Both boundary values should succeed
@@ -1595,7 +1596,7 @@ fn test_set_stake_limits_by_operator() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Operator updates: min_stake = 50, max_stake = 500
@@ -1624,7 +1625,7 @@ fn test_set_stake_limits_unauthorized() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Non-operator should be rejected
@@ -1639,8 +1640,8 @@ fn test_get_pools_by_category() {
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    let cat1 = Symbol::new(&env, "tech");
-    let cat2 = Symbol::new(&env, "sports");
+    let cat1 = symbol_short!("Tech");
+    let cat2 = symbol_short!("Sports");
 
     let pool0 = client.create_pool(
         &creator,
@@ -1846,7 +1847,7 @@ fn test_get_pool_stats() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Initial stats
