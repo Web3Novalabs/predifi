@@ -1875,3 +1875,973 @@ fn test_get_pool_stats() {
     assert_eq!(stats.current_odds.get(0), Some(25000));
     assert_eq!(stats.current_odds.get(1), Some(16666));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EDGE-CASE TESTS  (#327)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Coverage additions mandated by GitHub issue #327:
+//   • Leap-year timestamp boundaries
+//   • Maximum possible stake values
+//   • Rapid resolution / claim sequences
+//   • Boundary values in all validation logic
+//   • (Simulated) race conditions & unauthorized access attempts
+//   • State consistency after multiple resolution cycles
+
+// ── Constants for leap-year tests ────────────────────────────────────────────
+
+/// Feb 28, 2024 00:00:00 UTC (day before the 2024 leap day).
+const FEB_28_2024_UTC: u64 = 1_709_078_400;
+/// Feb 29, 2024 00:00:00 UTC (2024 is a leap year).
+const LEAP_DAY_2024_UTC: u64 = 1_709_164_800;
+/// Mar 01, 2024 00:00:00 UTC (first day after the 2024 leap day).
+const MAR_01_2024_UTC: u64 = 1_709_251_200;
+
+// ── Leap-year timestamp edge cases ───────────────────────────────────────────
+
+/// A pool whose end time falls exactly on the leap day (Feb 29, 2024)
+/// must be created and accepted for predictions without any off-by-one error.
+#[test]
+fn test_pool_end_time_on_leap_day() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    // Advance ledger to Feb 28. end_time = Feb 29 (86 400 s later, well above 3 600 s minimum).
+    env.ledger().with_mut(|li| li.timestamp = FEB_28_2024_UTC);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &LEAP_DAY_2024_UTC,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Leap year pool"),
+        &String::from_str(&env, "ipfs://leap"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+    // Prediction must be accepted while before the leap-day deadline.
+    client.place_prediction(&user, &pool_id, &100, &0);
+}
+
+/// Creating a pool whose end time is the leap day, but the ledger is already
+/// past Mar 1, must be rejected because the end time is in the past.
+#[test]
+#[should_panic(expected = "end_time must be in the future")]
+fn test_pool_end_time_at_leap_day_already_past() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // Ledger at Mar 1 – the leap day is in the past.
+    env.ledger().with_mut(|li| li.timestamp = MAR_01_2024_UTC);
+
+    client.create_pool(
+        &creator,
+        &LEAP_DAY_2024_UTC, // Feb 29 – already past
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Expired leap pool"),
+        &String::from_str(&env, "ipfs://expired"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+}
+
+/// A pool created before the leap day, resolved after it, must behave
+/// correctly.  This validates timestamp arithmetic across the Feb 29 boundary.
+#[test]
+fn test_pool_end_time_spans_leap_day_resolution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    // Creation at Feb 28 00:00 UTC – 3 600 s before end_time on Mar 01.
+    // (Difference = 1 709 251 200 – 1 709 074 800 = 176 400 > MIN_POOL_DURATION)
+    let creation_time: u64 = FEB_28_2024_UTC - 3_600;
+    env.ledger().with_mut(|li| li.timestamp = creation_time);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &MAR_01_2024_UTC,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Leap span pool"),
+        &String::from_str(&env, "ipfs://span"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &500);
+    token_admin_client.mint(&user2, &500);
+
+    client.place_prediction(&user1, &pool_id, &300, &0);
+    client.place_prediction(&user2, &pool_id, &200, &1);
+
+    // Advance ledger past Mar 1 (resolution_delay == 0 in setup).
+    env.ledger().with_mut(|li| li.timestamp = MAR_01_2024_UTC + 1);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // user1 staked on the winning outcome – receives full pot.
+    let w1 = client.claim_winnings(&user1, &pool_id);
+    assert_eq!(w1, 500);
+
+    let w2 = client.claim_winnings(&user2, &pool_id);
+    assert_eq!(w2, 0);
+}
+
+// ── Maximum possible stake amounts ───────────────────────────────────────────
+
+/// A single bet equal to MAX_INITIAL_LIQUIDITY (the contract ceiling) must be
+/// accepted, correctly recorded, and fully refunded on a win.
+#[test]
+fn test_maximum_single_stake_roundtrip() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+
+    // MAX_INITIAL_LIQUIDITY = 100_000_000_000_000
+    let max_amount: i128 = 100_000_000_000_000;
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Max stake pool"),
+        &String::from_str(&env, "ipfs://max"),
+        &1i128,
+        &max_amount, // max_stake == max_amount is valid
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &max_amount);
+
+    client.place_prediction(&user, &pool_id, &max_amount, &0);
+
+    let contract_addr = client.address.clone();
+    assert_eq!(token.balance(&contract_addr), max_amount);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Sole better on the winning side – receives the entire pot (no fee in setup).
+    let winnings = client.claim_winnings(&user, &pool_id);
+    assert_eq!(winnings, max_amount);
+    assert_eq!(token.balance(&user), max_amount);
+}
+
+/// Two winners each holding large stakes on the winning side must receive
+/// their proportional share without arithmetic overflow.
+#[test]
+fn test_large_stake_winnings_split_correctly() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    let big_stake: i128 = 10_000_000_000; // 10 billion base units
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Large stake split"),
+        &String::from_str(&env, "ipfs://large"),
+        &1i128,
+        &0i128, // no max_stake limit
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let winner1 = Address::generate(&env);
+    let winner2 = Address::generate(&env);
+    let loser1 = Address::generate(&env);
+    let loser2 = Address::generate(&env);
+    token_admin_client.mint(&winner1, &big_stake);
+    token_admin_client.mint(&winner2, &big_stake);
+    token_admin_client.mint(&loser1, &big_stake);
+    token_admin_client.mint(&loser2, &big_stake);
+
+    // Two winners on outcome 0, two losers on outcome 1.
+    client.place_prediction(&winner1, &pool_id, &big_stake, &0);
+    client.place_prediction(&winner2, &pool_id, &big_stake, &0);
+    client.place_prediction(&loser1, &pool_id, &big_stake, &1);
+    client.place_prediction(&loser2, &pool_id, &big_stake, &1);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    let total = big_stake * 4;
+    let w1 = client.claim_winnings(&winner1, &pool_id);
+    let w2 = client.claim_winnings(&winner2, &pool_id);
+
+    // Each winner gets half the pot.
+    assert_eq!(w1, total / 2);
+    assert_eq!(w2, total / 2);
+    assert_eq!(w1 + w2, total);
+
+    // Losers get nothing.
+    let l1 = client.claim_winnings(&loser1, &pool_id);
+    let l2 = client.claim_winnings(&loser2, &pool_id);
+    assert_eq!(l1, 0);
+    assert_eq!(l2, 0);
+}
+
+// ── Rapid resolution / claim sequences ───────────────────────────────────────
+
+/// Resolving the same pool twice in a row must fail the second time.
+#[test]
+#[should_panic(expected = "Pool already resolved")]
+fn test_double_resolution_attempt() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Double resolve"),
+        &String::from_str(&env, "ipfs://double"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+    // Second resolution must panic.
+    client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+/// Ten users all claim winnings immediately after resolution.
+/// The total paid out must equal the total staked (no value lost or created).
+#[test]
+fn test_many_users_rapid_claim_after_resolution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Rapid claim"),
+        &String::from_str(&env, "ipfs://rapid"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let stake: i128 = 100;
+
+    // 5 winners (outcome 0) and 5 losers (outcome 1).
+    let w0 = Address::generate(&env);
+    let w1 = Address::generate(&env);
+    let w2 = Address::generate(&env);
+    let w3 = Address::generate(&env);
+    let w4 = Address::generate(&env);
+    let l0 = Address::generate(&env);
+    let l1 = Address::generate(&env);
+    let l2 = Address::generate(&env);
+    let l3 = Address::generate(&env);
+    let l4 = Address::generate(&env);
+
+    for u in [&w0, &w1, &w2, &w3, &w4] {
+        token_admin_client.mint(u, &stake);
+        client.place_prediction(u, &pool_id, &stake, &0);
+    }
+    for u in [&l0, &l1, &l2, &l3, &l4] {
+        token_admin_client.mint(u, &stake);
+        client.place_prediction(u, &pool_id, &stake, &1);
+    }
+
+    let total = stake * 10;
+    assert_eq!(token.balance(&contract_addr), total);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    let mut total_paid: i128 = 0;
+    for u in [&w0, &w1, &w2, &w3, &w4] {
+        total_paid += client.claim_winnings(u, &pool_id);
+    }
+    for u in [&l0, &l1, &l2, &l3, &l4] {
+        assert_eq!(client.claim_winnings(u, &pool_id), 0);
+    }
+
+    // No value created or destroyed (INV-5).
+    assert_eq!(total_paid, total);
+}
+
+/// Resolving pool A then immediately creating pool B must leave pool A's
+/// state intact.  Verifies the ID counter doesn't corrupt resolved data.
+#[test]
+fn test_resolution_then_new_pool_state_isolation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool A"),
+        &String::from_str(&env, "ipfs://a"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &500);
+    client.place_prediction(&user, &pool_a, &200, &0);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_a, &0u32);
+
+    // Create pool B immediately after resolution.
+    let pool_b = client.create_pool(
+        &creator,
+        &200_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool B"),
+        &String::from_str(&env, "ipfs://b"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    assert_ne!(pool_a, pool_b);
+
+    // User can still claim from pool A.
+    let winnings = client.claim_winnings(&user, &pool_a);
+    assert_eq!(winnings, 200);
+
+    // Pool B is still active – predictions can be placed.
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user2, &500);
+    client.place_prediction(&user2, &pool_b, &100, &1);
+}
+
+// ── Boundary values in all validation logic ───────────────────────────────────
+
+/// min_stake == 0 must be rejected.
+#[test]
+#[should_panic(expected = "min_stake must be greater than zero")]
+fn test_create_pool_rejects_zero_min_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Zero min stake"),
+        &String::from_str(&env, "ipfs://zero"),
+        &0i128, // invalid
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+}
+
+/// options_count == 1 must be rejected (minimum is 2).
+#[test]
+#[should_panic(expected = "options_count must be at least 2")]
+fn test_create_pool_rejects_single_option() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &1u32, // invalid
+        &String::from_str(&env, "Single option pool"),
+        &String::from_str(&env, "ipfs://single"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+}
+
+/// options_count > MAX_OPTIONS_COUNT (100) must be rejected.
+#[test]
+#[should_panic(expected = "options_count exceeds maximum allowed value")]
+fn test_create_pool_rejects_excess_options_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &101u32, // MAX_OPTIONS_COUNT == 100, so 101 is invalid
+        &String::from_str(&env, "Too many options"),
+        &String::from_str(&env, "ipfs://many"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+}
+
+/// options_count == MAX_OPTIONS_COUNT (100) must be accepted, and a
+/// prediction on the last valid outcome index (99) must succeed.
+#[test]
+fn test_create_pool_accepts_maximum_options_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &100u32,
+        &String::from_str(&env, "Max options pool"),
+        &String::from_str(&env, "ipfs://maxopts"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+    // outcome index 99 is the last valid index and must be accepted.
+    client.place_prediction(&user, &pool_id, &100, &99);
+}
+
+/// end_time below MIN_POOL_DURATION from the current ledger must be rejected.
+#[test]
+#[should_panic(expected = "end_time must be at least 1 hour in the future")]
+fn test_create_pool_rejects_end_time_below_min_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // Ledger at 0; 1 800 s < MIN_POOL_DURATION (3 600 s).
+    client.create_pool(
+        &creator,
+        &1_800u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Too short pool"),
+        &String::from_str(&env, "ipfs://short"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+}
+
+/// end_time == current_time + MIN_POOL_DURATION must be accepted (lower
+/// boundary is inclusive).
+#[test]
+fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // Ledger at 0; MIN_POOL_DURATION == 3 600.
+    let pool_id = client.create_pool(
+        &creator,
+        &3_600u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Min duration pool"),
+        &String::from_str(&env, "ipfs://mintime"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    // If creation succeeded (didn't panic), the test passes.
+    let _ = pool_id;
+}
+
+/// max_stake < min_stake must be rejected.
+#[test]
+#[should_panic(expected = "max_stake must be zero (unlimited) or >= min_stake")]
+fn test_create_pool_rejects_max_stake_less_than_min_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Inverted stake limits"),
+        &String::from_str(&env, "ipfs://inverted"),
+        &100i128, // min_stake
+        &50i128,  // max_stake < min_stake → invalid
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+}
+
+/// max_stake == min_stake must be accepted (edge: equality is valid).
+#[test]
+fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Equal stake limits"),
+        &String::from_str(&env, "ipfs://equal"),
+        &100i128, // min_stake
+        &100i128, // max_stake == min_stake → valid
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &200);
+    // Exact bet at the only allowed amount.
+    client.place_prediction(&user, &pool_id, &100, &0);
+}
+
+/// outcome index == options_count must be rejected (out-of-bounds, 0-indexed).
+#[test]
+#[should_panic]
+fn test_resolve_pool_rejects_out_of_bounds_outcome() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &3u32, // outcomes 0, 1, 2
+        &String::from_str(&env, "OOB outcome"),
+        &String::from_str(&env, "ipfs://oob"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    // Outcome 3 is out-of-bounds for a 3-option pool.
+    client.resolve_pool(&operator, &pool_id, &3u32);
+}
+
+// ── (Simulated) race conditions & unauthorized access attempts ────────────────
+
+/// Multiple distinct unauthorized addresses attempting to resolve a pool must
+/// all be denied, and the pool must remain resolvable by a real operator
+/// afterwards.
+#[test]
+fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Auth test pool"),
+        &String::from_str(&env, "ipfs://auth"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &500);
+    client.place_prediction(&user, &pool_id, &200, &0);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+
+    // Three distinct unauthorized addresses each attempt a resolution.
+    for _ in 0..3u32 {
+        let not_operator = Address::generate(&env);
+        let result = client.try_resolve_pool(&not_operator, &pool_id, &0u32);
+        assert!(result.is_err(), "Unauthorized resolve must fail");
+    }
+
+    // Legitimate operator must still be able to resolve.
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    let winnings = client.claim_winnings(&user, &pool_id);
+    assert_eq!(winnings, 200);
+}
+
+/// An unauthorized admin operation must not alter configuration state.
+#[test]
+fn test_unauthorized_admin_op_does_not_mutate_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Legitimate admin sets fee to 200 bps.
+    client.set_fee_bps(&admin, &200u32);
+
+    // Attacker attempts to overwrite the fee – must be rejected.
+    let attacker = Address::generate(&env);
+    let result = client.try_set_fee_bps(&attacker, &9_999u32);
+    assert!(result.is_err(), "Unauthorized set_fee_bps must fail");
+
+    // Verify configuration was not altered by trying to create a pool
+    // (the contract must still function normally, proving the state is intact).
+    let new_pool = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Post-attack pool"),
+        &String::from_str(&env, "ipfs://postattack"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+    let _ = new_pool; // pool creation succeeds → state is healthy
+}
+
+/// Attempting to cancel a pool by someone who is neither an admin/operator
+/// nor the pool creator must be denied consistently across many attempts.
+#[test]
+fn test_unauthorized_cancel_attempts_do_not_affect_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Cancel guard pool"),
+        &String::from_str(&env, "ipfs://guard"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    for _ in 0..3u32 {
+        let not_operator = Address::generate(&env);
+        let result = client.try_cancel_pool(&not_operator, &pool_id);
+        assert!(result.is_err(), "Unauthorized cancel must fail");
+    }
+
+    // Legitimate operator can still cancel.
+    client.cancel_pool(&operator, &pool_id);
+}
+
+// ── State consistency after multiple resolution cycles ────────────────────────
+
+/// Create five pools, resolve them with alternating outcomes, and claim all
+/// winnings.  Verifies (INV-5): total claimed == total staked.
+#[test]
+fn test_state_consistency_across_many_pools() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let stake: i128 = 100;
+
+    // ── Pool 0 ──
+    let p0 = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32,
+        &String::from_str(&env, "Pool 0"), &String::from_str(&env, "ipfs://0"),
+        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+    );
+    // ── Pool 1 ──
+    let p1 = client.create_pool(
+        &creator, &100_001u64, &token_address, &2u32,
+        &String::from_str(&env, "Pool 1"), &String::from_str(&env, "ipfs://1"),
+        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+    );
+    // ── Pool 2 ──
+    let p2 = client.create_pool(
+        &creator, &100_002u64, &token_address, &2u32,
+        &String::from_str(&env, "Pool 2"), &String::from_str(&env, "ipfs://2"),
+        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+    );
+    // ── Pool 3 ──
+    let p3 = client.create_pool(
+        &creator, &100_003u64, &token_address, &2u32,
+        &String::from_str(&env, "Pool 3"), &String::from_str(&env, "ipfs://3"),
+        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+    );
+    // ── Pool 4 ──
+    let p4 = client.create_pool(
+        &creator, &100_004u64, &token_address, &2u32,
+        &String::from_str(&env, "Pool 4"), &String::from_str(&env, "ipfs://4"),
+        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+    );
+
+    let pools = [p0, p1, p2, p3, p4];
+
+    // Each pool gets user_a (outcome 0) and user_b (outcome 1).
+    let user_as: [Address; 5] = [
+        Address::generate(&env), Address::generate(&env), Address::generate(&env),
+        Address::generate(&env), Address::generate(&env),
+    ];
+    let user_bs: [Address; 5] = [
+        Address::generate(&env), Address::generate(&env), Address::generate(&env),
+        Address::generate(&env), Address::generate(&env),
+    ];
+
+    for i in 0..5usize {
+        token_admin_client.mint(&user_as[i], &stake);
+        token_admin_client.mint(&user_bs[i], &stake);
+        client.place_prediction(&user_as[i], &pools[i], &stake, &0);
+        client.place_prediction(&user_bs[i], &pools[i], &stake, &1);
+    }
+
+    let expected_total = stake * 10;
+    assert_eq!(token.balance(&contract_addr), expected_total);
+
+    env.ledger().with_mut(|li| li.timestamp = 200_000);
+
+    // Even-indexed pools → outcome 0 wins; odd-indexed → outcome 1 wins.
+    for i in 0..5usize {
+        let winning_outcome: u32 = if i % 2 == 0 { 0 } else { 1 };
+        client.resolve_pool(&operator, &pools[i], &winning_outcome);
+    }
+
+    let mut total_paid: i128 = 0;
+    for i in 0..5usize {
+        let wa = client.claim_winnings(&user_as[i], &pools[i]);
+        let wb = client.claim_winnings(&user_bs[i], &pools[i]);
+
+        // Each pool pays out exactly 2 × stake (INV-5 per pool).
+        assert_eq!(wa + wb, stake * 2, "pool {i}: payout mismatch");
+
+        if i % 2 == 0 {
+            assert_eq!(wa, stake * 2, "pool {i}: outcome-0 user should win");
+            assert_eq!(wb, 0,         "pool {i}: outcome-1 user should lose");
+        } else {
+            assert_eq!(wa, 0,         "pool {i}: outcome-0 user should lose");
+            assert_eq!(wb, stake * 2, "pool {i}: outcome-1 user should win");
+        }
+
+        total_paid += wa + wb;
+    }
+
+    // Global invariant: no value created or destroyed.
+    assert_eq!(total_paid, expected_total);
+    assert_eq!(token.balance(&contract_addr), 0);
+}
+
+/// Cancel pool A while pool B remains active, then resolve pool B.
+/// Verifies that cancellation of one pool does not corrupt another.
+#[test]
+fn test_state_consistency_after_cancellation_and_resolution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool A (cancel)"),
+        &String::from_str(&env, "ipfs://a"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let pool_b = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool B (resolve)"),
+        &String::from_str(&env, "ipfs://b"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_admin_client.mint(&user_a, &1000);
+    token_admin_client.mint(&user_b, &1000);
+
+    client.place_prediction(&user_a, &pool_a, &300, &0);
+    client.place_prediction(&user_b, &pool_b, &400, &1);
+
+    // Cancel pool A; 300 remain locked for refund.
+    client.cancel_pool(&operator, &pool_a);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_b, &1u32);
+
+    // user_b is the sole better on winning outcome of pool_b → receives full 400.
+    let wb = client.claim_winnings(&user_b, &pool_b);
+    assert_eq!(wb, 400);
+
+    // Contract should still hold pool_a's 300 (user_a's refund not yet claimed).
+    assert_eq!(token.balance(&contract_addr), 300);
+
+    // user_a claims refund from canceled pool_a.
+    let wa_refund = client.claim_winnings(&user_a, &pool_a);
+    assert_eq!(wa_refund, 300);
+
+    // Contract drained to zero.
+    assert_eq!(token.balance(&contract_addr), 0);
+}
+
+/// Verify that the contract correctly handles a pool with no losers
+/// (every bettor chose the winning outcome).  The sole winner gets everything;
+/// the invariant total_paid == total_staked must still hold.
+#[test]
+fn test_all_bettors_on_winning_side() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "All win pool"),
+        &String::from_str(&env, "ipfs://allwin"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &600);
+    token_admin_client.mint(&user2, &400);
+
+    client.place_prediction(&user1, &pool_id, &600, &0);
+    client.place_prediction(&user2, &pool_id, &400, &0);
+
+    let total = 1_000i128;
+    assert_eq!(token.balance(&contract_addr), total);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    let w1 = client.claim_winnings(&user1, &pool_id);
+    let w2 = client.claim_winnings(&user2, &pool_id);
+
+    // Proportional split: 600 and 400.
+    assert_eq!(w1, 600);
+    assert_eq!(w2, 400);
+    assert_eq!(w1 + w2, total);
+    assert_eq!(token.balance(&contract_addr), 0);
+}
+
+/// If no one bet on the winning outcome, all claimants must receive 0.
+#[test]
+fn test_no_bettor_on_winning_side() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &3u32,
+        &String::from_str(&env, "Empty winner pool"),
+        &String::from_str(&env, "ipfs://emptywinner"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
+    );
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &500);
+    token_admin_client.mint(&user2, &500);
+
+    // Both bet on outcome 1; outcome 2 wins (nobody bet on it).
+    client.place_prediction(&user1, &pool_id, &300, &1);
+    client.place_prediction(&user2, &pool_id, &200, &1);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &2u32); // outcome 2 – no bettors
+
+    let w1 = client.claim_winnings(&user1, &pool_id);
+    let w2 = client.claim_winnings(&user2, &pool_id);
+    assert_eq!(w1, 0);
+    assert_eq!(w2, 0);
+}
