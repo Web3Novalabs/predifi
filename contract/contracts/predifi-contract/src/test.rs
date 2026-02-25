@@ -1993,7 +1993,8 @@ fn test_pool_end_time_spans_leap_day_resolution() {
     client.place_prediction(&user2, &pool_id, &200, &1);
 
     // Advance ledger past Mar 1 (resolution_delay == 0 in setup).
-    env.ledger().with_mut(|li| li.timestamp = MAR_01_2024_UTC + 1);
+    env.ledger()
+        .with_mut(|li| li.timestamp = MAR_01_2024_UTC + 1);
     client.resolve_pool(&operator, &pool_id, &0u32);
 
     // user1 staked on the winning outcome – receives full pot.
@@ -2611,45 +2612,86 @@ fn test_state_consistency_across_many_pools() {
 
     // ── Pool 0 ──
     let p0 = client.create_pool(
-        &creator, &100_000u64, &token_address, &2u32,
-        &String::from_str(&env, "Pool 0"), &String::from_str(&env, "ipfs://0"),
-        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool 0"),
+        &String::from_str(&env, "ipfs://0"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
     );
     // ── Pool 1 ──
     let p1 = client.create_pool(
-        &creator, &100_001u64, &token_address, &2u32,
-        &String::from_str(&env, "Pool 1"), &String::from_str(&env, "ipfs://1"),
-        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+        &creator,
+        &100_001u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool 1"),
+        &String::from_str(&env, "ipfs://1"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
     );
     // ── Pool 2 ──
     let p2 = client.create_pool(
-        &creator, &100_002u64, &token_address, &2u32,
-        &String::from_str(&env, "Pool 2"), &String::from_str(&env, "ipfs://2"),
-        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+        &creator,
+        &100_002u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool 2"),
+        &String::from_str(&env, "ipfs://2"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
     );
     // ── Pool 3 ──
     let p3 = client.create_pool(
-        &creator, &100_003u64, &token_address, &2u32,
-        &String::from_str(&env, "Pool 3"), &String::from_str(&env, "ipfs://3"),
-        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+        &creator,
+        &100_003u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool 3"),
+        &String::from_str(&env, "ipfs://3"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
     );
     // ── Pool 4 ──
     let p4 = client.create_pool(
-        &creator, &100_004u64, &token_address, &2u32,
-        &String::from_str(&env, "Pool 4"), &String::from_str(&env, "ipfs://4"),
-        &1i128, &0i128, &0i128, &Symbol::new(&env, "tech"),
+        &creator,
+        &100_004u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Pool 4"),
+        &String::from_str(&env, "ipfs://4"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &Symbol::new(&env, "tech"),
     );
 
     let pools = [p0, p1, p2, p3, p4];
 
     // Each pool gets user_a (outcome 0) and user_b (outcome 1).
     let user_as: [Address; 5] = [
-        Address::generate(&env), Address::generate(&env), Address::generate(&env),
-        Address::generate(&env), Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
     ];
     let user_bs: [Address; 5] = [
-        Address::generate(&env), Address::generate(&env), Address::generate(&env),
-        Address::generate(&env), Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
+        Address::generate(&env),
     ];
 
     for i in 0..5usize {
@@ -2680,9 +2722,9 @@ fn test_state_consistency_across_many_pools() {
 
         if i % 2 == 0 {
             assert_eq!(wa, stake * 2, "pool {i}: outcome-0 user should win");
-            assert_eq!(wb, 0,         "pool {i}: outcome-1 user should lose");
+            assert_eq!(wb, 0, "pool {i}: outcome-1 user should lose");
         } else {
-            assert_eq!(wa, 0,         "pool {i}: outcome-0 user should lose");
+            assert_eq!(wa, 0, "pool {i}: outcome-0 user should lose");
             assert_eq!(wb, stake * 2, "pool {i}: outcome-1 user should win");
         }
 
