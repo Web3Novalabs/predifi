@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+mod price_feed_simple;
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
@@ -14,6 +15,7 @@ use soroban_sdk::{
     Env, IntoVal, String, Symbol, Vec,
 };
 
+pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -61,6 +63,14 @@ pub enum PredifiError {
     InvalidAmount = 42,
     /// Insufficient balance for the operation.
     InsufficientBalance = 44,
+    /// Oracle not initialized.
+    OracleNotInitialized = 100,
+    /// Price feed not found.
+    PriceFeedNotFound = 101,
+    /// Price data expired or invalid.
+    PriceDataInvalid = 102,
+    /// Price condition not set for pool.
+    PriceConditionNotSet = 103,
 }
 
 #[contracttype]
@@ -412,6 +422,46 @@ pub struct TreasuryWithdrawnEvent {
 pub struct UpgradeEvent {
     pub admin: Address,
     pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent(topics = ["oracle_init"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleInitEvent {
+    pub admin: Address,
+    pub pyth_contract: Address,
+    pub max_price_age: u64,
+    pub min_confidence_ratio: u32,
+}
+
+#[contractevent(topics = ["price_feed_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceFeedUpdatedEvent {
+    pub oracle: Address,
+    pub feed_pair: Symbol,
+    pub price: i128,
+    pub confidence: i128,
+    pub timestamp: u64,
+    pub expires_at: u64,
+}
+
+#[contractevent(topics = ["price_condition_set"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceConditionSetEvent {
+    pub pool_id: u64,
+    pub feed_pair: Symbol,
+    pub target_price: i128,
+    pub operator: u32,
+    pub tolerance_bps: u32,
+}
+
+#[contractevent(topics = ["price_resolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceResolvedEvent {
+    pub pool_id: u64,
+    pub feed_pair: Symbol,
+    pub current_price: i128,
+    pub target_price: i128,
+    pub outcome: u32,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1680,11 +1730,11 @@ impl OracleCallback for PredifiContract {
         outcome: u32,
         proof: String,
     ) -> Result<(), PredifiError> {
-        PredifiContract::require_not_paused(&env);
+        Self::require_not_paused(&env);
         oracle.require_auth();
 
         // Check authorization: oracle must have role 3
-        if let Err(e) = PredifiContract::require_role(&env, &oracle, 3) {
+        if let Err(e) = Self::require_role(&env, &oracle, 3) {
             // 🔴 HIGH ALERT: unauthorized attempt to resolve a pool by an oracle
             UnauthorizedResolveAttemptEvent {
                 caller: oracle,
@@ -1709,7 +1759,7 @@ impl OracleCallback for PredifiContract {
         }
 
         let current_time = env.ledger().timestamp();
-        let config = PredifiContract::get_config(&env);
+        let config = Self::get_config(&env);
 
         if current_time < pool.end_time.saturating_add(config.resolution_delay) {
             return Err(PredifiError::ResolutionDelayNotMet);
@@ -1719,7 +1769,7 @@ impl OracleCallback for PredifiContract {
         // Verify state transition validity (INV-2)
         assert!(
             outcome < pool.options_count
-                && PredifiContract::is_valid_state_transition(pool.state, MarketState::Resolved),
+                && Self::is_valid_state_transition(pool.state, MarketState::Resolved),
             "outcome exceeds options_count or invalid state transition"
         );
 
@@ -1728,10 +1778,10 @@ impl OracleCallback for PredifiContract {
         pool.outcome = outcome;
 
         env.storage().persistent().set(&pool_key, &pool);
-        PredifiContract::extend_persistent(&env, &pool_key);
+        Self::extend_persistent(&env, &pool_key);
 
         // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
-        let stakes = PredifiContract::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
         let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
 
         OracleResolvedEvent {
