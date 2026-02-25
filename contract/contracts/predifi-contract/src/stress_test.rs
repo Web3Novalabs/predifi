@@ -1,5 +1,6 @@
 use crate::{PredifiContract, PredifiContractClient};
 use soroban_sdk::{
+    symbol_short,
     testutils::{Address as _, Ledger},
     token, Address, Env, String, Symbol,
 };
@@ -95,7 +96,7 @@ fn test_high_volume_predictions_single_pool() {
         &10i128,
         &10000i128,
         &0,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     // Place 100 predictions from 100 unique users
@@ -132,7 +133,7 @@ fn test_bulk_claim_winnings() {
         &1i128,
         &0i128,
         &0,
-        &Symbol::new(&env, "finance"),
+        &symbol_short!("Finance"),
     );
 
     let mut users = alloc::vec::Vec::new();
@@ -175,7 +176,7 @@ fn test_sequential_pool_creation_stress() {
             &1i128,
             &0i128,
             &0,
-            &Symbol::new(&env, "misc"),
+            &symbol_short!("Other"),
         );
         assert_eq!(pool_id, i as u64);
     }
@@ -199,7 +200,7 @@ fn test_max_outcomes_high_volume() {
         &1i128,
         &0i128,
         &0,
-        &Symbol::new(&env, "sports"),
+        &symbol_short!("Sports"),
     );
 
     // Place predictions on each outcome
@@ -229,7 +230,7 @@ fn test_prediction_throughput_measurement() {
         &1i128,
         &0i128,
         &0,
-        &Symbol::new(&env, "tech"),
+        &symbol_short!("Tech"),
     );
 
     let start_ledger = env.ledger().timestamp();
@@ -267,7 +268,7 @@ fn test_resolution_under_load() {
             &1i128,
             &0i128,
             &0,
-            &Symbol::new(&env, "load"),
+            &symbol_short!("Other"),
         );
         pool_ids.push(pid);
     }

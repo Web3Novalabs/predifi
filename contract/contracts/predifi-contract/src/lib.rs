@@ -11,12 +11,43 @@ mod stress_test;
 mod test_utils;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, BytesN,
-    Env, IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
 pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MARKET CATEGORY CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Canonical set of market category symbols. All categories use PascalCase
+// convention and are ≤9 characters for compile-time symbol optimization.
+//
+// These constants define the allowed categories for prediction pools.
+// Any pool creation must specify one of these categories.
+
+/// Sports-related prediction markets (e.g., game outcomes, tournaments)
+pub const CATEGORY_SPORTS: Symbol = symbol_short!("Sports");
+
+/// Financial markets and economic predictions (e.g., stock prices, indices)
+pub const CATEGORY_FINANCE: Symbol = symbol_short!("Finance");
+
+/// Cryptocurrency and blockchain-related predictions (e.g., token prices, network events)
+pub const CATEGORY_CRYPTO: Symbol = symbol_short!("Crypto");
+
+/// Political events and elections
+pub const CATEGORY_POLITICS: Symbol = symbol_short!("Politics");
+
+/// Entertainment industry predictions (e.g., awards, box office)
+pub const CATEGORY_ENTERTAIN: Symbol = symbol_short!("Entertain");
+
+/// Technology and innovation predictions (e.g., product launches, tech trends)
+pub const CATEGORY_TECH: Symbol = symbol_short!("Tech");
+
+/// Miscellaneous predictions that don't fit other categories
+pub const CATEGORY_OTHER: Symbol = symbol_short!("Other");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PROTOCOL INVARIANTS (for formal verification)
@@ -54,6 +85,8 @@ pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
     InvalidPoolState = 24,
+    /// The provided category symbol is not in the allowed list
+    InvalidCategory = 25,
     AlreadyClaimed = 60,
     PoolCanceled = 70,
     ResolutionDelayNotMet = 81,
@@ -91,6 +124,8 @@ pub struct Pool {
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    /// Market category for this pool (e.g., Sports, Finance, Crypto)
+    pub category: Symbol,
     /// A short human-readable description of the event being predicted.
     pub description: String,
     /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
@@ -106,8 +141,6 @@ pub struct Pool {
     pub initial_liquidity: i128,
     /// Address of the pool creator.
     pub creator: Address,
-    /// Category symbol for filtering.
-    pub category: Symbol,
 }
 
 #[contracttype]
@@ -486,6 +519,34 @@ pub struct PredifiContract;
 #[contractimpl]
 impl PredifiContract {
     // ====== Pure Helper Functions (side-effect free, verifiable) ======
+
+    /// Validate that a category symbol is in the allowed list.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `category` - The category symbol to validate
+    ///
+    /// # Returns
+    /// `true` if the category is valid, `false` otherwise
+    fn validate_category(env: &Env, category: &Symbol) -> bool {
+        let mut allowed = Vec::new(env);
+        allowed.push_back(CATEGORY_SPORTS);
+        allowed.push_back(CATEGORY_FINANCE);
+        allowed.push_back(CATEGORY_CRYPTO);
+        allowed.push_back(CATEGORY_POLITICS);
+        allowed.push_back(CATEGORY_ENTERTAIN);
+        allowed.push_back(CATEGORY_TECH);
+        allowed.push_back(CATEGORY_OTHER);
+
+        for i in 0..allowed.len() {
+            if let Some(allowed_cat) = allowed.get(i) {
+                if &allowed_cat == category {
+                    return true;
+                }
+            }
+        }
+        false
+    }
 
     /// Pure: Calculate winnings for a user given pool state
     /// PRE: winning_stake > 0
@@ -987,6 +1048,12 @@ impl PredifiContract {
     ) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
+
+        // Validate: category must be in the allowed list
+        assert!(
+            Self::validate_category(&env, &category),
+            "category must be one of the allowed categories"
+        );
 
         // Validate: token must be on the allowed betting whitelist
         if !Self::is_token_whitelisted(&env, &token) {
