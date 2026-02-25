@@ -1922,7 +1922,7 @@ fn test_pool_end_time_on_leap_day() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user = Address::generate(&env);
@@ -1954,7 +1954,7 @@ fn test_pool_end_time_at_leap_day_already_past() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 }
 
@@ -1982,7 +1982,7 @@ fn test_pool_end_time_spans_leap_day_resolution() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user1 = Address::generate(&env);
@@ -2030,7 +2030,7 @@ fn test_maximum_single_stake_roundtrip() {
         &1i128,
         &max_amount, // max_stake == max_amount is valid
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user = Address::generate(&env);
@@ -2071,7 +2071,7 @@ fn test_large_stake_winnings_split_correctly() {
         &1i128,
         &0i128, // no max_stake limit
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let winner1 = Address::generate(&env);
@@ -2129,7 +2129,7 @@ fn test_double_resolution_attempt() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
@@ -2158,7 +2158,7 @@ fn test_many_users_rapid_claim_after_resolution() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let stake: i128 = 100;
@@ -2221,7 +2221,7 @@ fn test_resolution_then_new_pool_state_isolation() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user = Address::generate(&env);
@@ -2242,7 +2242,7 @@ fn test_resolution_then_new_pool_state_isolation() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     assert_ne!(pool_a, pool_b);
@@ -2278,7 +2278,7 @@ fn test_create_pool_rejects_zero_min_stake() {
         &0i128, // invalid
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 }
 
@@ -2301,7 +2301,7 @@ fn test_create_pool_rejects_single_option() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 }
 
@@ -2324,7 +2324,7 @@ fn test_create_pool_rejects_excess_options_count() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 }
 
@@ -2347,7 +2347,7 @@ fn test_create_pool_accepts_maximum_options_count() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user = Address::generate(&env);
@@ -2376,7 +2376,7 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 }
 
@@ -2400,7 +2400,7 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     // If creation succeeded (didn't panic), the test passes.
@@ -2426,7 +2426,7 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
         &100i128, // min_stake
         &50i128,  // max_stake < min_stake → invalid
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 }
 
@@ -2448,7 +2448,7 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
         &100i128, // min_stake
         &100i128, // max_stake == min_stake → valid
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user = Address::generate(&env);
@@ -2476,7 +2476,7 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
@@ -2506,7 +2506,7 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user = Address::generate(&env);
@@ -2560,7 +2560,7 @@ fn test_unauthorized_admin_op_does_not_mutate_state() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
     let _ = new_pool; // pool creation succeeds → state is healthy
 }
@@ -2584,7 +2584,7 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     for _ in 0..3u32 {
@@ -2622,7 +2622,7 @@ fn test_state_consistency_across_many_pools() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
     // ── Pool 1 ──
     let p1 = client.create_pool(
@@ -2635,7 +2635,7 @@ fn test_state_consistency_across_many_pools() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
     // ── Pool 2 ──
     let p2 = client.create_pool(
@@ -2648,7 +2648,7 @@ fn test_state_consistency_across_many_pools() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
     // ── Pool 3 ──
     let p3 = client.create_pool(
@@ -2661,7 +2661,7 @@ fn test_state_consistency_across_many_pools() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
     // ── Pool 4 ──
     let p4 = client.create_pool(
@@ -2674,7 +2674,7 @@ fn test_state_consistency_across_many_pools() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let pools = [p0, p1, p2, p3, p4];
@@ -2757,7 +2757,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let pool_b = client.create_pool(
@@ -2770,7 +2770,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user_a = Address::generate(&env);
@@ -2823,7 +2823,7 @@ fn test_all_bettors_on_winning_side() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user1 = Address::generate(&env);
@@ -2868,7 +2868,7 @@ fn test_no_bettor_on_winning_side() {
         &1i128,
         &0i128,
         &0i128,
-        &Symbol::new(&env, "tech"),
+        &Symbol::new(&env, "Tech"),
     );
 
     let user1 = Address::generate(&env);

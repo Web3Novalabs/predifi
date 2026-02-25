@@ -177,23 +177,23 @@ pub struct UserPredictionDetail {
 #[derive(Clone)]
 pub enum DataKey {
     Pool(u64),
-    Prediction(Address, u64),
-    PoolIdCounter,
-    HasClaimed(Address, u64),
-    OutcomeStake(u64, u32),
+    Pred(Address, u64),
+    PoolIdCtr,
+    Claimed(Address, u64),
+    OutStake(u64, u32),
     /// Optimized storage for markets with many outcomes (e.g., 32+ teams).
     /// Stores all outcome stakes as a single Vec<i128> to reduce storage reads.
-    OutcomeStakes(u64),
-    UserPredictionCount(Address),
-    UserPredictionIndex(Address, u32),
+    OutStakes(u64),
+    UsrPrdCnt(Address),
+    UsrPrdIdx(Address, u32),
     Config,
     Paused,
-    ReentrancyGuard,
-    CategoryPoolCount(Symbol),
-    CategoryPoolIndex(Symbol, u32),
+    RentGuard,
+    CatPoolCt(Symbol),
+    CatPoolIx(Symbol, u32),
     /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
-    TokenWhitelist(Address),
-    ParticipantsCount(u64),
+    TokenWl(Address),
+    PartCnt(u64),
 }
 
 #[contracttype]
@@ -594,7 +594,7 @@ impl PredifiContract {
     /// Get outcome stakes for a pool using optimized batch storage.
     /// Falls back to individual storage keys for backward compatibility.
     fn get_outcome_stakes(env: &Env, pool_id: u64, options_count: u32) -> Vec<i128> {
-        let key = DataKey::OutcomeStakes(pool_id);
+        let key = DataKey::OutStakes(pool_id);
         if let Some(stakes) = env.storage().persistent().get(&key) {
             Self::extend_persistent(env, &key);
             stakes
@@ -602,7 +602,7 @@ impl PredifiContract {
             // Fallback: reconstruct from individual outcome stakes (backward compatibility)
             let mut stakes = Vec::new(env);
             for i in 0..options_count {
-                let outcome_key = DataKey::OutcomeStake(pool_id, i);
+                let outcome_key = DataKey::OutStake(pool_id, i);
                 let stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
                 stakes.push_back(stake);
             }
@@ -624,12 +624,12 @@ impl PredifiContract {
         stakes.set(outcome, current + amount);
 
         // Store using optimized batch key
-        let key = DataKey::OutcomeStakes(pool_id);
+        let key = DataKey::OutStakes(pool_id);
         env.storage().persistent().set(&key, &stakes);
         Self::extend_persistent(env, &key);
 
         // Also update individual key for backward compatibility
-        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
+        let outcome_key = DataKey::OutStake(pool_id, outcome);
         env.storage()
             .persistent()
             .set(&outcome_key, &(current + amount));
@@ -695,7 +695,7 @@ impl PredifiContract {
     }
 
     fn enter_reentrancy_guard(env: &Env) {
-        let key = DataKey::ReentrancyGuard;
+        let key = DataKey::RentGuard;
         if env.storage().temporary().has(&key) {
             panic!("Reentrancy detected");
         }
@@ -703,12 +703,12 @@ impl PredifiContract {
     }
 
     fn exit_reentrancy_guard(env: &Env) {
-        env.storage().temporary().remove(&DataKey::ReentrancyGuard);
+        env.storage().temporary().remove(&DataKey::RentGuard);
     }
 
     /// Returns true if the token is on the allowed betting whitelist.
     fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
-        let key = DataKey::TokenWhitelist(token.clone());
+        let key = DataKey::TokenWl(token.clone());
         let allowed = env.storage().persistent().get(&key).unwrap_or(false);
         if env.storage().persistent().has(&key) {
             Self::extend_persistent(env, &key);
@@ -734,7 +734,7 @@ impl PredifiContract {
                 resolution_delay,
             };
             env.storage().instance().set(&DataKey::Config, &config);
-            env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
+            env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
             Self::extend_instance(&env);
 
             InitEvent {
@@ -876,7 +876,7 @@ impl PredifiContract {
             .publish(&env);
             return Err(e);
         }
-        let key = DataKey::TokenWhitelist(token.clone());
+        let key = DataKey::TokenWl(token.clone());
         env.storage().persistent().set(&key, &true);
         Self::extend_persistent(&env, &key);
 
@@ -905,7 +905,7 @@ impl PredifiContract {
             .publish(&env);
             return Err(e);
         }
-        let key = DataKey::TokenWhitelist(token.clone());
+        let key = DataKey::TokenWl(token.clone());
         env.storage().persistent().remove(&key);
 
         TokenWhitelistRemovedEvent {
@@ -1109,7 +1109,7 @@ impl PredifiContract {
         let pool_id: u64 = env
             .storage()
             .instance()
-            .get(&DataKey::PoolIdCounter)
+            .get(&DataKey::PoolIdCtr)
             .unwrap_or(0);
         Self::extend_instance(&env);
 
@@ -1135,7 +1135,7 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
-        let pc_key = DataKey::ParticipantsCount(pool_id);
+        let pc_key = DataKey::PartCnt(pool_id);
         env.storage().persistent().set(&pc_key, &0u32);
         Self::extend_persistent(&env, &pc_key);
 
@@ -1146,14 +1146,14 @@ impl PredifiContract {
         }
 
         // Update category index
-        let category_count_key = DataKey::CategoryPoolCount(category.clone());
+        let category_count_key = DataKey::CatPoolCt(category.clone());
         let category_count: u32 = env
             .storage()
             .persistent()
             .get(&category_count_key)
             .unwrap_or(0);
 
-        let category_index_key = DataKey::CategoryPoolIndex(category.clone(), category_count);
+        let category_index_key = DataKey::CatPoolIx(category.clone(), category_count);
         env.storage()
             .persistent()
             .set(&category_index_key, &pool_id);
@@ -1166,7 +1166,7 @@ impl PredifiContract {
 
         env.storage()
             .instance()
-            .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+            .set(&DataKey::PoolIdCtr, &(pool_id + 1));
         Self::extend_instance(&env);
 
         PoolCreatedEvent {
@@ -1407,17 +1407,37 @@ impl PredifiContract {
             );
         }
 
-        let pred_key = DataKey::Prediction(user.clone(), pool_id);
-        if !env.storage().persistent().has(&pred_key) {
-            let pc_key = DataKey::ParticipantsCount(pool_id);
+        let pred_key = DataKey::Pred(user.clone(), pool_id);
+        if let Some(mut existing_pred) = env.storage().persistent().get::<_, Prediction>(&pred_key)
+        {
+            assert!(
+                existing_pred.outcome == outcome,
+                "Cannot change prediction outcome"
+            );
+            existing_pred.amount = existing_pred.amount.checked_add(amount).expect("overflow");
+            env.storage().persistent().set(&pred_key, &existing_pred);
+            Self::extend_persistent(&env, &pred_key);
+        } else {
+            env.storage()
+                .persistent()
+                .set(&pred_key, &Prediction { amount, outcome });
+            Self::extend_persistent(&env, &pred_key);
+
+            let pc_key = DataKey::PartCnt(pool_id);
             let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
             env.storage().persistent().set(&pc_key, &(pc + 1));
             Self::extend_persistent(&env, &pc_key);
+
+            let count_key = DataKey::UsrPrdCnt(user.clone());
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+            let index_key = DataKey::UsrPrdIdx(user.clone(), count);
+            env.storage().persistent().set(&index_key, &pool_id);
+            Self::extend_persistent(&env, &index_key);
+
+            env.storage().persistent().set(&count_key, &(count + 1));
+            Self::extend_persistent(&env, &count_key);
         }
-        env.storage()
-            .persistent()
-            .set(&pred_key, &Prediction { amount, outcome });
-        Self::extend_persistent(&env, &pred_key);
 
         // Update total stake (INV-1)
         pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
@@ -1427,16 +1447,6 @@ impl PredifiContract {
         // Update outcome stake (INV-1) - using optimized batch storage
         let _stakes =
             Self::update_outcome_stake(&env, pool_id, outcome, amount, pool.options_count);
-
-        let count_key = DataKey::UserPredictionCount(user.clone());
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-
-        let index_key = DataKey::UserPredictionIndex(user.clone(), count);
-        env.storage().persistent().set(&index_key, &pool_id);
-        Self::extend_persistent(&env, &index_key);
-
-        env.storage().persistent().set(&count_key, &(count + 1));
-        Self::extend_persistent(&env, &count_key);
 
         // --- INTERACTIONS ---
 
@@ -1501,7 +1511,7 @@ impl PredifiContract {
             return Err(PredifiError::PoolNotResolved);
         }
 
-        let claimed_key = DataKey::HasClaimed(user.clone(), pool_id);
+        let claimed_key = DataKey::Claimed(user.clone(), pool_id);
         if env.storage().persistent().has(&claimed_key) {
             // 🔴 HIGH ALERT: repeated claim attempt on an already-claimed pool.
             SuspiciousDoubleClaimEvent {
@@ -1516,7 +1526,7 @@ impl PredifiContract {
 
         // --- CHECKS ---
 
-        let pred_key = DataKey::Prediction(user.clone(), pool_id);
+        let pred_key = DataKey::Pred(user.clone(), pool_id);
         let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
 
         if env.storage().persistent().has(&pred_key) {
@@ -1645,7 +1655,7 @@ impl PredifiContract {
         offset: u32,
         limit: u32,
     ) -> Vec<UserPredictionDetail> {
-        let count_key = DataKey::UserPredictionCount(user.clone());
+        let count_key = DataKey::UsrPrdCnt(user.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
         if env.storage().persistent().has(&count_key) {
             Self::extend_persistent(&env, &count_key);
@@ -1660,7 +1670,7 @@ impl PredifiContract {
         let end = core::cmp::min(offset.saturating_add(limit), count);
 
         for i in offset..end {
-            let index_key = DataKey::UserPredictionIndex(user.clone(), i);
+            let index_key = DataKey::UsrPrdIdx(user.clone(), i);
             let pool_id: u64 = env
                 .storage()
                 .persistent()
@@ -1668,7 +1678,7 @@ impl PredifiContract {
                 .expect("index not found");
             Self::extend_persistent(&env, &index_key);
 
-            let pred_key = DataKey::Prediction(user.clone(), pool_id);
+            let pred_key = DataKey::Pred(user.clone(), pool_id);
             let prediction: Prediction = env
                 .storage()
                 .persistent()
@@ -1750,7 +1760,7 @@ impl PredifiContract {
 
     /// Get a paginated list of pool IDs by category.
     pub fn get_pools_by_category(env: Env, category: Symbol, offset: u32, limit: u32) -> Vec<u64> {
-        let count_key = DataKey::CategoryPoolCount(category.clone());
+        let count_key = DataKey::CatPoolCt(category.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
         if env.storage().persistent().has(&count_key) {
             Self::extend_persistent(&env, &count_key);
@@ -1767,7 +1777,7 @@ impl PredifiContract {
 
         for i in 0..num_to_take {
             let index = start_index.saturating_sub(i);
-            let index_key = DataKey::CategoryPoolIndex(category.clone(), index);
+            let index_key = DataKey::CatPoolIx(category.clone(), index);
             let pool_id: u64 = env
                 .storage()
                 .persistent()
@@ -1793,7 +1803,7 @@ impl PredifiContract {
 
         let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
 
-        let pc_key = DataKey::ParticipantsCount(pool_id);
+        let pc_key = DataKey::PartCnt(pool_id);
         let participants_count: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
         if env.storage().persistent().has(&pc_key) {
             Self::extend_persistent(&env, &pc_key);
