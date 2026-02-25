@@ -1248,7 +1248,6 @@ impl PredifiContract {
         pool.state = MarketState::Resolved;
         pool.resolved = true;
         pool.outcome = outcome;
-        pool.status = PoolStatus::Resolved;
 
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
