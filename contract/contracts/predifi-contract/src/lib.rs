@@ -118,6 +118,22 @@ pub enum MarketState {
 
 #[contracttype]
 #[derive(Clone)]
+pub struct CreatePoolParams {
+    pub end_time: u64,
+    pub token: Address,
+    pub options_count: u32,
+    pub description: String,
+    pub metadata_url: String,
+    pub min_stake: i128,
+    pub max_stake: i128,
+    pub initial_liquidity: i128,
+    pub category: Symbol,
+    pub private: bool,
+    pub whitelist_key: Option<Symbol>,
+}
+
+#[contracttype]
+#[derive(Clone)]
 pub struct Pool {
     pub end_time: u64,
     pub resolved: bool,
@@ -145,6 +161,10 @@ pub struct Pool {
     pub initial_liquidity: i128,
     /// Address of the pool creator.
     pub creator: Address,
+    /// If true, only whitelisted users can place predictions.
+    pub private: bool,
+    /// Optional invite key for private pools.
+    pub whitelist_key: Option<Symbol>,
 }
 
 #[contracttype]
@@ -204,6 +224,8 @@ pub enum DataKey {
     ReferredVolume(Address, u64),
     /// Referral cut in bps (e.g. 5000 = 50% of referrer's fee share). Instance storage, default 5000.
     ReferralCutBps,
+    /// Private pool whitelist: Whitelist(pool_id, user) -> true if allowed.
+    Whitelist(u64, Address),
 }
 
 #[contracttype]
@@ -1103,88 +1125,72 @@ impl PredifiContract {
     ///
     /// PRE: end_time > current_time (INV-8)
     /// POST: Pool.state = Active, Pool.total_stake = initial_liquidity (if provided)
-    ///
-    /// # Arguments
-    /// * `creator`           - Address of the pool creator (must provide auth).
-    /// * `end_time`          - Unix timestamp after which no more predictions are accepted.
-    /// * `token`             - The Stellar token contract address used for staking.
-    /// * `options_count`     - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
-    /// * `description`       - Short human-readable description of the event (max 256 bytes).
-    /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
-    /// * `min_stake`         - Minimum stake amount per prediction (must be > 0).
-    /// * `max_stake`         - Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
-    /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_pool(
-        env: Env,
-        creator: Address,
-        end_time: u64,
-        token: Address,
-        options_count: u32,
-        description: String,
-        metadata_url: String,
-        min_stake: i128,
-        max_stake: i128,
-        initial_liquidity: i128,
-        category: Symbol,
-    ) -> u64 {
+    pub fn create_pool(env: Env, creator: Address, params: CreatePoolParams) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
 
         // Validate: category must be in the allowed list
         assert!(
-            Self::validate_category(&env, &category),
+            Self::validate_category(&env, &params.category),
             "category must be one of the allowed categories"
         );
 
         // Validate: token must be on the allowed betting whitelist
-        if !Self::is_token_whitelisted(&env, &token) {
+        if !Self::is_token_whitelisted(&env, &params.token) {
             soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
         }
 
         let current_time = env.ledger().timestamp();
 
         // Validate: end_time must be in the future
-        assert!(end_time > current_time, "end_time must be in the future");
+        assert!(
+            params.end_time > current_time,
+            "end_time must be in the future"
+        );
 
         // Validate: minimum pool duration (1 hour)
         assert!(
-            end_time >= current_time + MIN_POOL_DURATION,
+            params.end_time >= current_time + MIN_POOL_DURATION,
             "end_time must be at least 1 hour in the future"
         );
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
-        assert!(options_count >= 2, "options_count must be at least 2");
+        assert!(
+            params.options_count >= 2,
+            "options_count must be at least 2"
+        );
 
         // Validate: options_count must not exceed maximum limit
         assert!(
-            options_count <= MAX_OPTIONS_COUNT,
+            params.options_count <= MAX_OPTIONS_COUNT,
             "options_count exceeds maximum allowed value"
         );
 
         // Validate: initial_liquidity must be non-negative if provided
         assert!(
-            initial_liquidity >= 0,
+            params.initial_liquidity >= 0,
             "initial_liquidity must be non-negative"
         );
 
         // Validate: initial_liquidity must not exceed maximum limit
         assert!(
-            initial_liquidity <= MAX_INITIAL_LIQUIDITY,
+            params.initial_liquidity <= MAX_INITIAL_LIQUIDITY,
             "initial_liquidity exceeds maximum allowed value"
         );
 
-        // Note: Token address validation is deferred to when the token is actually used.
-        // This is the standard pattern in Soroban - invalid tokens will fail when
-        // transfers are attempted during place_prediction.
-
-        assert!(description.len() <= 256, "description exceeds 256 bytes");
-        assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
+        assert!(
+            params.description.len() <= 256,
+            "description exceeds 256 bytes"
+        );
+        assert!(
+            params.metadata_url.len() <= 512,
+            "metadata_url exceeds 512 bytes"
+        );
 
         // Validate stake limits
-        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(params.min_stake > 0, "min_stake must be greater than zero");
         assert!(
-            max_stake == 0 || max_stake >= min_stake,
+            params.max_stake == 0 || params.max_stake >= params.min_stake,
             "max_stake must be zero (unlimited) or >= min_stake"
         );
 
@@ -1196,22 +1202,24 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         let pool = Pool {
-            end_time,
+            end_time: params.end_time,
             resolved: false,
             canceled: false,
             state: MarketState::Active,
             outcome: 0,
-            token: token.clone(),
-            total_stake: initial_liquidity, // Initial liquidity is part of total stake
-            description,
-            metadata_url: metadata_url.clone(),
-            options_count,
-            min_stake,
-            max_stake,
-            max_total_stake: 0, // default: no cap
-            initial_liquidity,
+            token: params.token.clone(),
+            total_stake: params.initial_liquidity,
+            description: params.description,
+            metadata_url: params.metadata_url.clone(),
+            options_count: params.options_count,
+            min_stake: params.min_stake,
+            max_stake: params.max_stake,
+            max_total_stake: 0,
+            initial_liquidity: params.initial_liquidity,
             creator: creator.clone(),
-            category: category.clone(),
+            category: params.category.clone(),
+            private: params.private,
+            whitelist_key: params.whitelist_key,
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -1223,20 +1231,24 @@ impl PredifiContract {
         Self::extend_persistent(&env, &pc_key);
 
         // Transfer initial liquidity from creator to contract if provided
-        if initial_liquidity > 0 {
-            let token_client = token::Client::new(&env, &token);
-            token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
+        if params.initial_liquidity > 0 {
+            let token_client = token::Client::new(&env, &params.token);
+            token_client.transfer(
+                &creator,
+                env.current_contract_address(),
+                &params.initial_liquidity,
+            );
         }
 
         // Update category index
-        let category_count_key = DataKey::CatPoolCt(category.clone());
+        let category_count_key = DataKey::CatPoolCt(params.category.clone());
         let category_count: u32 = env
             .storage()
             .persistent()
             .get(&category_count_key)
             .unwrap_or(0);
 
-        let category_index_key = DataKey::CatPoolIx(category.clone(), category_count);
+        let category_index_key = DataKey::CatPoolIx(params.category.clone(), category_count);
         env.storage()
             .persistent()
             .set(&category_index_key, &pool_id);
@@ -1254,21 +1266,21 @@ impl PredifiContract {
 
         PoolCreatedEvent {
             pool_id,
-            end_time,
-            token,
-            options_count,
-            metadata_url,
-            initial_liquidity,
-            category,
+            end_time: params.end_time,
+            token: params.token,
+            options_count: params.options_count,
+            metadata_url: params.metadata_url,
+            initial_liquidity: params.initial_liquidity,
+            category: params.category,
         }
         .publish(&env);
 
         // Emit initial liquidity event if liquidity was provided
-        if initial_liquidity > 0 {
+        if params.initial_liquidity > 0 {
             InitialLiquidityProvidedEvent {
                 pool_id,
                 creator,
-                amount: initial_liquidity,
+                amount: params.initial_liquidity,
             }
             .publish(&env);
         }
@@ -1514,6 +1526,7 @@ impl PredifiContract {
         amount: i128,
         outcome: u32,
         referrer: Option<Address>,
+        invite_key: Option<Symbol>,
     ) {
         Self::require_not_paused(&env);
         user.require_auth();
@@ -1541,6 +1554,32 @@ impl PredifiContract {
         assert!(!pool.canceled, "Cannot place prediction on canceled pool");
         assert!(pool.state == MarketState::Active, "Pool is not active");
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
+
+        // Check private pool authorization
+        // Check private pool authorization
+        if pool.private {
+            let whitelist_key_data = DataKey::Whitelist(pool_id, user.clone());
+            let is_whitelisted = env
+                .storage()
+                .persistent()
+                .get(&whitelist_key_data)
+                .unwrap_or(false);
+
+            let has_valid_invite = if let Some(ref pool_key) = pool.whitelist_key {
+                if let Some(ref prov_key) = invite_key {
+                    pool_key == prov_key
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            assert!(
+                is_whitelisted || user == pool.creator || has_valid_invite,
+                "User not authorized for private pool"
+            );
+        }
 
         // Validate: outcome must be within the valid options range
         assert!(
@@ -2120,6 +2159,97 @@ impl PredifiContract {
         }
 
         results
+    }
+
+    /// Add a user to a private pool's whitelist. Only callable by pool creator.
+    pub fn add_to_whitelist(
+        env: Env,
+        creator: Address,
+        pool_id: u64,
+        user: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        creator.require_auth();
+
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if pool.creator != creator {
+            return Err(PredifiError::Unauthorized);
+        }
+
+        assert!(pool.private, "Pool is not private");
+
+        let whitelist_key = DataKey::Whitelist(pool_id, user);
+        env.storage().persistent().set(&whitelist_key, &true);
+        Self::extend_persistent(&env, &whitelist_key);
+
+        Ok(())
+    }
+
+    /// Remove a user from a private pool's whitelist. Only callable by pool creator.
+    pub fn remove_from_whitelist(
+        env: Env,
+        creator: Address,
+        pool_id: u64,
+        user: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        creator.require_auth();
+
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if pool.creator != creator {
+            return Err(PredifiError::Unauthorized);
+        }
+
+        assert!(pool.private, "Pool is not private");
+
+        let whitelist_key = DataKey::Whitelist(pool_id, user);
+        env.storage().persistent().remove(&whitelist_key);
+
+        Ok(())
+    }
+
+    /// Check if a user is whitelisted for a private pool.
+    pub fn is_whitelisted(env: Env, pool_id: u64, user: Address) -> bool {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if !pool.private {
+            return true;
+        }
+
+        if user == pool.creator {
+            return true;
+        }
+
+        let whitelist_key = DataKey::Whitelist(pool_id, user);
+        let is_whitelisted = env
+            .storage()
+            .persistent()
+            .get(&whitelist_key)
+            .unwrap_or(false);
+        if env.storage().persistent().has(&whitelist_key) {
+            Self::extend_persistent(&env, &whitelist_key);
+        }
+        is_whitelisted
     }
 
     /// Get comprehensive stats for a pool.
