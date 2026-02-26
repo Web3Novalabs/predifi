@@ -104,6 +104,8 @@ pub enum PredifiError {
     PriceDataInvalid = 102,
     /// Price condition not set for pool.
     PriceConditionNotSet = 103,
+    /// Total pool stake cap reached or would be exceeded.
+    MaxTotalStakeExceeded = 104,
 }
 
 #[contracttype]
@@ -136,6 +138,8 @@ pub struct Pool {
     pub min_stake: i128,
     /// Maximum stake amount per prediction (0 = no limit).
     pub max_stake: i128,
+    /// Maximum total stake amount across the entire pool (0 = no limit).
+    pub max_total_stake: i128,
     /// Initial liquidity provided by the pool creator (house money).
     /// This is part of total_stake but excluded from fee calculations.
     pub initial_liquidity: i128,
@@ -1134,6 +1138,7 @@ impl PredifiContract {
             options_count,
             min_stake,
             max_stake,
+            max_total_stake: 0, // default: no cap
             initial_liquidity,
             creator: creator.clone(),
             category: category.clone(),
@@ -1199,6 +1204,59 @@ impl PredifiContract {
         }
 
         pool_id
+    }
+
+    /// Increase the maximum total stake cap for a pool.
+    /// Only the pool creator can increase it, and only before the market ends.
+    ///
+    /// - `new_max_total_stake` must be >= current `pool.total_stake`.
+    /// - Setting to 0 means "no cap" (only allowed if current cap is 0 or increasing from a non-zero).
+    pub fn increase_max_total_stake(
+        env: Env,
+        creator: Address,
+        pool_id: u64,
+        new_max_total_stake: i128,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        creator.require_auth();
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if pool.creator != creator {
+            return Err(PredifiError::Unauthorized);
+        }
+
+        // Pool must still be active and not ended
+        if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+            return Err(PredifiError::InvalidPoolState);
+        }
+        assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
+
+        // Must not set a cap below what is already staked
+        assert!(
+            new_max_total_stake == 0 || new_max_total_stake >= pool.total_stake,
+            "new_max_total_stake must be zero (unlimited) or >= total_stake"
+        );
+
+        // Only allow increasing the cap (or setting unlimited)
+        if pool.max_total_stake > 0 && new_max_total_stake > 0 {
+            assert!(
+                new_max_total_stake >= pool.max_total_stake,
+                "new_max_total_stake must be >= current max_total_stake"
+            );
+        }
+
+        pool.max_total_stake = new_max_total_stake;
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        Ok(())
     }
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
@@ -1413,6 +1471,15 @@ impl PredifiContract {
                 amount <= pool.max_stake,
                 "amount exceeds the pool maximum stake"
             );
+        }
+
+        // Enforce global pool cap (max total stake)
+        if pool.max_total_stake > 0 {
+            let new_total = pool.total_stake.checked_add(amount).expect("overflow");
+            if new_total > pool.max_total_stake {
+                Self::exit_reentrancy_guard(&env);
+                soroban_sdk::panic_with_error!(&env, PredifiError::MaxTotalStakeExceeded);
+            }
         }
 
         let pred_key = DataKey::Pred(user.clone(), pool_id);
