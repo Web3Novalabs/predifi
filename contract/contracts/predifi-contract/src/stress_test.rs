@@ -1,4 +1,4 @@
-use crate::{CreatePoolParams, PredifiContract, PredifiContractClient};
+use crate::{PoolConfig, PredifiContract, PredifiContractClient};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
@@ -88,18 +88,18 @@ fn test_high_volume_predictions_single_pool() {
     // Create pool with min_stake=10, max_stake=10000
     let pool_id = client.create_pool(
         &creator,
-        &CreatePoolParams {
-            end_time: 10000u64,
-            token: token_client.address.clone(),
-            options_count: 2,
+        &10000u64,
+        // 10000 > 1000 + 3600
+        &token_client.address,
+        &2,
+        &symbol_short!("Tech"),
+        &PoolConfig {
             description: String::from_str(&env, "High Volume Stress Test"),
             metadata_url: String::from_str(&env, "ipfs://stress"),
             min_stake: 10i128,
             max_stake: 10000i128,
             initial_liquidity: 0,
-            category: symbol_short!("Tech"),
-            private: false,
-            whitelist_key: None,
+            required_resolutions: 1u32,
         },
     );
 
@@ -129,18 +129,18 @@ fn test_bulk_claim_winnings() {
 
     let pool_id = client.create_pool(
         &creator,
-        &CreatePoolParams {
-            end_time: 5000u64,
-            token: token_client.address.clone(),
-            options_count: 2,
+        &5000u64,
+        // 5000 > 1000 + 3600
+        &token_client.address,
+        &2,
+        &symbol_short!("Finance"),
+        &PoolConfig {
             description: String::from_str(&env, "Bulk Claim Test"),
             metadata_url: String::from_str(&env, "ipfs://bulk"),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0,
-            category: symbol_short!("Finance"),
-            private: false,
-            whitelist_key: None,
+            required_resolutions: 1u32,
         },
     );
 
@@ -176,18 +176,17 @@ fn test_sequential_pool_creation_stress() {
     for i in 0..num_pools {
         let pool_id = client.create_pool(
             &creator,
-            &CreatePoolParams {
-                end_time: 200000u64,
-                token: token_client.address.clone(),
-                options_count: 2,
+            &200000u64,
+            &token_client.address,
+            &2,
+            &symbol_short!("Other"),
+            &PoolConfig {
                 description: String::from_str(&env, "Stress Pool"),
                 metadata_url: String::from_str(&env, "ipfs://meta"),
                 min_stake: 1i128,
                 max_stake: 0i128,
                 initial_liquidity: 0,
-                category: symbol_short!("Other"),
-                private: false,
-                whitelist_key: None,
+                required_resolutions: 1u32,
             },
         );
         assert_eq!(pool_id, i as u64);
@@ -204,18 +203,17 @@ fn test_max_outcomes_high_volume() {
 
     let pool_id = client.create_pool(
         &creator,
-        &CreatePoolParams {
-            end_time: 200000u64,
-            token: token_client.address.clone(),
-            options_count: max_options,
+        &200000u64,
+        &token_client.address,
+        &max_options,
+        &symbol_short!("Sports"),
+        &PoolConfig {
             description: String::from_str(&env, "High Options Test"),
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0,
-            category: symbol_short!("Sports"),
-            private: false,
-            whitelist_key: None,
+            required_resolutions: 1u32,
         },
     );
 
@@ -238,18 +236,17 @@ fn test_prediction_throughput_measurement() {
     let creator = Address::generate(&env);
     let pool_id = client.create_pool(
         &creator,
-        &CreatePoolParams {
-            end_time: 200000u64,
-            token: token_client.address.clone(),
-            options_count: 2,
+        &200000u64,
+        &token_client.address,
+        &2,
+        &symbol_short!("Tech"),
+        &PoolConfig {
             description: String::from_str(&env, "Throughput Test"),
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0,
-            category: symbol_short!("Tech"),
-            private: false,
-            whitelist_key: None,
+            required_resolutions: 1u32,
         },
     );
 
@@ -280,18 +277,17 @@ fn test_resolution_under_load() {
     for _ in 0..num_pools {
         let pid = client.create_pool(
             &creator,
-            &CreatePoolParams {
-                end_time: 20000u64,
-                token: token_client.address.clone(),
-                options_count: 2,
+            &20000u64,
+            &token_client.address,
+            &2,
+            &symbol_short!("Other"),
+            &PoolConfig {
                 description: String::from_str(&env, "Load Pool"),
                 metadata_url: String::from_str(&env, "ipfs://load"),
                 min_stake: 1i128,
                 max_stake: 0i128,
                 initial_liquidity: 0,
-                category: symbol_short!("Other"),
-                private: false,
-                whitelist_key: None,
+                required_resolutions: 1u32,
             },
         );
         pool_ids.push(pid);

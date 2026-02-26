@@ -84,10 +84,11 @@ fn test_full_market_lifecycle() {
     let end_time = 3600u64;
     let pool_id = client.create_pool(
         &user1,
-        &CreatePoolParams {
-            end_time,
-            token: token_ctx.token_address.clone(),
-            options_count: 3u32,
+        &end_time,
+        &token_ctx.token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -96,9 +97,7 @@ fn test_full_market_lifecycle() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
-            category: symbol_short!("Tech"),
-            private: false,
-            whitelist_key: None,
+            required_resolutions: 1u32,
         },
     );
 
@@ -163,10 +162,11 @@ fn test_multi_user_betting_and_balance_verification() {
     let creator = Address::generate(&env);
     let pool_id = client.create_pool(
         &creator,
-        &CreatePoolParams {
-            end_time: 4000u64,
-            token: token_ctx.token_address.clone(),
-            options_count: 4u32,
+        &4000u64,
+        &token_ctx.token_address,
+        &4u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -175,9 +175,7 @@ fn test_multi_user_betting_and_balance_verification() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
-            category: symbol_short!("Tech"),
-            private: false,
-            whitelist_key: None,
+            required_resolutions: 1u32,
         },
     );
 
@@ -236,10 +234,11 @@ fn test_market_resolution_multiple_winners() {
     let creator = Address::generate(&env);
     let pool_id = client.create_pool(
         &creator,
-        &CreatePoolParams {
-            end_time: 3600u64,
-            token: token_ctx.token_address.clone(),
-            options_count: 3u32,
+        &3600u64,
+        &token_ctx.token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -248,9 +247,7 @@ fn test_market_resolution_multiple_winners() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
-            category: symbol_short!("Tech"),
-            private: false,
-            whitelist_key: None,
+            required_resolutions: 1u32,
         },
     );
 
