@@ -83,7 +83,7 @@ let pool_id = contract.create_pool(
 
 ### `place_prediction`
 
-Place a prediction on an active pool.
+Place a prediction on an active pool. Optionally specify a referrer to earn a share of the protocol fee when the referred user claims winnings.
 
 ```rust
 pub fn place_prediction(
@@ -91,7 +91,8 @@ pub fn place_prediction(
     user: Address,
     pool_id: u64,
     amount: i128,
-    outcome: u32
+    outcome: u32,
+    referrer: Option<Address>
 )
 ```
 
@@ -103,6 +104,7 @@ pub fn place_prediction(
 | `pool_id` | `u64` | Pool to predict on |
 | `amount` | `i128` | Prediction amount (in token's smallest unit) |
 | `outcome` | `u32` | Outcome index (0, 1, 2, etc.) |
+| `referrer` | `Option<Address>` | Optional address that referred this user; stored on first prediction for (user, pool) and used for referral payout on claim |
 
 **Returns:** None
 
@@ -114,6 +116,7 @@ pub fn place_prediction(
 - Current time < pool.end_time
 - Amount > 0
 - User must have sufficient token balance
+- If `referrer` is set: cannot be the user or the contract address
 
 **Token Transfer:**
 - Transfers `amount` tokens from user to contract
@@ -126,7 +129,8 @@ contract.place_prediction(
     user_address,
     pool_id,
     1000000000, // 100 tokens
-    1 // Outcome: "Yes"
+    1, // Outcome: "Yes"
+    Some(referrer_address) // or None
 );
 ```
 
@@ -182,7 +186,7 @@ contract.resolve_pool(
 
 ### `claim_winnings`
 
-Claim winnings from a resolved pool.
+Claim winnings from a resolved pool. Protocol fee is deducted from the pool before distribution; if the user was referred, a portion of that fee is paid to the referrer.
 
 ```rust
 pub fn claim_winnings(
@@ -201,7 +205,7 @@ pub fn claim_winnings(
 
 **Returns:** `Result<i128, PredifiError>` - Amount claimed (0 if didn't win)
 
-**Events:** `WinningsClaimedEvent`
+**Events:** `WinningsClaimedEvent`, `ReferralPaidEvent` (when user had a referrer and wins)
 
 **Validations:**
 - Pool must be resolved
@@ -210,9 +214,10 @@ pub fn claim_winnings(
 
 **Reward Calculation:**
 
-```
-winnings = (user_stake / winning_outcome_total_stake) × total_pool_stake
-```
+- Protocol fee = `total_pool_stake × fee_bps / 10_000`
+- Payout pool = `total_pool_stake - protocol_fee`
+- `winnings = (user_stake / winning_outcome_total_stake) × payout_pool`
+- If user has a referrer: referrer receives `referral_cut_bps` of the user's share of the protocol fee (the rest remains for treasury withdrawal).
 
 **Errors:**
 - `PoolNotResolved` - Pool not yet resolved
@@ -328,6 +333,32 @@ pub fn set_fee_bps(
 | `fee_bps` | `u32` | New fee in basis points (max 10000) |
 
 **Events:** `FeeUpdateEvent`
+
+---
+
+### `set_referral_cut_bps`
+
+Set the referral cut in basis points (e.g. 5000 = 50% of the referrer's fee share). Requires Admin role (0). Must be ≤ 10_000.
+
+```rust
+pub fn set_referral_cut_bps(
+    env: Env,
+    admin: Address,
+    referral_cut_bps: u32
+) -> Result<(), PredifiError>
+```
+
+**Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `admin` | `Address` | Admin address |
+| `referral_cut_bps` | `u32` | Share of protocol fee (attributable to referred user) paid to referrer (max 10000) |
+
+**Referral view functions:**
+
+- **`get_referral_cut_bps(env: Env) -> u32`** — Returns the current referral cut in basis points (default 5000).
+- **`get_referred_volume(env: Env, referrer: Address, pool_id: u64) -> i128`** — Returns the total stake amount referred by `referrer` on the given pool (for analytics and payout context).
 
 ---
 

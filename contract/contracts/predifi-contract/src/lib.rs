@@ -1,26 +1,119 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 
+mod price_feed_simple;
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
+#[cfg(test)]
+mod stress_test;
+#[cfg(test)]
+mod test_utils;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, token, Address, Env,
-    IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
+pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MARKET CATEGORY CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Canonical set of market category symbols. All categories use PascalCase
+// convention and are ≤9 characters for compile-time symbol optimization.
+//
+// These constants define the allowed categories for prediction pools.
+// Any pool creation must specify one of these categories.
+
+/// Sports-related prediction markets (e.g., game outcomes, tournaments)
+pub const CATEGORY_SPORTS: Symbol = symbol_short!("Sports");
+
+/// Financial markets and economic predictions (e.g., stock prices, indices)
+pub const CATEGORY_FINANCE: Symbol = symbol_short!("Finance");
+
+/// Cryptocurrency and blockchain-related predictions (e.g., token prices, network events)
+pub const CATEGORY_CRYPTO: Symbol = symbol_short!("Crypto");
+
+/// Political events and elections
+pub const CATEGORY_POLITICS: Symbol = symbol_short!("Politics");
+
+/// Entertainment industry predictions (e.g., awards, box office)
+pub const CATEGORY_ENTERTAIN: Symbol = symbol_short!("Entertain");
+
+/// Technology and innovation predictions (e.g., product launches, tech trends)
+pub const CATEGORY_TECH: Symbol = symbol_short!("Tech");
+
+/// Miscellaneous predictions that don't fit other categories
+pub const CATEGORY_OTHER: Symbol = symbol_short!("Other");
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROTOCOL INVARIANTS (for formal verification)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// INV-1: Pool.total_stake = Σ(OutcomeStake(pool_id, outcome)) for all outcomes
+// INV-2: Pool.state transitions: Active → {Resolved | Canceled}, never reversed
+// INV-3: HasClaimed(user, pool) is write-once (prevents double-claim)
+// INV-4: Winnings ≤ Pool.total_stake (no value creation)
+// INV-5: For resolved pools: Σ(claimed_winnings) ≤ Pool.total_stake
+// INV-6: Config.fee_bps ≤ 10_000 (max 100%)
+// INV-7: Prediction.amount > 0 (no zero-stakes)
+// INV-8: Pool.end_time > creation_time (pools must have future end)
+//
+// ═══════════════════════════════════════════════════════════════════════════
 
 const DAY_IN_LEDGERS: u32 = 17280;
 const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+
+/// Minimum pool duration in seconds (1 hour)
+const MIN_POOL_DURATION: u64 = 3600;
+/// Maximum number of options allowed in a pool
+const MAX_OPTIONS_COUNT: u32 = 100;
+/// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
+const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
+/// Stake amount (in base token units) above which a `HighValuePredictionEvent`
+/// is emitted so off-chain monitors can apply extra scrutiny.
+/// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
+const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
+    InvalidPoolState = 24,
+    /// The provided category symbol is not in the allowed list
+    InvalidCategory = 25,
     AlreadyClaimed = 60,
+    PoolCanceled = 70,
+    ResolutionDelayNotMet = 81,
+    /// Token is not on the allowed betting whitelist.
+    TokenNotWhitelisted = 91,
+    /// Invalid amount provided (e.g., zero or negative).
+    InvalidAmount = 42,
+    /// Insufficient balance for the operation.
+    InsufficientBalance = 44,
+    /// Oracle not initialized.
+    OracleNotInitialized = 100,
+    /// Price feed not found.
+    PriceFeedNotFound = 101,
+    /// Price data expired or invalid.
+    PriceDataInvalid = 102,
+    /// Price condition not set for pool.
+    PriceConditionNotSet = 103,
+    /// Total pool stake cap reached or would be exceeded.
+    MaxTotalStakeExceeded = 104,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarketState {
+    Active = 0,
+    Resolved = 1,
+    Canceled = 2,
 }
 
 #[contracttype]
@@ -28,13 +121,40 @@ pub enum PredifiError {
 pub struct Pool {
     pub end_time: u64,
     pub resolved: bool,
+    pub canceled: bool,
+    pub state: MarketState,
     pub outcome: u32,
     pub token: Address,
     pub total_stake: i128,
+    /// Market category for this pool (e.g., Sports, Finance, Crypto)
+    pub category: Symbol,
     /// A short human-readable description of the event being predicted.
     pub description: String,
     /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
     pub metadata_url: String,
+    /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT)
+    pub options_count: u32,
+    /// Minimum stake amount per prediction (must be > 0).
+    pub min_stake: i128,
+    /// Maximum stake amount per prediction (0 = no limit).
+    pub max_stake: i128,
+    /// Maximum total stake amount across the entire pool (0 = no limit).
+    pub max_total_stake: i128,
+    /// Initial liquidity provided by the pool creator (house money).
+    /// This is part of total_stake but excluded from fee calculations.
+    pub initial_liquidity: i128,
+    /// Address of the pool creator.
+    pub creator: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PoolStats {
+    pub pool_id: u64,
+    pub total_stake: i128,
+    pub stakes_per_outcome: Vec<i128>,
+    pub participants_count: u32,
+    pub current_odds: Vec<u64>, // Fixed-point with 4 decimals (e.g., 10000 = 1.00x)
 }
 
 #[contracttype]
@@ -43,6 +163,7 @@ pub struct Config {
     pub fee_bps: u32,
     pub treasury: Address,
     pub access_control: Address,
+    pub resolution_delay: u64,
 }
 
 #[contracttype]
@@ -52,7 +173,7 @@ pub struct UserPredictionDetail {
     pub amount: i128,
     pub user_outcome: u32,
     pub pool_end_time: u64,
-    pub pool_resolved: bool,
+    pub pool_state: MarketState,
     pub pool_outcome: u32,
 }
 
@@ -60,14 +181,29 @@ pub struct UserPredictionDetail {
 #[derive(Clone)]
 pub enum DataKey {
     Pool(u64),
-    Prediction(Address, u64),
-    PoolIdCounter,
-    HasClaimed(Address, u64),
-    OutcomeStake(u64, u32),
-    UserPredictionCount(Address),
-    UserPredictionIndex(Address, u32),
+    Pred(Address, u64),
+    PoolIdCtr,
+    Claimed(Address, u64),
+    OutStake(u64, u32),
+    /// Optimized storage for markets with many outcomes (e.g., 32+ teams).
+    /// Stores all outcome stakes as a single Vec<i128> to reduce storage reads.
+    OutStakes(u64),
+    UsrPrdCnt(Address),
+    UsrPrdIdx(Address, u32),
     Config,
     Paused,
+    RentGuard,
+    CatPoolCt(Symbol),
+    CatPoolIx(Symbol, u32),
+    /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
+    TokenWl(Address),
+    PartCnt(u64),
+    /// Referrer for a (user, pool): Referrer(user, pool_id) -> referrer Address.
+    Referrer(Address, u64),
+    /// Referred volume per (referrer, pool) for payout/analytics: ReferredVolume(referrer, pool_id) -> i128.
+    ReferredVolume(Address, u64),
+    /// Referral cut in bps (e.g. 5000 = 50% of referrer's fee share). Instance storage, default 5000.
+    ReferralCutBps,
 }
 
 #[contracttype]
@@ -85,6 +221,7 @@ pub struct InitEvent {
     pub access_control: Address,
     pub treasury: Address,
     pub fee_bps: u32,
+    pub resolution_delay: u64,
 }
 
 #[contractevent(topics = ["pause"])]
@@ -113,14 +250,38 @@ pub struct TreasuryUpdateEvent {
     pub treasury: Address,
 }
 
+#[contractevent(topics = ["resolution_delay_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionDelayUpdateEvent {
+    pub admin: Address,
+    pub delay: u64,
+}
+
+#[contractevent(topics = ["pool_ready"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolReadyForResolutionEvent {
+    pub pool_id: u64,
+    pub timestamp: u64,
+}
+
 #[contractevent(topics = ["pool_created"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolCreatedEvent {
     pub pool_id: u64,
     pub end_time: u64,
     pub token: Address,
-    /// Metadata URL included so off-chain indexers can immediately fetch context.
+    pub options_count: u32,
     pub metadata_url: String,
+    pub initial_liquidity: i128,
+    pub category: Symbol,
+}
+
+#[contractevent(topics = ["initial_liquidity_provided"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitialLiquidityProvidedEvent {
+    pub pool_id: u64,
+    pub creator: Address,
+    pub amount: i128,
 }
 
 #[contractevent(topics = ["pool_resolved"])]
@@ -129,6 +290,33 @@ pub struct PoolResolvedEvent {
     pub pool_id: u64,
     pub operator: Address,
     pub outcome: u32,
+}
+
+#[contractevent(topics = ["oracle_resolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleResolvedEvent {
+    pub pool_id: u64,
+    pub oracle: Address,
+    pub outcome: u32,
+    pub proof: String,
+}
+
+#[contractevent(topics = ["pool_canceled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolCanceledEvent {
+    pub pool_id: u64,
+    pub caller: Address,
+    pub reason: String,
+    pub operator: Address,
+}
+
+#[contractevent(topics = ["stake_limits_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakeLimitsUpdatedEvent {
+    pub pool_id: u64,
+    pub operator: Address,
+    pub min_stake: i128,
+    pub max_stake: i128,
 }
 
 #[contractevent(topics = ["prediction_placed"])]
@@ -148,14 +336,336 @@ pub struct WinningsClaimedEvent {
     pub amount: i128,
 }
 
+#[contractevent(topics = ["referral_paid"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralPaidEvent {
+    pub pool_id: u64,
+    pub referrer: Address,
+    pub referred_user: Address,
+    pub amount: i128,
+}
+
+// ── Monitoring & Alert Events ─────────────────────────────────────────────────
+// These events are classified by severity and are intended for consumption by
+// off-chain monitoring tools (Horizon event streaming, Grafana, SIEM, etc.).
+// See MONITORING.md at the repo root for scraping patterns and alert rules.
+
+/// 🔴 HIGH ALERT — emitted when `resolve_pool` is called by an address that
+/// does not hold the Operator role.  Indicates a potential attack or
+/// misconfigured access-control contract.
+#[contractevent(topics = ["unauthorized_resolution"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnauthorizedResolveAttemptEvent {
+    /// The address that attempted to resolve without authorization.
+    pub caller: Address,
+    /// The pool that was targeted.
+    pub pool_id: u64,
+    /// Ledger timestamp at the time of the attempt.
+    pub timestamp: u64,
+}
+
+/// 🔴 HIGH ALERT — emitted when an admin-restricted operation (`set_fee_bps`,
+/// `set_treasury`, `pause`, `unpause`) is called by an address that does not
+/// hold the Admin role.
+#[contractevent(topics = ["unauthorized_admin_op"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnauthorizedAdminAttemptEvent {
+    /// The address that attempted the restricted operation.
+    pub caller: Address,
+    /// Short name of the operation that was attempted.
+    pub operation: Symbol,
+    /// Ledger timestamp at the time of the attempt.
+    pub timestamp: u64,
+}
+
+/// 🔴 HIGH ALERT — emitted when `claim_winnings` is called after winnings have
+/// already been claimed for the same (user, pool) pair.  Repeated attempts may
+/// indicate a re-entrancy probe or a front-end bug worth investigating.
+#[contractevent(topics = ["double_claim_attempt"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SuspiciousDoubleClaimEvent {
+    /// The address that attempted to double-claim.
+    pub user: Address,
+    /// The pool for which the claim was already made.
+    pub pool_id: u64,
+    /// Ledger timestamp at the time of the attempt.
+    pub timestamp: u64,
+}
+
+/// 🔴 HIGH ALERT — emitted alongside `PauseEvent` whenever the contract is
+/// successfully paused.  Having a dedicated alert topic makes it easy to set
+/// a zero-tolerance PagerDuty rule that fires on any pause.
+#[contractevent(topics = ["contract_paused_alert"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractPausedAlertEvent {
+    /// The admin that triggered the pause.
+    pub admin: Address,
+    /// Ledger timestamp at pause time.
+    pub timestamp: u64,
+}
+
+/// 🟡 MEDIUM ALERT — emitted in `place_prediction` when the staked amount
+/// meets or exceeds `HIGH_VALUE_THRESHOLD`.  Useful for liquidity monitoring
+/// and detecting unusual betting patterns.
+#[contractevent(topics = ["high_value_prediction"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HighValuePredictionEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+    /// The threshold that was breached (aids display in dashboards).
+    pub threshold: i128,
+}
+
+/// 🟢 INFO — emitted alongside `PoolResolvedEvent` with enriched numeric
+/// context so monitors can calculate implied payouts and flag anomalies
+/// (e.g., winning_stake == 0 meaning no winners).
+#[contractevent(topics = ["pool_resolved_diag"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolResolvedDiagEvent {
+    pub pool_id: u64,
+    pub outcome: u32,
+    /// Total stake across all outcomes at resolution time.
+    pub total_stake: i128,
+    /// Stake on the winning outcome (0 ⟹ no winners — notable anomaly).
+    pub winning_stake: i128,
+    /// Ledger timestamp at resolution time.
+    pub timestamp: u64,
+}
+
+/// 🟢 INFO — emitted when all outcome stakes are updated in a single operation.
+/// Useful for markets with many outcomes (e.g., 32+ teams tournament) where
+/// emitting individual events per outcome would be impractical.
+#[contractevent(topics = ["outcome_stakes_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutcomeStakesUpdatedEvent {
+    pub pool_id: u64,
+    /// Number of outcomes in this pool.
+    pub options_count: u32,
+    /// Total stake across all outcomes after the update.
+    pub total_stake: i128,
+}
+
+#[contractevent(topics = ["token_whitelist_added"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistAddedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
+#[contractevent(topics = ["token_whitelist_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistRemovedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
+#[contractevent(topics = ["treasury_withdrawn"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryWithdrawnEvent {
+    pub admin: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub recipient: Address,
+    pub timestamp: u64,
+}
+#[contractevent(topics = ["refund_claimed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["upgrade"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeEvent {
+    pub admin: Address,
+    pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent(topics = ["oracle_init"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleInitEvent {
+    pub admin: Address,
+    pub pyth_contract: Address,
+    pub max_price_age: u64,
+    pub min_confidence_ratio: u32,
+}
+
+#[contractevent(topics = ["price_feed_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceFeedUpdatedEvent {
+    pub oracle: Address,
+    pub feed_pair: Symbol,
+    pub price: i128,
+    pub confidence: i128,
+    pub timestamp: u64,
+    pub expires_at: u64,
+}
+
+#[contractevent(topics = ["price_condition_set"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceConditionSetEvent {
+    pub pool_id: u64,
+    pub feed_pair: Symbol,
+    pub target_price: i128,
+    pub operator: u32,
+    pub tolerance_bps: u32,
+}
+
+#[contractevent(topics = ["price_resolved"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceResolvedEvent {
+    pub pool_id: u64,
+    pub feed_pair: Symbol,
+    pub current_price: i128,
+    pub target_price: i128,
+    pub outcome: u32,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
+
+pub trait OracleCallback {
+    /// Resolve a pool based on external oracle data.
+    /// Caller must have Oracle role (3).
+    /// Cannot resolve a canceled pool.
+    fn oracle_resolve(
+        env: Env,
+        oracle: Address,
+        pool_id: u64,
+        outcome: u32,
+        proof: String,
+    ) -> Result<(), PredifiError>;
+}
 
 #[contract]
 pub struct PredifiContract;
 
 #[contractimpl]
 impl PredifiContract {
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ====== Pure Helper Functions (side-effect free, verifiable) ======
+
+    /// Validate that a category symbol is in the allowed list.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `category` - The category symbol to validate
+    ///
+    /// # Returns
+    /// `true` if the category is valid, `false` otherwise
+    fn validate_category(env: &Env, category: &Symbol) -> bool {
+        let mut allowed = Vec::new(env);
+        allowed.push_back(CATEGORY_SPORTS);
+        allowed.push_back(CATEGORY_FINANCE);
+        allowed.push_back(CATEGORY_CRYPTO);
+        allowed.push_back(CATEGORY_POLITICS);
+        allowed.push_back(CATEGORY_ENTERTAIN);
+        allowed.push_back(CATEGORY_TECH);
+        allowed.push_back(CATEGORY_OTHER);
+
+        for i in 0..allowed.len() {
+            if let Some(allowed_cat) = allowed.get(i) {
+                if &allowed_cat == category {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Pure: Calculate winnings for a user given pool state
+    /// PRE: winning_stake > 0
+    /// POST: result ≤ total_stake (INV-4)
+    fn calculate_winnings(user_stake: i128, winning_stake: i128, total_stake: i128) -> i128 {
+        if winning_stake == 0 {
+            return 0;
+        }
+        // (user_stake / winning_stake) * total_stake
+        user_stake
+            .checked_mul(total_stake)
+            .expect("overflow in winnings calculation")
+            .checked_div(winning_stake)
+            .expect("division by zero")
+    }
+
+    /// Pure: Check if pool state transition is valid
+    /// PRE: current_state is valid MarketState
+    /// POST: returns true only for valid transitions (INV-2)
+    fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
+        matches!(
+            (current, next),
+            (MarketState::Active, MarketState::Resolved)
+                | (MarketState::Active, MarketState::Canceled)
+        )
+    }
+
+    /// Pure: Validate fee basis points
+    /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
+    fn is_valid_fee_bps(fee_bps: u32) -> bool {
+        fee_bps <= 10_000
+    }
+
+    /// Pure: Initialize outcome stakes vector with zeros
+    /// Used for markets with many outcomes (e.g., 32+ teams tournament)
+    #[allow(dead_code)]
+    fn init_outcome_stakes(env: &Env, options_count: u32) -> Vec<i128> {
+        let mut stakes = Vec::new(env);
+        for _ in 0..options_count {
+            stakes.push_back(0);
+        }
+        stakes
+    }
+
+    /// Get outcome stakes for a pool using optimized batch storage.
+    /// Falls back to individual storage keys for backward compatibility.
+    fn get_outcome_stakes(env: &Env, pool_id: u64, options_count: u32) -> Vec<i128> {
+        let key = DataKey::OutStakes(pool_id);
+        if let Some(stakes) = env.storage().persistent().get(&key) {
+            Self::extend_persistent(env, &key);
+            stakes
+        } else {
+            // Fallback: reconstruct from individual outcome stakes (backward compatibility)
+            let mut stakes = Vec::new(env);
+            for i in 0..options_count {
+                let outcome_key = DataKey::OutStake(pool_id, i);
+                let stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+                stakes.push_back(stake);
+            }
+            stakes
+        }
+    }
+
+    /// Update outcome stake at a specific index and persist using optimized batch storage.
+    /// Also maintains backward compatibility with individual outcome stake keys.
+    fn update_outcome_stake(
+        env: &Env,
+        pool_id: u64,
+        outcome: u32,
+        amount: i128,
+        options_count: u32,
+    ) -> Vec<i128> {
+        let mut stakes = Self::get_outcome_stakes(env, pool_id, options_count);
+        let current = stakes.get(outcome).unwrap_or(0);
+        stakes.set(outcome, current + amount);
+
+        // Store using optimized batch key
+        let key = DataKey::OutStakes(pool_id);
+        env.storage().persistent().set(&key, &stakes);
+        Self::extend_persistent(env, &key);
+
+        // Also update individual key for backward compatibility
+        let outcome_key = DataKey::OutStake(pool_id, outcome);
+        env.storage()
+            .persistent()
+            .set(&outcome_key, &(current + amount));
+        Self::extend_persistent(env, &outcome_key);
+
+        stakes
+    }
+
+    // ── Storage & Side-Effect Functions ───────────────────────────────────────
 
     fn extend_instance(env: &Env) {
         env.storage()
@@ -195,6 +705,17 @@ impl PredifiContract {
         config
     }
 
+    /// Referral cut in basis points (e.g. 5000 = 50% of referrer's fee share to referrer). Default 5000.
+    fn read_referral_cut_bps(env: &Env) -> u32 {
+        let bps = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReferralCutBps)
+            .unwrap_or(5000u32);
+        Self::extend_instance(env);
+        bps
+    }
+
     fn is_paused(env: &Env) -> bool {
         let paused = env
             .storage()
@@ -211,24 +732,54 @@ impl PredifiContract {
         }
     }
 
+    fn enter_reentrancy_guard(env: &Env) {
+        let key = DataKey::RentGuard;
+        if env.storage().temporary().has(&key) {
+            panic!("Reentrancy detected");
+        }
+        env.storage().temporary().set(&key, &true);
+    }
+
+    fn exit_reentrancy_guard(env: &Env) {
+        env.storage().temporary().remove(&DataKey::RentGuard);
+    }
+
+    /// Returns true if the token is on the allowed betting whitelist.
+    fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
+        let key = DataKey::TokenWl(token.clone());
+        let allowed = env.storage().persistent().get(&key).unwrap_or(false);
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(env, &key);
+        }
+        allowed
+    }
+
     // ── Public interface ──────────────────────────────────────────────────────
 
     /// Initialize the contract. Idempotent — safe to call multiple times.
-    pub fn init(env: Env, access_control: Address, treasury: Address, fee_bps: u32) {
+    pub fn init(
+        env: Env,
+        access_control: Address,
+        treasury: Address,
+        fee_bps: u32,
+        resolution_delay: u64,
+    ) {
         if !env.storage().instance().has(&DataKey::Config) {
             let config = Config {
                 fee_bps,
                 treasury: treasury.clone(),
                 access_control: access_control.clone(),
+                resolution_delay,
             };
             env.storage().instance().set(&DataKey::Config, &config);
-            env.storage().instance().set(&DataKey::PoolIdCounter, &0u64);
+            env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
             Self::extend_instance(&env);
 
             InitEvent {
                 access_control,
                 treasury,
                 fee_bps,
+                resolution_delay,
             }
             .publish(&env);
         }
@@ -237,19 +788,40 @@ impl PredifiContract {
     /// Pause the contract. Only callable by Admin (role 0).
     pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)
-            .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
+        if Self::require_role(&env, &admin, 0).is_err() {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "pause"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            panic!("Unauthorized: missing required role");
+        }
         env.storage().instance().set(&DataKey::Paused, &true);
         Self::extend_instance(&env);
 
+        // Emit dedicated pause-alert event so monitors can apply zero-tolerance
+        // rules independently of the generic PauseEvent.
+        ContractPausedAlertEvent {
+            admin: admin.clone(),
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
         PauseEvent { admin }.publish(&env);
     }
 
     /// Unpause the contract. Only callable by Admin (role 0).
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)
-            .unwrap_or_else(|_| panic!("Unauthorized: missing required role"));
+        if Self::require_role(&env, &admin, 0).is_err() {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "unpause"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            panic!("Unauthorized: missing required role");
+        }
         env.storage().instance().set(&DataKey::Paused, &false);
         Self::extend_instance(&env);
 
@@ -257,11 +829,21 @@ impl PredifiContract {
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
+    /// PRE: admin has role 0
+    /// POST: Config.fee_bps ≤ 10_000 (INV-6)
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
-        assert!(fee_bps <= 10_000, "fee_bps exceeds 10000");
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_fee_bps"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        assert!(Self::is_valid_fee_bps(fee_bps), "fee_bps exceeds 10000");
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
@@ -275,7 +857,15 @@ impl PredifiContract {
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_treasury"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
         let mut config = Self::get_config(&env);
         config.treasury = treasury.clone();
         env.storage().instance().set(&DataKey::Config, &config);
@@ -285,71 +875,1071 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Create a new prediction pool. Returns the new pool ID.
+    /// Set resolution delay in seconds. Caller must have Admin role (0).
+    pub fn set_resolution_delay(env: Env, admin: Address, delay: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_resolution_delay"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let mut config = Self::get_config(&env);
+        config.resolution_delay = delay;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        ResolutionDelayUpdateEvent { admin, delay }.publish(&env);
+        Ok(())
+    }
+
+    /// Set referral cut in basis points (e.g. 5000 = 50% of referrer's fee share). Caller must have Admin role (0).
+    /// Must be ≤ 10_000.
+    pub fn set_referral_cut_bps(
+        env: Env,
+        admin: Address,
+        referral_cut_bps: u32,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_referral_cut_bps"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        assert!(
+            referral_cut_bps <= 10_000,
+            "referral_cut_bps must be at most 10000"
+        );
+        env.storage()
+            .instance()
+            .set(&DataKey::ReferralCutBps, &referral_cut_bps);
+        Self::extend_instance(&env);
+        Ok(())
+    }
+
+    /// Add a token to the allowed betting whitelist. Caller must have Admin role (0).
+    pub fn add_token_to_whitelist(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "add_token_to_whitelist"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let key = DataKey::TokenWl(token.clone());
+        env.storage().persistent().set(&key, &true);
+        Self::extend_persistent(&env, &key);
+
+        TokenWhitelistAddedEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Remove a token from the allowed betting whitelist. Caller must have Admin role (0).
+    pub fn remove_token_from_whitelist(
+        env: Env,
+        admin: Address,
+        token: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "remove_token_from_whitelist"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        let key = DataKey::TokenWl(token.clone());
+        env.storage().persistent().remove(&key);
+
+        TokenWhitelistRemovedEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Upgrade the contract Wasm code. Only callable by Admin (role 0).
+    pub fn upgrade_contract(
+        env: Env,
+        admin: Address,
+        new_wasm_hash: BytesN<32>,
+    ) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+
+        UpgradeEvent {
+            admin: admin.clone(),
+            new_wasm_hash,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Placeholder for post-upgrade migration logic.
+    pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_role(&env, &admin, 0)?;
+        // Initial implementation has no state migration needed.
+        Ok(())
+    }
+
+    /// Returns true if the given token is on the allowed betting whitelist.
+    pub fn is_token_allowed(env: Env, token: Address) -> bool {
+        Self::is_token_whitelisted(&env, &token)
+    }
+
+    /// Get referral cut in basis points (e.g. 5000 = 50% of referrer's fee share).
+    pub fn get_referral_cut_bps(env: Env) -> u32 {
+        Self::read_referral_cut_bps(&env)
+    }
+
+    /// Get total referred volume for a (referrer, pool_id) in base token units.
+    pub fn get_referred_volume(env: Env, referrer: Address, pool_id: u64) -> i128 {
+        let key = DataKey::ReferredVolume(referrer, pool_id);
+        let vol = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(&env, &key);
+        }
+        vol
+    }
+
+    /// Withdraw accumulated protocol fees or unused liquidity from the contract.
+    /// Only callable by Admin (role 0).
     ///
     /// # Arguments
-    /// * `end_time`     - Unix timestamp after which no more predictions are accepted.
-    /// * `token`        - The Stellar token contract address used for staking.
-    /// * `description`  - Short human-readable description of the event (max 256 bytes).
-    /// * `metadata_url` - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `admin` - Address with Admin role (must provide auth)
+    /// * `token` - The token contract address to withdraw
+    /// * `amount` - Amount to withdraw (must be > 0)
+    /// * `recipient` - Address to receive the withdrawn funds (typically treasury)
+    ///
+    /// # Returns
+    /// Result indicating success or error
+    ///
+    /// # Security
+    /// - Requires Admin role (0)
+    /// - Emits TreasuryWithdrawnEvent for audit trail
+    /// - Validates amount > 0
+    /// - Checks contract has sufficient balance
+    pub fn withdraw_treasury(
+        env: Env,
+        admin: Address,
+        token: Address,
+        amount: i128,
+        recipient: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+
+        // Verify admin role
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "withdraw_treasury"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+
+        // Validate amount
+        if amount <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        // Get token client and check balance
+        let token_client = token::Client::new(&env, &token);
+        let contract_balance = token_client.balance(&env.current_contract_address());
+
+        if contract_balance < amount {
+            return Err(PredifiError::InsufficientBalance);
+        }
+
+        // Transfer tokens to recipient
+        token_client.transfer(&env.current_contract_address(), &recipient, &amount);
+
+        // Emit audit event
+        TreasuryWithdrawnEvent {
+            admin: admin.clone(),
+            token: token.clone(),
+            amount,
+            recipient: recipient.clone(),
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Create a new prediction pool. Returns the new pool ID.
+    ///
+    /// PRE: end_time > current_time (INV-8)
+    /// POST: Pool.state = Active, Pool.total_stake = initial_liquidity (if provided)
+    ///
+    /// # Arguments
+    /// * `creator`           - Address of the pool creator (must provide auth).
+    /// * `end_time`          - Unix timestamp after which no more predictions are accepted.
+    /// * `token`             - The Stellar token contract address used for staking.
+    /// * `options_count`     - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
+    /// * `description`       - Short human-readable description of the event (max 256 bytes).
+    /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// * `min_stake`         - Minimum stake amount per prediction (must be > 0).
+    /// * `max_stake`         - Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
+    /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
         env: Env,
+        creator: Address,
         end_time: u64,
         token: Address,
+        options_count: u32,
         description: String,
         metadata_url: String,
+        min_stake: i128,
+        max_stake: i128,
+        initial_liquidity: i128,
+        category: Symbol,
     ) -> u64 {
         Self::require_not_paused(&env);
+        creator.require_auth();
+
+        // Validate: category must be in the allowed list
         assert!(
-            end_time > env.ledger().timestamp(),
-            "end_time must be in the future"
+            Self::validate_category(&env, &category),
+            "category must be one of the allowed categories"
         );
+
+        // Validate: token must be on the allowed betting whitelist
+        if !Self::is_token_whitelisted(&env, &token) {
+            soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
+        }
+
+        let current_time = env.ledger().timestamp();
+
+        // Validate: end_time must be in the future
+        assert!(end_time > current_time, "end_time must be in the future");
+
+        // Validate: minimum pool duration (1 hour)
+        assert!(
+            end_time >= current_time + MIN_POOL_DURATION,
+            "end_time must be at least 1 hour in the future"
+        );
+
+        // Validate: options_count must be at least 2 (binary or more outcomes)
+        assert!(options_count >= 2, "options_count must be at least 2");
+
+        // Validate: options_count must not exceed maximum limit
+        assert!(
+            options_count <= MAX_OPTIONS_COUNT,
+            "options_count exceeds maximum allowed value"
+        );
+
+        // Validate: initial_liquidity must be non-negative if provided
+        assert!(
+            initial_liquidity >= 0,
+            "initial_liquidity must be non-negative"
+        );
+
+        // Validate: initial_liquidity must not exceed maximum limit
+        assert!(
+            initial_liquidity <= MAX_INITIAL_LIQUIDITY,
+            "initial_liquidity exceeds maximum allowed value"
+        );
+
+        // Note: Token address validation is deferred to when the token is actually used.
+        // This is the standard pattern in Soroban - invalid tokens will fail when
+        // transfers are attempted during place_prediction.
+
         assert!(description.len() <= 256, "description exceeds 256 bytes");
         assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
+
+        // Validate stake limits
+        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(
+            max_stake == 0 || max_stake >= min_stake,
+            "max_stake must be zero (unlimited) or >= min_stake"
+        );
 
         let pool_id: u64 = env
             .storage()
             .instance()
-            .get(&DataKey::PoolIdCounter)
+            .get(&DataKey::PoolIdCtr)
             .unwrap_or(0);
         Self::extend_instance(&env);
 
         let pool = Pool {
             end_time,
             resolved: false,
+            canceled: false,
+            state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
-            total_stake: 0,
+            total_stake: initial_liquidity, // Initial liquidity is part of total stake
             description,
             metadata_url: metadata_url.clone(),
+            options_count,
+            min_stake,
+            max_stake,
+            max_total_stake: 0, // default: no cap
+            initial_liquidity,
+            creator: creator.clone(),
+            category: category.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
+        let pc_key = DataKey::PartCnt(pool_id);
+        env.storage().persistent().set(&pc_key, &0u32);
+        Self::extend_persistent(&env, &pc_key);
+
+        // Transfer initial liquidity from creator to contract if provided
+        if initial_liquidity > 0 {
+            let token_client = token::Client::new(&env, &token);
+            token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
+        }
+
+        // Update category index
+        let category_count_key = DataKey::CatPoolCt(category.clone());
+        let category_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&category_count_key)
+            .unwrap_or(0);
+
+        let category_index_key = DataKey::CatPoolIx(category.clone(), category_count);
+        env.storage()
+            .persistent()
+            .set(&category_index_key, &pool_id);
+        Self::extend_persistent(&env, &category_index_key);
+
+        env.storage()
+            .persistent()
+            .set(&category_count_key, &(category_count + 1));
+        Self::extend_persistent(&env, &category_count_key);
+
         env.storage()
             .instance()
-            .set(&DataKey::PoolIdCounter, &(pool_id + 1));
+            .set(&DataKey::PoolIdCtr, &(pool_id + 1));
         Self::extend_instance(&env);
 
         PoolCreatedEvent {
             pool_id,
             end_time,
             token,
+            options_count,
             metadata_url,
+            initial_liquidity,
+            category,
         }
         .publish(&env);
+
+        // Emit initial liquidity event if liquidity was provided
+        if initial_liquidity > 0 {
+            InitialLiquidityProvidedEvent {
+                pool_id,
+                creator,
+                amount: initial_liquidity,
+            }
+            .publish(&env);
+        }
 
         pool_id
     }
 
+    /// Increase the maximum total stake cap for a pool.
+    /// Only the pool creator can increase it, and only before the market ends.
+    ///
+    /// - `new_max_total_stake` must be >= current `pool.total_stake`.
+    /// - Setting to 0 means "no cap" (only allowed if current cap is 0 or increasing from a non-zero).
+    pub fn increase_max_total_stake(
+        env: Env,
+        creator: Address,
+        pool_id: u64,
+        new_max_total_stake: i128,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        creator.require_auth();
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if pool.creator != creator {
+            return Err(PredifiError::Unauthorized);
+        }
+
+        // Pool must still be active and not ended
+        if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+            return Err(PredifiError::InvalidPoolState);
+        }
+        assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
+
+        // Must not set a cap below what is already staked
+        assert!(
+            new_max_total_stake == 0 || new_max_total_stake >= pool.total_stake,
+            "new_max_total_stake must be zero (unlimited) or >= total_stake"
+        );
+
+        // Only allow increasing the cap (or setting unlimited)
+        if pool.max_total_stake > 0 && new_max_total_stake > 0 {
+            assert!(
+                new_max_total_stake >= pool.max_total_stake,
+                "new_max_total_stake must be >= current max_total_stake"
+            );
+        }
+
+        pool.max_total_stake = new_max_total_stake;
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        Ok(())
+    }
+
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
+    /// Cannot resolve a canceled pool.
+    /// PRE: pool.state = Active, operator has role 1
+    /// POST: pool.state = Resolved, state transition valid (INV-2)
     pub fn resolve_pool(
         env: Env,
         operator: Address,
         pool_id: u64,
         outcome: u32,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        operator.require_auth();
+        if let Err(e) = Self::require_role(&env, &operator, 1) {
+            // 🔴 HIGH ALERT: unauthorized attempt to resolve a pool.
+            UnauthorizedResolveAttemptEvent {
+                caller: operator,
+                pool_id,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        assert!(!pool.resolved, "Pool already resolved");
+        assert!(!pool.canceled, "Cannot resolve a canceled pool");
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let current_time = env.ledger().timestamp();
+        let config = Self::get_config(&env);
+
+        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+            return Err(PredifiError::ResolutionDelayNotMet);
+        }
+
+        // Validate: outcome must be within the valid options range
+        // Verify state transition validity (INV-2)
+        assert!(
+            outcome < pool.options_count
+                && Self::is_valid_state_transition(pool.state, MarketState::Resolved),
+            "outcome exceeds options_count or invalid state transition"
+        );
+
+        pool.state = MarketState::Resolved;
+        pool.resolved = true;
+        pool.outcome = outcome;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+
+        PoolResolvedEvent {
+            pool_id,
+            operator,
+            outcome,
+        }
+        .publish(&env);
+
+        // 🟢 INFO: enriched diagnostics alongside the standard resolved event.
+        PoolResolvedDiagEvent {
+            pool_id,
+            outcome,
+            total_stake: pool.total_stake,
+            winning_stake,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Mark a pool as ready for resolution and emit an event.
+    /// Can be called by anyone once the resolution delay has passed.
+    pub fn mark_pool_ready(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let config = Self::get_config(&env);
+        let current_time = env.ledger().timestamp();
+
+        if current_time >= pool.end_time.saturating_add(config.resolution_delay) {
+            PoolReadyForResolutionEvent {
+                pool_id,
+                timestamp: current_time,
+            }
+            .publish(&env);
+            Ok(())
+        } else {
+            Err(PredifiError::ResolutionDelayNotMet)
+        }
+    }
+
+    /// Cancel an active pool. Caller must have Operator role (1).
+    /// Cancel a pool, freezing all betting and enabling refund process.
+    /// Only callable by Admin (role 0) - can cancel any pool for any reason.
+    ///
+    /// # Arguments
+    /// * `caller`  - The address requesting the cancellation (must be admin).
+    /// * `pool_id` - The ID of the pool to cancel.
+    /// * `reason`  - A short description of why the pool is being canceled.
+    ///
+    /// # Errors
+    /// - `Unauthorized` if caller is not admin.
+    /// - `PoolNotResolved` error (code 22) is returned if trying to cancel an already resolved pool.
+    /// PRE: pool.state = Active, operator has role 1
+    /// POST: pool.state = Canceled, state transition valid (INV-2)
+    pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        operator.require_auth();
+
+        // Check authorization: operator must have role 1
+        Self::require_role(&env, &operator, 1)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        // Ensure resolved pools cannot be canceled
+        if pool.resolved {
+            return Err(PredifiError::PoolNotResolved);
+        }
+
+        // Prevent double cancellation
+        assert!(!pool.canceled, "Pool already canceled");
+        // Verify state transition validity (INV-2)
+        assert!(
+            Self::is_valid_state_transition(pool.state, MarketState::Canceled),
+            "Invalid state transition"
+        );
+
+        pool.state = MarketState::Canceled;
+
+        // Mark pool as canceled
+        pool.canceled = true;
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        PoolCanceledEvent {
+            pool_id,
+            caller: operator.clone(),
+            reason: String::from_str(&env, ""),
+            operator,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Place a prediction on a pool. Cannot predict on canceled or resolved pools.
+    /// Optional `referrer`: if set, that address will receive a referral cut of the protocol fee
+    /// when this user claims winnings. Stored only on first prediction for (user, pool_id).
+    /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
+    /// PRE: pool.min_stake <= amount <= pool.max_stake (unless max_stake == 0)
+    /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    pub fn place_prediction(
+        env: Env,
+        user: Address,
+        pool_id: u64,
+        amount: i128,
+        outcome: u32,
+        referrer: Option<Address>,
+    ) {
+        Self::require_not_paused(&env);
+        user.require_auth();
+        assert!(amount > 0, "amount must be positive");
+
+        // Validate referrer if provided: cannot be self or contract
+        if let Some(ref r) = referrer {
+            assert!(r != &user, "referrer cannot be self");
+            assert!(
+                r != &env.current_contract_address(),
+                "referrer cannot be contract"
+            );
+        }
+
+        Self::enter_reentrancy_guard(&env);
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        assert!(!pool.resolved, "Pool already resolved");
+        assert!(!pool.canceled, "Cannot place prediction on canceled pool");
+        assert!(pool.state == MarketState::Active, "Pool is not active");
+        assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
+
+        // Validate: outcome must be within the valid options range
+        assert!(
+            outcome < pool.options_count,
+            "outcome exceeds options_count"
+        );
+
+        // --- INTERNAL CHECKS & EFFECTS ---
+        // Validate: per-pool stake limits
+        assert!(
+            amount >= pool.min_stake,
+            "amount is below the pool minimum stake"
+        );
+        if pool.max_stake > 0 {
+            assert!(
+                amount <= pool.max_stake,
+                "amount exceeds the pool maximum stake"
+            );
+        }
+
+        // Enforce global pool cap (max total stake)
+        if pool.max_total_stake > 0 {
+            let new_total = pool.total_stake.checked_add(amount).expect("overflow");
+            if new_total > pool.max_total_stake {
+                Self::exit_reentrancy_guard(&env);
+                soroban_sdk::panic_with_error!(&env, PredifiError::MaxTotalStakeExceeded);
+            }
+        }
+
+        let pred_key = DataKey::Pred(user.clone(), pool_id);
+        let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
+        if let Some(mut existing_pred) = existing_pred {
+            assert!(
+                existing_pred.outcome == outcome,
+                "Cannot change prediction outcome"
+            );
+            existing_pred.amount = existing_pred.amount.checked_add(amount).expect("overflow");
+            env.storage().persistent().set(&pred_key, &existing_pred);
+            Self::extend_persistent(&env, &pred_key);
+
+            // Track referred volume: if this user already has a referrer, add to their volume
+            let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+            if let Some(referrer_addr) = env.storage().persistent().get::<_, Address>(&referrer_key)
+            {
+                Self::extend_persistent(&env, &referrer_key);
+                let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
+                let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
+                env.storage().persistent().set(&vol_key, &(vol + amount));
+                Self::extend_persistent(&env, &vol_key);
+            }
+        } else {
+            env.storage()
+                .persistent()
+                .set(&pred_key, &Prediction { amount, outcome });
+            Self::extend_persistent(&env, &pred_key);
+
+            // Store referrer on first prediction and track referred volume
+            if let Some(ref referrer_addr) = referrer {
+                let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+                env.storage().persistent().set(&referrer_key, referrer_addr);
+                Self::extend_persistent(&env, &referrer_key);
+                let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
+                let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
+                env.storage().persistent().set(&vol_key, &(vol + amount));
+                Self::extend_persistent(&env, &vol_key);
+            }
+
+            let pc_key = DataKey::PartCnt(pool_id);
+            let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+            env.storage().persistent().set(&pc_key, &(pc + 1));
+            Self::extend_persistent(&env, &pc_key);
+
+            let count_key = DataKey::UsrPrdCnt(user.clone());
+            let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+            let index_key = DataKey::UsrPrdIdx(user.clone(), count);
+            env.storage().persistent().set(&index_key, &pool_id);
+            Self::extend_persistent(&env, &index_key);
+
+            env.storage().persistent().set(&count_key, &(count + 1));
+            Self::extend_persistent(&env, &count_key);
+        }
+
+        // Update total stake (INV-1)
+        pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        // Update outcome stake (INV-1) - using optimized batch storage
+        let _stakes =
+            Self::update_outcome_stake(&env, pool_id, outcome, amount, pool.options_count);
+
+        // --- INTERACTIONS ---
+
+        let token_client = token::Client::new(&env, &pool.token);
+        token_client.transfer(&user, &env.current_contract_address(), &amount);
+
+        Self::exit_reentrancy_guard(&env);
+
+        PredictionPlacedEvent {
+            pool_id,
+            user: user.clone(),
+            amount,
+            outcome,
+        }
+        .publish(&env);
+
+        // 🟡 MEDIUM ALERT: large stake detected — emit supplementary event.
+        if amount >= HIGH_VALUE_THRESHOLD {
+            HighValuePredictionEvent {
+                pool_id,
+                user,
+                amount,
+                outcome,
+                threshold: HIGH_VALUE_THRESHOLD,
+            }
+            .publish(&env);
+        }
+
+        // 🟢 INFO: For markets with many outcomes (16+), emit batch stake update event
+        // to avoid emitting individual events per outcome which would be impractical
+        // for large tournaments (e.g., 32-team bracket).
+        if pool.options_count >= 16 {
+            OutcomeStakesUpdatedEvent {
+                pool_id,
+                options_count: pool.options_count,
+                total_stake: pool.total_stake,
+            }
+            .publish(&env);
+        }
+    }
+
+    /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
+    /// PRE: pool.state ≠ Active
+    /// POST: HasClaimed(user, pool) = true (INV-3), payout ≤ pool.total_stake (INV-4)
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
+        Self::require_not_paused(&env);
+        user.require_auth();
+
+        Self::enter_reentrancy_guard(&env);
+
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if pool.state == MarketState::Active {
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::PoolNotResolved);
+        }
+
+        let claimed_key = DataKey::Claimed(user.clone(), pool_id);
+        if env.storage().persistent().has(&claimed_key) {
+            // 🔴 HIGH ALERT: repeated claim attempt on an already-claimed pool.
+            SuspiciousDoubleClaimEvent {
+                user: user.clone(),
+                pool_id,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::AlreadyClaimed);
+        }
+
+        // --- CHECKS ---
+
+        let pred_key = DataKey::Pred(user.clone(), pool_id);
+        let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
+
+        if env.storage().persistent().has(&pred_key) {
+            Self::extend_persistent(&env, &pred_key);
+        }
+
+        let prediction = match prediction {
+            Some(p) => p,
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Ok(0);
+            }
+        };
+
+        // --- EFFECTS ---
+
+        // Mark as claimed immediately to prevent re-entrancy (INV-3)
+        env.storage().persistent().set(&claimed_key, &true);
+        Self::extend_persistent(&env, &claimed_key);
+
+        if pool.state == MarketState::Canceled {
+            // --- INTERACTIONS (Refund) ---
+            let token_client = token::Client::new(&env, &pool.token);
+            token_client.transfer(&env.current_contract_address(), &user, &prediction.amount);
+
+            Self::exit_reentrancy_guard(&env);
+
+            WinningsClaimedEvent {
+                pool_id,
+                user: user.clone(),
+                amount: prediction.amount,
+            }
+            .publish(&env);
+
+            return Ok(prediction.amount);
+        }
+
+        if prediction.outcome != pool.outcome {
+            Self::exit_reentrancy_guard(&env);
+            return Ok(0);
+        }
+
+        // Get winning stake using optimized batch storage
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(pool.outcome).unwrap_or(0);
+
+        if winning_stake == 0 {
+            Self::exit_reentrancy_guard(&env);
+            return Ok(0);
+        }
+
+        // Protocol fee: deducted from pool before distribution (flat fee_bps, no dependency on 317)
+        let config = Self::get_config(&env);
+        let fee_bps_i = config.fee_bps as i128;
+        let protocol_fee_total =
+            SafeMath::percentage(pool.total_stake, fee_bps_i, RoundingMode::ProtocolFavor)
+                .map_err(|_| PredifiError::InvalidAmount)?;
+        let payout_pool = pool
+            .total_stake
+            .checked_sub(protocol_fee_total)
+            .ok_or(PredifiError::InvalidAmount)?;
+
+        // Winnings = user's share of the payout pool (after fee)
+        let winnings = Self::calculate_winnings(prediction.amount, winning_stake, payout_pool);
+
+        // Verify invariant: winnings ≤ total_stake (INV-4)
+        assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
+
+        // --- INTERACTIONS ---
+        let token_client = token::Client::new(&env, &pool.token);
+
+        // Referral: portion of protocol fee attributable to this user goes to referrer
+        let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+        if let Some(referrer) = env.storage().persistent().get::<_, Address>(&referrer_key) {
+            Self::extend_persistent(&env, &referrer_key);
+            if protocol_fee_total > 0 && pool.total_stake > 0 {
+                let protocol_fee_share = SafeMath::proportion(
+                    prediction.amount,
+                    pool.total_stake,
+                    protocol_fee_total,
+                    RoundingMode::Neutral,
+                )
+                .map_err(|_| PredifiError::InvalidAmount)?;
+                let referral_cut_bps = Self::read_referral_cut_bps(&env) as i128;
+                let referral_amount = SafeMath::percentage(
+                    protocol_fee_share,
+                    referral_cut_bps,
+                    RoundingMode::Neutral,
+                )
+                .map_err(|_| PredifiError::InvalidAmount)?;
+                if referral_amount > 0 {
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &referrer,
+                        &referral_amount,
+                    );
+                    ReferralPaidEvent {
+                        pool_id,
+                        referrer: referrer.clone(),
+                        referred_user: user.clone(),
+                        amount: referral_amount,
+                    }
+                    .publish(&env);
+                }
+            }
+        }
+
+        token_client.transfer(&env.current_contract_address(), &user, &winnings);
+
+        Self::exit_reentrancy_guard(&env);
+
+        WinningsClaimedEvent {
+            pool_id,
+            user,
+            amount: winnings,
+        }
+        .publish(&env);
+
+        Ok(winnings)
+    }
+
+    /// Claim a refund from a canceled pool. Returns the refunded amount.
+    /// Only available for canceled pools. User receives their full original stake.
+    ///
+    /// PRE: pool.state = Canceled, user has a prediction on the pool
+    /// POST: HasClaimed(user, pool) = true (INV-3), user receives full stake amount
+    ///
+    /// # Arguments
+    /// * `user` - Address claiming the refund (must provide auth)
+    /// * `pool_id` - ID of the canceled pool
+    ///
+    /// # Returns
+    /// Ok(amount) - Refund successfully claimed, returns refunded amount
+    /// Err(PredifiError) - Operation failed with specific error code
+    ///
+    /// # Errors
+    /// - `InvalidPoolState` if pool doesn't exist or is not canceled
+    /// - `InsufficientBalance` if user has no prediction or zero stake
+    /// - `AlreadyClaimed` if user already claimed refund for this pool
+    /// - `PoolNotResolved` if pool is resolved (not canceled)
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    pub fn claim_refund(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
+        Self::require_not_paused(&env);
+        user.require_auth();
+
+        Self::enter_reentrancy_guard(&env);
+
+        // --- CHECKS ---
+
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = match env.storage().persistent().get(&pool_key) {
+            Some(p) => p,
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Err(PredifiError::InvalidPoolState);
+            }
+        };
+        Self::extend_persistent(&env, &pool_key);
+
+        // Verify pool is canceled
+        if pool.state != MarketState::Canceled {
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Check if user already claimed refund
+        let claimed_key = DataKey::Claimed(user.clone(), pool_id);
+        if env.storage().persistent().has(&claimed_key) {
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::AlreadyClaimed);
+        }
+
+        // Get user's prediction
+        let pred_key = DataKey::Pred(user.clone(), pool_id);
+        let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
+
+        if env.storage().persistent().has(&pred_key) {
+            Self::extend_persistent(&env, &pred_key);
+        }
+
+        let prediction = match prediction {
+            Some(p) => p,
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Err(PredifiError::InsufficientBalance);
+            }
+        };
+
+        // Verify user has a non-zero stake
+        if prediction.amount <= 0 {
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::InsufficientBalance);
+        }
+
+        // --- EFFECTS ---
+
+        // Mark as claimed immediately to prevent re-entrancy (INV-3)
+        env.storage().persistent().set(&claimed_key, &true);
+        Self::extend_persistent(&env, &claimed_key);
+
+        let refund_amount = prediction.amount;
+
+        // --- INTERACTIONS ---
+
+        let token_client = token::Client::new(&env, &pool.token);
+        token_client.transfer(&env.current_contract_address(), &user, &refund_amount);
+
+        Self::exit_reentrancy_guard(&env);
+
+        RefundClaimedEvent {
+            pool_id,
+            user: user.clone(),
+            amount: refund_amount,
+        }
+        .publish(&env);
+
+        Ok(refund_amount)
+    }
+
+    /// Update the stake limits for an active pool. Caller must have Operator role (1).
+    /// PRE: pool.state = Active, operator has role 1
+    /// POST: pool.min_stake and pool.max_stake updated
+    pub fn set_stake_limits(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        min_stake: i128,
+        max_stake: i128,
     ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
@@ -362,150 +1952,31 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        assert!(!pool.resolved, "Pool already resolved");
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
 
-        pool.resolved = true;
-        pool.outcome = outcome;
+        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(
+            max_stake == 0 || max_stake >= min_stake,
+            "max_stake must be zero (unlimited) or >= min_stake"
+        );
+
+        pool.min_stake = min_stake;
+        pool.max_stake = max_stake;
 
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
 
-        PoolResolvedEvent {
+        StakeLimitsUpdatedEvent {
             pool_id,
             operator,
-            outcome,
+            min_stake,
+            max_stake,
         }
         .publish(&env);
+
         Ok(())
-    }
-
-    /// Place a prediction on a pool.
-    #[allow(clippy::needless_borrows_for_generic_args)]
-    pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
-        Self::require_not_paused(&env);
-        user.require_auth();
-        assert!(amount > 0, "amount must be positive");
-
-        let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
-            .storage()
-            .persistent()
-            .get(&pool_key)
-            .expect("Pool not found");
-
-        assert!(!pool.resolved, "Pool already resolved");
-        assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
-
-        let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&user, &env.current_contract_address(), &amount);
-
-        let pred_key = DataKey::Prediction(user.clone(), pool_id);
-        env.storage()
-            .persistent()
-            .set(&pred_key, &Prediction { amount, outcome });
-        Self::extend_persistent(&env, &pred_key);
-
-        pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
-        env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
-
-        let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
-        let current_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&outcome_key, &(current_stake + amount));
-        Self::extend_persistent(&env, &outcome_key);
-
-        let count_key = DataKey::UserPredictionCount(user.clone());
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-
-        let index_key = DataKey::UserPredictionIndex(user.clone(), count);
-        env.storage().persistent().set(&index_key, &pool_id);
-        Self::extend_persistent(&env, &index_key);
-
-        env.storage().persistent().set(&count_key, &(count + 1));
-        Self::extend_persistent(&env, &count_key);
-
-        PredictionPlacedEvent {
-            pool_id,
-            user,
-            amount,
-            outcome,
-        }
-        .publish(&env);
-    }
-
-    /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
-    #[allow(clippy::needless_borrows_for_generic_args)]
-    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
-        Self::require_not_paused(&env);
-        user.require_auth();
-
-        let pool_key = DataKey::Pool(pool_id);
-        let pool: Pool = env
-            .storage()
-            .persistent()
-            .get(&pool_key)
-            .expect("Pool not found");
-        Self::extend_persistent(&env, &pool_key);
-
-        if !pool.resolved {
-            return Err(PredifiError::PoolNotResolved);
-        }
-
-        let claimed_key = DataKey::HasClaimed(user.clone(), pool_id);
-        if env.storage().persistent().has(&claimed_key) {
-            return Err(PredifiError::AlreadyClaimed);
-        }
-
-        // Mark as claimed immediately to prevent re-entrancy
-        env.storage().persistent().set(&claimed_key, &true);
-        Self::extend_persistent(&env, &claimed_key);
-
-        let pred_key = DataKey::Prediction(user.clone(), pool_id);
-        let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
-
-        if env.storage().persistent().has(&pred_key) {
-            Self::extend_persistent(&env, &pred_key);
-        }
-
-        let prediction = match prediction {
-            Some(p) => p,
-            None => return Ok(0),
-        };
-
-        if prediction.outcome != pool.outcome {
-            return Ok(0);
-        }
-
-        let outcome_key = DataKey::OutcomeStake(pool_id, pool.outcome);
-        let winning_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
-        if env.storage().persistent().has(&outcome_key) {
-            Self::extend_persistent(&env, &outcome_key);
-        }
-
-        if winning_stake == 0 {
-            return Ok(0);
-        }
-
-        let winnings = prediction
-            .amount
-            .checked_mul(pool.total_stake)
-            .expect("overflow")
-            .checked_div(winning_stake)
-            .expect("division by zero");
-
-        let token_client = token::Client::new(&env, &pool.token);
-        token_client.transfer(&env.current_contract_address(), &user, &winnings);
-
-        WinningsClaimedEvent {
-            pool_id,
-            user,
-            amount: winnings,
-        }
-        .publish(&env);
-
-        Ok(winnings)
     }
 
     /// Get a paginated list of a user's predictions.
@@ -515,7 +1986,7 @@ impl PredifiContract {
         offset: u32,
         limit: u32,
     ) -> Vec<UserPredictionDetail> {
-        let count_key = DataKey::UserPredictionCount(user.clone());
+        let count_key = DataKey::UsrPrdCnt(user.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
         if env.storage().persistent().has(&count_key) {
             Self::extend_persistent(&env, &count_key);
@@ -530,7 +2001,7 @@ impl PredifiContract {
         let end = core::cmp::min(offset.saturating_add(limit), count);
 
         for i in offset..end {
-            let index_key = DataKey::UserPredictionIndex(user.clone(), i);
+            let index_key = DataKey::UsrPrdIdx(user.clone(), i);
             let pool_id: u64 = env
                 .storage()
                 .persistent()
@@ -538,7 +2009,7 @@ impl PredifiContract {
                 .expect("index not found");
             Self::extend_persistent(&env, &index_key);
 
-            let pred_key = DataKey::Prediction(user.clone(), pool_id);
+            let pred_key = DataKey::Pred(user.clone(), pool_id);
             let prediction: Prediction = env
                 .storage()
                 .persistent()
@@ -559,13 +2030,235 @@ impl PredifiContract {
                 amount: prediction.amount,
                 user_outcome: prediction.outcome,
                 pool_end_time: pool.end_time,
-                pool_resolved: pool.resolved,
+                pool_state: pool.state,
                 pool_outcome: pool.outcome,
             });
         }
 
         results
     }
+
+    /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
+    /// Instead of making N storage reads (one per outcome), it makes a single read.
+    ///
+    /// Returns a Vec of stakes where index corresponds to outcome index.
+    /// For example, stake[0] is the total amount bet on outcome 0.
+    pub fn get_pool(env: Env, pool_id: u64) -> Pool {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+        pool
+    }
+
+    pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        Self::get_outcome_stakes(&env, pool_id, pool.options_count)
+    }
+
+    /// Get a specific outcome's stake (backward compatible).
+    /// For markets with many outcomes, consider using get_pool_outcome_stakes() instead.
+    pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
+        let pool_key = DataKey::Pool(pool_id);
+        if !env.storage().persistent().has(&pool_key) {
+            return 0;
+        }
+
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if outcome >= pool.options_count {
+            return 0;
+        }
+
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        stakes.get(outcome).unwrap_or(0)
+    }
+
+    /// Get a paginated list of pool IDs by category.
+    pub fn get_pools_by_category(env: Env, category: Symbol, offset: u32, limit: u32) -> Vec<u64> {
+        let count_key = DataKey::CatPoolCt(category.clone());
+        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+        if env.storage().persistent().has(&count_key) {
+            Self::extend_persistent(&env, &count_key);
+        }
+
+        let mut results = Vec::new(&env);
+
+        if offset >= count || limit == 0 {
+            return results;
+        }
+
+        let start_index = count.saturating_sub(offset).saturating_sub(1);
+        let num_to_take = core::cmp::min(limit, count.saturating_sub(offset));
+
+        for i in 0..num_to_take {
+            let index = start_index.saturating_sub(i);
+            let index_key = DataKey::CatPoolIx(category.clone(), index);
+            let pool_id: u64 = env
+                .storage()
+                .persistent()
+                .get(&index_key)
+                .expect("index not found");
+            Self::extend_persistent(&env, &index_key);
+
+            results.push_back(pool_id);
+        }
+
+        results
+    }
+
+    /// Get comprehensive stats for a pool.
+    pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+
+        let pc_key = DataKey::PartCnt(pool_id);
+        let participants_count: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+        if env.storage().persistent().has(&pc_key) {
+            Self::extend_persistent(&env, &pc_key);
+        }
+
+        let mut current_odds = Vec::new(&env);
+        for stake in stakes.iter() {
+            if stake == 0 {
+                current_odds.push_back(0);
+            } else {
+                // Calculation: (total_stake * 10000) / stake
+                // Result is fixed-point with 4 decimal places (e.g., 2.5x odds = 25000)
+                let odds = pool
+                    .total_stake
+                    .checked_mul(10000)
+                    .expect("overflow")
+                    .checked_div(stake)
+                    .unwrap_or(0);
+                current_odds.push_back(odds as u64);
+            }
+        }
+
+        PoolStats {
+            pool_id,
+            total_stake: pool.total_stake,
+            stakes_per_outcome: stakes,
+            participants_count,
+            current_odds,
+        }
+    }
 }
 
+#[contractimpl]
+impl OracleCallback for PredifiContract {
+    fn oracle_resolve(
+        env: Env,
+        oracle: Address,
+        pool_id: u64,
+        outcome: u32,
+        proof: String,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        oracle.require_auth();
+
+        // Check authorization: oracle must have role 3
+        if let Err(e) = Self::require_role(&env, &oracle, 3) {
+            // 🔴 HIGH ALERT: unauthorized attempt to resolve a pool by an oracle
+            UnauthorizedResolveAttemptEvent {
+                caller: oracle,
+                pool_id,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        assert!(!pool.resolved, "Pool already resolved");
+        assert!(!pool.canceled, "Cannot resolve a canceled pool");
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let current_time = env.ledger().timestamp();
+        let config = Self::get_config(&env);
+
+        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+            return Err(PredifiError::ResolutionDelayNotMet);
+        }
+
+        // Validate: outcome must be within the valid options range
+        // Verify state transition validity (INV-2)
+        assert!(
+            outcome < pool.options_count
+                && Self::is_valid_state_transition(pool.state, MarketState::Resolved),
+            "outcome exceeds options_count or invalid state transition"
+        );
+
+        pool.state = MarketState::Resolved;
+        pool.resolved = true;
+        pool.outcome = outcome;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
+        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+
+        OracleResolvedEvent {
+            pool_id,
+            oracle: oracle.clone(),
+            outcome,
+            proof,
+        }
+        .publish(&env);
+
+        // Emit standard resolved event to maintain compatibility
+        PoolResolvedEvent {
+            pool_id,
+            operator: oracle,
+            outcome,
+        }
+        .publish(&env);
+
+        // 🟢 INFO: enriched diagnostics alongside the standard resolved event.
+        PoolResolvedDiagEvent {
+            pool_id,
+            outcome,
+            total_stake: pool.total_stake,
+            winning_stake,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+}
+
+mod integration_test;
 mod test;

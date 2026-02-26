@@ -12,6 +12,8 @@ crate-type = ["cdylib", "lib"]
 soroban-sdk    = { workspace = true }
 predifi-errors = { workspace = true }
 access-control = { workspace = true }
+# Pyth Network for price feeds
+pyth-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
