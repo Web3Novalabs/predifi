@@ -106,6 +106,10 @@ pub enum PredifiError {
     PriceConditionNotSet = 103,
     /// Total pool stake cap reached or would be exceeded.
     MaxTotalStakeExceeded = 104,
+    /// Oracles disagree on the outcome.
+    ResolutionConflict = 105,
+    /// This oracle has already cast a vote for this pool.
+    OracleAlreadyVoted = 106,
 }
 
 #[contracttype]
@@ -145,6 +149,19 @@ pub struct Pool {
     pub initial_liquidity: i128,
     /// Address of the pool creator.
     pub creator: Address,
+    /// Number of authorized oracle resolutions required to finalize the pool.
+    pub required_resolutions: u32,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolConfig {
+    pub description: String,
+    pub metadata_url: String,
+    pub min_stake: i128,
+    pub max_stake: i128,
+    pub initial_liquidity: i128,
+    pub required_resolutions: u32,
 }
 
 #[contracttype]
@@ -198,6 +215,12 @@ pub enum DataKey {
     /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
     TokenWl(Address),
     PartCnt(u64),
+    /// Tracks if an oracle has already voted: ResVote(pool_id, oracle_address)
+    ResVote(u64, Address),
+    /// Tracks vote count for a specific outcome: ResVoteCt(pool_id, outcome)
+    ResVoteCt(u64, u32),
+    /// Tracks total number of votes cast for a pool: ResTotal(pool_id)
+    ResTotal(u64),
 }
 
 #[contracttype]
@@ -268,6 +291,7 @@ pub struct PoolCreatedEvent {
     pub metadata_url: String,
     pub initial_liquidity: i128,
     pub category: Symbol,
+    pub required_resolutions: u32,
 }
 
 #[contractevent(topics = ["initial_liquidity_provided"])]
@@ -508,6 +532,15 @@ pub struct PriceResolvedEvent {
     pub current_price: i128,
     pub target_price: i128,
     pub outcome: u32,
+}
+
+#[contractevent(topics = ["resolution_conflict"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionConflictEvent {
+    pub pool_id: u64,
+    pub oracle: Address,
+    pub outcome: u32,
+    pub existing_outcome: u32,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1051,12 +1084,8 @@ impl PredifiContract {
         end_time: u64,
         token: Address,
         options_count: u32,
-        description: String,
-        metadata_url: String,
-        min_stake: i128,
-        max_stake: i128,
-        initial_liquidity: i128,
         category: Symbol,
+        config: PoolConfig,
     ) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
@@ -1094,27 +1123,30 @@ impl PredifiContract {
 
         // Validate: initial_liquidity must be non-negative if provided
         assert!(
-            initial_liquidity >= 0,
+            config.initial_liquidity >= 0,
             "initial_liquidity must be non-negative"
         );
 
         // Validate: initial_liquidity must not exceed maximum limit
         assert!(
-            initial_liquidity <= MAX_INITIAL_LIQUIDITY,
+            config.initial_liquidity <= MAX_INITIAL_LIQUIDITY,
             "initial_liquidity exceeds maximum allowed value"
         );
+        
+        // Validate: required_resolutions must be at least 1
+        assert!(config.required_resolutions >= 1, "required_resolutions must be at least 1");
 
         // Note: Token address validation is deferred to when the token is actually used.
         // This is the standard pattern in Soroban - invalid tokens will fail when
         // transfers are attempted during place_prediction.
 
-        assert!(description.len() <= 256, "description exceeds 256 bytes");
-        assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
+        assert!(config.description.len() <= 256, "description exceeds 256 bytes");
+        assert!(config.metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
 
         // Validate stake limits
-        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(config.min_stake > 0, "min_stake must be greater than zero");
         assert!(
-            max_stake == 0 || max_stake >= min_stake,
+            config.max_stake == 0 || config.max_stake >= config.min_stake,
             "max_stake must be zero (unlimited) or >= min_stake"
         );
 
@@ -1123,8 +1155,7 @@ impl PredifiContract {
             .instance()
             .get(&DataKey::PoolIdCtr)
             .unwrap_or(0);
-        Self::extend_instance(&env);
-
+        // Initialize pool data structure
         let pool = Pool {
             end_time,
             resolved: false,
@@ -1132,16 +1163,17 @@ impl PredifiContract {
             state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
-            total_stake: initial_liquidity, // Initial liquidity is part of total stake
-            description,
-            metadata_url: metadata_url.clone(),
-            options_count,
-            min_stake,
-            max_stake,
-            max_total_stake: 0, // default: no cap
-            initial_liquidity,
-            creator: creator.clone(),
+            total_stake: config.initial_liquidity,
             category: category.clone(),
+            description: config.description.clone(),
+            metadata_url: config.metadata_url.clone(),
+            options_count,
+            min_stake: config.min_stake,
+            max_stake: config.max_stake,
+            max_total_stake: 0,
+            initial_liquidity: config.initial_liquidity,
+            creator: creator.clone(),
+            required_resolutions: config.required_resolutions,
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -1153,9 +1185,9 @@ impl PredifiContract {
         Self::extend_persistent(&env, &pc_key);
 
         // Transfer initial liquidity from creator to contract if provided
-        if initial_liquidity > 0 {
+        if config.initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
-            token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
+            token_client.transfer(&creator, env.current_contract_address(), &config.initial_liquidity);
         }
 
         // Update category index
@@ -1187,18 +1219,19 @@ impl PredifiContract {
             end_time,
             token,
             options_count,
-            metadata_url,
-            initial_liquidity,
+            metadata_url: config.metadata_url,
+            initial_liquidity: config.initial_liquidity,
             category,
+            required_resolutions: config.required_resolutions,
         }
         .publish(&env);
 
         // Emit initial liquidity event if liquidity was provided
-        if initial_liquidity > 0 {
+        if config.initial_liquidity > 0 {
             InitialLiquidityProvidedEvent {
                 pool_id,
                 creator,
-                amount: initial_liquidity,
+                amount: config.initial_liquidity,
             }
             .publish(&env);
         }
@@ -1303,40 +1336,83 @@ impl PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        // Verify state transition validity (INV-2)
-        assert!(
-            outcome < pool.options_count
-                && Self::is_valid_state_transition(pool.state, MarketState::Resolved),
-            "outcome exceeds options_count or invalid state transition"
-        );
+        assert!(outcome < pool.options_count, "outcome exceeds options_count");
 
-        pool.state = MarketState::Resolved;
-        pool.resolved = true;
-        pool.outcome = outcome;
+        // --- Multi-resolution Voting Logic ---
 
-        env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
-
-        // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
-        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
-
-        PoolResolvedEvent {
-            pool_id,
-            operator,
-            outcome,
+        // Check if this operator has already voted for this pool
+        let vote_key = DataKey::ResVote(pool_id, operator.clone());
+        if env.storage().persistent().has(&vote_key) {
+            return Err(PredifiError::OracleAlreadyVoted); // Reusing error code for operators
         }
-        .publish(&env);
 
-        // 🟢 INFO: enriched diagnostics alongside the standard resolved event.
-        PoolResolvedDiagEvent {
-            pool_id,
-            outcome,
-            total_stake: pool.total_stake,
-            winning_stake,
-            timestamp: env.ledger().timestamp(),
+        // Record the operator's vote
+        env.storage().persistent().set(&vote_key, &outcome);
+        Self::extend_persistent(&env, &vote_key);
+
+        // Increment total number of votes cast for this pool
+        let total_votes_key = DataKey::ResTotal(pool_id);
+        let total_votes: u32 = env.storage().persistent().get(&total_votes_key).unwrap_or(0);
+        let new_total_votes = total_votes + 1;
+        env.storage().persistent().set(&total_votes_key, &new_total_votes);
+        Self::extend_persistent(&env, &total_votes_key);
+
+        // Increment specific outcome vote count
+        let outcome_votes_key = DataKey::ResVoteCt(pool_id, outcome);
+        let outcome_votes: u32 = env.storage().persistent().get(&outcome_votes_key).unwrap_or(0);
+        let new_outcome_votes = outcome_votes + 1;
+        env.storage().persistent().set(&outcome_votes_key, &new_outcome_votes);
+        Self::extend_persistent(&env, &outcome_votes_key);
+
+        // Detect conflicts
+        if new_total_votes > new_outcome_votes {
+            for i in 0..pool.options_count {
+                if i == outcome {
+                    continue;
+                }
+                let other_key = DataKey::ResVoteCt(pool_id, i);
+                if env.storage().persistent().has(&other_key) {
+                    ResolutionConflictEvent {
+                        pool_id,
+                        oracle: operator.clone(),
+                        outcome,
+                        existing_outcome: i,
+                    }
+                    .publish(&env);
+                    break;
+                }
+            }
         }
-        .publish(&env);
+
+        // Check if the required threshold has been met
+        if new_outcome_votes >= pool.required_resolutions {
+            pool.state = MarketState::Resolved;
+            pool.resolved = true;
+            pool.outcome = outcome;
+
+            env.storage().persistent().set(&pool_key, &pool);
+            Self::extend_persistent(&env, &pool_key);
+
+            // Retrieve winning-outcome stake for the diagnostic event
+            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+
+            PoolResolvedEvent {
+                pool_id,
+                operator,
+                outcome,
+            }
+            .publish(&env);
+
+            PoolResolvedDiagEvent {
+                pool_id,
+                outcome,
+                total_stake: pool.total_stake,
+                winning_stake,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+        }
 
         Ok(())
     }
@@ -2054,23 +2130,53 @@ impl OracleCallback for PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        // Verify state transition validity (INV-2)
-        assert!(
-            outcome < pool.options_count
-                && Self::is_valid_state_transition(pool.state, MarketState::Resolved),
-            "outcome exceeds options_count or invalid state transition"
-        );
+        assert!(outcome < pool.options_count, "outcome exceeds options_count");
 
-        pool.state = MarketState::Resolved;
-        pool.resolved = true;
-        pool.outcome = outcome;
+        // --- Multi-oracle Voting Logic ---
 
-        env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
+        let vote_key = DataKey::ResVote(pool_id, oracle.clone());
+        if env.storage().persistent().has(&vote_key) {
+            return Err(PredifiError::OracleAlreadyVoted);
+        }
 
-        // Retrieve winning-outcome stake for the diagnostic event using optimized batch storage
-        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-        let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+        // Record the oracle's vote
+        env.storage().persistent().set(&vote_key, &outcome);
+        Self::extend_persistent(&env, &vote_key);
+
+        // Increment total number of votes cast for this pool
+        let total_votes_key = DataKey::ResTotal(pool_id);
+        let total_votes: u32 = env.storage().persistent().get(&total_votes_key).unwrap_or(0);
+        let new_total_votes = total_votes + 1;
+        env.storage().persistent().set(&total_votes_key, &new_total_votes);
+        Self::extend_persistent(&env, &total_votes_key);
+
+        // Increment specific outcome vote count
+        let outcome_votes_key = DataKey::ResVoteCt(pool_id, outcome);
+        let outcome_votes: u32 = env.storage().persistent().get(&outcome_votes_key).unwrap_or(0);
+        let new_outcome_votes = outcome_votes + 1;
+        env.storage().persistent().set(&outcome_votes_key, &new_outcome_votes);
+        Self::extend_persistent(&env, &outcome_votes_key);
+
+        // Detect conflicts: if there are ANY votes for a different outcome
+        if new_total_votes > new_outcome_votes {
+            // A conflict exists. Find at least one other voted outcome for the event.
+            for i in 0..pool.options_count {
+                if i == outcome {
+                    continue;
+                }
+                let other_key = DataKey::ResVoteCt(pool_id, i);
+                if env.storage().persistent().has(&other_key) {
+                    ResolutionConflictEvent {
+                        pool_id,
+                        oracle: oracle.clone(),
+                        outcome,
+                        existing_outcome: i,
+                    }
+                    .publish(&env);
+                    break;
+                }
+            }
+        }
 
         OracleResolvedEvent {
             pool_id,
@@ -2080,27 +2186,41 @@ impl OracleCallback for PredifiContract {
         }
         .publish(&env);
 
-        // Emit standard resolved event to maintain compatibility
-        PoolResolvedEvent {
-            pool_id,
-            operator: oracle,
-            outcome,
-        }
-        .publish(&env);
+        // Check if the required threshold has been met
+        if new_outcome_votes >= pool.required_resolutions {
+            pool.state = MarketState::Resolved;
+            pool.resolved = true;
+            pool.outcome = outcome;
 
-        // 🟢 INFO: enriched diagnostics alongside the standard resolved event.
-        PoolResolvedDiagEvent {
-            pool_id,
-            outcome,
-            total_stake: pool.total_stake,
-            winning_stake,
-            timestamp: env.ledger().timestamp(),
+            env.storage().persistent().set(&pool_key, &pool);
+            Self::extend_persistent(&env, &pool_key);
+
+            // Retrieve winning-outcome stake for the diagnostic event
+            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
+            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+
+            // Emit resolution events once threshold is met
+            PoolResolvedEvent {
+                pool_id,
+                operator: oracle,
+                outcome,
+            }
+            .publish(&env);
+
+            PoolResolvedDiagEvent {
+                pool_id,
+                outcome,
+                total_stake: pool.total_stake,
+                winning_stake,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
         }
-        .publish(&env);
 
         Ok(())
     }
 }
+
 
 mod integration_test;
 mod test;
