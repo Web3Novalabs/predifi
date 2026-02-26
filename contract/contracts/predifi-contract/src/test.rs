@@ -28,8 +28,8 @@ mod dummy_access_control {
     }
 }
 
-const ROLE_ADMIN: u32 = 0;
-const ROLE_OPERATOR: u32 = 1;
+const ROLE_ADMIN: u32 = 0; // i am testing this
+const ROLE_OPERATOR: u32 = 1; // i am testing this the second one
 const ROLE_ORACLE: u32 = 3;
 
 fn setup(
