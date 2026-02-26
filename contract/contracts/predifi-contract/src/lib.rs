@@ -1691,20 +1691,16 @@ impl PredifiContract {
         // Protocol fee: deducted from pool before distribution (flat fee_bps, no dependency on 317)
         let config = Self::get_config(&env);
         let fee_bps_i = config.fee_bps as i128;
-        let protocol_fee_total = SafeMath::percentage(
-            pool.total_stake,
-            fee_bps_i,
-            RoundingMode::ProtocolFavor,
-        )
-        .map_err(|_| PredifiError::InvalidAmount)?;
+        let protocol_fee_total =
+            SafeMath::percentage(pool.total_stake, fee_bps_i, RoundingMode::ProtocolFavor)
+                .map_err(|_| PredifiError::InvalidAmount)?;
         let payout_pool = pool
             .total_stake
             .checked_sub(protocol_fee_total)
             .ok_or(PredifiError::InvalidAmount)?;
 
         // Winnings = user's share of the payout pool (after fee)
-        let winnings =
-            Self::calculate_winnings(prediction.amount, winning_stake, payout_pool);
+        let winnings = Self::calculate_winnings(prediction.amount, winning_stake, payout_pool);
 
         // Verify invariant: winnings ≤ total_stake (INV-4)
         assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
