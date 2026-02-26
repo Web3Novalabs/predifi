@@ -221,6 +221,9 @@ pub enum DataKey {
     ResVoteCt(u64, u32),
     /// Tracks total number of votes cast for a pool: ResTotal(pool_id)
     ResTotal(u64),
+    ReferralCutBps,
+    ReferredVolume(Address, u64),
+    Referrer(Address, u64),
 }
 
 #[contracttype]
