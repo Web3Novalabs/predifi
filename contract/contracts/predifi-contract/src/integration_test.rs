@@ -91,14 +91,14 @@ fn test_full_market_lifecycle() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // 2. Place Predictions
@@ -169,14 +169,14 @@ fn test_multi_user_betting_and_balance_verification() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Bets:
@@ -241,14 +241,14 @@ fn test_market_resolution_multiple_winners() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Bets:

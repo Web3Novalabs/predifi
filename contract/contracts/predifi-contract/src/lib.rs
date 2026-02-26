@@ -1196,16 +1196,25 @@ impl PredifiContract {
             config.initial_liquidity <= MAX_INITIAL_LIQUIDITY,
             "initial_liquidity exceeds maximum allowed value"
         );
-        
+
         // Validate: required_resolutions must be at least 1
-        assert!(config.required_resolutions >= 1, "required_resolutions must be at least 1");
+        assert!(
+            config.required_resolutions >= 1,
+            "required_resolutions must be at least 1"
+        );
 
         // Note: Token address validation is deferred to when the token is actually used.
         // This is the standard pattern in Soroban - invalid tokens will fail when
         // transfers are attempted during place_prediction.
 
-        assert!(config.description.len() <= 256, "description exceeds 256 bytes");
-        assert!(config.metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
+        assert!(
+            config.description.len() <= 256,
+            "description exceeds 256 bytes"
+        );
+        assert!(
+            config.metadata_url.len() <= 512,
+            "metadata_url exceeds 512 bytes"
+        );
 
         // Validate stake limits
         assert!(config.min_stake > 0, "min_stake must be greater than zero");
@@ -1251,7 +1260,11 @@ impl PredifiContract {
         // Transfer initial liquidity from creator to contract if provided
         if config.initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
-            token_client.transfer(&creator, env.current_contract_address(), &config.initial_liquidity);
+            token_client.transfer(
+                &creator,
+                env.current_contract_address(),
+                &config.initial_liquidity,
+            );
         }
 
         // Update category index
@@ -1400,7 +1413,10 @@ impl PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        assert!(outcome < pool.options_count, "outcome exceeds options_count");
+        assert!(
+            outcome < pool.options_count,
+            "outcome exceeds options_count"
+        );
 
         // --- Multi-resolution Voting Logic ---
 
@@ -1416,16 +1432,28 @@ impl PredifiContract {
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
-        let total_votes: u32 = env.storage().persistent().get(&total_votes_key).unwrap_or(0);
+        let total_votes: u32 = env
+            .storage()
+            .persistent()
+            .get(&total_votes_key)
+            .unwrap_or(0);
         let new_total_votes = total_votes + 1;
-        env.storage().persistent().set(&total_votes_key, &new_total_votes);
+        env.storage()
+            .persistent()
+            .set(&total_votes_key, &new_total_votes);
         Self::extend_persistent(&env, &total_votes_key);
 
         // Increment specific outcome vote count
         let outcome_votes_key = DataKey::ResVoteCt(pool_id, outcome);
-        let outcome_votes: u32 = env.storage().persistent().get(&outcome_votes_key).unwrap_or(0);
+        let outcome_votes: u32 = env
+            .storage()
+            .persistent()
+            .get(&outcome_votes_key)
+            .unwrap_or(0);
         let new_outcome_votes = outcome_votes + 1;
-        env.storage().persistent().set(&outcome_votes_key, &new_outcome_votes);
+        env.storage()
+            .persistent()
+            .set(&outcome_votes_key, &new_outcome_votes);
         Self::extend_persistent(&env, &outcome_votes_key);
 
         // Detect conflicts
@@ -2282,7 +2310,10 @@ impl OracleCallback for PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        assert!(outcome < pool.options_count, "outcome exceeds options_count");
+        assert!(
+            outcome < pool.options_count,
+            "outcome exceeds options_count"
+        );
 
         // --- Multi-oracle Voting Logic ---
 
@@ -2297,16 +2328,28 @@ impl OracleCallback for PredifiContract {
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
-        let total_votes: u32 = env.storage().persistent().get(&total_votes_key).unwrap_or(0);
+        let total_votes: u32 = env
+            .storage()
+            .persistent()
+            .get(&total_votes_key)
+            .unwrap_or(0);
         let new_total_votes = total_votes + 1;
-        env.storage().persistent().set(&total_votes_key, &new_total_votes);
+        env.storage()
+            .persistent()
+            .set(&total_votes_key, &new_total_votes);
         Self::extend_persistent(&env, &total_votes_key);
 
         // Increment specific outcome vote count
         let outcome_votes_key = DataKey::ResVoteCt(pool_id, outcome);
-        let outcome_votes: u32 = env.storage().persistent().get(&outcome_votes_key).unwrap_or(0);
+        let outcome_votes: u32 = env
+            .storage()
+            .persistent()
+            .get(&outcome_votes_key)
+            .unwrap_or(0);
         let new_outcome_votes = outcome_votes + 1;
-        env.storage().persistent().set(&outcome_votes_key, &new_outcome_votes);
+        env.storage()
+            .persistent()
+            .set(&outcome_votes_key, &new_outcome_votes);
         Self::extend_persistent(&env, &outcome_votes_key);
 
         // Detect conflicts: if there are ANY votes for a different outcome
@@ -2372,7 +2415,6 @@ impl OracleCallback for PredifiContract {
         Ok(())
     }
 }
-
 
 mod integration_test;
 mod test;

@@ -102,14 +102,14 @@ fn test_claim_winnings() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None);
     client.place_prediction(&user2, &pool_id, &100, &2, &None);
@@ -205,14 +205,14 @@ fn test_double_claim() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None);
 
@@ -244,14 +244,14 @@ fn test_claim_unresolved() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None);
 
@@ -279,14 +279,14 @@ fn test_multiple_pools_independent() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     let pool_b = client.create_pool(
         &creator,
@@ -297,14 +297,14 @@ fn test_multiple_pools_independent() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     client.place_prediction(&user1, &pool_a, &100, &1, &None);
@@ -363,14 +363,14 @@ fn test_unauthorized_resolve_pool() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     let not_operator = Address::generate(&env);
     env.ledger().with_mut(|li| li.timestamp = 10001);
@@ -414,13 +414,18 @@ fn test_oracle_can_resolve() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
 
     // Call oracle_resolve which should succeed
-    client.oracle_resolve(&oracle, &pool_id, &1u32, &String::from_str(&env, "proof_123"));
+    client.oracle_resolve(
+        &oracle,
+        &pool_id,
+        &1u32,
+        &String::from_str(&env, "proof_123"),
+    );
 }
 
 #[test]
@@ -462,12 +467,17 @@ fn test_unauthorized_oracle_resolve() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
 
-    client.oracle_resolve(&not_oracle, &pool_id, &1u32, &String::from_str(&env, "proof_123"));
+    client.oracle_resolve(
+        &not_oracle,
+        &pool_id,
+        &1u32,
+        &String::from_str(&env, "proof_123"),
+    );
 }
 
 #[test]
@@ -689,14 +699,14 @@ fn test_paused_blocks_create_pool() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 }
 
@@ -799,14 +809,14 @@ fn test_unpause_restores_functionality() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     client.place_prediction(&user, &pool_id, &10, &1, &None);
 }
@@ -832,14 +842,14 @@ fn test_get_user_predictions() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     let pool1 = client.create_pool(
         &creator,
@@ -850,14 +860,14 @@ fn test_get_user_predictions() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     let pool2 = client.create_pool(
         &creator,
@@ -868,14 +878,14 @@ fn test_get_user_predictions() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     client.place_prediction(&user, &pool0, &10, &1, &None);
@@ -905,7 +915,7 @@ fn test_multi_oracle_resolution() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, _, _, treasury, _, creator) = setup(&env);
+    let (ac_client, client, token_address, _, _, _treasury, _, creator) = setup(&env);
 
     let oracle1 = Address::generate(&env);
     let oracle2 = Address::generate(&env);
@@ -928,27 +938,27 @@ fn test_multi_oracle_resolution() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 2u32,
-        }
+        },
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
 
     // Oracle 1 votes for outcome 1
     client.oracle_resolve(&oracle1, &pool_id, &1u32, &String::from_str(&env, "proof1"));
-    
+
     // Verify pool is NOT yet resolved
-    let stats = client.get_pool_stats(&pool_id);
+    let _stats = client.get_pool_stats(&pool_id);
     // Since get_pool_stats doesn't directly show "resolved" bool in PoolStats struct (it shows current_odds etc)
     // We could try to claim winnings and expect failure.
-    let user1 = Address::generate(&env);
+    let _user1 = Address::generate(&env);
     // Actually, let's just use oracle_resolve and see it works.
-    
+
     // Oracle 2 votes for outcome 2 (Conflict!)
     client.oracle_resolve(&oracle2, &pool_id, &2u32, &String::from_str(&env, "proof2"));
-    
+
     // Oracle 3 votes for outcome 1 (Threshold met!)
     client.oracle_resolve(&oracle3, &pool_id, &1u32, &String::from_str(&env, "proof3"));
-    
+
     // Now it should be resolved to 1.
     // If we call get_user_predictions for a user who predicted 1, it should show resolved.
 }
@@ -986,14 +996,14 @@ fn test_admin_can_cancel_pool() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Admin should be able to cancel
@@ -1031,14 +1041,14 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Admin should be able to cancel their pool
@@ -1062,14 +1072,14 @@ fn test_non_admin_non_creator_cannot_cancel() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let unauthorized = Address::generate(&env);
@@ -1111,7 +1121,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 }
 
@@ -1173,14 +1183,14 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
@@ -1228,14 +1238,14 @@ fn test_cannot_place_prediction_on_canceled_pool() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Cancel the pool
@@ -1278,14 +1288,14 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Admin cancels the pool
@@ -1333,14 +1343,14 @@ fn test_admin_can_cancel_pool_with_predictions() {
         &PoolConfig {
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // User places a prediction
@@ -1394,7 +1404,7 @@ fn test_cancel_pool_refunds_predictions() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // User places a prediction
@@ -1432,7 +1442,7 @@ fn test_cannot_cancel_resolved_pool() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     env.ledger().with_mut(|li| li.timestamp = 10001);
@@ -1480,7 +1490,7 @@ fn test_cannot_resolve_canceled_pool() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     client.cancel_pool(&admin, &pool_id);
@@ -1512,7 +1522,7 @@ fn test_cannot_predict_on_canceled_pool() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     client.cancel_pool(&operator, &pool_id);
@@ -1557,7 +1567,7 @@ fn test_resolve_pool_before_delay() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Set time to end_time + MIN_POOL_DURATION (to allow creation)
@@ -1607,7 +1617,7 @@ fn test_resolve_pool_after_delay() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Set time to end_time + 3601s (more than delay)
@@ -1649,7 +1659,7 @@ fn test_mark_pool_ready() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Test before delay
@@ -1691,7 +1701,7 @@ fn test_stake_below_minimum_rejected() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Should panic: amount (10) < min_stake (50)
@@ -1724,7 +1734,7 @@ fn test_stake_above_maximum_rejected() {
             max_stake: 100i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Should panic: amount (200) > max_stake (100)
@@ -1758,7 +1768,7 @@ fn test_stake_at_boundaries_accepted() {
             max_stake: 200i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Both boundary values should succeed
@@ -1791,7 +1801,7 @@ fn test_set_stake_limits_by_operator() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Operator updates: min_stake = 50, max_stake = 500
@@ -1823,7 +1833,7 @@ fn test_set_stake_limits_unauthorized() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Non-operator should be rejected
@@ -1854,7 +1864,7 @@ fn test_get_pools_by_category() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     let pool1 = client.create_pool(
         &creator,
@@ -1869,7 +1879,7 @@ fn test_get_pools_by_category() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     let pool2 = client.create_pool(
         &creator,
@@ -1884,7 +1894,7 @@ fn test_get_pools_by_category() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let tech_pools = client.get_pools_by_category(&cat1, &0, &10);
@@ -1911,7 +1921,7 @@ fn test_admin_can_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, creator) =
+    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _creator) =
         setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
@@ -1934,7 +1944,7 @@ fn test_non_admin_cannot_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (_, client, token_address, _token, token_admin_client, treasury, _, _) = setup(&env);
     let contract_addr = client.address.clone();
     let non_admin = Address::generate(&env);
 
@@ -1950,7 +1960,8 @@ fn test_withdraw_treasury_rejects_zero_amount() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, _token, token_admin_client, treasury, _, _) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -1967,7 +1978,8 @@ fn test_withdraw_treasury_rejects_insufficient_balance() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, _token, token_admin_client, treasury, _, _) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -2016,7 +2028,8 @@ fn test_paused_blocks_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, _token, token_admin_client, treasury, _, _) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -2058,7 +2071,7 @@ fn test_get_pool_stats() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // Initial stats
@@ -2136,7 +2149,7 @@ fn test_pool_end_time_on_leap_day() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user = Address::generate(&env);
@@ -2172,7 +2185,7 @@ fn test_pool_end_time_at_leap_day_already_past() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 }
 
@@ -2203,7 +2216,7 @@ fn test_pool_end_time_spans_leap_day_resolution() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user1 = Address::generate(&env);
@@ -2255,7 +2268,7 @@ fn test_maximum_single_stake_roundtrip() {
             initial_liquidity: // max_stake == max_amount is valid
         0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user = Address::generate(&env);
@@ -2300,7 +2313,7 @@ fn test_large_stake_winnings_split_correctly() {
             initial_liquidity: // no max_stake limit
         0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let winner1 = Address::generate(&env);
@@ -2361,7 +2374,7 @@ fn test_double_resolution_attempt() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
@@ -2393,7 +2406,7 @@ fn test_many_users_rapid_claim_after_resolution() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let stake: i128 = 100;
@@ -2459,7 +2472,7 @@ fn test_resolution_then_new_pool_state_isolation() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user = Address::generate(&env);
@@ -2483,7 +2496,7 @@ fn test_resolution_then_new_pool_state_isolation() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     assert_ne!(pool_a, pool_b);
@@ -2522,7 +2535,7 @@ fn test_create_pool_rejects_zero_min_stake() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 }
 
@@ -2548,7 +2561,7 @@ fn test_create_pool_rejects_single_option() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 }
 
@@ -2574,7 +2587,7 @@ fn test_create_pool_rejects_excess_options_count() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 }
 
@@ -2600,7 +2613,7 @@ fn test_create_pool_accepts_maximum_options_count() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user = Address::generate(&env);
@@ -2632,7 +2645,7 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 }
 
@@ -2659,7 +2672,7 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     // If creation succeeded (didn't panic), the test passes.
@@ -2685,10 +2698,10 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
             description: String::from_str(&env, "Inverted stake limits"),
             metadata_url: String::from_str(&env, "ipfs://inverted"),
             min_stake: 100i128,
-            max_stake: 50i128, // min_stake
+            max_stake: 50i128,        // min_stake
             initial_liquidity: 0i128, // max_stake < min_stake → invalid
             required_resolutions: 1u32,
-        }
+        },
     );
 }
 
@@ -2710,10 +2723,10 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
             description: String::from_str(&env, "Equal stake limits"),
             metadata_url: String::from_str(&env, "ipfs://equal"),
             min_stake: 100i128,
-            max_stake: 100i128, // min_stake
+            max_stake: 100i128,       // min_stake
             initial_liquidity: 0i128, // max_stake == min_stake → valid
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user = Address::generate(&env);
@@ -2744,7 +2757,7 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
@@ -2777,7 +2790,7 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user = Address::generate(&env);
@@ -2834,7 +2847,7 @@ fn test_unauthorized_admin_op_does_not_mutate_state() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     let _ = new_pool; // pool creation succeeds → state is healthy
 }
@@ -2861,7 +2874,7 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     for _ in 0..3u32 {
@@ -2879,6 +2892,7 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
 /// Create five pools, resolve them with alternating outcomes, and claim all
 /// winnings.  Verifies (INV-5): total claimed == total staked.
 #[test]
+#[allow(clippy::needless_range_loop)]
 fn test_state_consistency_across_many_pools() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2902,7 +2916,7 @@ fn test_state_consistency_across_many_pools() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     // ── Pool 1 ──
     let p1 = client.create_pool(
@@ -2918,7 +2932,7 @@ fn test_state_consistency_across_many_pools() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     // ── Pool 2 ──
     let p2 = client.create_pool(
@@ -2934,7 +2948,7 @@ fn test_state_consistency_across_many_pools() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     // ── Pool 3 ──
     let p3 = client.create_pool(
@@ -2950,7 +2964,7 @@ fn test_state_consistency_across_many_pools() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
     // ── Pool 4 ──
     let p4 = client.create_pool(
@@ -2966,7 +2980,7 @@ fn test_state_consistency_across_many_pools() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let pools = [p0, p1, p2, p3, p4];
@@ -3052,7 +3066,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let pool_b = client.create_pool(
@@ -3068,7 +3082,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user_a = Address::generate(&env);
@@ -3124,7 +3138,7 @@ fn test_all_bettors_on_winning_side() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user1 = Address::generate(&env);
@@ -3172,7 +3186,7 @@ fn test_no_bettor_on_winning_side() {
             max_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
-        }
+        },
     );
 
     let user1 = Address::generate(&env);
