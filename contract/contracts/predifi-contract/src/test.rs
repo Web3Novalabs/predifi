@@ -163,12 +163,15 @@ fn test_referral_fee_distribution() {
         &100000u64,
         &token_address,
         &2u32,
-        &String::from_str(&env, "Referral Pool"),
-        &String::from_str(&env, "ipfs://test"),
-        &1i128,
-        &0i128,
-        &0i128,
         &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Referral Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+        },
     );
     // Referred user places with referrer (100 on outcome 0)
     client.place_prediction(&referred_user, &pool_id, &100, &0, &Some(referrer.clone()));
