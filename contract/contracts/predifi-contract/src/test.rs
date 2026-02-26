@@ -102,9 +102,9 @@ fn test_claim_winnings() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -177,7 +177,14 @@ fn test_referral_fee_distribution() {
         },
     );
     // Referred user places with referrer (100 on outcome 0)
-    client.place_prediction(&referred_user, &pool_id, &100, &0, &Some(referrer.clone()), &None);
+    client.place_prediction(
+        &referred_user,
+        &pool_id,
+        &100,
+        &0,
+        &Some(referrer.clone()),
+        &None,
+    );
     assert_eq!(client.get_referred_volume(&referrer, &pool_id), 100);
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
@@ -210,9 +217,9 @@ fn test_double_claim() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -250,9 +257,9 @@ fn test_claim_unresolved() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -286,9 +293,9 @@ fn test_multiple_pools_independent() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -305,9 +312,9 @@ fn test_multiple_pools_independent() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -372,9 +379,9 @@ fn test_unauthorized_resolve_pool() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -711,9 +718,9 @@ fn test_paused_blocks_create_pool() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -822,9 +829,9 @@ fn test_unpause_restores_functionality() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -856,9 +863,9 @@ fn test_get_user_predictions() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -875,9 +882,9 @@ fn test_get_user_predictions() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -894,9 +901,9 @@ fn test_get_user_predictions() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -960,9 +967,9 @@ fn test_admin_can_cancel_pool() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -1006,9 +1013,9 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -1038,9 +1045,9 @@ fn test_non_admin_non_creator_cannot_cancel() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -1151,9 +1158,9 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -1207,9 +1214,9 @@ fn test_cannot_place_prediction_on_canceled_pool() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -1258,9 +1265,9 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -1314,9 +1321,9 @@ fn test_admin_can_cancel_pool_with_predictions() {
             options_count: 3u32,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -1534,7 +1541,7 @@ fn test_resolve_pool_before_delay() {
     let pool_id = client.create_pool(
         &creator,
         &CreatePoolParams {
-            end_time: end_time,
+            end_time,
             token: token.clone(),
             options_count: 2u32,
             description: String::from_str(&env, "Delay Test"),
@@ -1585,7 +1592,7 @@ fn test_resolve_pool_after_delay() {
     let pool_id = client.create_pool(
         &creator,
         &CreatePoolParams {
-            end_time: end_time,
+            end_time,
             token: token.clone(),
             options_count: 2u32,
             description: String::from_str(&env, "Delay Test"),
@@ -1628,7 +1635,7 @@ fn test_mark_pool_ready() {
     let pool_id = client.create_pool(
         &creator,
         &CreatePoolParams {
-            end_time: end_time,
+            end_time,
             token: token.clone(),
             options_count: 2u32,
             description: String::from_str(&env, "Ready Test"),
@@ -1909,7 +1916,7 @@ fn test_admin_can_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, creator) =
+    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _creator) =
         setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
@@ -1932,7 +1939,7 @@ fn test_non_admin_cannot_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (_, client, token_address, _token, token_admin_client, treasury, _, _) = setup(&env);
     let contract_addr = client.address.clone();
     let non_admin = Address::generate(&env);
 
@@ -1948,7 +1955,8 @@ fn test_withdraw_treasury_rejects_zero_amount() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, _token, token_admin_client, treasury, _, _) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -1965,7 +1973,8 @@ fn test_withdraw_treasury_rejects_insufficient_balance() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, _token, token_admin_client, treasury, _, _) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -2014,7 +2023,8 @@ fn test_paused_blocks_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, _token, token_admin_client, treasury, _, _) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -3017,28 +3027,30 @@ fn test_state_consistency_across_many_pools() {
         Address::generate(&env),
     ];
 
-    for i in 0..5usize {
+    let mut expected_total: i128 = 0;
+    for (i, pool) in pools.iter().enumerate() {
+        let stake = 100 + (i as i128 * 10);
         token_admin_client.mint(&user_as[i], &stake);
         token_admin_client.mint(&user_bs[i], &stake);
-        client.place_prediction(&user_as[i], &pools[i], &stake, &0, &None, &None);
-        client.place_prediction(&user_bs[i], &pools[i], &stake, &1, &None, &None);
+        client.place_prediction(&user_as[i], pool, &stake, &0, &None, &None);
+        client.place_prediction(&user_bs[i], pool, &stake, &1, &None, &None);
+        expected_total += stake * 2;
     }
 
-    let expected_total = stake * 10;
     assert_eq!(token.balance(&contract_addr), expected_total);
 
     env.ledger().with_mut(|li| li.timestamp = 200_000);
 
     // Even-indexed pools → outcome 0 wins; odd-indexed → outcome 1 wins.
-    for i in 0..5usize {
+    for (i, pool) in pools.iter().enumerate() {
         let winning_outcome: u32 = if i % 2 == 0 { 0 } else { 1 };
-        client.resolve_pool(&operator, &pools[i], &winning_outcome);
+        client.resolve_pool(&operator, pool, &winning_outcome);
     }
 
     let mut total_paid: i128 = 0;
-    for i in 0..5usize {
-        let wa = client.claim_winnings(&user_as[i], &pools[i]);
-        let wb = client.claim_winnings(&user_bs[i], &pools[i]);
+    for (i, pool) in pools.iter().enumerate() {
+        let wa = client.claim_winnings(&user_as[i], pool);
+        let wb = client.claim_winnings(&user_bs[i], pool);
 
         // Each pool pays out exactly 2 × stake (INV-5 per pool).
         assert_eq!(wa + wb, stake * 2, "pool {i}: payout mismatch");
