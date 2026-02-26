@@ -194,6 +194,12 @@ pub enum DataKey {
     /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
     TokenWl(Address),
     PartCnt(u64),
+    /// Referrer for a (user, pool): Referrer(user, pool_id) -> referrer Address.
+    Referrer(Address, u64),
+    /// Referred volume per (referrer, pool) for payout/analytics: ReferredVolume(referrer, pool_id) -> i128.
+    ReferredVolume(Address, u64),
+    /// Referral cut in bps (e.g. 5000 = 50% of referrer's fee share). Instance storage, default 5000.
+    ReferralCutBps,
 }
 
 #[contracttype]
@@ -323,6 +329,15 @@ pub struct PredictionPlacedEvent {
 pub struct WinningsClaimedEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["referral_paid"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralPaidEvent {
+    pub pool_id: u64,
+    pub referrer: Address,
+    pub referred_user: Address,
     pub amount: i128,
 }
 
@@ -678,6 +693,17 @@ impl PredifiContract {
         config
     }
 
+    /// Referral cut in basis points (e.g. 5000 = 50% of referrer's fee share to referrer). Default 5000.
+    fn read_referral_cut_bps(env: &Env) -> u32 {
+        let bps = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReferralCutBps)
+            .unwrap_or(5000u32);
+        Self::extend_instance(env);
+        bps
+    }
+
     fn is_paused(env: &Env) -> bool {
         let paused = env
             .storage()
@@ -859,6 +885,35 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Set referral cut in basis points (e.g. 5000 = 50% of referrer's fee share). Caller must have Admin role (0).
+    /// Must be ≤ 10_000.
+    pub fn set_referral_cut_bps(
+        env: Env,
+        admin: Address,
+        referral_cut_bps: u32,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_referral_cut_bps"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+        assert!(
+            referral_cut_bps <= 10_000,
+            "referral_cut_bps must be at most 10000"
+        );
+        env.storage()
+            .instance()
+            .set(&DataKey::ReferralCutBps, &referral_cut_bps);
+        Self::extend_instance(&env);
+        Ok(())
+    }
+
     /// Add a token to the allowed betting whitelist. Caller must have Admin role (0).
     pub fn add_token_to_whitelist(
         env: Env,
@@ -948,6 +1003,21 @@ impl PredifiContract {
     /// Returns true if the given token is on the allowed betting whitelist.
     pub fn is_token_allowed(env: Env, token: Address) -> bool {
         Self::is_token_whitelisted(&env, &token)
+    }
+
+    /// Get referral cut in basis points (e.g. 5000 = 50% of referrer's fee share).
+    pub fn get_referral_cut_bps(env: Env) -> u32 {
+        Self::read_referral_cut_bps(&env)
+    }
+
+    /// Get total referred volume for a (referrer, pool_id) in base token units.
+    pub fn get_referred_volume(env: Env, referrer: Address, pool_id: u64) -> i128 {
+        let key = DataKey::ReferredVolume(referrer, pool_id);
+        let vol = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent(&env, &key);
+        }
+        vol
     }
 
     /// Withdraw accumulated protocol fees or unused liquidity from the contract.
@@ -1365,14 +1435,32 @@ impl PredifiContract {
     }
 
     /// Place a prediction on a pool. Cannot predict on canceled or resolved pools.
+    /// Optional `referrer`: if set, that address will receive a referral cut of the protocol fee
+    /// when this user claims winnings. Stored only on first prediction for (user, pool_id).
     /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
     /// PRE: pool.min_stake <= amount <= pool.max_stake (unless max_stake == 0)
     /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
     #[allow(clippy::needless_borrows_for_generic_args)]
-    pub fn place_prediction(env: Env, user: Address, pool_id: u64, amount: i128, outcome: u32) {
+    pub fn place_prediction(
+        env: Env,
+        user: Address,
+        pool_id: u64,
+        amount: i128,
+        outcome: u32,
+        referrer: Option<Address>,
+    ) {
         Self::require_not_paused(&env);
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
+
+        // Validate referrer if provided: cannot be self or contract
+        if let Some(ref r) = referrer {
+            assert!(r != &user, "referrer cannot be self");
+            assert!(
+                r != &env.current_contract_address(),
+                "referrer cannot be contract"
+            );
+        }
 
         Self::enter_reentrancy_guard(&env);
 
@@ -1408,8 +1496,8 @@ impl PredifiContract {
         }
 
         let pred_key = DataKey::Pred(user.clone(), pool_id);
-        if let Some(mut existing_pred) = env.storage().persistent().get::<_, Prediction>(&pred_key)
-        {
+        let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
+        if let Some(mut existing_pred) = existing_pred {
             assert!(
                 existing_pred.outcome == outcome,
                 "Cannot change prediction outcome"
@@ -1417,11 +1505,33 @@ impl PredifiContract {
             existing_pred.amount = existing_pred.amount.checked_add(amount).expect("overflow");
             env.storage().persistent().set(&pred_key, &existing_pred);
             Self::extend_persistent(&env, &pred_key);
+
+            // Track referred volume: if this user already has a referrer, add to their volume
+            let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+            if let Some(referrer_addr) = env.storage().persistent().get::<_, Address>(&referrer_key)
+            {
+                Self::extend_persistent(&env, &referrer_key);
+                let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
+                let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
+                env.storage().persistent().set(&vol_key, &(vol + amount));
+                Self::extend_persistent(&env, &vol_key);
+            }
         } else {
             env.storage()
                 .persistent()
                 .set(&pred_key, &Prediction { amount, outcome });
             Self::extend_persistent(&env, &pred_key);
+
+            // Store referrer on first prediction and track referred volume
+            if let Some(ref referrer_addr) = referrer {
+                let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+                env.storage().persistent().set(&referrer_key, referrer_addr);
+                Self::extend_persistent(&env, &referrer_key);
+                let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
+                let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
+                env.storage().persistent().set(&vol_key, &(vol + amount));
+                Self::extend_persistent(&env, &vol_key);
+            }
 
             let pc_key = DataKey::PartCnt(pool_id);
             let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
@@ -1578,14 +1688,66 @@ impl PredifiContract {
             return Ok(0);
         }
 
-        // Use pure function for winnings calculation (verifiable)
-        let winnings = Self::calculate_winnings(prediction.amount, winning_stake, pool.total_stake);
+        // Protocol fee: deducted from pool before distribution (flat fee_bps, no dependency on 317)
+        let config = Self::get_config(&env);
+        let fee_bps_i = config.fee_bps as i128;
+        let protocol_fee_total = SafeMath::percentage(
+            pool.total_stake,
+            fee_bps_i,
+            RoundingMode::ProtocolFavor,
+        )
+        .map_err(|_| PredifiError::InvalidAmount)?;
+        let payout_pool = pool
+            .total_stake
+            .checked_sub(protocol_fee_total)
+            .ok_or(PredifiError::InvalidAmount)?;
+
+        // Winnings = user's share of the payout pool (after fee)
+        let winnings =
+            Self::calculate_winnings(prediction.amount, winning_stake, payout_pool);
 
         // Verify invariant: winnings ≤ total_stake (INV-4)
         assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
 
-        // --- INTERACTIONS (Winnings Payout) ---
+        // --- INTERACTIONS ---
         let token_client = token::Client::new(&env, &pool.token);
+
+        // Referral: portion of protocol fee attributable to this user goes to referrer
+        let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+        if let Some(referrer) = env.storage().persistent().get::<_, Address>(&referrer_key) {
+            Self::extend_persistent(&env, &referrer_key);
+            if protocol_fee_total > 0 && pool.total_stake > 0 {
+                let protocol_fee_share = SafeMath::proportion(
+                    prediction.amount,
+                    pool.total_stake,
+                    protocol_fee_total,
+                    RoundingMode::Neutral,
+                )
+                .map_err(|_| PredifiError::InvalidAmount)?;
+                let referral_cut_bps = Self::read_referral_cut_bps(&env) as i128;
+                let referral_amount = SafeMath::percentage(
+                    protocol_fee_share,
+                    referral_cut_bps,
+                    RoundingMode::Neutral,
+                )
+                .map_err(|_| PredifiError::InvalidAmount)?;
+                if referral_amount > 0 {
+                    token_client.transfer(
+                        &env.current_contract_address(),
+                        &referrer,
+                        &referral_amount,
+                    );
+                    ReferralPaidEvent {
+                        pool_id,
+                        referrer: referrer.clone(),
+                        referred_user: user.clone(),
+                        amount: referral_amount,
+                    }
+                    .publish(&env);
+                }
+            }
+        }
+
         token_client.transfer(&env.current_contract_address(), &user, &winnings);
 
         Self::exit_reentrancy_guard(&env);
