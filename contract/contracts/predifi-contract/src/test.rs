@@ -2921,8 +2921,6 @@ fn test_state_consistency_across_many_pools() {
     let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
     let contract_addr = client.address.clone();
 
-    let stake: i128 = 100;
-
     // ── Pool 0 ──
     let p0 = client.create_pool(
         &creator,
@@ -3049,6 +3047,7 @@ fn test_state_consistency_across_many_pools() {
 
     let mut total_paid: i128 = 0;
     for (i, pool) in pools.iter().enumerate() {
+        let stake = 100 + (i as i128 * 10);
         let wa = client.claim_winnings(&user_as[i], pool);
         let wb = client.claim_winnings(&user_bs[i], pool);
 
