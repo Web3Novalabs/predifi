@@ -108,8 +108,8 @@ fn test_claim_winnings() {
         &0i128,
         &symbol_short!("Tech"),
     );
-    client.place_prediction(&user1, &pool_id, &100, &1);
-    client.place_prediction(&user2, &pool_id, &100, &2);
+    client.place_prediction(&user1, &pool_id, &100, &1, &None);
+    client.place_prediction(&user2, &pool_id, &100, &2, &None);
 
     assert_eq!(token.balance(&contract_addr), 200);
 
@@ -124,6 +124,62 @@ fn test_claim_winnings() {
     let winnings2 = client.claim_winnings(&user2, &pool_id);
     assert_eq!(winnings2, 0);
     assert_eq!(token.balance(&user2), 900);
+}
+
+/// Referral: referred user places with referrer; on claim, referrer receives a cut of the protocol fee.
+#[test]
+fn test_referral_fee_distribution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token = token::Client::new(&env, &token_contract);
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let token_address = token_contract;
+    let treasury = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &200u32, &0u64); // 2% protocol fee
+    client.add_token_to_whitelist(&admin, &token_address);
+    client.set_referral_cut_bps(&admin, &5000u32); // 50% of fee share to referrer
+
+    let referrer = Address::generate(&env);
+    let referred_user = Address::generate(&env);
+    token_admin_client.mint(&referred_user, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Referral Pool"),
+        &String::from_str(&env, "ipfs://test"),
+        &1i128,
+        &0i128,
+        &0i128,
+        &symbol_short!("Tech"),
+    );
+    // Referred user places with referrer (100 on outcome 0)
+    client.place_prediction(&referred_user, &pool_id, &100, &0, &Some(referrer.clone()));
+    assert_eq!(client.get_referred_volume(&referrer, &pool_id), 100);
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    let winnings = client.claim_winnings(&referred_user, &pool_id);
+    // Protocol fee = 2% of 100 = 2. Payout pool = 98. Winner gets 98.
+    assert_eq!(winnings, 98);
+    // Referrer gets 50% of (100/100 * 2) = 1
+    assert_eq!(token.balance(&referrer), 1);
+    assert_eq!(token.balance(&referred_user), 1000 - 100 + 98);
 }
 
 #[test]
@@ -152,7 +208,7 @@ fn test_double_claim() {
         &0i128,
         &symbol_short!("Tech"),
     );
-    client.place_prediction(&user1, &pool_id, &100, &1);
+    client.place_prediction(&user1, &pool_id, &100, &1, &None);
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
 
@@ -188,7 +244,7 @@ fn test_claim_unresolved() {
         &0i128,
         &symbol_short!("Tech"),
     );
-    client.place_prediction(&user1, &pool_id, &100, &1);
+    client.place_prediction(&user1, &pool_id, &100, &1, &None);
 
     client.claim_winnings(&user1, &pool_id);
 }
@@ -236,8 +292,8 @@ fn test_multiple_pools_independent() {
         &symbol_short!("Tech"),
     );
 
-    client.place_prediction(&user1, &pool_a, &100, &1);
-    client.place_prediction(&user2, &pool_b, &100, &1);
+    client.place_prediction(&user1, &pool_a, &100, &1, &None);
+    client.place_prediction(&user2, &pool_b, &100, &1, &None);
 
     env.ledger().with_mut(|li| li.timestamp = 100001);
 
@@ -645,7 +701,7 @@ fn test_paused_blocks_place_prediction() {
     client.init(&ac_id, &treasury, &0u32, &0u64);
 
     client.pause(&admin);
-    client.place_prediction(&user, &0u64, &10, &1);
+    client.place_prediction(&user, &0u64, &10, &1, &None);
 }
 
 #[test]
@@ -732,7 +788,7 @@ fn test_unpause_restores_functionality() {
         &0i128,
         &symbol_short!("Tech"),
     );
-    client.place_prediction(&user, &pool_id, &10, &1);
+    client.place_prediction(&user, &pool_id, &10, &1, &None);
 }
 
 // ── Pagination tests ──────────────────────────────────────────────────────────
@@ -793,9 +849,9 @@ fn test_get_user_predictions() {
         &symbol_short!("Tech"),
     );
 
-    client.place_prediction(&user, &pool0, &10, &1);
-    client.place_prediction(&user, &pool1, &20, &2);
-    client.place_prediction(&user, &pool2, &30, &1);
+    client.place_prediction(&user, &pool0, &10, &1, &None);
+    client.place_prediction(&user, &pool1, &20, &2, &None);
+    client.place_prediction(&user, &pool2, &30, &1, &None);
 
     let first_two = client.get_user_predictions(&user, &0, &2);
     assert_eq!(first_two.len(), 2);
@@ -1086,7 +1142,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
     client.cancel_pool(&admin, &pool_id);
 
     // Try to place prediction on canceled pool - should panic
-    client.place_prediction(&user, &pool_id, &100, &1);
+    client.place_prediction(&user, &pool_id, &100, &1, &None);
 }
 
 #[test]
@@ -1182,13 +1238,13 @@ fn test_admin_can_cancel_pool_with_predictions() {
     );
 
     // User places a prediction
-    client.place_prediction(&user, &pool_id, &100, &1);
+    client.place_prediction(&user, &pool_id, &100, &1, &None);
 
     // Admin cancels the pool - this freezes betting
     client.cancel_pool(&admin, &pool_id);
 
     // Verify no more predictions can be placed - should panic
-    client.place_prediction(&user, &pool_id, &50, &2);
+    client.place_prediction(&user, &pool_id, &50, &2, &None);
 }
 
 #[test]
@@ -1233,7 +1289,7 @@ fn test_cancel_pool_refunds_predictions() {
     );
 
     // User places a prediction
-    client.place_prediction(&user1, &pool_id, &100, &1);
+    client.place_prediction(&user1, &pool_id, &100, &1, &None);
     assert_eq!(token_admin_client.balance(&contract_addr), 100);
     assert_eq!(token_admin_client.balance(&user1), 900);
 
@@ -1343,7 +1399,7 @@ fn test_cannot_predict_on_canceled_pool() {
 
     client.cancel_pool(&operator, &pool_id);
     // Should panic
-    client.place_prediction(&user1, &pool_id, &100, &1);
+    client.place_prediction(&user1, &pool_id, &100, &1, &None);
 }
 
 #[test]
@@ -1509,7 +1565,7 @@ fn test_stake_below_minimum_rejected() {
     );
 
     // Should panic: amount (10) < min_stake (50)
-    client.place_prediction(&user, &pool_id, &10, &0);
+    client.place_prediction(&user, &pool_id, &10, &0, &None);
 }
 
 #[test]
@@ -1539,7 +1595,7 @@ fn test_stake_above_maximum_rejected() {
     );
 
     // Should panic: amount (200) > max_stake (100)
-    client.place_prediction(&user, &pool_id, &200, &0);
+    client.place_prediction(&user, &pool_id, &200, &0, &None);
 }
 
 #[test]
@@ -1570,8 +1626,8 @@ fn test_stake_at_boundaries_accepted() {
     );
 
     // Both boundary values should succeed
-    client.place_prediction(&user1, &pool_id, &10, &0); // exactly min_stake
-    client.place_prediction(&user2, &pool_id, &200, &1); // exactly max_stake
+    client.place_prediction(&user1, &pool_id, &10, &0, &None); // exactly min_stake
+    client.place_prediction(&user2, &pool_id, &200, &1, &None); // exactly max_stake
 }
 
 #[test]
@@ -1603,7 +1659,7 @@ fn test_set_stake_limits_by_operator() {
     client.set_stake_limits(&operator, &pool_id, &50i128, &500i128);
 
     // Stake at the new minimum should succeed
-    client.place_prediction(&user, &pool_id, &50, &0);
+    client.place_prediction(&user, &pool_id, &50, &0, &None);
 }
 
 #[test]
@@ -1856,13 +1912,13 @@ fn test_get_pool_stats() {
     assert_eq!(stats.total_stake, 0);
 
     // User 1 bets 100 on outcome 0
-    client.place_prediction(&user1, &pool_id, &100, &0);
+    client.place_prediction(&user1, &pool_id, &100, &0, &None);
     // User 2 bets 200 on outcome 1
-    client.place_prediction(&user2, &pool_id, &200, &1);
+    client.place_prediction(&user2, &pool_id, &200, &1, &None);
     // User 3 bets 100 on outcome 1
-    client.place_prediction(&user3, &pool_id, &100, &1);
+    client.place_prediction(&user3, &pool_id, &100, &1, &None);
     // User 1 bets 100 more on outcome 0 (should not increase participants)
-    client.place_prediction(&user1, &pool_id, &100, &0);
+    client.place_prediction(&user1, &pool_id, &100, &0, &None);
 
     let stats = client.get_pool_stats(&pool_id);
     assert_eq!(stats.participants_count, 3);
@@ -1928,7 +1984,7 @@ fn test_pool_end_time_on_leap_day() {
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
     // Prediction must be accepted while before the leap-day deadline.
-    client.place_prediction(&user, &pool_id, &100, &0);
+    client.place_prediction(&user, &pool_id, &100, &0, &None);
 }
 
 /// Creating a pool whose end time is the leap day, but the ledger is already
@@ -1990,8 +2046,8 @@ fn test_pool_end_time_spans_leap_day_resolution() {
     token_admin_client.mint(&user1, &500);
     token_admin_client.mint(&user2, &500);
 
-    client.place_prediction(&user1, &pool_id, &300, &0);
-    client.place_prediction(&user2, &pool_id, &200, &1);
+    client.place_prediction(&user1, &pool_id, &300, &0, &None);
+    client.place_prediction(&user2, &pool_id, &200, &1, &None);
 
     // Advance ledger past Mar 1 (resolution_delay == 0 in setup).
     env.ledger()
@@ -2036,7 +2092,7 @@ fn test_maximum_single_stake_roundtrip() {
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &max_amount);
 
-    client.place_prediction(&user, &pool_id, &max_amount, &0);
+    client.place_prediction(&user, &pool_id, &max_amount, &0, &None);
 
     let contract_addr = client.address.clone();
     assert_eq!(token.balance(&contract_addr), max_amount);
@@ -2084,10 +2140,10 @@ fn test_large_stake_winnings_split_correctly() {
     token_admin_client.mint(&loser2, &big_stake);
 
     // Two winners on outcome 0, two losers on outcome 1.
-    client.place_prediction(&winner1, &pool_id, &big_stake, &0);
-    client.place_prediction(&winner2, &pool_id, &big_stake, &0);
-    client.place_prediction(&loser1, &pool_id, &big_stake, &1);
-    client.place_prediction(&loser2, &pool_id, &big_stake, &1);
+    client.place_prediction(&winner1, &pool_id, &big_stake, &0, &None);
+    client.place_prediction(&winner2, &pool_id, &big_stake, &0, &None);
+    client.place_prediction(&loser1, &pool_id, &big_stake, &1, &None);
+    client.place_prediction(&loser2, &pool_id, &big_stake, &1, &None);
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
     client.resolve_pool(&operator, &pool_id, &0u32);
@@ -2177,11 +2233,11 @@ fn test_many_users_rapid_claim_after_resolution() {
 
     for u in [&w0, &w1, &w2, &w3, &w4] {
         token_admin_client.mint(u, &stake);
-        client.place_prediction(u, &pool_id, &stake, &0);
+        client.place_prediction(u, &pool_id, &stake, &0, &None);
     }
     for u in [&l0, &l1, &l2, &l3, &l4] {
         token_admin_client.mint(u, &stake);
-        client.place_prediction(u, &pool_id, &stake, &1);
+        client.place_prediction(u, &pool_id, &stake, &1, &None);
     }
 
     let total = stake * 10;
@@ -2226,7 +2282,7 @@ fn test_resolution_then_new_pool_state_isolation() {
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &500);
-    client.place_prediction(&user, &pool_a, &200, &0);
+    client.place_prediction(&user, &pool_a, &200, &0, &None);
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
     client.resolve_pool(&operator, &pool_a, &0u32);
@@ -2254,7 +2310,7 @@ fn test_resolution_then_new_pool_state_isolation() {
     // Pool B is still active – predictions can be placed.
     let user2 = Address::generate(&env);
     token_admin_client.mint(&user2, &500);
-    client.place_prediction(&user2, &pool_b, &100, &1);
+    client.place_prediction(&user2, &pool_b, &100, &1, &None);
 }
 
 // ── Boundary values in all validation logic ───────────────────────────────────
@@ -2353,7 +2409,7 @@ fn test_create_pool_accepts_maximum_options_count() {
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1000);
     // outcome index 99 is the last valid index and must be accepted.
-    client.place_prediction(&user, &pool_id, &100, &99);
+    client.place_prediction(&user, &pool_id, &100, &99, &None);
 }
 
 /// end_time below MIN_POOL_DURATION from the current ledger must be rejected.
@@ -2454,7 +2510,7 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &200);
     // Exact bet at the only allowed amount.
-    client.place_prediction(&user, &pool_id, &100, &0);
+    client.place_prediction(&user, &pool_id, &100, &0, &None);
 }
 
 /// outcome index == options_count must be rejected (out-of-bounds, 0-indexed).
@@ -2511,7 +2567,7 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &500);
-    client.place_prediction(&user, &pool_id, &200, &0);
+    client.place_prediction(&user, &pool_id, &200, &0, &None);
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
 
@@ -2698,8 +2754,8 @@ fn test_state_consistency_across_many_pools() {
     for i in 0..5usize {
         token_admin_client.mint(&user_as[i], &stake);
         token_admin_client.mint(&user_bs[i], &stake);
-        client.place_prediction(&user_as[i], &pools[i], &stake, &0);
-        client.place_prediction(&user_bs[i], &pools[i], &stake, &1);
+        client.place_prediction(&user_as[i], &pools[i], &stake, &0, &None);
+        client.place_prediction(&user_bs[i], &pools[i], &stake, &1, &None);
     }
 
     let expected_total = stake * 10;
@@ -2778,8 +2834,8 @@ fn test_state_consistency_after_cancellation_and_resolution() {
     token_admin_client.mint(&user_a, &1000);
     token_admin_client.mint(&user_b, &1000);
 
-    client.place_prediction(&user_a, &pool_a, &300, &0);
-    client.place_prediction(&user_b, &pool_b, &400, &1);
+    client.place_prediction(&user_a, &pool_a, &300, &0, &None);
+    client.place_prediction(&user_b, &pool_b, &400, &1, &None);
 
     // Cancel pool A; 300 remain locked for refund.
     client.cancel_pool(&operator, &pool_a);
@@ -2831,8 +2887,8 @@ fn test_all_bettors_on_winning_side() {
     token_admin_client.mint(&user1, &600);
     token_admin_client.mint(&user2, &400);
 
-    client.place_prediction(&user1, &pool_id, &600, &0);
-    client.place_prediction(&user2, &pool_id, &400, &0);
+    client.place_prediction(&user1, &pool_id, &600, &0, &None);
+    client.place_prediction(&user2, &pool_id, &400, &0, &None);
 
     let total = 1_000i128;
     assert_eq!(token.balance(&contract_addr), total);
@@ -2877,8 +2933,8 @@ fn test_no_bettor_on_winning_side() {
     token_admin_client.mint(&user2, &500);
 
     // Both bet on outcome 1; outcome 2 wins (nobody bet on it).
-    client.place_prediction(&user1, &pool_id, &300, &1);
-    client.place_prediction(&user2, &pool_id, &200, &1);
+    client.place_prediction(&user1, &pool_id, &300, &1, &None);
+    client.place_prediction(&user2, &pool_id, &200, &1, &None);
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
     client.resolve_pool(&operator, &pool_id, &2u32); // outcome 2 – no bettors
