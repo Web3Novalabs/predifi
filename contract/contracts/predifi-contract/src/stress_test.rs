@@ -1,8 +1,8 @@
-use crate::{PredifiContract, PredifiContractClient};
+use crate::{PoolConfig, PredifiContract, PredifiContractClient};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
-    token, Address, Env, String, Symbol,
+    token, Address, Env, String,
 };
 
 extern crate alloc;
@@ -88,15 +88,19 @@ fn test_high_volume_predictions_single_pool() {
     // Create pool with min_stake=10, max_stake=10000
     let pool_id = client.create_pool(
         &creator,
-        &10000u64, // 10000 > 1000 + 3600
+        &10000u64,
+        // 10000 > 1000 + 3600
         &token_client.address,
         &2,
-        &String::from_str(&env, "High Volume Stress Test"),
-        &String::from_str(&env, "ipfs://stress"),
-        &10i128,
-        &10000i128,
-        &0,
         &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "High Volume Stress Test"),
+            metadata_url: String::from_str(&env, "ipfs://stress"),
+            min_stake: 10i128,
+            max_stake: 10000i128,
+            initial_liquidity: 0,
+            required_resolutions: 1u32,
+        },
     );
 
     // Place 100 predictions from 100 unique users
@@ -125,15 +129,19 @@ fn test_bulk_claim_winnings() {
 
     let pool_id = client.create_pool(
         &creator,
-        &5000u64, // 5000 > 1000 + 3600
+        &5000u64,
+        // 5000 > 1000 + 3600
         &token_client.address,
         &2,
-        &String::from_str(&env, "Bulk Claim Test"),
-        &String::from_str(&env, "ipfs://bulk"),
-        &1i128,
-        &0i128,
-        &0,
         &symbol_short!("Finance"),
+        &PoolConfig {
+            description: String::from_str(&env, "Bulk Claim Test"),
+            metadata_url: String::from_str(&env, "ipfs://bulk"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0,
+            required_resolutions: 1u32,
+        },
     );
 
     let mut users = alloc::vec::Vec::new();
@@ -171,12 +179,15 @@ fn test_sequential_pool_creation_stress() {
             &200000u64,
             &token_client.address,
             &2,
-            &String::from_str(&env, "Stress Pool"),
-            &String::from_str(&env, "ipfs://meta"),
-            &1i128,
-            &0i128,
-            &0,
             &symbol_short!("Other"),
+            &PoolConfig {
+                description: String::from_str(&env, "Stress Pool"),
+                metadata_url: String::from_str(&env, "ipfs://meta"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                initial_liquidity: 0,
+                required_resolutions: 1u32,
+            },
         );
         assert_eq!(pool_id, i as u64);
     }
@@ -195,12 +206,15 @@ fn test_max_outcomes_high_volume() {
         &200000u64,
         &token_client.address,
         &max_options,
-        &String::from_str(&env, "High Options Test"),
-        &String::from_str(&env, "ipfs://meta"),
-        &1i128,
-        &0i128,
-        &0,
         &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "High Options Test"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0,
+            required_resolutions: 1u32,
+        },
     );
 
     // Place predictions on each outcome
@@ -225,12 +239,15 @@ fn test_prediction_throughput_measurement() {
         &200000u64,
         &token_client.address,
         &2,
-        &String::from_str(&env, "Throughput Test"),
-        &String::from_str(&env, "ipfs://meta"),
-        &1i128,
-        &0i128,
-        &0,
         &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Throughput Test"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0,
+            required_resolutions: 1u32,
+        },
     );
 
     let start_ledger = env.ledger().timestamp();
@@ -263,12 +280,15 @@ fn test_resolution_under_load() {
             &20000u64,
             &token_client.address,
             &2,
-            &String::from_str(&env, "Load Pool"),
-            &String::from_str(&env, "ipfs://load"),
-            &1i128,
-            &0i128,
-            &0,
             &symbol_short!("Other"),
+            &PoolConfig {
+                description: String::from_str(&env, "Load Pool"),
+                metadata_url: String::from_str(&env, "ipfs://load"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                initial_liquidity: 0,
+                required_resolutions: 1u32,
+            },
         );
         pool_ids.push(pid);
     }

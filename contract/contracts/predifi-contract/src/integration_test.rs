@@ -87,15 +87,18 @@ fn test_full_market_lifecycle() {
         &end_time,
         &token_ctx.token_address,
         &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-        &1i128,
-        &0i128,
-        &0i128,
         &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+        },
     );
 
     // 2. Place Predictions
@@ -162,15 +165,18 @@ fn test_multi_user_betting_and_balance_verification() {
         &4000u64,
         &token_ctx.token_address,
         &4u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-        &1i128,
-        &0i128,
-        &0i128,
         &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+        },
     );
 
     // Bets:
@@ -231,15 +237,18 @@ fn test_market_resolution_multiple_winners() {
         &3600u64,
         &token_ctx.token_address,
         &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-        &1i128,
-        &0i128,
-        &0i128,
         &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+        },
     );
 
     // Bets:
