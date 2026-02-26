@@ -110,7 +110,7 @@ fn test_high_volume_predictions_single_pool() {
 
         // Split users between outcome 0 and 1
         let outcome = i % 2;
-        client.place_prediction(&user, &pool_id, &stake_per_user, &outcome, &None);
+        client.place_prediction(&user, &pool_id, &stake_per_user, &outcome, &None, &None);
     }
 
     // Use client to get details instead of direct storage access
@@ -148,7 +148,7 @@ fn test_bulk_claim_winnings() {
     for _ in 0..num_users {
         let user = Address::generate(&env);
         token_admin_client.mint(&user, &stake_per_user);
-        client.place_prediction(&user, &pool_id, &stake_per_user, &0, &None); // All on outcome 0
+        client.place_prediction(&user, &pool_id, &stake_per_user, &0, &None, &None); // All on outcome 0
         users.push(user);
     }
 
@@ -221,7 +221,7 @@ fn test_max_outcomes_high_volume() {
     for i in 0..max_options {
         let user = Address::generate(&env);
         token_admin_client.mint(&user, &1000);
-        client.place_prediction(&user, &pool_id, &1000, &i, &None);
+        client.place_prediction(&user, &pool_id, &1000, &i, &None, &None);
     }
 
     let pool = client.get_pool(&pool_id);
@@ -256,7 +256,7 @@ fn test_prediction_throughput_measurement() {
     for _ in 0..num_predictions {
         let user = Address::generate(&env);
         token_admin_client.mint(&user, &100);
-        client.place_prediction(&user, &pool_id, &100, &0, &None);
+        client.place_prediction(&user, &pool_id, &100, &0, &None, &None);
     }
 
     let end_ledger = env.ledger().timestamp();
@@ -297,7 +297,7 @@ fn test_resolution_under_load() {
     for &pid in &pool_ids {
         let user = Address::generate(&env);
         token_admin_client.mint(&user, &1000);
-        client.place_prediction(&user, &pid, &1000, &0, &None);
+        client.place_prediction(&user, &pid, &1000, &0, &None, &None);
     }
 
     // Advance time
