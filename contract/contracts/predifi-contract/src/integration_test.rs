@@ -97,7 +97,7 @@ fn test_full_market_lifecycle() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
-            required_resolutions: 1u32,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
         },
     );
 
@@ -175,7 +175,7 @@ fn test_multi_user_betting_and_balance_verification() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
-            required_resolutions: 1u32,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
         },
     );
 
@@ -247,7 +247,7 @@ fn test_market_resolution_multiple_winners() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
-            required_resolutions: 1u32,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
         },
     );
 

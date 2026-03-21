@@ -167,6 +167,10 @@ pub struct Pool {
     pub creator: Address,
     /// Number of authorized oracle resolutions required to finalize the pool.
     pub required_resolutions: u32,
+    /// Whether the pool is private (invite-only).
+    pub private: bool,
+    /// Optional symbol used as an invite key for private pools.
+    pub whitelist_key: Option<Symbol>,
 }
 
 #[contracttype]
@@ -178,6 +182,8 @@ pub struct PoolConfig {
     pub max_stake: i128,
     pub initial_liquidity: i128,
     pub required_resolutions: u32,
+    pub private: bool,
+    pub whitelist_key: Option<Symbol>,
 }
 
 #[contracttype]
@@ -240,6 +246,8 @@ pub enum DataKey {
     ReferralCutBps,
     ReferredVolume(Address, u64),
     Referrer(Address, u64),
+    /// User whitelist for private pools: Whitelist(pool_id, user_address)
+    Whitelist(u64, Address),
 }
 
 #[contracttype]
@@ -1175,38 +1183,32 @@ impl PredifiContract {
 
         // Validate: category must be in the allowed list
         assert!(
-            Self::validate_category(&env, &params.category),
+            Self::validate_category(&env, &category),
             "category must be one of the allowed categories"
         );
 
         // Validate: token must be on the allowed betting whitelist
-        if !Self::is_token_whitelisted(&env, &params.token) {
+        if !Self::is_token_whitelisted(&env, &token) {
             soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
         }
 
         let current_time = env.ledger().timestamp();
 
         // Validate: end_time must be in the future
-        assert!(
-            params.end_time > current_time,
-            "end_time must be in the future"
-        );
+        assert!(end_time > current_time, "end_time must be in the future");
 
         // Validate: minimum pool duration (1 hour)
         assert!(
-            params.end_time >= current_time + MIN_POOL_DURATION,
+            end_time >= current_time + MIN_POOL_DURATION,
             "end_time must be at least 1 hour in the future"
         );
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
-        assert!(
-            params.options_count >= 2,
-            "options_count must be at least 2"
-        );
+        assert!(options_count >= 2, "options_count must be at least 2");
 
         // Validate: options_count must not exceed maximum limit
         assert!(
-            params.options_count <= MAX_OPTIONS_COUNT,
+            options_count <= MAX_OPTIONS_COUNT,
             "options_count exceeds maximum allowed value"
         );
 
@@ -1255,7 +1257,7 @@ impl PredifiContract {
             .unwrap_or(0);
         // Initialize pool data structure
         let pool = Pool {
-            end_time: params.end_time,
+            end_time,
             resolved: false,
             canceled: false,
             state: MarketState::Active,
@@ -1272,6 +1274,8 @@ impl PredifiContract {
             initial_liquidity: config.initial_liquidity,
             creator: creator.clone(),
             required_resolutions: config.required_resolutions,
+            private: config.private,
+            whitelist_key: config.whitelist_key.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -1293,14 +1297,14 @@ impl PredifiContract {
         }
 
         // Update category index
-        let category_count_key = DataKey::CatPoolCt(params.category.clone());
+        let category_count_key = DataKey::CatPoolCt(category.clone());
         let category_count: u32 = env
             .storage()
             .persistent()
             .get(&category_count_key)
             .unwrap_or(0);
 
-        let category_index_key = DataKey::CatPoolIx(params.category.clone(), category_count);
+        let category_index_key = DataKey::CatPoolIx(category.clone(), category_count);
         env.storage()
             .persistent()
             .set(&category_index_key, &pool_id);
