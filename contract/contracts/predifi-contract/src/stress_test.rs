@@ -99,7 +99,9 @@ fn test_high_volume_predictions_single_pool() {
             min_stake: 10i128,
             max_stake: 10000i128,
             initial_liquidity: 0,
-            required_resolutions: 1u32, private: false, whitelist_key: None,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
         },
     );
 
@@ -140,7 +142,9 @@ fn test_bulk_claim_winnings() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0,
-            required_resolutions: 1u32, private: false, whitelist_key: None,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
         },
     );
 
@@ -186,7 +190,9 @@ fn test_sequential_pool_creation_stress() {
                 min_stake: 1i128,
                 max_stake: 0i128,
                 initial_liquidity: 0,
-                required_resolutions: 1u32, private: false, whitelist_key: None,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
             },
         );
         assert_eq!(pool_id, i as u64);
@@ -213,7 +219,9 @@ fn test_max_outcomes_high_volume() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0,
-            required_resolutions: 1u32, private: false, whitelist_key: None,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
         },
     );
 
@@ -246,7 +254,9 @@ fn test_prediction_throughput_measurement() {
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0,
-            required_resolutions: 1u32, private: false, whitelist_key: None,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
         },
     );
 
@@ -287,7 +297,9 @@ fn test_resolution_under_load() {
                 min_stake: 1i128,
                 max_stake: 0i128,
                 initial_liquidity: 0,
-                required_resolutions: 1u32, private: false, whitelist_key: None,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
             },
         );
         pool_ids.push(pid);
