@@ -112,47 +112,85 @@ pub enum PredifiError {
     OracleAlreadyVoted = 106,
 }
 
+/// Represents the current state of a prediction market.
+///
+/// State transitions are one-way: `Active` can only transition to `Resolved` or `Canceled`.
 #[contracttype]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MarketState {
+    /// Market is active and accepting predictions.
     Active = 0,
+    /// Market has been resolved and winnings can be claimed.
     Resolved = 1,
+    /// Market has been canceled and stakes can be refunded.
     Canceled = 2,
 }
 
+/// Parameters for creating a new prediction pool.
+///
+/// This struct is used internally to validate and organize pool creation data.
+/// All fields must pass validation before a pool can be created.
 #[contracttype]
 #[derive(Clone)]
 pub struct CreatePoolParams {
+    /// Unix timestamp after which no more predictions are accepted.
     pub end_time: u64,
+    /// The Stellar token contract address used for staking.
     pub token: Address,
+    /// Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
     pub options_count: u32,
+    /// Short human-readable description of the event (max 256 bytes).
     pub description: String,
+    /// URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
     pub metadata_url: String,
+    /// Minimum stake amount per prediction (must be > 0).
     pub min_stake: i128,
+    /// Maximum stake amount per prediction (0 = no limit).
     pub max_stake: i128,
+    /// Optional initial liquidity to provide from creator (house money).
     pub initial_liquidity: i128,
+    /// Market category for classification (e.g., Sports, Finance, Crypto).
     pub category: Symbol,
+    /// Whether the pool is private (invite-only).
     pub private: bool,
+    /// Optional symbol used as an invite key for private pools.
     pub whitelist_key: Option<Symbol>,
 }
 
+/// Represents a prediction pool with all its configuration and state.
+///
+/// A pool is the core data structure that represents a prediction market.
+/// It contains all information about the market, stakes, and resolution.
+///
+/// # Invariants
+/// - `end_time` must be in the future when created (INV-8)
+/// - `state` can only transition from `Active` to `Resolved` or `Canceled` (INV-2)
+/// - `total_stake` equals the sum of all outcome stakes (INV-1)
+/// - For resolved pools: total winnings ≤ `total_stake` (INV-5)
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
+    /// Unix timestamp after which no more predictions are accepted.
     pub end_time: u64,
+    /// Whether the pool has been resolved (deprecated, use `state` instead).
     pub resolved: bool,
+    /// Whether the pool has been canceled (deprecated, use `state` instead).
     pub canceled: bool,
+    /// Current state of the market (Active, Resolved, or Canceled).
     pub state: MarketState,
+    /// The winning outcome index (0-based) after resolution. 0 if not yet resolved.
     pub outcome: u32,
+    /// The Stellar token contract address used for staking.
     pub token: Address,
+    /// Total amount of tokens staked across all outcomes, including initial liquidity.
     pub total_stake: i128,
-    /// Market category for this pool (e.g., Sports, Finance, Crypto)
+    /// Market category for this pool (e.g., Sports, Finance, Crypto).
     pub category: Symbol,
     /// A short human-readable description of the event being predicted.
     pub description: String,
     /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
     pub metadata_url: String,
-    /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT)
+    /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT).
     pub options_count: u32,
     /// Minimum stake amount per prediction (must be > 0).
     pub min_stake: i128,
@@ -173,69 +211,132 @@ pub struct Pool {
     pub whitelist_key: Option<Symbol>,
 }
 
+/// Configuration parameters for creating a prediction pool.
+///
+/// This struct is passed to `create_pool` to define the pool's properties.
+/// It separates configuration from runtime state (which is managed in `Pool`).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolConfig {
+    /// Short human-readable description of the event (max 256 bytes).
     pub description: String,
+    /// URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
     pub metadata_url: String,
+    /// Minimum stake amount per prediction (must be > 0).
     pub min_stake: i128,
+    /// Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
     pub max_stake: i128,
+    /// Optional initial liquidity to provide from creator (must be >= 0).
+    /// This is "house money" that participates in the pool but is excluded from fee calculations.
     pub initial_liquidity: i128,
+    /// Number of authorized oracle resolutions required to finalize the pool (must be >= 1).
     pub required_resolutions: u32,
+    /// Whether the pool is private (invite-only). If true, users must be whitelisted.
     pub private: bool,
+    /// Optional symbol used as an invite key for private pools.
     pub whitelist_key: Option<Symbol>,
 }
 
+/// Statistics for a prediction pool.
+///
+/// Provides a snapshot of pool activity including stakes, participants, and odds.
+/// Useful for frontends and analytics.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct PoolStats {
+    /// Unique identifier of the pool.
     pub pool_id: u64,
+    /// Total amount of tokens staked across all outcomes.
     pub total_stake: i128,
+    /// Vector of stake amounts for each outcome (indexed by outcome number).
     pub stakes_per_outcome: Vec<i128>,
+    /// Number of unique participants in this pool.
     pub participants_count: u32,
-    pub current_odds: Vec<u64>, // Fixed-point with 4 decimals (e.g., 10000 = 1.00x)
+    /// Current odds for each outcome in fixed-point format with 4 decimals.
+    /// For example, 10000 represents 1.00x, 5000 represents 0.50x, 20000 represents 2.00x.
+    pub current_odds: Vec<u64>,
 }
 
+/// Global protocol configuration.
+///
+/// Contains system-wide settings that control protocol behavior.
+/// These settings can be updated by admin with appropriate governance.
+///
+/// # Invariants
+/// - `fee_bps` must be <= 10,000 (100%) (INV-6)
 #[contracttype]
 #[derive(Clone)]
 pub struct Config {
+    /// Protocol fee in basis points (1 bp = 0.01%). Valid range: 0-10,000.
+    /// A value of 5000 represents 50% fee on winnings.
     pub fee_bps: u32,
+    /// Address that receives protocol fees.
     pub treasury: Address,
+    /// Address of the access control contract for role-based permissions.
     pub access_control: Address,
+    /// Minimum delay in seconds after pool end time before resolution is allowed.
+    /// This provides a grace period for oracle data to settle.
     pub resolution_delay: u64,
 }
 
+/// Detailed information about a user's prediction in a specific pool.
+///
+/// This struct is used to display user prediction history and calculate winnings.
+/// It combines user-specific data with pool state for convenient access.
 #[contracttype]
 #[derive(Clone)]
 pub struct UserPredictionDetail {
+    /// Unique identifier of the pool.
     pub pool_id: u64,
+    /// Amount of tokens staked by the user on their chosen outcome.
     pub amount: i128,
+    /// The outcome index (0-based) that the user predicted.
     pub user_outcome: u32,
+    /// Unix timestamp when the pool ends.
     pub pool_end_time: u64,
+    /// Current state of the pool (Active, Resolved, or Canceled).
     pub pool_state: MarketState,
+    /// The winning outcome index (0-based) if the pool is resolved, 0 otherwise.
     pub pool_outcome: u32,
 }
 
+/// Internal storage keys for contract data.
+///
+/// This enum defines all the keys used to store and retrieve data from
+/// Soroban's storage. Each variant corresponds to a specific data type.
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
+    /// Pool data by pool ID: Pool(pool_id) -> Pool
     Pool(u64),
+    /// User prediction by user address and pool ID: Pred(user, pool_id) -> Prediction
     Pred(Address, u64),
+    /// Pool ID counter for generating unique pool IDs.
     PoolIdCtr,
+    /// Tracks whether a user has claimed winnings for a pool: Claimed(user, pool_id) -> bool
     Claimed(Address, u64),
+    /// Stake amount for a specific outcome: OutStake(pool_id, outcome) -> i128
     OutStake(u64, u32),
     /// Optimized storage for markets with many outcomes (e.g., 32+ teams).
-    /// Stores all outcome stakes as a single Vec<i128> to reduce storage reads.
+    /// Stores all outcome stakes as a single `Vec<i128>` to reduce storage reads.
     OutStakes(u64),
+    /// User prediction count: UsrPrdCnt(user) -> u32
     UsrPrdCnt(Address),
+    /// User prediction index: UsrPrdIdx(user, index) -> UserPredictionDetail
     UsrPrdIdx(Address, u32),
+    /// Global protocol configuration: Config -> Config
     Config,
+    /// Contract pause state: Paused -> bool
     Paused,
+    /// Reentrancy guard: RentGuard -> bool
     RentGuard,
+    /// Category pool count: CatPoolCt(category) -> u32
     CatPoolCt(Symbol),
+    /// Category pool index: CatPoolIx(category, index) -> u64
     CatPoolIx(Symbol, u32),
-    /// Token whitelist: TokenWhitelist(token_address) -> true if allowed for betting.
+    /// Token whitelist: TokenWl(token_address) -> true if allowed for betting.
     TokenWl(Address),
+    /// Participant count for a pool: PartCnt(pool_id) -> u32
     PartCnt(u64),
     /// Tracks if an oracle has already voted: ResVote(pool_id, oracle_address)
     ResVote(u64, Address),
@@ -243,17 +344,26 @@ pub enum DataKey {
     ResVoteCt(u64, u32),
     /// Tracks total number of votes cast for a pool: ResTotal(pool_id)
     ResTotal(u64),
+    /// Referral cut in basis points: ReferralCutBps -> u32
     ReferralCutBps,
+    /// Referred volume for a referrer and pool: ReferredVolume(referrer, pool_id) -> i128
     ReferredVolume(Address, u64),
+    /// Referrer address for a user and pool: Referrer(user, pool_id) -> Address
     Referrer(Address, u64),
     /// User whitelist for private pools: Whitelist(pool_id, user_address)
     Whitelist(u64, Address),
 }
 
+/// Represents a user's prediction in a pool.
+///
+/// This is a lightweight structure stored for each user-pool combination,
+/// tracking their stake and chosen outcome.
 #[contracttype]
 #[derive(Clone)]
 pub struct Prediction {
+    /// Amount of tokens staked by the user on their chosen outcome.
     pub amount: i128,
+    /// The outcome index (0-based) that the user predicted.
     pub outcome: u32,
 }
 
@@ -2196,7 +2306,7 @@ impl PredifiContract {
     /// Instead of making N storage reads (one per outcome), it makes a single read.
     ///
     /// Returns a Vec of stakes where index corresponds to outcome index.
-    /// For example, stake[0] is the total amount bet on outcome 0.
+    /// For example, `stake\[0\]` is the total amount bet on outcome 0.
     pub fn get_pool(env: Env, pool_id: u64) -> Pool {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env

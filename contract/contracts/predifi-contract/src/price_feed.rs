@@ -3,59 +3,96 @@
 use soroban_sdk::{Address, Env, Symbol, Vec, BytesN};
 use crate::{PredifiError, DataKey};
 
-/// Price feed data structure for external oracle integration
+/// Price feed data structure for external oracle integration.
+///
+/// This struct contains real-time price data from an oracle (e.g., Pyth Network).
+/// It is used for automated market resolution based on price conditions.
+///
+/// # Price Data Validity
+/// - `price` must be positive
+/// - `confidence` must be non-negative
+/// - `timestamp` must be in the past
+/// - `expires_at` must be greater than `timestamp`
+/// - Current time must be <= `expires_at` for the price to be considered valid
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[contracttype]
 pub struct PriceFeed {
-    /// The asset pair (e.g., "ETH/USD")
+    /// The asset pair identifier (e.g., "ETH/USD", "BTC/USD").
     pub pair: Symbol,
-    /// Current price
+    /// Current price of the asset pair in base token units.
     pub price: i128,
-    /// Confidence interval (±)
+    /// Confidence interval representing the uncertainty of the price (± value).
+    /// Lower confidence values indicate more reliable price data.
     pub confidence: i128,
-    /// Timestamp of the price update
+    /// Unix timestamp when the price was last updated.
     pub timestamp: u64,
-    /// Expiration time for this price data
+    /// Unix timestamp when this price data expires.
+    /// Price data is considered invalid after this time.
     pub expires_at: u64,
 }
 
-/// Price condition for automated market resolution
+/// Price condition for automated market resolution.
+///
+/// This struct defines a price-based condition that can be used to
+/// automatically resolve a prediction pool without manual oracle intervention.
+///
+/// # Example Usage
+/// For a pool predicting "Will ETH exceed $3000?", you would set:
+/// - `feed_pair`: "ETH/USD"
+/// - `target_price`: 3000
+/// - `operator`: 1 (greater than)
+/// - `tolerance_bps`: 100 (1% tolerance)
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[contracttype]
 pub struct PriceCondition {
-    /// The price feed pair to monitor
+    /// The price feed pair to monitor (e.g., "ETH/USD").
     pub feed_pair: Symbol,
-    /// Target price to compare against
+    /// Target price to compare against for resolution.
     pub target_price: i128,
-    /// Comparison operator: 0 = equal, 1 = greater than, 2 = less than
+    /// Comparison operator for the price condition:
+    /// - 0 = equal (price == target ± tolerance)
+    /// - 1 = greater than (price > target + tolerance)
+    /// - 2 = less than (price < target - tolerance)
     pub operator: u32,
-    /// Tolerance for price comparison (in basis points)
+    /// Tolerance for price comparison in basis points (1 bp = 0.01%).
+    /// For example, 100 bps = 1% tolerance around the target price.
+    /// This prevents resolution failures due to minor price fluctuations.
     pub tolerance_bps: u32,
 }
 
-/// Oracle configuration for price feeds
+/// Oracle configuration for price feeds.
+///
+/// This struct contains global settings for oracle integration,
+/// controlling how price data is validated and consumed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[contracttype]
 pub struct OracleConfig {
-    /// Pyth Network contract address
+    /// Pyth Network oracle contract address on Stellar.
+    /// This contract provides decentralized price feeds.
     pub pyth_contract: Address,
-    /// Maximum age of price data (in seconds)
+    /// Maximum age of price data in seconds.
+    /// Price data older than this is considered stale and invalid.
     pub max_price_age: u64,
-    /// Minimum confidence interval (relative to price)
-    pub min_confidence_ratio: u32, // in basis points
+    /// Minimum confidence ratio in basis points (1 bp = 0.01%).
+    /// Lower values indicate higher confidence. If the actual confidence
+    /// ratio exceeds this threshold, the price data is rejected.
+    /// For example, 100 bps = 1% maximum confidence ratio.
+    pub min_confidence_ratio: u32,
 }
 
-/// Storage keys for price feed data
+/// Storage keys for price feed data.
+///
+/// This enum defines all storage keys used by the price feed system.
 #[derive(Clone)]
 #[contracttype]
 pub enum PriceFeedDataKey {
-    /// Oracle configuration
+    /// Oracle configuration: OracleConfig -> OracleConfig
     OracleConfig,
     /// Registered price feeds: PriceFeed(feed_pair) -> PriceFeed
     PriceFeed(Symbol),
     /// Price conditions for pools: PriceCondition(pool_id) -> PriceCondition
     PriceCondition(u64),
-    /// Last update timestamp for each feed
+    /// Last update timestamp for each feed: LastUpdate(feed_pair) -> u64
     LastUpdate(Symbol),
 }
 
