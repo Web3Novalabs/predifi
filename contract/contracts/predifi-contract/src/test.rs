@@ -2339,11 +2339,12 @@ fn test_withdraw_treasury_rejects_insufficient_balance() {
 }
 
 #[test]
-fn test_withdraw_treasury_multiple_tokens() {
+fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -2355,19 +2356,121 @@ fn test_withdraw_treasury_multiple_tokens() {
     let token_admin_client2 = token::StellarAssetClient::new(&env, &token_contract2);
     client.add_token_to_whitelist(&admin, &token_contract2);
 
-    // Mint both tokens to contract
-    token_admin_client.mint(&contract_addr, &5000);
-    token_admin_client2.mint(&contract_addr, &3000);
+    // Set protocol fee to 10% (1000 bps) for clear fee calculation
+    client.set_fee_bps(&admin, &1000u32);
 
-    // Withdraw from both tokens
-    client.withdraw_treasury(&admin, &token_address, &2000, &treasury);
-    client.withdraw_treasury(&admin, &token_contract2, &1500, &treasury);
+    // Create two pools with different tokens
+    let pool1_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool 1 - Token 1"),
+            metadata_url: String::from_str(&env, "ipfs://pool1"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
 
-    // Verify balances
-    assert_eq!(token.balance(&treasury), 2000);
-    assert_eq!(token2.balance(&treasury), 1500);
-    assert_eq!(token.balance(&contract_addr), 3000);
-    assert_eq!(token2.balance(&contract_addr), 1500);
+    let pool2_id = client.create_pool(
+        &creator,
+        &100001u64,
+        &token_contract2,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool 2 - Token 2"),
+            metadata_url: String::from_str(&env, "ipfs://pool2"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    // Create users for betting
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    token_admin_client.mint(&user2, &1000);
+    token_admin_client2.mint(&user1, &1000);
+    token_admin_client2.mint(&user2, &1000);
+
+    // Place predictions in pool1 (token1) - user1 bets on outcome 0, user2 on outcome 1
+    client.place_prediction(&user1, &pool1_id, &500, &0, &None, &None);
+    client.place_prediction(&user2, &pool1_id, &500, &1, &None, &None);
+
+    // Place predictions in pool2 (token2) - user1 bets on outcome 0, user2 on outcome 1
+    client.place_prediction(&user1, &pool2_id, &400, &0, &None, &None);
+    client.place_prediction(&user2, &pool2_id, &600, &1, &None, &None);
+
+    // Verify contract balances before resolution
+    assert_eq!(token.balance(&contract_addr), 1000); // 500 + 500 from pool1
+    assert_eq!(token2.balance(&contract_addr), 1000); // 400 + 600 from pool2
+
+    // Advance time to allow resolution
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Resolve both pools with different outcomes
+    // Pool1: outcome 0 wins (user1 wins)
+    client.resolve_pool(&operator, &pool1_id, &0u32);
+    // Pool2: outcome 1 wins (user2 wins)
+    client.resolve_pool(&operator, &pool2_id, &1u32);
+
+    // Users claim winnings - this is where fees are collected
+    // Pool1: total_stake=1000, fee=10% (100), payout=900, user1 gets all 900
+    let winnings1_user1 = client.claim_winnings(&user1, &pool1_id);
+    assert_eq!(winnings1_user1, 900); // 1000 - 10% fee
+
+    // Pool2: total_stake=1000, fee=10% (100), payout=900, user2 gets all 900
+    let winnings2_user2 = client.claim_winnings(&user2, &pool2_id);
+    assert_eq!(winnings2_user2, 900); // 1000 - 10% fee
+
+    // Verify contract balances after claims (should have 100 tokens each as fees)
+    assert_eq!(token.balance(&contract_addr), 100); // 10% fee from pool1
+    assert_eq!(token2.balance(&contract_addr), 100); // 10% fee from pool2
+
+    // Verify treasury balances before withdraw
+    assert_eq!(token.balance(&treasury), 0);
+    assert_eq!(token2.balance(&treasury), 0);
+
+    // Withdraw treasury for token1 (partial withdrawal - 60 out of 100)
+    client.withdraw_treasury(&admin, &token_address, &60, &treasury);
+
+    // Verify first withdrawal
+    assert_eq!(token.balance(&treasury), 60);
+    assert_eq!(token.balance(&contract_addr), 40); // 100 - 60
+                                                   // Token2 should be unaffected
+    assert_eq!(token2.balance(&treasury), 0);
+    assert_eq!(token2.balance(&contract_addr), 100);
+
+    // Withdraw treasury for token2 (full withdrawal - 100)
+    client.withdraw_treasury(&admin, &token_contract2, &100, &treasury);
+
+    // Verify second withdrawal doesn't affect token1
+    assert_eq!(token.balance(&treasury), 60); // Unchanged
+    assert_eq!(token.balance(&contract_addr), 40); // Unchanged
+    assert_eq!(token2.balance(&treasury), 100);
+    assert_eq!(token2.balance(&contract_addr), 0);
+
+    // Withdraw remaining token1 balance
+    client.withdraw_treasury(&admin, &token_address, &40, &treasury);
+
+    // Final verification - all fees withdrawn independently
+    assert_eq!(token.balance(&treasury), 100); // 60 + 40
+    assert_eq!(token.balance(&contract_addr), 0);
+    assert_eq!(token2.balance(&treasury), 100);
+    assert_eq!(token2.balance(&contract_addr), 0);
 }
 
 #[test]
