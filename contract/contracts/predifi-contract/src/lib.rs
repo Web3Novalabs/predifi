@@ -1,8 +1,8 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
-mod price_feed_simple;
 mod price_feed;
+mod price_feed_simple;
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
@@ -786,21 +786,6 @@ impl PredifiContract {
             }
         }
         false
-    }
-
-    /// Pure: Calculate winnings for a user given pool state
-    /// PRE: winning_stake > 0
-    /// POST: result ≤ total_stake (INV-4)
-    fn calculate_winnings(user_stake: i128, winning_stake: i128, total_stake: i128) -> i128 {
-        if winning_stake == 0 {
-            return 0;
-        }
-        // (user_stake / winning_stake) * total_stake
-        user_stake
-            .checked_mul(total_stake)
-            .expect("overflow in winnings calculation")
-            .checked_div(winning_stake)
-            .expect("division by zero")
     }
 
     /// Pure: Check if pool state transition is valid
@@ -2105,7 +2090,8 @@ impl PredifiContract {
             .ok_or(PredifiError::InvalidAmount)?;
 
         // Winnings = user's share of the payout pool (after fee)
-        let winnings = Self::calculate_winnings(prediction.amount, winning_stake, payout_pool);
+        let winnings = SafeMath::calculate_share(prediction.amount, winning_stake, payout_pool)
+            .map_err(|_| PredifiError::InvalidAmount)?;
 
         // Verify invariant: winnings ≤ total_stake (INV-4)
         assert!(winnings <= pool.total_stake, "Winnings exceed total stake");

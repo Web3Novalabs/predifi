@@ -1,4 +1,4 @@
-#//! Price Feed Integration Module
+//! Price Feed Integration Module
 //!
 //! This module provides a robust adapter for integrating external oracles (e.g., Pyth Network)
 //! with PrediFi prediction pools. It enables automated, price-based market resolution
@@ -12,8 +12,8 @@
 //! 4. **Resolve Pool**: Once the market ends, call `resolve_pool_from_price` to automatically
 //!    determine the winning outcome based on the latest valid price data.
 
-use crate::{DataKey, PredifiError};
-use soroban_sdk::{Address, BytesN, Env, Symbol, Vec};
+use crate::PredifiError;
+use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
 /// Price feed data structure for external oracle integration.
 ///
@@ -116,8 +116,10 @@ pub enum PriceFeedDataKey {
 }
 
 /// Price feed adapter for external oracle integration
+#[allow(dead_code)]
 pub struct PriceFeedAdapter;
 
+#[allow(dead_code)]
 impl PriceFeedAdapter {
     /// Initialize global oracle configuration.
     ///
@@ -132,17 +134,17 @@ impl PriceFeedAdapter {
         min_confidence_ratio: u32,
     ) -> Result<(), PredifiError> {
         admin.require_auth();
-        
+
         let config = OracleConfig {
             pyth_contract: pyth_contract.clone(),
             max_price_age,
             min_confidence_ratio,
         };
-        
+
         env.storage()
             .persistent()
             .set(&PriceFeedDataKey::OracleConfig, &config);
-        
+
         Ok(())
     }
 
@@ -169,16 +171,16 @@ impl PriceFeedAdapter {
         expires_at: u64,
     ) -> Result<(), PredifiError> {
         oracle.require_auth();
-        
+
         // Validate price data
         if price <= 0 || confidence < 0 {
             return Err(PredifiError::InvalidAmount);
         }
-        
+
         if timestamp > env.ledger().timestamp() || expires_at <= timestamp {
             return Err(PredifiError::InvalidPoolState);
         }
-        
+
         let feed = PriceFeed {
             pair: feed_pair.clone(),
             price,
@@ -186,25 +188,26 @@ impl PriceFeedAdapter {
             timestamp,
             expires_at,
         };
-        
+
         // Store price feed data
         env.storage()
             .persistent()
             .set(&PriceFeedDataKey::PriceFeed(feed_pair.clone()), &feed);
-        
+
         env.storage()
             .persistent()
             .set(&PriceFeedDataKey::LastUpdate(feed_pair), &timestamp);
-        
+
         Ok(())
     }
 
     /// Get current price feed data
     pub fn get_price_feed(env: &Env, feed_pair: &Symbol) -> Option<PriceFeed> {
-        let feed: Option<PriceFeed> = env.storage()
+        let feed: Option<PriceFeed> = env
+            .storage()
             .persistent()
             .get(&PriceFeedDataKey::PriceFeed(feed_pair.clone()));
-        
+
         feed
     }
 
@@ -212,23 +215,23 @@ impl PriceFeedAdapter {
     pub fn is_price_valid(env: &Env, feed: &PriceFeed) -> bool {
         let current_time = env.ledger().timestamp();
         let config = Self::get_oracle_config(env);
-        
+
         // Check if price data is expired
         if current_time > feed.expires_at {
             return false;
         }
-        
+
         // Check if price data is too old
         if current_time > feed.timestamp + config.max_price_age {
             return false;
         }
-        
+
         // Check confidence ratio
         let confidence_ratio = (feed.confidence * 10000) / feed.price;
-        if confidence_ratio > config.min_confidence_ratio {
+        if confidence_ratio > config.min_confidence_ratio as i128 {
             return false;
         }
-        
+
         true
     }
 
@@ -241,7 +244,7 @@ impl PriceFeedAdapter {
         env.storage()
             .persistent()
             .set(&PriceFeedDataKey::PriceCondition(pool_id), &condition);
-        
+
         Ok(())
     }
 
@@ -257,32 +260,35 @@ impl PriceFeedAdapter {
         env: &Env,
         condition: &PriceCondition,
     ) -> Result<bool, PredifiError> {
-        let feed = Self::get_price_feed(env, &condition.feed_pair)
-            .ok_or(PredifiError::PoolNotResolved)?;
-        
+        let feed =
+            Self::get_price_feed(env, &condition.feed_pair).ok_or(PredifiError::PoolNotResolved)?;
+
         // Validate price data
         if !Self::is_price_valid(env, &feed) {
             return Err(PredifiError::ResolutionDelayNotMet);
         }
-        
+
         // Calculate tolerance amount
         let tolerance_amount = (condition.target_price * condition.tolerance_bps as i128) / 10000;
-        
+
         // Evaluate condition based on operator
         let result = match condition.operator {
-            0 => { // Equal
-                feed.price >= condition.target_price - tolerance_amount &&
-                feed.price <= condition.target_price + tolerance_amount
-            },
-            1 => { // Greater than
+            0 => {
+                // Equal
+                feed.price >= condition.target_price - tolerance_amount
+                    && feed.price <= condition.target_price + tolerance_amount
+            }
+            1 => {
+                // Greater than
                 feed.price > condition.target_price + tolerance_amount
-            },
-            2 => { // Less than
+            }
+            2 => {
+                // Less than
                 feed.price < condition.target_price - tolerance_amount
-            },
+            }
             _ => return Err(PredifiError::InvalidPoolState),
         };
-        
+
         Ok(result)
     }
 
@@ -295,15 +301,12 @@ impl PriceFeedAdapter {
     /// # Resolution Logic
     /// - If `evaluate_price_condition` returns `true` -> Outcome `1` (Yes/Target Met)
     /// - If `evaluate_price_condition` returns `false` -> Outcome `0` (No/Target Missed)
-    pub fn resolve_pool_from_price(
-        env: &Env,
-        pool_id: u64,
-    ) -> Result<u32, PredifiError> {
-        let condition = Self::get_price_condition(env, pool_id)
-            .ok_or(PredifiError::PoolNotResolved)?;
-        
+    pub fn resolve_pool_from_price(env: &Env, pool_id: u64) -> Result<u32, PredifiError> {
+        let condition =
+            Self::get_price_condition(env, pool_id).ok_or(PredifiError::PoolNotResolved)?;
+
         let condition_met = Self::evaluate_price_condition(env, &condition)?;
-        
+
         // Return outcome: 1 if condition met, 0 if not met
         Ok(if condition_met { 1 } else { 0 })
     }
@@ -315,10 +318,10 @@ impl PriceFeedAdapter {
         updates: Vec<(Symbol, i128, i128, u64, u64)>,
     ) -> Result<(), PredifiError> {
         oracle.require_auth();
-        
+
         for i in 0..updates.len() {
             let (feed_pair, price, confidence, timestamp, expires_at) = updates.get(i).unwrap();
-            
+
             Self::update_price_feed(
                 env,
                 oracle,
@@ -329,7 +332,7 @@ impl PriceFeedAdapter {
                 expires_at,
             )?;
         }
-        
+
         Ok(())
     }
 
@@ -344,13 +347,13 @@ impl PriceFeedAdapter {
     pub fn cleanup_expired_feeds(env: &Env) -> Result<u32, PredifiError> {
         let _current_time = env.ledger().timestamp();
         let cleaned_count = 0u32;
-        
+
         // This would typically scan all price feeds and remove expired ones
         // Implementation depends on storage scanning capabilities
-        
+
         Ok(cleaned_count)
     }
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {}

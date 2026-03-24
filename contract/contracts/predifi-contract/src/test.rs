@@ -2837,7 +2837,7 @@ fn test_place_prediction_all_valid_outcomes() {
 
     // Verify stakes were recorded correctly
     let stakes = client.get_pool_outcome_stakes(&pool_id);
-    assert_eq!(stakes.len(), options_count as u32);
+    assert_eq!(stakes.len(), options_count);
     for i in 0..options_count {
         assert_eq!(stakes.get(i).unwrap(), 100);
     }
@@ -2887,7 +2887,7 @@ fn test_stakes_length_consistency_with_options_count() {
 
     // Verify stakes vector length matches options_count
     let stakes = client.get_pool_outcome_stakes(&pool_id);
-    assert_eq!(stakes.len(), options_count as u32);
+    assert_eq!(stakes.len(), options_count);
 
     // Verify specific stake values
     assert_eq!(stakes.get(0).unwrap(), 900); // user1: 500 + user3: 400
