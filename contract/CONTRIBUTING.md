@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Contributing to Predifi Smart Contracts
 
 Welcome! We appreciate your interest in contributing to the Predifi smart contracts. This guide will help you set up your environment and understand our development workflow.
@@ -79,7 +78,6 @@ Alternatively, you can deploy and test against the public Stellar Testnet. Use t
 3. **Pull Requests**: Provide a detailed description of your changes and link them to any relevant issues.
 
 Happy coding! 🚀
-=======
 # Contributing to PrediFi Contracts
 
 Thank you for your interest in contributing to PrediFi! This guide will help you set up your development environment and understand the workflow for contributing to our smart contracts.
@@ -154,4 +152,6 @@ All pull requests must pass the CI checks, which include:
 - `cargo test`
 
 Please ensure your changes are well-documented and include tests where appropriate.
->>>>>>> 9376f1f (docs: create CONTRIBUTING.md for contract directory #425)
+
+=======
+

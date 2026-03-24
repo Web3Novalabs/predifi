@@ -2730,6 +2730,223 @@ fn test_create_pool_accepts_maximum_options_count() {
     client.place_prediction(&user, &pool_id, &100, &99, &None, &None);
 }
 
+/// Placing a prediction with outcome >= options_count must be rejected.
+/// This tests the limit enforcement in update_outcome_stake.
+#[test]
+#[should_panic(expected = "Error(Contract, #25)")]
+fn test_place_prediction_rejects_out_of_bounds_outcome() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &3u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Three options"),
+            metadata_url: String::from_str(&env, "ipfs://three"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+    // outcome 3 is out of bounds (valid: 0, 1, 2)
+    client.place_prediction(&user, &pool_id, &100, &3, &None, &None);
+}
+
+/// Placing a prediction with outcome == options_count must be rejected.
+/// This verifies the boundary condition: outcome must be < options_count.
+#[test]
+#[should_panic(expected = "Error(Contract, #25)")]
+fn test_place_prediction_rejects_outcome_equal_to_options_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &5u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Five options"),
+            metadata_url: String::from_str(&env, "ipfs://five"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+    // outcome 5 equals options_count (valid: 0-4)
+    client.place_prediction(&user, &pool_id, &100, &5, &None, &None);
+}
+
+/// Placing predictions on all valid outcomes (0 to options_count-1) must succeed.
+/// This verifies that legitimate usage is not blocked by the bounds check.
+#[test]
+fn test_place_prediction_all_valid_outcomes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let options_count = 10u32;
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &options_count,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Ten options"),
+            metadata_url: String::from_str(&env, "ipfs://ten"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    token_admin_client.mint(&creator, &(100 * options_count as i128));
+
+    // Place predictions on all valid outcomes (0 through 9) using different users
+    for outcome in 0..options_count {
+        let user = Address::generate(&env);
+        token_admin_client.mint(&user, &100);
+        client.place_prediction(&user, &pool_id, &100, &outcome, &None, &None);
+    }
+
+    // Verify stakes were recorded correctly
+    let stakes = client.get_pool_outcome_stakes(&pool_id);
+    assert_eq!(stakes.len(), options_count as u32);
+    for i in 0..options_count {
+        assert_eq!(stakes.get(i).unwrap(), 100);
+    }
+}
+
+/// Test that stakes.len() remains consistent with options_count after multiple updates.
+#[test]
+fn test_stakes_length_consistency_with_options_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    let options_count = 7u32;
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &options_count,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Seven options"),
+            metadata_url: String::from_str(&env, "ipfs://seven"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+    let user4 = Address::generate(&env);
+    token_admin_client.mint(&user1, &500);
+    token_admin_client.mint(&user2, &300);
+    token_admin_client.mint(&user3, &400);
+    token_admin_client.mint(&user4, &600);
+
+    // Multiple users place predictions on various outcomes (one per user)
+    client.place_prediction(&user1, &pool_id, &500, &0, &None, &None);
+    client.place_prediction(&user2, &pool_id, &300, &3, &None, &None);
+    client.place_prediction(&user3, &pool_id, &400, &0, &None, &None);
+    client.place_prediction(&user4, &pool_id, &600, &6, &None, &None);
+
+    // Verify stakes vector length matches options_count
+    let stakes = client.get_pool_outcome_stakes(&pool_id);
+    assert_eq!(stakes.len(), options_count as u32);
+
+    // Verify specific stake values
+    assert_eq!(stakes.get(0).unwrap(), 900); // user1: 500 + user3: 400
+    assert_eq!(stakes.get(3).unwrap(), 300);
+    assert_eq!(stakes.get(6).unwrap(), 600);
+    assert_eq!(stakes.get(1).unwrap(), 0);
+    assert_eq!(stakes.get(2).unwrap(), 0);
+    assert_eq!(stakes.get(4).unwrap(), 0);
+    assert_eq!(stakes.get(5).unwrap(), 0);
+
+    // Resolve and claim to ensure full lifecycle works
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+    let winnings = client.claim_winnings(&user1, &pool_id);
+    assert!(winnings > 0);
+}
+
+/// Test with MAX_OPTIONS_COUNT pool to ensure bounds check works at scale.
+#[test]
+fn test_outcome_bounds_with_maximum_options_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &100u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Max options pool"),
+            metadata_url: String::from_str(&env, "ipfs://maxopts"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &2000);
+
+    // Valid: last index (99)
+    client.place_prediction(&user, &pool_id, &500, &99, &None, &None);
+
+    // Verify the valid bet was recorded
+    let stakes = client.get_pool_outcome_stakes(&pool_id);
+    assert_eq!(stakes.len(), 100);
+    assert_eq!(stakes.get(99).unwrap(), 500);
+    assert_eq!(stakes.get(0).unwrap(), 0);
+
+    // Note: Attempting to bet on outcome 100 should panic
+    // (tested separately in test_place_prediction_rejects_out_of_bounds_outcome)
+}
+
 /// end_time below MIN_POOL_DURATION from the current ledger must be rejected.
 #[test]
 #[should_panic(expected = "end_time must be at least 1 hour in the future")]
@@ -3348,4 +3565,150 @@ fn test_no_bettor_on_winning_side() {
     let w2 = client.claim_winnings(&user2, &pool_id);
     assert_eq!(w1, 0);
     assert_eq!(w2, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// is_contract_paused Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test that is_contract_paused returns false by default after initialization.
+#[test]
+fn test_is_contract_paused_returns_false_by_default() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let _admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Contract should not be paused by default
+    assert!(!client.is_contract_paused());
+}
+
+/// Test that is_contract_paused returns true after pause is called.
+#[test]
+fn test_is_contract_paused_returns_true_after_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Initially not paused
+    assert!(!client.is_contract_paused());
+
+    // Pause the contract
+    client.pause(&admin);
+
+    // Now it should be paused
+    assert!(client.is_contract_paused());
+}
+
+/// Test that is_contract_paused returns false after unpause is called.
+#[test]
+fn test_is_contract_paused_returns_false_after_unpause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Pause the contract
+    client.pause(&admin);
+    assert!(client.is_contract_paused());
+
+    // Unpause the contract
+    client.unpause(&admin);
+
+    // Now it should not be paused
+    assert!(!client.is_contract_paused());
+}
+
+/// Test toggling pause state multiple times and verifying is_contract_paused.
+#[test]
+fn test_is_contract_paused_toggle_pause_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Initial state: not paused
+    assert!(!client.is_contract_paused());
+
+    // First pause
+    client.pause(&admin);
+    assert!(client.is_contract_paused());
+
+    // First unpause
+    client.unpause(&admin);
+    assert!(!client.is_contract_paused());
+
+    // Second pause
+    client.pause(&admin);
+    assert!(client.is_contract_paused());
+
+    // Second unpause
+    client.unpause(&admin);
+    assert!(!client.is_contract_paused());
+}
+
+/// Test that is_contract_paused works correctly across multiple contract instances.
+#[test]
+fn test_is_contract_paused_independent_per_instance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+
+    let contract_id_1 = env.register(PredifiContract, ());
+    let client_1 = PredifiContractClient::new(&env, &contract_id_1);
+
+    let contract_id_2 = env.register(PredifiContract, ());
+    let client_2 = PredifiContractClient::new(&env, &contract_id_2);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Initialize both contracts
+    client_1.init(&ac_id, &treasury, &0u32, &0u64);
+    client_2.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Both should start unpaused
+    assert!(!client_1.is_contract_paused());
+    assert!(!client_2.is_contract_paused());
+
+    // Pause only contract 1
+    client_1.pause(&admin);
+
+    // Contract 1 should be paused, contract 2 should remain unpaused
+    assert!(client_1.is_contract_paused());
+    assert!(!client_2.is_contract_paused());
 }

@@ -22,6 +22,54 @@ pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ACCESS CONTROL — ROLES & PERMISSIONS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Roles are managed by the companion `access-control` contract and are
+// referenced here by their numeric discriminant.  The `require_role` helper
+// cross-calls `access_control::has_role(user, role)` at runtime.
+//
+// ┌──────────┬───────┬──────────────────────────────────────────────────────┐
+// │ Role     │ Value │ Permitted operations in predifi-contract              │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Admin    │   0   │ pause / unpause                                       │
+// │          │       │ set_fee_bps                                           │
+// │          │       │ set_treasury                                          │
+// │          │       │ set_resolution_delay                                  │
+// │          │       │ set_referral_cut_bps                                  │
+// │          │       │ add_token_to_whitelist / remove_token_from_whitelist  │
+// │          │       │ withdraw_treasury                                     │
+// │          │       │ upgrade_contract                                      │
+// │          │       │ migrate_state                                         │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Operator │   1   │ resolve_pool (multi-vote; finalises when threshold    │
+// │          │       │   of required_resolutions is reached)                 │
+// │          │       │ cancel_pool                                           │
+// │          │       │ set_stake_limits                                      │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Oracle   │   3   │ oracle_resolve (OracleCallback trait; multi-vote;     │
+// │          │       │   finalises when required_resolutions threshold met)  │
+// └──────────┴───────┴──────────────────────────────────────────────────────┘
+//
+// Note: roles 2 (Moderator) and 4 (User) are defined in the access-control
+// contract but are not currently enforced by predifi-contract.
+//
+// HOW ROLES ARE ASSIGNED
+// ──────────────────────
+// 1. Deploy the `access-control` contract and call `access_control::init(admin)`
+//    to set the initial administrator.
+// 2. The admin calls `access_control::assign_role(admin, user, Role::Operator)`
+//    (or `Role::Oracle`, etc.) to grant a role to any address.
+// 3. Roles can be revoked with `access_control::revoke_role`, transferred with
+//    `access_control::transfer_role`, or bulk-cleared with `revoke_all_roles`.
+// 4. Admin authority itself can be transferred via `access_control::transfer_admin`.
+// 5. Pass the deployed access-control contract address to
+//    `predifi_contract::init(access_control, treasury, fee_bps, resolution_delay)`
+//    so the predifi contract knows which access-control instance to query.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MARKET CATEGORY CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 //
@@ -88,8 +136,8 @@ pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
     InvalidPoolState = 24,
-    /// The provided category symbol is not in the allowed list
-    InvalidCategory = 25,
+    /// The outcome value is invalid or out of bounds.
+    InvalidOutcome = 25,
     AlreadyClaimed = 60,
     PoolCanceled = 70,
     ResolutionDelayNotMet = 81,
@@ -806,6 +854,9 @@ impl PredifiContract {
 
     /// Update outcome stake at a specific index and persist using optimized batch storage.
     /// Also maintains backward compatibility with individual outcome stake keys.
+    ///
+    /// # Panics
+    /// Panics if `outcome >= options_count` to prevent unbounded storage growth.
     fn update_outcome_stake(
         env: &Env,
         pool_id: u64,
@@ -813,6 +864,11 @@ impl PredifiContract {
         amount: i128,
         options_count: u32,
     ) -> Vec<i128> {
+        // Enforce outcome bounds to prevent unbounded storage growth
+        if outcome >= options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
+
         let mut stakes = Self::get_outcome_stakes(env, pool_id, options_count);
         let current = stakes.get(outcome).unwrap_or(0);
         stakes.set(outcome, current + amount);
@@ -993,6 +1049,17 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         UnpauseEvent { admin }.publish(&env);
+    }
+
+    /// Check if the contract is paused.
+    ///
+    /// This is a public query function that allows third-party integrations
+    /// to check the pause state without sending a transaction.
+    ///
+    /// # Returns
+    /// `true` if the contract is paused, `false` otherwise.
+    pub fn is_contract_paused(env: Env) -> bool {
+        Self::is_paused(&env)
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
@@ -1555,10 +1622,9 @@ impl PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        assert!(
-            outcome < pool.options_count,
-            "outcome exceeds options_count"
-        );
+        if outcome >= pool.options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
 
         // --- Multi-resolution Voting Logic ---
 
@@ -1810,10 +1876,9 @@ impl PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        assert!(
-            outcome < pool.options_count,
-            "outcome exceeds options_count"
-        );
+        if outcome >= pool.options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
 
         // --- INTERNAL CHECKS & EFFECTS ---
         // Validate: per-pool stake limits
@@ -2570,10 +2635,9 @@ impl OracleCallback for PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        assert!(
-            outcome < pool.options_count,
-            "outcome exceeds options_count"
-        );
+        if outcome >= pool.options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
 
         // --- Multi-oracle Voting Logic ---
 
