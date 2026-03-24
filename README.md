@@ -86,6 +86,37 @@ The user interface is built with **Next.js**, **Tailwind CSS**, and **TypeScript
 
    Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## PriceFeed Integration
+
+PrediFi supports automated, price-based resolution for prediction pools via external oracles (e.g., Pyth Network). This enables markets to settle automatically once a target price is reached.
+
+### Price-based Pool Creation
+
+To create a price-linked pool, follow these steps:
+
+1.  **Initialize Oracle**: The contract admin must register the oracle provider's address and staleness parameters once.
+2.  **Define PriceCondition**: Specify the asset pair (e.g., `ETH/USD`), target price, and the comparison operator.
+3.  **Setup Pool**: Link the `PriceCondition` to the pool ID using `set_price_condition`.
+
+### PriceCondition Configuration
+
+A `PriceCondition` defines exactly how a pool should be resolved:
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| `feed_pair` | `Symbol` | The asset pair identifier (e.g., `BTC/USD`). |
+| `target_price` | `i128` | The price level to monitor (using oracle's decimal scale). |
+| `operator` | `u32` | `0` (Equal), `1` (Greater Than), `2` (Less Than). |
+| `tolerance_bps` | `u32` | Buffer in basis points (1 bp = 0.01%) to prevent noise flips. |
+
+### Automated Resolution
+
+Once the pool's end time is reached, anyone can trigger the resolution by calling `resolve_pool_from_price`. The contract will:
+1.  Retrieve the latest price from the oracle.
+2.  Verify the price data is fresh and reliable (confidence check).
+3.  Evaluate the `PriceCondition`.
+4.  Resolve the pool to outcome `1` (Condition Met) or `0` (Condition Not Met).
+
 ## Contributing
 
 We welcome contributions! Please follow these steps:
