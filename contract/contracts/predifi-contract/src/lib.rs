@@ -19,6 +19,54 @@ pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
 
 // ═══════════════════════════════════════════════════════════════════════════
+// ACCESS CONTROL — ROLES & PERMISSIONS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Roles are managed by the companion `access-control` contract and are
+// referenced here by their numeric discriminant.  The `require_role` helper
+// cross-calls `access_control::has_role(user, role)` at runtime.
+//
+// ┌──────────┬───────┬──────────────────────────────────────────────────────┐
+// │ Role     │ Value │ Permitted operations in predifi-contract              │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Admin    │   0   │ pause / unpause                                       │
+// │          │       │ set_fee_bps                                           │
+// │          │       │ set_treasury                                          │
+// │          │       │ set_resolution_delay                                  │
+// │          │       │ set_referral_cut_bps                                  │
+// │          │       │ add_token_to_whitelist / remove_token_from_whitelist  │
+// │          │       │ withdraw_treasury                                     │
+// │          │       │ upgrade_contract                                      │
+// │          │       │ migrate_state                                         │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Operator │   1   │ resolve_pool (multi-vote; finalises when threshold    │
+// │          │       │   of required_resolutions is reached)                 │
+// │          │       │ cancel_pool                                           │
+// │          │       │ set_stake_limits                                      │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Oracle   │   3   │ oracle_resolve (OracleCallback trait; multi-vote;     │
+// │          │       │   finalises when required_resolutions threshold met)  │
+// └──────────┴───────┴──────────────────────────────────────────────────────┘
+//
+// Note: roles 2 (Moderator) and 4 (User) are defined in the access-control
+// contract but are not currently enforced by predifi-contract.
+//
+// HOW ROLES ARE ASSIGNED
+// ──────────────────────
+// 1. Deploy the `access-control` contract and call `access_control::init(admin)`
+//    to set the initial administrator.
+// 2. The admin calls `access_control::assign_role(admin, user, Role::Operator)`
+//    (or `Role::Oracle`, etc.) to grant a role to any address.
+// 3. Roles can be revoked with `access_control::revoke_role`, transferred with
+//    `access_control::transfer_role`, or bulk-cleared with `revoke_all_roles`.
+// 4. Admin authority itself can be transferred via `access_control::transfer_admin`.
+// 5. Pass the deployed access-control contract address to
+//    `predifi_contract::init(access_control, treasury, fee_bps, resolution_delay)`
+//    so the predifi contract knows which access-control instance to query.
+//
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MARKET CATEGORY CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
 //
