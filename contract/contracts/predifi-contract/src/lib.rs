@@ -85,8 +85,8 @@ pub enum PredifiError {
     Unauthorized = 10,
     PoolNotResolved = 22,
     InvalidPoolState = 24,
-    /// The provided category symbol is not in the allowed list
-    InvalidCategory = 25,
+    /// The outcome value is invalid or out of bounds.
+    InvalidOutcome = 25,
     AlreadyClaimed = 60,
     PoolCanceled = 70,
     ResolutionDelayNotMet = 81,
@@ -803,6 +803,9 @@ impl PredifiContract {
 
     /// Update outcome stake at a specific index and persist using optimized batch storage.
     /// Also maintains backward compatibility with individual outcome stake keys.
+    ///
+    /// # Panics
+    /// Panics if `outcome >= options_count` to prevent unbounded storage growth.
     fn update_outcome_stake(
         env: &Env,
         pool_id: u64,
@@ -810,6 +813,11 @@ impl PredifiContract {
         amount: i128,
         options_count: u32,
     ) -> Vec<i128> {
+        // Enforce outcome bounds to prevent unbounded storage growth
+        if outcome >= options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
+
         let mut stakes = Self::get_outcome_stakes(env, pool_id, options_count);
         let current = stakes.get(outcome).unwrap_or(0);
         stakes.set(outcome, current + amount);
@@ -1552,10 +1560,9 @@ impl PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        assert!(
-            outcome < pool.options_count,
-            "outcome exceeds options_count"
-        );
+        if outcome >= pool.options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
 
         // --- Multi-resolution Voting Logic ---
 
@@ -1807,10 +1814,9 @@ impl PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        assert!(
-            outcome < pool.options_count,
-            "outcome exceeds options_count"
-        );
+        if outcome >= pool.options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
 
         // --- INTERNAL CHECKS & EFFECTS ---
         // Validate: per-pool stake limits
@@ -2567,10 +2573,9 @@ impl OracleCallback for PredifiContract {
         }
 
         // Validate: outcome must be within the valid options range
-        assert!(
-            outcome < pool.options_count,
-            "outcome exceeds options_count"
-        );
+        if outcome >= pool.options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
 
         // --- Multi-oracle Voting Logic ---
 
