@@ -2,6 +2,11 @@
 name    = "predifi-contract"
 version = "0.0.0"
 edition = "2021"
+authors = ["PrediFi Team <team@predifi.io>"]
+description = "PrediFi - Decentralized Outcome Prediction Protocol built on Stellar/Soroban"
+homepage = "https://predifi.io"
+repository = "https://github.com/Web3Novalabs/predifi"
+license = "MIT"
 publish = false
 
 # cdylib produces the WASM binary; lib allows Rust tests to import the contract.

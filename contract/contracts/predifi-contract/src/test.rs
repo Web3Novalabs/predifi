@@ -4,7 +4,7 @@
 use super::*;
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Ledger},
+    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger},
     token, Address, BytesN, Env, String, Symbol,
 };
 
@@ -1194,6 +1194,228 @@ fn test_token_whitelist_add_remove_and_is_allowed() {
     assert!(client.is_token_allowed(&token));
     client.remove_token_from_whitelist(&admin, &token);
     assert!(!client.is_token_allowed(&token));
+}
+
+/// Helper to set up a minimal contract + access control for whitelist tests.
+fn setup_whitelist_env() -> (Env, PredifiContractClient<'static>, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    (env, client, admin, treasury)
+}
+
+#[test]
+fn test_token_not_whitelisted_by_default() {
+    let (env, client, _admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+    assert!(!client.is_token_allowed(&token));
+}
+
+#[test]
+fn test_add_token_to_whitelist_makes_it_allowed() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_allowed(&token));
+}
+
+#[test]
+fn test_remove_token_from_whitelist_disallows_it() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_allowed(&token));
+
+    client.remove_token_from_whitelist(&admin, &token);
+    assert!(!client.is_token_allowed(&token));
+}
+
+#[test]
+fn test_readd_token_after_removal_works() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    client.remove_token_from_whitelist(&admin, &token);
+    assert!(!client.is_token_allowed(&token));
+
+    // Re-add should work fine
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_allowed(&token));
+}
+
+#[test]
+fn test_multiple_tokens_whitelisted_independently() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let token_c = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token_a);
+    client.add_token_to_whitelist(&admin, &token_b);
+
+    assert!(client.is_token_allowed(&token_a));
+    assert!(client.is_token_allowed(&token_b));
+    assert!(!client.is_token_allowed(&token_c));
+
+    // Removing one doesn't affect the other
+    client.remove_token_from_whitelist(&admin, &token_a);
+    assert!(!client.is_token_allowed(&token_a));
+    assert!(client.is_token_allowed(&token_b));
+}
+
+#[test]
+#[should_panic]
+fn test_unauthorized_add_to_whitelist_panics() {
+    let (env, client, _admin, _treasury) = setup_whitelist_env();
+    let non_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    // non_admin has no role — should fail
+    client.add_token_to_whitelist(&non_admin, &token);
+}
+
+#[test]
+#[should_panic]
+fn test_unauthorized_remove_from_whitelist_panics() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let non_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    // non_admin has no role — should fail
+    client.remove_token_from_whitelist(&non_admin, &token);
+}
+
+#[test]
+fn test_whitelist_persists_in_persistent_storage() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+
+    // Verify the key exists in persistent storage (not instance)
+    let key = DataKey::TokenWl(token.clone());
+    let in_persistent = env.as_contract(&client.address, || env.storage().persistent().has(&key));
+    assert!(in_persistent, "Token should be in persistent storage");
+
+    // Confirm it is NOT in instance storage
+    let in_instance = env.as_contract(&client.address, || env.storage().instance().has(&key));
+    assert!(!in_instance, "Token should NOT be in instance storage");
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #91)")]
+fn test_place_prediction_fails_for_non_whitelisted_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Intentionally do NOT whitelist the token
+    token_admin_client.mint(&user, &1000);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+
+    // create_pool itself checks the whitelist — should panic with TokenNotWhitelisted (#91)
+    client.create_pool(
+        &creator,
+        &2000u64,
+        &token_contract,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "desc"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 10i128,
+            max_stake: 500i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+}
+
+#[test]
+fn test_place_prediction_succeeds_for_whitelisted_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Whitelist the token
+    client.add_token_to_whitelist(&admin, &token_contract);
+    token_admin_client.mint(&user, &1000);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_contract,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "desc"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 10i128,
+            max_stake: 500i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    // Should succeed without panic
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+
+    // Verify prediction was recorded via get_user_predictions
+    let preds = client.get_user_predictions(&user, &0u32, &10u32);
+    assert_eq!(preds.len(), 1);
 }
 
 #[test]
@@ -2837,7 +3059,7 @@ fn test_place_prediction_all_valid_outcomes() {
 
     // Verify stakes were recorded correctly
     let stakes = client.get_pool_outcome_stakes(&pool_id);
-    assert_eq!(stakes.len(), options_count as u32);
+    assert_eq!(stakes.len(), options_count);
     for i in 0..options_count {
         assert_eq!(stakes.get(i).unwrap(), 100);
     }
@@ -2887,7 +3109,7 @@ fn test_stakes_length_consistency_with_options_count() {
 
     // Verify stakes vector length matches options_count
     let stakes = client.get_pool_outcome_stakes(&pool_id);
-    assert_eq!(stakes.len(), options_count as u32);
+    assert_eq!(stakes.len(), options_count);
 
     // Verify specific stake values
     assert_eq!(stakes.get(0).unwrap(), 900); // user1: 500 + user3: 400
@@ -3734,6 +3956,40 @@ fn test_is_pool_active_returns_true_for_active_pool() {
         &PoolConfig {
             description: String::from_str(&env, "Active pool test"),
             metadata_url: String::from_str(&env, "ipfs://active"),
+// ── bump_ttl helper tests ────────────────────────────────────────────────────
+
+/// Helper: create an env with predictable ledger settings for TTL assertions.
+fn create_ttl_env() -> Env {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100_000;
+        li.min_persistent_entry_ttl = 500;
+        li.min_temp_entry_ttl = 100;
+        li.max_entry_ttl = 6_000_000; // large enough for BUMP_AMOUNT (30 * 17280 = 518400)
+    });
+    env
+}
+
+/// Helper: create a pool using the standard PoolConfig pattern.
+fn create_test_pool(
+    env: &Env,
+    client: &PredifiContractClient,
+    creator: &Address,
+    token_address: &Address,
+    end_time: u64,
+) -> u64 {
+    client.create_pool(
+        creator,
+        &end_time,
+        token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(env, "bump_ttl test pool"),
+            metadata_url: String::from_str(
+                env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             initial_liquidity: 0i128,
@@ -3982,4 +4238,187 @@ fn test_is_pool_active_full_lifecycle() {
     let l = client.claim_winnings(&user_lose, &pool_id);
     assert_eq!(l, 0);
     assert_eq!(token.balance(&contract_addr), 0);
+}
+    )
+}
+
+/// bump_ttl should extend both instance TTL and persistent TTL for the given key.
+#[test]
+fn test_bump_ttl_extends_both_instance_and_persistent() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+
+    // After create_pool, bump_ttl is called for pool_key and pc_key.
+    // Both instance and persistent TTLs should be extended to BUMP_AMOUNT (518400 ledgers).
+    env.as_contract(&contract_id, || {
+        let pool_key = DataKey::Pool(pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&pool_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        // BUMP_AMOUNT = 30 * 17280 = 518400
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT, got {instance_ttl}"
+        );
+    });
+}
+
+/// bump_ttl via place_prediction: pool_key persistent and instance TTLs are bumped.
+#[test]
+fn test_bump_ttl_after_place_prediction() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000);
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+
+    // Advance ledger sequence past BUMP_THRESHOLD to force a re-bump, then place a prediction.
+    // BUMP_THRESHOLD = 14 * 17280 = 241920; advance enough so remaining TTL < threshold.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100_000 + 300_000;
+    });
+
+    client.place_prediction(&user, &pool_id, &100, &0u32, &None, &None);
+
+    // After place_prediction, bump_ttl should have refreshed both TTLs.
+    env.as_contract(&contract_id, || {
+        let pool_key = DataKey::Pool(pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&pool_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT after place_prediction, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT after place_prediction, got {instance_ttl}"
+        );
+    });
+}
+
+/// bump_ttl via resolve_pool: pool_key TTLs are bumped on resolution.
+#[test]
+fn test_bump_ttl_after_resolve_pool() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000);
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+    client.place_prediction(&user, &pool_id, &100, &0u32, &None, &None);
+
+    // Advance time past end_time and reduce sequence to lower TTLs.
+    env.ledger().with_mut(|li| {
+        li.timestamp = 200_000;
+        li.sequence_number = 100_000 + 300_000;
+    });
+
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    env.as_contract(&contract_id, || {
+        let pool_key = DataKey::Pool(pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&pool_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT after resolve_pool, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT after resolve_pool, got {instance_ttl}"
+        );
+    });
+}
+
+/// bump_ttl via cancel_pool: pool_key TTLs are bumped on cancellation.
+#[test]
+fn test_bump_ttl_after_cancel_pool() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+
+    // Advance sequence to reduce TTLs before cancel.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100_000 + 300_000;
+    });
+
+    client.cancel_pool(&operator, &pool_id);
+
+    env.as_contract(&contract_id, || {
+        let pool_key = DataKey::Pool(pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&pool_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT after cancel_pool, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT after cancel_pool, got {instance_ttl}"
+        );
+    });
+}
+
+/// bump_ttl via claim_winnings: claimed_key TTLs are bumped on claim.
+#[test]
+fn test_bump_ttl_after_claim_winnings() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000);
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+    client.place_prediction(&user, &pool_id, &100, &0u32, &None, &None);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 200_000;
+        li.sequence_number = 100_000 + 300_000;
+    });
+
+    client.resolve_pool(&operator, &pool_id, &0u32);
+    client.claim_winnings(&user, &pool_id);
+
+    env.as_contract(&contract_id, || {
+        let claimed_key = DataKey::Claimed(user.clone(), pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&claimed_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT after claim_winnings, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT after claim_winnings, got {instance_ttl}"
+        );
+    });
 }

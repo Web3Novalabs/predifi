@@ -405,4 +405,70 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(result.err(), Some(PredifiError::PriceConditionNotSet));
     }
+
+    #[test]
+    fn test_automated_price_resolution_integration() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // 1. Initialize Oracle
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300, // 5 minutes max age
+            100, // 1% confidence ratio
+        )
+        .unwrap();
+
+        // 2. Grant roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator
+        access_control.grant_role(&oracle, 3); // Oracle
+
+        // 3. Create a pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // 4. Set Price Condition: BTC/USD > $60,000
+        let btc_feed = symbol!("BTC/USD");
+        let target_price = 60_000_000000_i128;
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            btc_feed.clone(),
+            target_price,
+            1,   // Greater than
+            100, // 1% tolerance
+        )
+        .unwrap();
+
+        // 5. Update Price Feed: BTC at $61,000
+        let current_time = env.ledger().timestamp();
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            btc_feed.clone(),
+            61_000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 60,
+        )
+        .unwrap();
+
+        // 6. Fast forward to resolution phase
+        env.ledger().set_timestamp(current_time + 3600);
+
+        // 7. Resolve the pool automatically from price
+        PredifiContract::resolve_pool_from_price(env.clone(), oracle.clone(), pool_id).unwrap();
+
+        // 8. Verify the result
+        let pool = PredifiContract::get_pool(env.clone(), pool_id).unwrap();
+        assert_eq!(pool.state, MarketState::Resolved);
+        assert!(pool.resolved);
+        assert_eq!(pool.outcome, 1); // Condition Met
+    }
 }

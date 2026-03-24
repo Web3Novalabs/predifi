@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+mod price_feed;
 mod price_feed_simple;
 mod safe_math;
 #[cfg(test)]
@@ -17,6 +18,54 @@ use soroban_sdk::{
 
 pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ACCESS CONTROL — ROLES & PERMISSIONS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Roles are managed by the companion `access-control` contract and are
+// referenced here by their numeric discriminant.  The `require_role` helper
+// cross-calls `access_control::has_role(user, role)` at runtime.
+//
+// ┌──────────┬───────┬──────────────────────────────────────────────────────┐
+// │ Role     │ Value │ Permitted operations in predifi-contract              │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Admin    │   0   │ pause / unpause                                       │
+// │          │       │ set_fee_bps                                           │
+// │          │       │ set_treasury                                          │
+// │          │       │ set_resolution_delay                                  │
+// │          │       │ set_referral_cut_bps                                  │
+// │          │       │ add_token_to_whitelist / remove_token_from_whitelist  │
+// │          │       │ withdraw_treasury                                     │
+// │          │       │ upgrade_contract                                      │
+// │          │       │ migrate_state                                         │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Operator │   1   │ resolve_pool (multi-vote; finalises when threshold    │
+// │          │       │   of required_resolutions is reached)                 │
+// │          │       │ cancel_pool                                           │
+// │          │       │ set_stake_limits                                      │
+// ├──────────┼───────┼──────────────────────────────────────────────────────┤
+// │ Oracle   │   3   │ oracle_resolve (OracleCallback trait; multi-vote;     │
+// │          │       │   finalises when required_resolutions threshold met)  │
+// └──────────┴───────┴──────────────────────────────────────────────────────┘
+//
+// Note: roles 2 (Moderator) and 4 (User) are defined in the access-control
+// contract but are not currently enforced by predifi-contract.
+//
+// HOW ROLES ARE ASSIGNED
+// ──────────────────────
+// 1. Deploy the `access-control` contract and call `access_control::init(admin)`
+//    to set the initial administrator.
+// 2. The admin calls `access_control::assign_role(admin, user, Role::Operator)`
+//    (or `Role::Oracle`, etc.) to grant a role to any address.
+// 3. Roles can be revoked with `access_control::revoke_role`, transferred with
+//    `access_control::transfer_role`, or bulk-cleared with `revoke_all_roles`.
+// 4. Admin authority itself can be transferred via `access_control::transfer_admin`.
+// 5. Pass the deployed access-control contract address to
+//    `predifi_contract::init(access_control, treasury, fee_bps, resolution_delay)`
+//    so the predifi contract knows which access-control instance to query.
+//
+// ═══════════════════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MARKET CATEGORY CONSTANTS
@@ -349,6 +398,15 @@ pub enum DataKey {
     /// Referred volume for a referrer and pool: ReferredVolume(referrer, pool_id) -> i128
     ReferredVolume(Address, u64),
     /// Referrer address for a user and pool: Referrer(user, pool_id) -> Address
+    ///
+    /// FUTURE: Multiple referrers per user per pool
+    /// Currently a user can only have one referrer per pool. If multiple referrers are needed
+    /// (e.g. to split the referral share among several parties), this key should be changed to
+    /// store a `Map<Address, u32>` (referrer -> share_bps) or a `Vec<Address>` with equal splits.
+    /// The `ReferredVolume` key would similarly need to become per-(referrer, user, pool) or be
+    /// aggregated differently. The payout loop in `claim_winnings` would iterate over all referrers
+    /// and distribute proportional cuts. Until that requirement is confirmed, the single-referrer
+    /// model is kept for simplicity and gas efficiency.
     Referrer(Address, u64),
     /// User whitelist for private pools: Whitelist(pool_id, user_address)
     Whitelist(u64, Address),
@@ -739,21 +797,6 @@ impl PredifiContract {
         false
     }
 
-    /// Pure: Calculate winnings for a user given pool state
-    /// PRE: winning_stake > 0
-    /// POST: result ≤ total_stake (INV-4)
-    fn calculate_winnings(user_stake: i128, winning_stake: i128, total_stake: i128) -> i128 {
-        if winning_stake == 0 {
-            return 0;
-        }
-        // (user_stake / winning_stake) * total_stake
-        user_stake
-            .checked_mul(total_stake)
-            .expect("overflow in winnings calculation")
-            .checked_div(winning_stake)
-            .expect("division by zero")
-    }
-
     /// Pure: Check if pool state transition is valid
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
@@ -861,6 +904,12 @@ impl PredifiContract {
             .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
     }
 
+    /// Bumps both instance and persistent TTLs for the given key in one call.
+    fn bump_ttl(env: &Env, key: &DataKey) {
+        Self::extend_instance(env);
+        Self::extend_persistent(env, key);
+    }
+
     fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> bool {
         env.invoke_contract(
             contract,
@@ -929,11 +978,11 @@ impl PredifiContract {
     /// Returns true if the token is on the allowed betting whitelist.
     fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
         let key = DataKey::TokenWl(token.clone());
-        let allowed = env.storage().persistent().get(&key).unwrap_or(false);
-        if env.storage().persistent().has(&key) {
+        let whitelisted = env.storage().persistent().has(&key);
+        if whitelisted {
             Self::extend_persistent(env, &key);
         }
-        allowed
+        whitelisted
     }
 
     // ── Public interface ──────────────────────────────────────────────────────
@@ -1419,11 +1468,11 @@ impl PredifiContract {
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
+        Self::bump_ttl(&env, &pool_key);
 
         let pc_key = DataKey::PartCnt(pool_id);
         env.storage().persistent().set(&pc_key, &0u32);
-        Self::extend_persistent(&env, &pc_key);
+        Self::bump_ttl(&env, &pc_key);
 
         // Transfer initial liquidity from creator to contract if provided
         if config.initial_liquidity > 0 {
@@ -1447,12 +1496,12 @@ impl PredifiContract {
         env.storage()
             .persistent()
             .set(&category_index_key, &pool_id);
-        Self::extend_persistent(&env, &category_index_key);
+        Self::bump_ttl(&env, &category_index_key);
 
         env.storage()
             .persistent()
             .set(&category_count_key, &(category_count + 1));
-        Self::extend_persistent(&env, &category_count_key);
+        Self::bump_ttl(&env, &category_count_key);
 
         env.storage()
             .instance()
@@ -1657,7 +1706,7 @@ impl PredifiContract {
             pool.outcome = outcome;
 
             env.storage().persistent().set(&pool_key, &pool);
-            Self::extend_persistent(&env, &pool_key);
+            Self::bump_ttl(&env, &pool_key);
 
             // Retrieve winning-outcome stake for the diagnostic event
             let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
@@ -1762,7 +1811,7 @@ impl PredifiContract {
         // Mark pool as canceled
         pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
+        Self::bump_ttl(&env, &pool_key);
 
         PoolCanceledEvent {
             pool_id,
@@ -1901,7 +1950,9 @@ impl PredifiContract {
                 .set(&pred_key, &Prediction { amount, outcome });
             Self::extend_persistent(&env, &pred_key);
 
-            // Store referrer on first prediction and track referred volume
+            // Store referrer on first prediction and track referred volume.
+            // NOTE: Only one referrer per (user, pool) is supported today.
+            // See DataKey::Referrer for a note on extending this to multiple referrers.
             if let Some(ref referrer_addr) = referrer {
                 let referrer_key = DataKey::Referrer(user.clone(), pool_id);
                 env.storage().persistent().set(&referrer_key, referrer_addr);
@@ -1931,7 +1982,7 @@ impl PredifiContract {
         // Update total stake (INV-1)
         pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
         env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
+        Self::bump_ttl(&env, &pool_key);
 
         // Update outcome stake (INV-1) - using optimized batch storage
         let _stakes =
@@ -2034,7 +2085,7 @@ impl PredifiContract {
 
         // Mark as claimed immediately to prevent re-entrancy (INV-3)
         env.storage().persistent().set(&claimed_key, &true);
-        Self::extend_persistent(&env, &claimed_key);
+        Self::bump_ttl(&env, &claimed_key);
 
         if pool.state == MarketState::Canceled {
             // --- INTERACTIONS (Refund) ---
@@ -2079,7 +2130,8 @@ impl PredifiContract {
             .ok_or(PredifiError::InvalidAmount)?;
 
         // Winnings = user's share of the payout pool (after fee)
-        let winnings = Self::calculate_winnings(prediction.amount, winning_stake, payout_pool);
+        let winnings = SafeMath::calculate_share(prediction.amount, winning_stake, payout_pool)
+            .map_err(|_| PredifiError::InvalidAmount)?;
 
         // Verify invariant: winnings ≤ total_stake (INV-4)
         assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
@@ -2214,7 +2266,7 @@ impl PredifiContract {
 
         // Mark as claimed immediately to prevent re-entrancy (INV-3)
         env.storage().persistent().set(&claimed_key, &true);
-        Self::extend_persistent(&env, &claimed_key);
+        Self::bump_ttl(&env, &claimed_key);
 
         let refund_amount = prediction.amount;
 
@@ -2687,7 +2739,7 @@ impl OracleCallback for PredifiContract {
             pool.outcome = outcome;
 
             env.storage().persistent().set(&pool_key, &pool);
-            Self::extend_persistent(&env, &pool_key);
+            Self::bump_ttl(&env, &pool_key);
 
             // Retrieve winning-outcome stake for the diagnostic event
             let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
