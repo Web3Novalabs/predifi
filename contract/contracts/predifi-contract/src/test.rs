@@ -1196,6 +1196,228 @@ fn test_token_whitelist_add_remove_and_is_allowed() {
     assert!(!client.is_token_allowed(&token));
 }
 
+/// Helper to set up a minimal contract + access control for whitelist tests.
+fn setup_whitelist_env() -> (Env, PredifiContractClient<'static>, Address, Address) {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    (env, client, admin, treasury)
+}
+
+#[test]
+fn test_token_not_whitelisted_by_default() {
+    let (env, client, _admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+    assert!(!client.is_token_allowed(&token));
+}
+
+#[test]
+fn test_add_token_to_whitelist_makes_it_allowed() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_allowed(&token));
+}
+
+#[test]
+fn test_remove_token_from_whitelist_disallows_it() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_allowed(&token));
+
+    client.remove_token_from_whitelist(&admin, &token);
+    assert!(!client.is_token_allowed(&token));
+}
+
+#[test]
+fn test_readd_token_after_removal_works() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    client.remove_token_from_whitelist(&admin, &token);
+    assert!(!client.is_token_allowed(&token));
+
+    // Re-add should work fine
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_allowed(&token));
+}
+
+#[test]
+fn test_multiple_tokens_whitelisted_independently() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let token_c = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token_a);
+    client.add_token_to_whitelist(&admin, &token_b);
+
+    assert!(client.is_token_allowed(&token_a));
+    assert!(client.is_token_allowed(&token_b));
+    assert!(!client.is_token_allowed(&token_c));
+
+    // Removing one doesn't affect the other
+    client.remove_token_from_whitelist(&admin, &token_a);
+    assert!(!client.is_token_allowed(&token_a));
+    assert!(client.is_token_allowed(&token_b));
+}
+
+#[test]
+#[should_panic]
+fn test_unauthorized_add_to_whitelist_panics() {
+    let (env, client, _admin, _treasury) = setup_whitelist_env();
+    let non_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    // non_admin has no role — should fail
+    client.add_token_to_whitelist(&non_admin, &token);
+}
+
+#[test]
+#[should_panic]
+fn test_unauthorized_remove_from_whitelist_panics() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let non_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    // non_admin has no role — should fail
+    client.remove_token_from_whitelist(&non_admin, &token);
+}
+
+#[test]
+fn test_whitelist_persists_in_persistent_storage() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+
+    // Verify the key exists in persistent storage (not instance)
+    let key = DataKey::TokenWl(token.clone());
+    let in_persistent = env.as_contract(&client.address, || env.storage().persistent().has(&key));
+    assert!(in_persistent, "Token should be in persistent storage");
+
+    // Confirm it is NOT in instance storage
+    let in_instance = env.as_contract(&client.address, || env.storage().instance().has(&key));
+    assert!(!in_instance, "Token should NOT be in instance storage");
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #91)")]
+fn test_place_prediction_fails_for_non_whitelisted_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Intentionally do NOT whitelist the token
+    token_admin_client.mint(&user, &1000);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+
+    // create_pool itself checks the whitelist — should panic with TokenNotWhitelisted (#91)
+    client.create_pool(
+        &creator,
+        &2000u64,
+        &token_contract,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "desc"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 10i128,
+            max_stake: 500i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+}
+
+#[test]
+fn test_place_prediction_succeeds_for_whitelisted_token() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Whitelist the token
+    client.add_token_to_whitelist(&admin, &token_contract);
+    token_admin_client.mint(&user, &1000);
+
+    env.ledger().with_mut(|l| l.timestamp = 1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_contract,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "desc"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 10i128,
+            max_stake: 500i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    // Should succeed without panic
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+
+    // Verify prediction was recorded via get_user_predictions
+    let preds = client.get_user_predictions(&user, &0u32, &10u32);
+    assert_eq!(preds.len(), 1);
+}
+
 #[test]
 #[should_panic(expected = "Error(Contract, #22)")]
 fn test_cannot_cancel_resolved_pool_by_operator() {
