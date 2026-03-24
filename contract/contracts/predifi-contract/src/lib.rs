@@ -771,6 +771,16 @@ impl PredifiContract {
         fee_bps <= 10_000
     }
 
+    /// Pure: Check if a pool is currently active.
+    /// A pool is active iff it has not been resolved, not been canceled,
+    /// and its state is explicitly `MarketState::Active`.
+    ///
+    /// PRE: pool is a valid Pool instance
+    /// POST: returns true only when all three conditions hold simultaneously
+    fn is_pool_active(pool: &Pool) -> bool {
+        !pool.resolved && !pool.canceled && pool.state == MarketState::Active
+    }
+
     /// Pure: Initialize outcome stakes vector with zeros
     /// Used for markets with many outcomes (e.g., 32+ teams tournament)
     #[allow(dead_code)]
@@ -1501,9 +1511,13 @@ impl PredifiContract {
         }
 
         // Pool must still be active and not ended
-        if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+        // if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+        //     return Err(PredifiError::InvalidPoolState);
+        // }
+        if !Self::is_pool_active(&pool){
             return Err(PredifiError::InvalidPoolState);
         }
+
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         // Must not set a cap below what is already staked
@@ -1559,8 +1573,11 @@ impl PredifiContract {
 
         assert!(!pool.resolved, "Pool already resolved");
         assert!(!pool.canceled, "Cannot resolve a canceled pool");
-        if pool.state != MarketState::Active {
-            return Err(PredifiError::InvalidPoolState);
+        // if pool.state != MarketState::Active {
+        //     return Err(PredifiError::InvalidPoolState);
+        // }
+        if !Self::is_pool_active(&pool) {
+            return Err(PredifiError::InvalidPoolState)
         }
 
         let current_time = env.ledger().timestamp();
@@ -1728,14 +1745,17 @@ impl PredifiContract {
         if pool.resolved {
             return Err(PredifiError::PoolNotResolved);
         }
-
+        
         // Prevent double cancellation
         assert!(!pool.canceled, "Pool already canceled");
         // Verify state transition validity (INV-2)
-        assert!(
-            Self::is_valid_state_transition(pool.state, MarketState::Canceled),
-            "Invalid state transition"
-        );
+        // assert!(
+        //     Self::is_valid_state_transition(pool.state, MarketState::Canceled),
+        //     "Invalid state transition"
+        // );
+        if !Self::is_pool_active(&pool) {
+            return Err(PredifiError::InvalidPoolState);
+        }
 
         pool.state = MarketState::Canceled;
 
@@ -1795,7 +1815,10 @@ impl PredifiContract {
 
         assert!(!pool.resolved, "Pool already resolved");
         assert!(!pool.canceled, "Cannot place prediction on canceled pool");
-        assert!(pool.state == MarketState::Active, "Pool is not active");
+        // assert!(pool.state == MarketState::Active, "Pool is not active");
+        if !Self::is_pool_active(&pool) {
+            panic!("Pool is not active");
+        }
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         // Check private pool authorization
@@ -2572,7 +2595,10 @@ impl OracleCallback for PredifiContract {
 
         assert!(!pool.resolved, "Pool already resolved");
         assert!(!pool.canceled, "Cannot resolve a canceled pool");
-        if pool.state != MarketState::Active {
+        // if pool.state != MarketState::Active {
+        //     return Err(PredifiError::InvalidPoolState);
+        // }
+        if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 

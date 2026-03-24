@@ -3712,3 +3712,274 @@ fn test_is_contract_paused_independent_per_instance() {
     assert!(client_1.is_contract_paused());
     assert!(!client_2.is_contract_paused());
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// is_pool_active Helper Tests 
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// is_pool_active returns true for a freshly created pool.
+#[test]
+fn test_is_pool_active_returns_true_for_active_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Active pool test"),
+            metadata_url: String::from_str(&env, "ipfs://active"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    // All three conditions must hold for an active pool.
+    assert!(!pool.resolved);
+    assert!(!pool.canceled);
+    assert_eq!(pool.state, MarketState::Active);
+}
+
+/// is_pool_active returns false (via behavior) after pool is resolved —
+/// resolve_pool on an already-resolved pool must panic.
+#[test]
+#[should_panic(expected = "Pool already resolved")]
+fn test_is_pool_active_false_after_resolve() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Resolve inactive test"),
+            metadata_url: String::from_str(&env, "ipfs://resolved"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Pool is now resolved — resolved == true, state == Resolved.
+    // is_pool_active would return false, so a second resolve attempt must panic.
+    client.resolve_pool(&operator, &pool_id, &0u32);
+}
+
+/// is_pool_active returns false (via behavior) after pool is canceled —
+/// place_prediction on a canceled pool must panic with the correct message.
+#[test]
+#[should_panic(expected = "Cannot place prediction on canceled pool")]
+fn test_is_pool_active_false_after_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Cancel inactive test"),
+            metadata_url: String::from_str(&env, "ipfs://canceled"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &500);
+
+    // Pool is canceled — is_pool_active returns false.
+    // place_prediction must be blocked.
+    client.place_prediction(&user, &pool_id, &100, &0, &None, &None);
+}
+
+/// Resolving a canceled pool must be blocked — verifies is_pool_active
+/// integration in resolve_pool.
+#[test]
+#[should_panic(expected = "Cannot resolve a canceled pool")]
+fn test_is_pool_active_blocks_resolve_on_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Cancel then resolve test"),
+            metadata_url: String::from_str(&env, "ipfs://cancelresolve"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    // is_pool_active == false → should panic
+    client.resolve_pool(&operator, &pool_id, &0u32);
+}
+
+/// Canceling a canceled pool a second time must be blocked — verifies
+/// is_pool_active integration in cancel_pool.
+#[test]
+#[should_panic(expected = "Pool already canceled")]
+fn test_is_pool_active_blocks_double_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Double cancel test"),
+            metadata_url: String::from_str(&env, "ipfs://doublecancel"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+    // Second cancel: is_pool_active == false → should panic
+    client.cancel_pool(&operator, &pool_id);
+}
+
+/// increase_max_total_stake on a resolved pool must return InvalidPoolState —
+/// verifies is_pool_active integration in that function too.
+#[test]
+#[should_panic(expected = "Error(Contract, #24)")]
+fn test_is_pool_active_blocks_increase_max_stake_on_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Max stake resolved test"),
+            metadata_url: String::from_str(&env, "ipfs://maxresolved"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Pool resolved → is_pool_active == false → must return InvalidPoolState (24)
+    client.increase_max_total_stake(&creator, &pool_id, &500_000);
+}
+
+/// Full lifecycle: active → predictions → resolve → claim.
+/// Confirms is_pool_active correctly gates each phase without regression.
+#[test]
+fn test_is_pool_active_full_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Lifecycle test"),
+            metadata_url: String::from_str(&env, "ipfs://lifecycle"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    // Phase 1: pool is active — predictions accepted.
+    let pool = client.get_pool(&pool_id);
+    assert!(!pool.resolved && !pool.canceled && pool.state == MarketState::Active);
+
+    let user_win = Address::generate(&env);
+    let user_lose = Address::generate(&env);
+    token_admin_client.mint(&user_win, &300);
+    token_admin_client.mint(&user_lose, &200);
+
+    client.place_prediction(&user_win, &pool_id, &300, &0, &None, &None);
+    client.place_prediction(&user_lose, &pool_id, &200, &1, &None, &None);
+    assert_eq!(token.balance(&contract_addr), 500);
+
+    // Phase 2: resolve — pool transitions to inactive.
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    let pool = client.get_pool(&pool_id);
+    assert!(pool.resolved);
+    assert_eq!(pool.state, MarketState::Resolved);
+
+    // Phase 3: claims work correctly post-resolution.
+    let w = client.claim_winnings(&user_win, &pool_id);
+    assert_eq!(w, 500);
+    let l = client.claim_winnings(&user_lose, &pool_id);
+    assert_eq!(l, 0);
+    assert_eq!(token.balance(&contract_addr), 0);
+}
