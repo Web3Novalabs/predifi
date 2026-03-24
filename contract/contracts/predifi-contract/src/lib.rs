@@ -885,6 +885,12 @@ impl PredifiContract {
             .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
     }
 
+    /// Bumps both instance and persistent TTLs for the given key in one call.
+    fn bump_ttl(env: &Env, key: &DataKey) {
+        Self::extend_instance(env);
+        Self::extend_persistent(env, key);
+    }
+
     fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> bool {
         env.invoke_contract(
             contract,
@@ -1443,11 +1449,11 @@ impl PredifiContract {
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
+        Self::bump_ttl(&env, &pool_key);
 
         let pc_key = DataKey::PartCnt(pool_id);
         env.storage().persistent().set(&pc_key, &0u32);
-        Self::extend_persistent(&env, &pc_key);
+        Self::bump_ttl(&env, &pc_key);
 
         // Transfer initial liquidity from creator to contract if provided
         if config.initial_liquidity > 0 {
@@ -1471,12 +1477,12 @@ impl PredifiContract {
         env.storage()
             .persistent()
             .set(&category_index_key, &pool_id);
-        Self::extend_persistent(&env, &category_index_key);
+        Self::bump_ttl(&env, &category_index_key);
 
         env.storage()
             .persistent()
             .set(&category_count_key, &(category_count + 1));
-        Self::extend_persistent(&env, &category_count_key);
+        Self::bump_ttl(&env, &category_count_key);
 
         env.storage()
             .instance()
@@ -1674,7 +1680,7 @@ impl PredifiContract {
             pool.outcome = outcome;
 
             env.storage().persistent().set(&pool_key, &pool);
-            Self::extend_persistent(&env, &pool_key);
+            Self::bump_ttl(&env, &pool_key);
 
             // Retrieve winning-outcome stake for the diagnostic event
             let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
@@ -1776,7 +1782,7 @@ impl PredifiContract {
         // Mark pool as canceled
         pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
+        Self::bump_ttl(&env, &pool_key);
 
         PoolCanceledEvent {
             pool_id,
@@ -1942,7 +1948,7 @@ impl PredifiContract {
         // Update total stake (INV-1)
         pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
         env.storage().persistent().set(&pool_key, &pool);
-        Self::extend_persistent(&env, &pool_key);
+        Self::bump_ttl(&env, &pool_key);
 
         // Update outcome stake (INV-1) - using optimized batch storage
         let _stakes =
@@ -2045,7 +2051,7 @@ impl PredifiContract {
 
         // Mark as claimed immediately to prevent re-entrancy (INV-3)
         env.storage().persistent().set(&claimed_key, &true);
-        Self::extend_persistent(&env, &claimed_key);
+        Self::bump_ttl(&env, &claimed_key);
 
         if pool.state == MarketState::Canceled {
             // --- INTERACTIONS (Refund) ---
@@ -2226,7 +2232,7 @@ impl PredifiContract {
 
         // Mark as claimed immediately to prevent re-entrancy (INV-3)
         env.storage().persistent().set(&claimed_key, &true);
-        Self::extend_persistent(&env, &claimed_key);
+        Self::bump_ttl(&env, &claimed_key);
 
         let refund_amount = prediction.amount;
 
@@ -2696,7 +2702,7 @@ impl OracleCallback for PredifiContract {
             pool.outcome = outcome;
 
             env.storage().persistent().set(&pool_key, &pool);
-            Self::extend_persistent(&env, &pool_key);
+            Self::bump_ttl(&env, &pool_key);
 
             // Retrieve winning-outcome stake for the diagnostic event
             let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);

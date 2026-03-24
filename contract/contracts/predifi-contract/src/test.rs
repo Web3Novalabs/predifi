@@ -4,7 +4,7 @@
 use super::*;
 use soroban_sdk::{
     symbol_short,
-    testutils::{Address as _, Ledger},
+    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger},
     token, Address, BytesN, Env, String, Symbol,
 };
 
@@ -3711,4 +3711,229 @@ fn test_is_contract_paused_independent_per_instance() {
     // Contract 1 should be paused, contract 2 should remain unpaused
     assert!(client_1.is_contract_paused());
     assert!(!client_2.is_contract_paused());
+}
+
+// ── bump_ttl helper tests ────────────────────────────────────────────────────
+
+/// Helper: create an env with predictable ledger settings for TTL assertions.
+fn create_ttl_env() -> Env {
+    let env = Env::default();
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100_000;
+        li.min_persistent_entry_ttl = 500;
+        li.min_temp_entry_ttl = 100;
+        li.max_entry_ttl = 6_000_000; // large enough for BUMP_AMOUNT (30 * 17280 = 518400)
+    });
+    env
+}
+
+/// Helper: create a pool using the standard PoolConfig pattern.
+fn create_test_pool(
+    env: &Env,
+    client: &PredifiContractClient,
+    creator: &Address,
+    token_address: &Address,
+    end_time: u64,
+) -> u64 {
+    client.create_pool(
+        creator,
+        &end_time,
+        token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(env, "bump_ttl test pool"),
+            metadata_url: String::from_str(
+                env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    )
+}
+
+/// bump_ttl should extend both instance TTL and persistent TTL for the given key.
+#[test]
+fn test_bump_ttl_extends_both_instance_and_persistent() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+
+    // After create_pool, bump_ttl is called for pool_key and pc_key.
+    // Both instance and persistent TTLs should be extended to BUMP_AMOUNT (518400 ledgers).
+    env.as_contract(&contract_id, || {
+        let pool_key = DataKey::Pool(pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&pool_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        // BUMP_AMOUNT = 30 * 17280 = 518400
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT, got {instance_ttl}"
+        );
+    });
+}
+
+/// bump_ttl via place_prediction: pool_key persistent and instance TTLs are bumped.
+#[test]
+fn test_bump_ttl_after_place_prediction() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000);
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+
+    // Advance ledger sequence past BUMP_THRESHOLD to force a re-bump, then place a prediction.
+    // BUMP_THRESHOLD = 14 * 17280 = 241920; advance enough so remaining TTL < threshold.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100_000 + 300_000;
+    });
+
+    client.place_prediction(&user, &pool_id, &100, &0u32, &None, &None);
+
+    // After place_prediction, bump_ttl should have refreshed both TTLs.
+    env.as_contract(&contract_id, || {
+        let pool_key = DataKey::Pool(pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&pool_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT after place_prediction, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT after place_prediction, got {instance_ttl}"
+        );
+    });
+}
+
+/// bump_ttl via resolve_pool: pool_key TTLs are bumped on resolution.
+#[test]
+fn test_bump_ttl_after_resolve_pool() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000);
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+    client.place_prediction(&user, &pool_id, &100, &0u32, &None, &None);
+
+    // Advance time past end_time and reduce sequence to lower TTLs.
+    env.ledger().with_mut(|li| {
+        li.timestamp = 200_000;
+        li.sequence_number = 100_000 + 300_000;
+    });
+
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    env.as_contract(&contract_id, || {
+        let pool_key = DataKey::Pool(pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&pool_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT after resolve_pool, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT after resolve_pool, got {instance_ttl}"
+        );
+    });
+}
+
+/// bump_ttl via cancel_pool: pool_key TTLs are bumped on cancellation.
+#[test]
+fn test_bump_ttl_after_cancel_pool() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+
+    // Advance sequence to reduce TTLs before cancel.
+    env.ledger().with_mut(|li| {
+        li.sequence_number = 100_000 + 300_000;
+    });
+
+    client.cancel_pool(&operator, &pool_id);
+
+    env.as_contract(&contract_id, || {
+        let pool_key = DataKey::Pool(pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&pool_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT after cancel_pool, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT after cancel_pool, got {instance_ttl}"
+        );
+    });
+}
+
+/// bump_ttl via claim_winnings: claimed_key TTLs are bumped on claim.
+#[test]
+fn test_bump_ttl_after_claim_winnings() {
+    let env = create_ttl_env();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_id = client.address.clone();
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000);
+
+    let pool_id = create_test_pool(&env, &client, &creator, &token_address, 100_000u64);
+    client.place_prediction(&user, &pool_id, &100, &0u32, &None, &None);
+
+    env.ledger().with_mut(|li| {
+        li.timestamp = 200_000;
+        li.sequence_number = 100_000 + 300_000;
+    });
+
+    client.resolve_pool(&operator, &pool_id, &0u32);
+    client.claim_winnings(&user, &pool_id);
+
+    env.as_contract(&contract_id, || {
+        let claimed_key = DataKey::Claimed(user.clone(), pool_id);
+        let persistent_ttl = env.storage().persistent().get_ttl(&claimed_key);
+        let instance_ttl = env.storage().instance().get_ttl();
+
+        assert!(
+            persistent_ttl >= 518_000,
+            "persistent TTL should be near BUMP_AMOUNT after claim_winnings, got {persistent_ttl}"
+        );
+        assert!(
+            instance_ttl >= 518_000,
+            "instance TTL should be near BUMP_AMOUNT after claim_winnings, got {instance_ttl}"
+        );
+    });
 }
