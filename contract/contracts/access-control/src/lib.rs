@@ -2,13 +2,29 @@
 use predifi_errors::PrediFiError;
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env};
 
+/// Role-based access control enumeration.
+///
+/// This enum defines all available roles in the protocol.
+/// Roles are hierarchical with Admin having the highest privileges.
+///
+/// # Role Hierarchy
+/// - Admin (0): Full control over protocol configuration and role management
+/// - Operator (1): Can manage pools and perform operational tasks
+/// - Moderator (2): Can moderate content and handle disputes
+/// - Oracle (3): Can resolve pools and provide external data
+/// - User (4): Basic role for regular users (often implicit)
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Role {
+    /// Administrator with full control over protocol settings and role assignments.
     Admin = 0,
+    /// Operator can manage pools, update configurations, and perform operational tasks.
     Operator = 1,
+    /// Moderator can handle disputes and moderate content.
     Moderator = 2,
+    /// Oracle can resolve pools based on external data and price feeds.
     Oracle = 3,
+    /// Basic user role for regular protocol participants.
     User = 4,
 }
 
@@ -57,30 +73,54 @@ pub struct AllRolesRevokedEvent {
     pub user: Address,
 }
 
+/// Status of a prediction pool in the access control system.
+///
+/// This enum tracks the lifecycle state of a pool for permission management.
+/// Different roles may have different permissions based on pool status.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PoolStatus {
+    /// Pool is active and accepting operations.
     Active,
+    /// Pool has been resolved and is in payout phase.
     Resolved,
+    /// Pool is closed and no longer accepting operations.
     Closed,
+    /// Pool is under dispute and requires moderator intervention.
     Disputed,
 }
 
+/// Category classification for prediction pools.
+///
+/// This enum provides a standardized set of categories for organizing
+/// prediction markets. Categories help users discover relevant pools.
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PoolCategory {
+    /// Sports-related predictions (e.g., game outcomes, tournaments, player performance).
     Sports,
+    /// Political event predictions (e.g., elections, policy decisions, approvals).
     Politics,
+    /// Financial market predictions (e.g., stock prices, indices, economic indicators).
     Finance,
+    /// Entertainment industry predictions (e.g., awards, box office, TV shows).
     Entertainment,
+    /// Miscellaneous predictions that don't fit other categories.
     Other,
 }
 
+/// Storage keys for access control data.
+///
+/// This enum defines all storage keys used by the access control contract.
 #[contracttype]
 pub enum DataKey {
+    /// Admin address: Admin -> Address
     Admin,
+    /// Role assignment: Role(user_address, role) -> ()
     Role(Address, Role),
+    /// Pool data: Pool(pool_id) -> Pool
     Pool(u64),
+    /// Pool counter: PoolCount -> u64
     PoolCount,
 }
 
