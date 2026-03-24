@@ -959,11 +959,11 @@ impl PredifiContract {
     /// Returns true if the token is on the allowed betting whitelist.
     fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
         let key = DataKey::TokenWl(token.clone());
-        let allowed = env.storage().persistent().get(&key).unwrap_or(false);
-        if env.storage().persistent().has(&key) {
+        let whitelisted = env.storage().persistent().has(&key);
+        if whitelisted {
             Self::extend_persistent(env, &key);
         }
-        allowed
+        whitelisted
     }
 
     // ── Public interface ──────────────────────────────────────────────────────
