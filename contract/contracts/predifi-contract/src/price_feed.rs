@@ -1,7 +1,19 @@
-#![no_std]
+#//! Price Feed Integration Module
+//!
+//! This module provides a robust adapter for integrating external oracles (e.g., Pyth Network)
+//! with PrediFi prediction pools. It enables automated, price-based market resolution
+//! without requiring manual intervention from operators or oracles.
+//!
+//! ## Integration Flow
+//! 1. **Initialize Oracle**: Call `init_oracle` with the Pyth contract address and validation parameters.
+//! 2. **Update Feeds**: Oracle keepers call `update_price_feed` periodically to push fresh data.
+//! 3. **Set Pool Condition**: During pool creation or setup, call `set_price_condition` to link
+//!    a pool to a specific price feed and target outcome.
+//! 4. **Resolve Pool**: Once the market ends, call `resolve_pool_from_price` to automatically
+//!    determine the winning outcome based on the latest valid price data.
 
-use soroban_sdk::{Address, Env, Symbol, Vec, BytesN};
-use crate::{PredifiError, DataKey};
+use crate::{DataKey, PredifiError};
+use soroban_sdk::{Address, BytesN, Env, Symbol, Vec};
 
 /// Price feed data structure for external oracle integration.
 ///
@@ -34,29 +46,36 @@ pub struct PriceFeed {
 /// Price condition for automated market resolution.
 ///
 /// This struct defines a price-based condition that can be used to
-/// automatically resolve a prediction pool without manual oracle intervention.
+/// automatically resolve a prediction pool. The condition specifies an
+/// asset pair, a target price level, and a comparison operator.
+///
+/// # Technical Requirements
+/// - `feed_pair`: Must match a symbol registered via `update_price_feed` (e.g., `symbol!("ETH/USD")`).
+/// - `target_price`: Specified in the same decimal format as the oracle feed (typically 8 decimals).
+/// - `operator`: Defines the winning criteria (0: Equal, 1: Greater, 2: Less).
+/// - `tolerance_bps`: Defines a "buffer" around the target price to prevent resolution
+///   flips due to minor noise. 100 bps = 1.0%.
 ///
 /// # Example Usage
-/// For a pool predicting "Will ETH exceed $3000?", you would set:
-/// - `feed_pair`: "ETH/USD"
-/// - `target_price`: 3000
-/// - `operator`: 1 (greater than)
-/// - `tolerance_bps`: 100 (1% tolerance)
+/// For a pool predicting "Will BTC exceed $60,000 at expiry?":
+/// - `feed_pair`: "BTC/USD"
+/// - `target_price`: 6000000000000
+/// - `operator`: 1 (Greater Than)
+/// - `tolerance_bps`: 50 (0.5% tolerance)
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[contracttype]
 pub struct PriceCondition {
     /// The price feed pair to monitor (e.g., "ETH/USD").
     pub feed_pair: Symbol,
-    /// Target price to compare against for resolution.
+    /// Target price to compare against for resolution (e.g., 3000 * 10^8).
     pub target_price: i128,
     /// Comparison operator for the price condition:
-    /// - 0 = equal (price == target ± tolerance)
-    /// - 1 = greater than (price > target + tolerance)
-    /// - 2 = less than (price < target - tolerance)
+    /// - `0`: Equal (price is within `target_price ± tolerance`)
+    /// - `1`: Greater than (price > `target_price + tolerance`)
+    /// - `2`: Less than (price < `target_price - tolerance`)
     pub operator: u32,
     /// Tolerance for price comparison in basis points (1 bp = 0.01%).
-    /// For example, 100 bps = 1% tolerance around the target price.
-    /// This prevents resolution failures due to minor price fluctuations.
+    /// Prevents resolution issues if the price is exactly at the boundary.
     pub tolerance_bps: u32,
 }
 
@@ -100,7 +119,11 @@ pub enum PriceFeedDataKey {
 pub struct PriceFeedAdapter;
 
 impl PriceFeedAdapter {
-    /// Initialize oracle configuration
+    /// Initialize global oracle configuration.
+    ///
+    /// This should be called by the contract admin once during protocol setup.
+    /// It registers the official Pyth contract address and sets the safety
+    /// parameters for price staleness and confidence.
     pub fn init_oracle(
         env: &Env,
         admin: &Address,
@@ -131,7 +154,11 @@ impl PriceFeedAdapter {
             .expect("Oracle config not initialized")
     }
 
-    /// Update price feed data (called by oracle keeper)
+    /// Update price feed data for a specific asset pair.
+    ///
+    /// This is typically called by an off-chain keeper or a specialized
+    /// oracle role. It updates the internal state with the latest price,
+    /// confidence level, and timestamp from the oracle provider.
     pub fn update_price_feed(
         env: &Env,
         oracle: &Address,
@@ -259,7 +286,15 @@ impl PriceFeedAdapter {
         Ok(result)
     }
 
-    /// Resolve pool based on price condition
+    /// Resolve a prediction pool using its configured price condition.
+    ///
+    /// This is the primary entry point for automated resolution. It retrieves
+    /// the pool's condition, evaluates it against the current market price,
+    /// and returns the winning outcome index.
+    ///
+    /// # Resolution Logic
+    /// - If `evaluate_price_condition` returns `true` -> Outcome `1` (Yes/Target Met)
+    /// - If `evaluate_price_condition` returns `false` -> Outcome `0` (No/Target Missed)
     pub fn resolve_pool_from_price(
         env: &Env,
         pool_id: u64,

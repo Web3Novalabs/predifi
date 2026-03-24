@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod price_feed_simple;
+mod price_feed;
 mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
