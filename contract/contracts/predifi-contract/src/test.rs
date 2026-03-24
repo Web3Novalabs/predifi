@@ -3349,3 +3349,639 @@ fn test_no_bettor_on_winning_side() {
     assert_eq!(w1, 0);
     assert_eq!(w2, 0);
 }
+
+// ── PriceFeedAdapter tests ──────────────────────────────────────────────────
+// Coverage for price_feed_simple.rs: init, update, validate, evaluate, resolve.
+
+#[test]
+fn test_pfa_init_oracle_and_get_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+
+    let admin = Address::generate(&env);
+    let pyth = Address::generate(&env);
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::init_oracle(&env, &admin, pyth.clone(), 300, 100).unwrap();
+        let config = PriceFeedAdapter::get_oracle_config(&env, &pyth);
+        assert!(config.is_some());
+        let (max_age, min_conf) = config.unwrap();
+        assert_eq!(max_age, 300);
+        assert_eq!(min_conf, 100);
+    });
+}
+
+#[test]
+fn test_pfa_get_config_returns_none_before_init() {
+    let env = Env::default();
+    let cid = env.register(PredifiContract, ());
+    let pyth = Address::generate(&env);
+
+    env.as_contract(&cid, || {
+        assert!(PriceFeedAdapter::get_oracle_config(&env, &pyth).is_none());
+    });
+}
+
+#[test]
+fn test_pfa_update_and_get_price_feed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3000_000000, 10_000, ts, ts + 60)
+            .unwrap();
+
+        let feed = PriceFeedAdapter::get_price_feed(&env, &pair);
+        assert!(feed.is_some());
+        let (price, confidence, timestamp, expires_at) = feed.unwrap();
+        assert_eq!(price, 3000_000000);
+        assert_eq!(confidence, 10_000);
+        assert_eq!(timestamp, ts);
+        assert_eq!(expires_at, ts + 60);
+    });
+}
+
+#[test]
+fn test_pfa_get_price_feed_returns_none_for_unknown_pair() {
+    let env = Env::default();
+    let cid = env.register(PredifiContract, ());
+
+    env.as_contract(&cid, || {
+        assert!(PriceFeedAdapter::get_price_feed(&env, &symbol_short!("XXXXXX")).is_none());
+    });
+}
+
+#[test]
+fn test_pfa_get_price_feed_returns_none_for_mismatched_pair() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("BTCUSD"), 60000_000000, 50_000, ts, ts + 120,
+        )
+        .unwrap();
+        assert!(PriceFeedAdapter::get_price_feed(&env, &symbol_short!("ETHUSD")).is_none());
+    });
+}
+
+// ── update_price_feed validation (error cases) ──────────────────────────────
+
+#[test]
+fn test_pfa_update_rejects_zero_price() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("ETHUSD"), 0, 10_000, ts, ts + 60,
+        );
+        assert_eq!(res, Err(PredifiError::InvalidAmount));
+    });
+}
+
+#[test]
+fn test_pfa_update_rejects_negative_price() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("ETHUSD"), -1, 10_000, ts, ts + 60,
+        );
+        assert_eq!(res, Err(PredifiError::InvalidAmount));
+    });
+}
+
+#[test]
+fn test_pfa_update_rejects_negative_confidence() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("ETHUSD"), 3000_000000, -1, ts, ts + 60,
+        );
+        assert_eq!(res, Err(PredifiError::InvalidAmount));
+    });
+}
+
+#[test]
+fn test_pfa_update_rejects_future_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("ETHUSD"), 3000_000000, 10_000, ts + 999, ts + 1200,
+        );
+        assert_eq!(res, Err(PredifiError::InvalidPoolState));
+    });
+}
+
+#[test]
+fn test_pfa_update_rejects_expires_at_equal_to_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("ETHUSD"), 3000_000000, 10_000, ts, ts,
+        );
+        assert_eq!(res, Err(PredifiError::InvalidPoolState));
+    });
+}
+
+#[test]
+fn test_pfa_update_rejects_expires_at_before_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("ETHUSD"), 3000_000000, 10_000, ts, ts.saturating_sub(1),
+        );
+        assert_eq!(res, Err(PredifiError::InvalidPoolState));
+    });
+}
+
+#[test]
+fn test_pfa_update_accepts_minimum_valid_price() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("ETHUSD"), 1, 0, ts, ts + 1,
+        );
+        assert!(res.is_ok());
+    });
+}
+
+#[test]
+fn test_pfa_update_accepts_zero_confidence() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle, symbol_short!("ETHUSD"), 3000_000000, 0, ts, ts + 60,
+        );
+        assert!(res.is_ok());
+    });
+}
+
+// ── is_price_valid boundary tests ───────────────────────────────────────────
+
+#[test]
+fn test_pfa_is_valid_when_not_expired() {
+    let env = Env::default();
+    let data: (i128, i128, u64, u64) = (3000_000000, 10_000, 0, 60);
+    assert!(PriceFeedAdapter::is_price_valid(&env, &data, 300));
+}
+
+#[test]
+fn test_pfa_is_valid_at_exact_expiry_boundary() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 60);
+    // 60 > 60 is false → still valid
+    let data: (i128, i128, u64, u64) = (3000_000000, 10_000, 0, 60);
+    assert!(PriceFeedAdapter::is_price_valid(&env, &data, 300));
+}
+
+#[test]
+fn test_pfa_is_invalid_just_past_expiry() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 61);
+    let data: (i128, i128, u64, u64) = (3000_000000, 10_000, 0, 60);
+    assert!(!PriceFeedAdapter::is_price_valid(&env, &data, 300));
+}
+
+#[test]
+fn test_pfa_is_valid_at_exact_max_age_boundary() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 300);
+    // 300 > 0 + 300 is false → valid
+    let data: (i128, i128, u64, u64) = (3000_000000, 10_000, 0, 500);
+    assert!(PriceFeedAdapter::is_price_valid(&env, &data, 300));
+}
+
+#[test]
+fn test_pfa_is_invalid_past_max_age() {
+    let env = Env::default();
+    env.ledger().with_mut(|li| li.timestamp = 301);
+    let data: (i128, i128, u64, u64) = (3000_000000, 10_000, 0, 500);
+    assert!(!PriceFeedAdapter::is_price_valid(&env, &data, 300));
+}
+
+#[test]
+fn test_pfa_is_valid_confidence_at_threshold() {
+    let env = Env::default();
+    // confidence = price / 100 = 30_000000 → NOT greater than → valid
+    let data: (i128, i128, u64, u64) = (3000_000000, 30_000000, 0, 60);
+    assert!(PriceFeedAdapter::is_price_valid(&env, &data, 300));
+}
+
+#[test]
+fn test_pfa_is_invalid_confidence_over_threshold() {
+    let env = Env::default();
+    // confidence = price / 100 + 1 → greater than → invalid
+    let data: (i128, i128, u64, u64) = (3000_000000, 30_000001, 0, 60);
+    assert!(!PriceFeedAdapter::is_price_valid(&env, &data, 300));
+}
+
+// ── set_price_condition / get_price_condition ────────────────────────────────
+
+#[test]
+fn test_pfa_set_and_get_price_condition() {
+    let env = Env::default();
+    let cid = env.register(PredifiContract, ());
+    let pair = symbol_short!("ETHUSD");
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::set_price_condition(&env, 1, pair.clone(), 3000_000000, 1, 100).unwrap();
+        let cond = PriceFeedAdapter::get_price_condition(&env, 1);
+        assert!(cond.is_some());
+        let (fp, tp, op, tol) = cond.unwrap();
+        assert_eq!(fp, pair);
+        assert_eq!(tp, 3000_000000);
+        assert_eq!(op, 1);
+        assert_eq!(tol, 100);
+    });
+}
+
+#[test]
+fn test_pfa_get_condition_returns_none_for_unknown_pool() {
+    let env = Env::default();
+    let cid = env.register(PredifiContract, ());
+
+    env.as_contract(&cid, || {
+        assert!(PriceFeedAdapter::get_price_condition(&env, 42).is_none());
+    });
+}
+
+// ── evaluate_price_condition ────────────────────────────────────────────────
+
+#[test]
+fn test_pfa_evaluate_equal_within_tolerance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // target = 3000, tolerance = 100 bps (1%) → range [2970, 3030]
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3010_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 0, 100);
+        let result = PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300).unwrap();
+        assert!(result);
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_equal_outside_tolerance() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // price = 3031 → outside [2970, 3030]
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3031_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 0, 100);
+        let result = PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300).unwrap();
+        assert!(!result);
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_equal_at_upper_tolerance_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // upper bound = 3030_000000 (inclusive)
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3030_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 0, 100);
+        assert!(PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300).unwrap());
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_equal_at_lower_tolerance_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // lower bound = 2970_000000 (inclusive)
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 2970_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 0, 100);
+        assert!(PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300).unwrap());
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_greater_than_met() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // target = 3000, tolerance = 100 bps → threshold = 3030; price = 3031 → met
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3031_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 1, 100);
+        assert!(PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300).unwrap());
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_greater_than_not_met_at_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // price = 3030 = target + tolerance → NOT strictly greater
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3030_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 1, 100);
+        assert!(!PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300).unwrap());
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_less_than_met() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // target = 3000, tolerance = 100 bps → threshold = 2970; price = 2969 → met
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 2969_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 2, 100);
+        assert!(PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300).unwrap());
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_less_than_not_met_at_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // price = 2970 = target - tolerance → NOT strictly less
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 2970_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 2, 100);
+        assert!(!PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300).unwrap());
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_invalid_operator() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3000_000000, 10_000, ts, ts + 60).unwrap();
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 5, 100);
+        assert_eq!(
+            PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300),
+            Err(PredifiError::InvalidPoolState)
+        );
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_missing_price_feed() {
+    let env = Env::default();
+    let cid = env.register(PredifiContract, ());
+
+    env.as_contract(&cid, || {
+        let condition: (Symbol, i128, u32, u32) = (symbol_short!("ETHUSD"), 3000_000000, 1, 100);
+        assert_eq!(
+            PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300),
+            Err(PredifiError::PriceFeedNotFound)
+        );
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_with_expired_price_data() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3000_000000, 10_000, ts, ts + 30).unwrap();
+        env.ledger().with_mut(|li| li.timestamp = ts + 31);
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 1, 100);
+        assert_eq!(
+            PriceFeedAdapter::evaluate_price_condition(&env, &condition, 300),
+            Err(PredifiError::PriceDataInvalid)
+        );
+    });
+}
+
+#[test]
+fn test_pfa_evaluate_with_stale_price_data() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3000_000000, 10_000, ts, ts + 500).unwrap();
+        env.ledger().with_mut(|li| li.timestamp = ts + 61);
+        // max_age = 60 → 61 > 0 + 60 → stale
+        let condition: (Symbol, i128, u32, u32) = (pair.clone(), 3000_000000, 1, 100);
+        assert_eq!(
+            PriceFeedAdapter::evaluate_price_condition(&env, &condition, 60),
+            Err(PredifiError::PriceDataInvalid)
+        );
+    });
+}
+
+// ── resolve_pool_from_price ─────────────────────────────────────────────────
+
+#[test]
+fn test_pfa_resolve_condition_met_returns_one() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3100_000000, 10_000, ts, ts + 60).unwrap();
+        PriceFeedAdapter::set_price_condition(&env, 1, pair.clone(), 3000_000000, 1, 100).unwrap();
+        assert_eq!(PriceFeedAdapter::resolve_pool_from_price(&env, 1, 300).unwrap(), 1);
+    });
+}
+
+#[test]
+fn test_pfa_resolve_condition_not_met_returns_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle = Address::generate(&env);
+    let pair = symbol_short!("ETHUSD");
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 2900_000000, 10_000, ts, ts + 60).unwrap();
+        PriceFeedAdapter::set_price_condition(&env, 1, pair.clone(), 3000_000000, 1, 100).unwrap();
+        assert_eq!(PriceFeedAdapter::resolve_pool_from_price(&env, 1, 300).unwrap(), 0);
+    });
+}
+
+#[test]
+fn test_pfa_resolve_no_condition_set() {
+    let env = Env::default();
+    let cid = env.register(PredifiContract, ());
+
+    env.as_contract(&cid, || {
+        assert_eq!(
+            PriceFeedAdapter::resolve_pool_from_price(&env, 999, 300),
+            Err(PredifiError::PriceConditionNotSet)
+        );
+    });
+}
+
+// ── batch-like sequential updates ───────────────────────────────────────────
+// Note: batch_update_price_feeds calls require_auth() at the outer level and
+// update_price_feed calls it again per-entry. In direct unit tests (as_contract)
+// this triggers "frame is already authorized". We verify equivalent behavior
+// by testing sequential updates through the individual entry point.
+
+#[test]
+fn test_pfa_sequential_updates_last_feed_wins() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle1 = Address::generate(&env);
+    let oracle2 = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // Two sequential updates with different oracles (same frame auth limitation)
+        PriceFeedAdapter::update_price_feed(
+            &env, &oracle1, symbol_short!("ETHUSD"), 3000_000000, 10_000, ts, ts + 60,
+        ).unwrap();
+        PriceFeedAdapter::update_price_feed(
+            &env, &oracle2, symbol_short!("BTCUSD"), 60000_000000, 50_000, ts, ts + 60,
+        ).unwrap();
+
+        // Only the last-written pair is retrievable (fixed-key storage)
+        let btc = PriceFeedAdapter::get_price_feed(&env, &symbol_short!("BTCUSD"));
+        assert!(btc.is_some());
+        assert_eq!(btc.unwrap().0, 60000_000000);
+
+        // Previous pair is overwritten
+        assert!(PriceFeedAdapter::get_price_feed(&env, &symbol_short!("ETHUSD")).is_none());
+    });
+}
+
+#[test]
+fn test_pfa_sequential_update_rejects_invalid_after_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let cid = env.register(PredifiContract, ());
+    let oracle1 = Address::generate(&env);
+    let oracle2 = Address::generate(&env);
+    let ts = env.ledger().timestamp();
+
+    env.as_contract(&cid, || {
+        // First update succeeds
+        PriceFeedAdapter::update_price_feed(
+            &env, &oracle1, symbol_short!("ETHUSD"), 3000_000000, 10_000, ts, ts + 60,
+        ).unwrap();
+
+        // Second update with price = 0 fails
+        let res = PriceFeedAdapter::update_price_feed(
+            &env, &oracle2, symbol_short!("BTCUSD"), 0, 50_000, ts, ts + 60,
+        );
+        assert_eq!(res, Err(PredifiError::InvalidAmount));
+
+        // First feed still intact
+        let eth = PriceFeedAdapter::get_price_feed(&env, &symbol_short!("ETHUSD"));
+        assert!(eth.is_some());
+        assert_eq!(eth.unwrap().0, 3000_000000);
+    });
+}
+
+// ── cleanup_expired_feeds (stub) ────────────────────────────────────────────
+
+#[test]
+fn test_pfa_cleanup_expired_feeds_returns_zero() {
+    let env = Env::default();
+    let count = PriceFeedAdapter::cleanup_expired_feeds(&env, 300).unwrap();
+    assert_eq!(count, 0);
+}

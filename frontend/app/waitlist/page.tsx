@@ -10,7 +10,7 @@ export default function WaitlistPage() {
       <main className="w-screen overflow-x-hidden flex-1">
         <WaitlistForm />
       </main>
-      
+
       <Footer />
     </div>
   );

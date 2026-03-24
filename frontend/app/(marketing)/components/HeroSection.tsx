@@ -40,7 +40,7 @@ function HeroSection() {
         <div className="flex flex-col md:flex-row items-center justify-center gap-y-20 md:gap-x-[70px] rounded-[24px] md:rounded-[14px] bg-[#001518] md:bg-[#00262A66] px-6 py-10 md:py-6 backdrop-blur-none md:backdrop-blur-[14px] shadow-2xl md:shadow-lg w-full max-w-[350px] md:max-w-fit mx-auto border border-[#ffffff0d] md:border-none">
           <Stat label="Prediction Accuracy" value="99%" />
           <Stat label="Amount Predicted" value="$44k+" />
-          {/* Hidden on mobile if you want to match the screenshot exactly (which only showed 3 items), 
+          {/* Hidden on mobile if you want to match the screenshot exactly (which only showed 3 items),
               but kept here for completeness. You can add 'hidden md:block' to hide specific ones. */}
           <Stat label="Total Coin Flips" value="5k+" />
           <Stat label="Active Prediction Pools" value="2k+" />

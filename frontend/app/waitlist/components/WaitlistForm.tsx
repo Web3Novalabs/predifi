@@ -71,7 +71,7 @@ export default function WaitlistForm() {
             PrediFi is currently in <span className="font-semibold text-white">early access</span> and coming soon!
           </p>
           <p className="text-[#B3CECB] text-sm md:text-base tracking-[2%] max-w-lg">
-            Be among the first to experience decentralized prediction markets. 
+            Be among the first to experience decentralized prediction markets.
             Join our waitlist to get early access and stay updated on our launch.
           </p>
         </div>
@@ -138,7 +138,7 @@ export default function WaitlistForm() {
                   You&apos;re on the list!
                 </h3>
                 <p className="text-[#B3CECB] text-sm md:text-base">
-                  Thank you for joining the waitlist. We&apos;ll notify you when 
+                  Thank you for joining the waitlist. We&apos;ll notify you when
                   PrediFi launches so you can be among the first to start predicting!
                 </p>
               </div>
@@ -149,7 +149,7 @@ export default function WaitlistForm() {
         {/* Additional Info */}
         <div className="mt-8 md:mt-12 text-[#758382] text-xs md:text-sm max-w-lg">
           <p>
-            By joining the waitlist, you&apos;ll receive updates about our launch, 
+            By joining the waitlist, you&apos;ll receive updates about our launch,
             early access opportunities, and exclusive features.
           </p>
         </div>
