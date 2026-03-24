@@ -992,6 +992,17 @@ impl PredifiContract {
         UnpauseEvent { admin }.publish(&env);
     }
 
+    /// Check if the contract is paused.
+    ///
+    /// This is a public query function that allows third-party integrations
+    /// to check the pause state without sending a transaction.
+    ///
+    /// # Returns
+    /// `true` if the contract is paused, `false` otherwise.
+    pub fn is_contract_paused(env: Env) -> bool {
+        Self::is_paused(&env)
+    }
+
     /// Set fee in basis points. Caller must have Admin role (0).
     /// PRE: admin has role 0
     /// POST: Config.fee_bps ≤ 10_000 (INV-6)

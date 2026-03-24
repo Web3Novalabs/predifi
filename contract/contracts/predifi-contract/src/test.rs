@@ -3349,3 +3349,149 @@ fn test_no_bettor_on_winning_side() {
     assert_eq!(w1, 0);
     assert_eq!(w2, 0);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// is_contract_paused Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test that is_contract_paused returns false by default after initialization.
+#[test]
+fn test_is_contract_paused_returns_false_by_default() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let _admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Contract should not be paused by default
+    assert!(!client.is_contract_paused());
+}
+
+/// Test that is_contract_paused returns true after pause is called.
+#[test]
+fn test_is_contract_paused_returns_true_after_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Initially not paused
+    assert!(!client.is_contract_paused());
+
+    // Pause the contract
+    client.pause(&admin);
+
+    // Now it should be paused
+    assert!(client.is_contract_paused());
+}
+
+/// Test that is_contract_paused returns false after unpause is called.
+#[test]
+fn test_is_contract_paused_returns_false_after_unpause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Pause the contract
+    client.pause(&admin);
+    assert!(client.is_contract_paused());
+
+    // Unpause the contract
+    client.unpause(&admin);
+
+    // Now it should not be paused
+    assert!(!client.is_contract_paused());
+}
+
+/// Test toggling pause state multiple times and verifying is_contract_paused.
+#[test]
+fn test_is_contract_paused_toggle_pause_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Initial state: not paused
+    assert!(!client.is_contract_paused());
+
+    // First pause
+    client.pause(&admin);
+    assert!(client.is_contract_paused());
+
+    // First unpause
+    client.unpause(&admin);
+    assert!(!client.is_contract_paused());
+
+    // Second pause
+    client.pause(&admin);
+    assert!(client.is_contract_paused());
+
+    // Second unpause
+    client.unpause(&admin);
+    assert!(!client.is_contract_paused());
+}
+
+/// Test that is_contract_paused works correctly across multiple contract instances.
+#[test]
+fn test_is_contract_paused_independent_per_instance() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+
+    let contract_id_1 = env.register(PredifiContract, ());
+    let client_1 = PredifiContractClient::new(&env, &contract_id_1);
+
+    let contract_id_2 = env.register(PredifiContract, ());
+    let client_2 = PredifiContractClient::new(&env, &contract_id_2);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Initialize both contracts
+    client_1.init(&ac_id, &treasury, &0u32, &0u64);
+    client_2.init(&ac_id, &treasury, &0u32, &0u64);
+
+    // Both should start unpaused
+    assert!(!client_1.is_contract_paused());
+    assert!(!client_2.is_contract_paused());
+
+    // Pause only contract 1
+    client_1.pause(&admin);
+
+    // Contract 1 should be paused, contract 2 should remain unpaused
+    assert!(client_1.is_contract_paused());
+    assert!(!client_2.is_contract_paused());
+}
