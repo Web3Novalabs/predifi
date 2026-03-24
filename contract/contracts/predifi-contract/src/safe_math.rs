@@ -253,6 +253,42 @@ impl SafeMath {
         Ok(results)
     }
 
+    /// Calculate a winner's share of the payout pool.
+    ///
+    /// Computes `(user_stake * payout_pool) / winning_stake`, which is the
+    /// canonical formula used in `claim_winnings`.
+    ///
+    /// # Arguments
+    /// * `user_stake`   - The amount the user staked on the winning outcome.
+    /// * `winning_stake` - Total stake on the winning outcome across all users.
+    /// * `payout_pool`  - The pool available for distribution (after fees).
+    ///
+    /// # Returns
+    /// * `Ok(0)` when `winning_stake` is 0 (no winners — safe no-op).
+    /// * `Ok(share)` on success.
+    /// * `Err(ArithmeticError)` on overflow or invalid inputs.
+    pub fn calculate_share(
+        user_stake: i128,
+        winning_stake: i128,
+        payout_pool: i128,
+    ) -> Result<i128, PrediFiError> {
+        if user_stake < 0 || winning_stake < 0 || payout_pool < 0 {
+            return Err(PrediFiError::ArithmeticError);
+        }
+        if winning_stake == 0 || user_stake == 0 || payout_pool == 0 {
+            return Ok(0);
+        }
+        if user_stake > winning_stake {
+            return Err(PrediFiError::ArithmeticError);
+        }
+        let product = user_stake
+            .checked_mul(payout_pool)
+            .ok_or(PrediFiError::ArithmeticError)?;
+        product
+            .checked_div(winning_stake)
+            .ok_or(PrediFiError::ArithmeticError)
+    }
+
     /// Safely add two amounts with overflow check
     pub fn safe_add(a: i128, b: i128) -> Result<i128, PrediFiError> {
         a.checked_add(b).ok_or(PrediFiError::ArithmeticError)
@@ -576,5 +612,80 @@ mod tests {
         let payout =
             SafeMath::proportion(user_stake, total_stake, pool, RoundingMode::Neutral).unwrap();
         assert_eq!(payout, 25_000_000_000_000); // 25% of pool
+    }
+
+    #[test]
+    fn test_calculate_share_basic() {
+        // User staked 300 of 1000 winning stake, payout pool is 5000
+        // (300 * 5000) / 1000 = 1500
+        assert_eq!(SafeMath::calculate_share(300, 1000, 5000).unwrap(), 1500);
+
+        // User staked all of winning side — gets full payout pool
+        assert_eq!(SafeMath::calculate_share(1000, 1000, 5000).unwrap(), 5000);
+
+        // User staked 1 of 3, payout pool 99 → (1*99)/3 = 33
+        assert_eq!(SafeMath::calculate_share(1, 3, 99).unwrap(), 33);
+    }
+
+    #[test]
+    fn test_calculate_share_zero_cases() {
+        // winning_stake == 0 → safe no-op, returns 0 (no winners)
+        assert_eq!(SafeMath::calculate_share(100, 0, 5000).unwrap(), 0);
+
+        // user_stake == 0 → no winnings
+        assert_eq!(SafeMath::calculate_share(0, 1000, 5000).unwrap(), 0);
+
+        // payout_pool == 0 → nothing to distribute
+        assert_eq!(SafeMath::calculate_share(300, 1000, 0).unwrap(), 0);
+    }
+
+    #[test]
+    fn test_calculate_share_negative_inputs() {
+        assert_eq!(
+            SafeMath::calculate_share(-1, 1000, 5000),
+            Err(PrediFiError::ArithmeticError)
+        );
+        assert_eq!(
+            SafeMath::calculate_share(100, -1000, 5000),
+            Err(PrediFiError::ArithmeticError)
+        );
+        assert_eq!(
+            SafeMath::calculate_share(100, 1000, -5000),
+            Err(PrediFiError::ArithmeticError)
+        );
+    }
+
+    #[test]
+    fn test_calculate_share_user_stake_exceeds_winning_stake() {
+        // user_stake > winning_stake is logically impossible — should error
+        assert_eq!(
+            SafeMath::calculate_share(1001, 1000, 5000),
+            Err(PrediFiError::ArithmeticError)
+        );
+    }
+
+    #[test]
+    fn test_calculate_share_large_numbers() {
+        // Realistic token amounts (7 decimal places)
+        let user_stake = 5_000_000_000_000i128;
+        let winning_stake = 20_000_000_000_000i128;
+        let payout_pool = 100_000_000_000_000i128;
+        // (5e12 * 1e14) / 2e13 = 25e12
+        assert_eq!(
+            SafeMath::calculate_share(user_stake, winning_stake, payout_pool).unwrap(),
+            25_000_000_000_000
+        );
+    }
+
+    #[test]
+    fn test_calculate_share_truncates_remainder() {
+        // (1 * 10) / 3 = 3 (integer division, truncates)
+        assert_eq!(SafeMath::calculate_share(1, 3, 10).unwrap(), 3);
+    }
+
+    #[test]
+    fn test_calculate_share_equal_stakes() {
+        // Two users with equal stakes, payout pool 100 → each gets 50
+        assert_eq!(SafeMath::calculate_share(50, 100, 100).unwrap(), 50);
     }
 }
