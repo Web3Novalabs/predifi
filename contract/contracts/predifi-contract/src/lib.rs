@@ -398,6 +398,15 @@ pub enum DataKey {
     /// Referred volume for a referrer and pool: ReferredVolume(referrer, pool_id) -> i128
     ReferredVolume(Address, u64),
     /// Referrer address for a user and pool: Referrer(user, pool_id) -> Address
+    ///
+    /// FUTURE: Multiple referrers per user per pool
+    /// Currently a user can only have one referrer per pool. If multiple referrers are needed
+    /// (e.g. to split the referral share among several parties), this key should be changed to
+    /// store a `Map<Address, u32>` (referrer -> share_bps) or a `Vec<Address>` with equal splits.
+    /// The `ReferredVolume` key would similarly need to become per-(referrer, user, pool) or be
+    /// aggregated differently. The payout loop in `claim_winnings` would iterate over all referrers
+    /// and distribute proportional cuts. Until that requirement is confirmed, the single-referrer
+    /// model is kept for simplicity and gas efficiency.
     Referrer(Address, u64),
     /// User whitelist for private pools: Whitelist(pool_id, user_address)
     Whitelist(u64, Address),
@@ -1918,7 +1927,9 @@ impl PredifiContract {
                 .set(&pred_key, &Prediction { amount, outcome });
             Self::extend_persistent(&env, &pred_key);
 
-            // Store referrer on first prediction and track referred volume
+            // Store referrer on first prediction and track referred volume.
+            // NOTE: Only one referrer per (user, pool) is supported today.
+            // See DataKey::Referrer for a note on extending this to multiple referrers.
             if let Some(ref referrer_addr) = referrer {
                 let referrer_key = DataKey::Referrer(user.clone(), pool_id);
                 env.storage().persistent().set(&referrer_key, referrer_addr);
