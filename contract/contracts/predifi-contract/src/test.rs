@@ -2947,7 +2947,6 @@ fn test_outcome_bounds_with_maximum_options_count() {
     // (tested separately in test_place_prediction_rejects_out_of_bounds_outcome)
 }
 
-
 /// end_time below MIN_POOL_DURATION from the current ledger must be rejected.
 #[test]
 #[should_panic(expected = "end_time must be at least 1 hour in the future")]
