@@ -39,6 +39,8 @@ jobs:
             ~/.cargo/git
             contract/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock') }}
+      # Check formatting for ALL .rs files in the workspace (includes all contracts)
+      # This ensures all files under contracts/ directory are properly formatted
       - name: Check Formatting
         run: cargo fmt --all -- --check
       - name: Lint with Clippy
