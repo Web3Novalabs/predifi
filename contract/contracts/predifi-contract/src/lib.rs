@@ -1430,10 +1430,7 @@ impl PredifiContract {
             config.max_stake == 0 || config.max_stake >= config.min_stake,
             "max_stake must be zero (unlimited) or >= min_stake"
         );
-        assert!(
-            config.max_total_stake >= 0,
-            "max_total_stake must be >= 0"
-        );
+        assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
         let pool_id: u64 = env
             .storage()

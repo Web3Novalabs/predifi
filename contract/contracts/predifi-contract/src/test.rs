@@ -3310,7 +3310,7 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
             description: String::from_str(&env, "Inverted stake limits"),
             metadata_url: String::from_str(&env, "ipfs://inverted"),
             min_stake: 100i128,
-            max_stake: 50i128,        // min_stake
+            max_stake: 50i128, // min_stake
             max_total_stake: 0,
             initial_liquidity: 0i128, // max_stake < min_stake -> invalid
             required_resolutions: 1u32,
@@ -3338,7 +3338,7 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
             description: String::from_str(&env, "Equal stake limits"),
             metadata_url: String::from_str(&env, "ipfs://equal"),
             min_stake: 100i128,
-            max_stake: 100i128,       // min_stake
+            max_stake: 100i128, // min_stake
             max_total_stake: 0,
             initial_liquidity: 0i128, // max_stake == min_stake -> valid
             required_resolutions: 1u32,
