@@ -999,7 +999,9 @@ impl PredifiContract {
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
-            env.storage().instance().set(&DataKey::Version, &CONTRACT_VERSION);
+            env.storage()
+                .instance()
+                .set(&DataKey::Version, &CONTRACT_VERSION);
             Self::extend_instance(&env);
 
             InitEvent {
