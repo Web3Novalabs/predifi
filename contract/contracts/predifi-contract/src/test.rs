@@ -63,7 +63,7 @@ fn setup(
 
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_address);
 
     (
@@ -153,7 +153,7 @@ fn test_referral_fee_distribution() {
     let admin = Address::generate(&env);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &200u32, &0u64); // 2% protocol fee
+    client.init(&ac_id, &treasury, &200u32, &0u64, &3600u64); // 2% protocol fee
     client.add_token_to_whitelist(&admin, &token_address);
     client.set_referral_cut_bps(&admin, &5000u32); // 50% of fee share to referrer
 
@@ -428,7 +428,7 @@ fn test_oracle_can_resolve() {
 
     ac_client.grant_role(&oracle, &ROLE_ORACLE);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -484,7 +484,7 @@ fn test_unauthorized_oracle_resolve() {
     // Give them OPERATOR instead of ORACLE, they still shouldn't be able to call oracle_resolve
     ac_client.grant_role(&not_oracle, &ROLE_OPERATOR);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -530,7 +530,7 @@ fn test_admin_can_set_fee_bps() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.set_fee_bps(&admin, &500u32);
 }
@@ -549,7 +549,7 @@ fn test_admin_can_set_treasury() {
     let treasury = Address::generate(&env);
     let new_treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.set_treasury(&admin, &new_treasury);
 }
@@ -569,7 +569,7 @@ fn test_admin_can_pause_and_unpause() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.unpause(&admin);
@@ -589,7 +589,7 @@ fn test_admin_can_upgrade() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // We expect this to panic in the mock environment because the Wasm hash is not registered.
     // The point is to verify it passes the Authorization check.
@@ -609,7 +609,7 @@ fn test_non_admin_cannot_upgrade() {
 
     let not_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
     client.upgrade_contract(&not_admin, &new_wasm_hash);
@@ -628,7 +628,7 @@ fn test_admin_can_migrate() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.migrate_state(&admin);
 }
@@ -645,7 +645,7 @@ fn test_non_admin_cannot_migrate() {
 
     let not_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.migrate_state(&not_admin);
 }
@@ -662,7 +662,7 @@ fn test_non_admin_cannot_pause() {
 
     let not_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&not_admin);
 }
@@ -681,7 +681,7 @@ fn test_paused_blocks_set_fee_bps() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.set_fee_bps(&admin, &100u32);
@@ -701,7 +701,7 @@ fn test_paused_blocks_set_treasury() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.set_treasury(&admin, &Address::generate(&env));
@@ -722,7 +722,7 @@ fn test_paused_blocks_create_pool() {
     let treasury = Address::generate(&env);
     let token = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token);
 
     let creator = Address::generate(&env);
@@ -765,7 +765,7 @@ fn test_paused_blocks_place_prediction() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.place_prediction(&user, &0u64, &10, &1, &None, &None);
@@ -787,7 +787,7 @@ fn test_paused_blocks_resolve_pool() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.resolve_pool(&operator, &0u64, &1u32);
@@ -808,7 +808,7 @@ fn test_paused_blocks_claim_winnings() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.claim_winnings(&user, &0u64);
@@ -832,7 +832,7 @@ fn test_unpause_restores_functionality() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_contract);
     token_admin_client.mint(&user, &1000);
 
@@ -1039,7 +1039,7 @@ fn test_admin_can_cancel_pool() {
     let creator = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let pool_id = client.create_pool(
@@ -1087,7 +1087,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
     let admin = Address::generate(&env);
     ac_client.grant_role(&creator, &ROLE_OPERATOR);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_address);
 
     let pool_id = client.create_pool(
@@ -1169,7 +1169,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
     let token_not_whitelisted = Address::generate(&env);
 
     ac_client.grant_role(&creator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     // Do NOT whitelist token_not_whitelisted
 
     client.create_pool(
@@ -1206,7 +1206,7 @@ fn test_token_whitelist_add_remove_and_is_allowed() {
     let treasury = Address::generate(&env);
     let token = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     assert!(!client.is_token_allowed(&token));
     client.add_token_to_whitelist(&admin, &token);
@@ -1228,7 +1228,7 @@ fn setup_whitelist_env() -> (Env, PredifiContractClient<'static>, Address, Addre
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     (env, client, admin, treasury)
 }
@@ -1356,7 +1356,7 @@ fn test_place_prediction_fails_for_non_whitelisted_token() {
     let user = Address::generate(&env);
 
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Intentionally do NOT whitelist the token
     token_admin_client.mint(&user, &1000);
@@ -1404,7 +1404,7 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
     let user = Address::generate(&env);
 
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Whitelist the token
     client.add_token_to_whitelist(&admin, &token_contract);
@@ -1462,7 +1462,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let pool_id = client.create_pool(
@@ -1515,7 +1515,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -1573,7 +1573,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let pool_id = client.create_pool(
@@ -1627,7 +1627,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -1687,7 +1687,7 @@ fn test_cancel_pool_refunds_predictions() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -1782,7 +1782,7 @@ fn test_cannot_resolve_canceled_pool() {
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -1864,7 +1864,7 @@ fn test_resolve_pool_before_delay() {
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
     // Init with 3600s delay
-    client.init(&ac_id, &treasury, &0u32, &3600u64);
+    client.init(&ac_id, &treasury, &0u32, &3600u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token);
 
     let end_time = 10000;
@@ -1917,7 +1917,7 @@ fn test_resolve_pool_after_delay() {
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
     // Init with 3600s delay
-    client.init(&ac_id, &treasury, &0u32, &3600u64);
+    client.init(&ac_id, &treasury, &0u32, &3600u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token);
 
     let end_time = 10000;
@@ -1962,7 +1962,7 @@ fn test_mark_pool_ready() {
     let treasury = Address::generate(&env);
     let token = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &3600u64);
+    client.init(&ac_id, &treasury, &0u32, &3600u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token);
 
     let end_time = 10000;
@@ -3395,7 +3395,7 @@ fn test_outcome_bounds_with_maximum_options_count() {
 
 /// end_time below MIN_POOL_DURATION from the current ledger must be rejected.
 #[test]
-#[should_panic(expected = "end_time must be at least 1 hour in the future")]
+#[should_panic(expected = "end_time must be at least min_pool_duration in the future")]
 fn test_create_pool_rejects_end_time_below_min_duration() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4046,7 +4046,7 @@ fn test_is_contract_paused_returns_false_by_default() {
 
     let _admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Contract should not be paused by default
     assert!(!client.is_contract_paused());
@@ -4066,7 +4066,7 @@ fn test_is_contract_paused_returns_true_after_pause() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Initially not paused
     assert!(!client.is_contract_paused());
@@ -4092,7 +4092,7 @@ fn test_is_contract_paused_returns_false_after_unpause() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Pause the contract
     client.pause(&admin);
@@ -4119,7 +4119,7 @@ fn test_is_contract_paused_toggle_pause_state() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Initial state: not paused
     assert!(!client.is_contract_paused());
@@ -4161,8 +4161,8 @@ fn test_is_contract_paused_independent_per_instance() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
     // Initialize both contracts
-    client_1.init(&ac_id, &treasury, &0u32, &0u64);
-    client_2.init(&ac_id, &treasury, &0u32, &0u64);
+    client_1.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client_2.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Both should start unpaused
     assert!(!client_1.is_contract_paused());
@@ -4484,4 +4484,58 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
 
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.max_total_stake, 0);
+}
+
+#[test]
+fn test_admin_can_set_min_pool_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+
+    client.set_min_pool_duration(&admin, &7200u64);
+}
+
+#[test]
+#[should_panic(expected = "end_time must be at least min_pool_duration in the future")]
+fn test_create_pool_respects_configurable_min_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _treasury, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Initial min_pool_duration is 3600 from setup.
+    // Set a much larger min_pool_duration.
+    client.set_min_pool_duration(&admin, &86400u64); // 1 day
+
+    // Try to create a pool with 2 hours duration (7200s), which is < 1 day.
+    let current_time = env.ledger().timestamp();
+    client.create_pool(
+        &creator,
+        &(current_time + 7200u64),
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Short Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
 }
