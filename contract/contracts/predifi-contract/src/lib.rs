@@ -275,6 +275,8 @@ pub struct PoolConfig {
     pub min_stake: i128,
     /// Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
     pub max_stake: i128,
+    /// Maximum total stake allowed for the pool (0 = no limit, must be >= 0).
+    pub max_total_stake: i128,
     /// Optional initial liquidity to provide from creator (must be >= 0).
     /// This is "house money" that participates in the pool but is excluded from fee calculations.
     pub initial_liquidity: i128,
@@ -487,6 +489,7 @@ pub struct PoolCreatedEvent {
     pub initial_liquidity: i128,
     pub category: Symbol,
     pub required_resolutions: u32,
+    pub max_total_stake: i128,
 }
 
 #[contractevent(topics = ["initial_liquidity_provided"])]
@@ -1427,6 +1430,10 @@ impl PredifiContract {
             config.max_stake == 0 || config.max_stake >= config.min_stake,
             "max_stake must be zero (unlimited) or >= min_stake"
         );
+        assert!(
+            config.max_total_stake >= 0,
+            "max_total_stake must be >= 0"
+        );
 
         let pool_id: u64 = env
             .storage()
@@ -1448,7 +1455,7 @@ impl PredifiContract {
             options_count,
             min_stake: config.min_stake,
             max_stake: config.max_stake,
-            max_total_stake: 0,
+            max_total_stake: config.max_total_stake,
             initial_liquidity: config.initial_liquidity,
             creator: creator.clone(),
             required_resolutions: config.required_resolutions,
@@ -1507,6 +1514,7 @@ impl PredifiContract {
             initial_liquidity: config.initial_liquidity,
             category,
             required_resolutions: config.required_resolutions,
+            max_total_stake: config.max_total_stake,
         }
         .publish(&env);
 
