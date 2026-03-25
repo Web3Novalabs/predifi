@@ -55,7 +55,9 @@ fn setup(
 
     // Register and whitelist a token
     let token_admin = Address::generate(env);
-    let token = env.register_stellar_asset_contract_v2(token_admin).address();
+    let token = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
     client.add_token_to_whitelist(&admin, &token);
 
     (client, token, admin, operator, creator)
