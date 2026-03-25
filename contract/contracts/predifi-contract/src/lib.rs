@@ -7,6 +7,8 @@ mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
 #[cfg(test)]
+mod storage_test;
+#[cfg(test)]
 mod stress_test;
 #[cfg(test)]
 mod test_utils;
@@ -214,6 +216,8 @@ pub struct CreatePoolParams {
     pub private: bool,
     /// Optional symbol used as an invite key for private pools.
     pub whitelist_key: Option<Symbol>,
+    /// Human-readable labels for each outcome (length must equal options_count).
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// Represents a prediction pool with all its configuration and state.
@@ -268,6 +272,8 @@ pub struct Pool {
     pub private: bool,
     /// Optional symbol used as an invite key for private pools.
     pub whitelist_key: Option<Symbol>,
+    /// Human-readable labels for each outcome (length must equal options_count).
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// Configuration parameters for creating a prediction pool.
@@ -296,6 +302,8 @@ pub struct PoolConfig {
     pub private: bool,
     /// Optional symbol used as an invite key for private pools.
     pub whitelist_key: Option<Symbol>,
+    /// Human-readable labels for each outcome (length must equal options_count).
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// Statistics for a prediction pool.
@@ -516,6 +524,7 @@ pub struct PoolCreatedEvent {
     pub category: Symbol,
     pub required_resolutions: u32,
     pub max_total_stake: i128,
+    pub outcome_descriptions: Vec<String>,
 }
 
 #[contractevent(topics = ["initial_liquidity_provided"])]
@@ -1507,6 +1516,11 @@ impl PredifiContract {
         );
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
+        assert!(
+            config.outcome_descriptions.len() == options_count,
+            "outcome_descriptions length must equal options_count"
+        );
+
         let pool_id: u64 = env
             .storage()
             .instance()
@@ -1533,6 +1547,7 @@ impl PredifiContract {
             required_resolutions: config.required_resolutions,
             private: config.private,
             whitelist_key: config.whitelist_key.clone(),
+            outcome_descriptions: config.outcome_descriptions.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -1588,6 +1603,7 @@ impl PredifiContract {
             category,
             required_resolutions: config.required_resolutions,
             max_total_stake: config.max_total_stake,
+            outcome_descriptions: config.outcome_descriptions,
         }
         .publish(&env);
 
