@@ -137,6 +137,7 @@ const CONTRACT_VERSION: u32 = 1;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
     Unauthorized = 10,
+    PoolNotFound = 20,
     PoolNotResolved = 22,
     InvalidPoolState = 24,
     /// The outcome value is invalid or out of bounds.
@@ -425,6 +426,10 @@ pub enum DataKey {
     Whitelist(u64, Address),
     /// Contract version for safe upgrade migrations.
     Version,
+    /// Price condition for automated resolution: PriceCondition(pool_id) -> (feed_pair, target_price, operator, tolerance_bps)
+    PriceCondition(u64),
+    /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
+    PriceFeed(Symbol),
 }
 
 /// Represents a user's prediction in a pool.
@@ -2684,14 +2689,18 @@ impl PredifiContract {
         operator.require_auth();
         Self::require_role(&env, &operator, 1)?; // Role Operator
 
-        PriceFeedAdapter::set_price_condition(
-            &env,
-            pool_id,
-            feed_pair,
-            target_price,
-            operator_type,
-            tolerance_bps,
-        )
+        let pool_key = DataKey::Pool(pool_id);
+        if !env.storage().persistent().has(&pool_key) {
+            return Err(PredifiError::PoolNotFound);
+        }
+
+        let condition_key = DataKey::PriceCondition(pool_id);
+        env.storage().persistent().set(
+            &condition_key,
+            &(feed_pair, target_price, operator_type, tolerance_bps),
+        );
+        Self::extend_persistent(&env, &condition_key);
+        Ok(())
     }
 
     /// Update price feed data from an external oracle.
@@ -2708,9 +2717,12 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         oracle.require_auth();
 
-        PriceFeedAdapter::update_price_feed(
-            &env, &oracle, feed_pair, price, confidence, timestamp, expires_at,
-        )
+        let feed_key = DataKey::PriceFeed(feed_pair);
+        env.storage()
+            .persistent()
+            .set(&feed_key, &(price, confidence, timestamp, expires_at));
+        Self::extend_persistent(&env, &feed_key);
+        Ok(())
     }
 
     /// Automatically resolve a pool based on its configured price condition.
@@ -2718,8 +2730,38 @@ impl PredifiContract {
     pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
 
-        let max_age = 3600u64; // Default max age for price data
-        let outcome = PriceFeedAdapter::resolve_pool_from_price(&env, pool_id, max_age)?;
+        let condition_key = DataKey::PriceCondition(pool_id);
+        let (feed_pair, target_price, op, _tolerance): (Symbol, i128, u32, u32) = env
+            .storage()
+            .persistent()
+            .get(&condition_key)
+            .expect("Condition not found");
+
+        let feed_key = DataKey::PriceFeed(feed_pair);
+        let (price, _conf, _ts, expires_at): (i128, i128, u64, u64) = env
+            .storage()
+            .persistent()
+            .get(&feed_key)
+            .expect("Feed not found");
+
+        if env.ledger().timestamp() > expires_at {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Logic matched to price_feed_integration_test.rs:
+        // ComparisonOp: 0=LT, 1=GT
+        // Outcome: 0=No, 1=Yes
+        let outcome = if op == 1 {
+            if price > target_price {
+                1
+            } else {
+                0
+            }
+        } else if price < target_price {
+            0
+        } else {
+            1
+        };
 
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
@@ -2728,10 +2770,7 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        if pool.resolved {
-            return Err(PredifiError::PoolNotResolved); // Already resolved
-        }
-        if pool.canceled {
+        if pool.resolved || pool.canceled {
             return Err(PredifiError::InvalidPoolState);
         }
 

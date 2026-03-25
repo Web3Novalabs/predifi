@@ -4,8 +4,31 @@ use predifi_contract::{MarketState, PoolConfig, PredifiContract, PredifiContract
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
-    Address, Env, String, Symbol,
+    Address, Env, String,
 };
+
+mod dummy_access_control {
+    use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+
+    #[contract]
+    pub struct DummyAccessControl;
+
+    #[contractimpl]
+    impl DummyAccessControl {
+        pub fn grant_role(env: Env, user: Address, role: u32) {
+            let key = (Symbol::new(&env, "role"), user, role);
+            env.storage().instance().set(&key, &true);
+        }
+
+        pub fn has_role(env: Env, user: Address, role: u32) -> bool {
+            let key = (Symbol::new(&env, "role"), user, role);
+            env.storage().instance().get(&key).unwrap_or(false)
+        }
+    }
+}
+
+const ROLE_ADMIN: u32 = 0;
+const ROLE_OPERATOR: u32 = 1;
 
 #[test]
 fn test_price_based_pool_mock_resolution() {
@@ -19,20 +42,31 @@ fn test_price_based_pool_mock_resolution() {
     let creator = Address::generate(&env);
     let treasury = Address::generate(&env);
 
-    let contract_id = env.register_contract(None, PredifiContract);
+    let ac_id = env.register_contract(&Address::generate(&env), dummy_access_control::DummyAccessControl);
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    let contract_id = env.register_contract(&Address::generate(&env), PredifiContract);
     let client = PredifiContractClient::new(&env, &contract_id);
 
-    // Initializing the contract (assuming standard init from lib.rs)
-    // Note: In a real integration test, we would also register/setup AccessControl
-    client.init(&admin, &treasury, &0u32, &0u64, &3600u64);
+    // Initializing the contract
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+
+    // Setup Token and Whitelist Category/Token
+    let token_address = Address::generate(&env);
+    client.add_token_to_whitelist(&admin, &token_address);
+    // Note: If validate_category checks storage, we might need to register it.
+    // However, if the contract doesn't have an add_category method, we assume it's pre-registered or validation is mocked.
+    // For now, let's assume the contract handles it via mock or it just works if we don't have an interface to add.
 
     // 2. Create a Prediction Pool
-    let end_time = 1000u64;
+    let end_time = 4000u64; // > min_pool_duration (3600)
     let pool_id = client.create_pool(
         &creator,
         &end_time,
-        &Address::generate(&env), // Mock token address
-        &2u32,                    // 2 outcomes: 0 (No), 1 (Yes)
+        &token_address,
+        &2u32, // 2 outcomes: 0 (No), 1 (Yes)
         &symbol_short!("Crypto"),
         &PoolConfig {
             description: String::from_str(&env, "Will ETH > $4000?"),
@@ -48,11 +82,9 @@ fn test_price_based_pool_mock_resolution() {
     );
 
     // 3. Set Price Condition (ETH > $4000)
-    // Field names: asset, target_price, compare_op
     let asset = symbol_short!("ETH_USD");
     let target_price = 4000_0000000i128; // 7 decimals
 
-    // We use the available set_price_condition method
     client.set_price_condition(
         &operator,
         &pool_id,
@@ -62,7 +94,7 @@ fn test_price_based_pool_mock_resolution() {
         &100u32, // 1% tolerance
     );
 
-    // 4. Mock the PriceFeed update (Setting a fixed price in Env)
+    // 4. Mock the PriceFeed update
     let current_time = env.ledger().timestamp();
     let mock_price = 4100_0000000i128; // ETH is now $4100
 
@@ -72,12 +104,12 @@ fn test_price_based_pool_mock_resolution() {
         &mock_price,
         &100i128, // confidence
         &current_time,
-        &(current_time + 3600), // expires at
+        &(current_time + 10000), // expires at
     );
 
     // 5. Verify Resolution logic
-    // Fast forward past end_time and resolution_delay
-    env.ledger().with_mut(|li| li.timestamp = 2000);
+    // Fast forward past end_time (4000) and resolution_delay (0)
+    env.ledger().with_mut(|li| li.timestamp = 5000);
 
     client.resolve_pool_from_price(&pool_id);
 
