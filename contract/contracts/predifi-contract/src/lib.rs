@@ -128,6 +128,9 @@ const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
 const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 
+/// Current contract version. Bump on each release to support safe migrations.
+const CONTRACT_VERSION: u32 = 1;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
@@ -412,6 +415,8 @@ pub enum DataKey {
     Referrer(Address, u64),
     /// User whitelist for private pools: Whitelist(pool_id, user_address)
     Whitelist(u64, Address),
+    /// Contract version for safe upgrade migrations.
+    Version,
 }
 
 /// Represents a user's prediction in a pool.
@@ -997,6 +1002,9 @@ impl PredifiContract {
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
+            env.storage()
+                .instance()
+                .set(&DataKey::Version, &CONTRACT_VERSION);
             Self::extend_instance(&env);
 
             InitEvent {
@@ -1061,6 +1069,15 @@ impl PredifiContract {
     /// `true` if the contract is paused, `false` otherwise.
     pub fn is_contract_paused(env: Env) -> bool {
         Self::is_paused(&env)
+    }
+
+    /// Return the contract version stored during initialization.
+    /// Returns 0 if the contract was deployed before version tracking was added.
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or(0u32)
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
@@ -2405,26 +2422,32 @@ impl PredifiContract {
     }
 
     /// Get a specific outcome's stake (backward compatible).
-    /// For markets with many outcomes, consider using get_pool_outcome_stakes() instead.
+    ///
+    /// Optimized to read the batch `OutStakes` key directly when available,
+    /// avoiding a full `Pool` struct deserialization. Falls back to loading
+    /// the pool only when the batch key is missing (pre-optimization data).
     pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
+        // Try the optimized batch key first (avoids Pool deserialization)
+        let batch_key = DataKey::OutStakes(pool_id);
+        if let Some(stakes) = env.storage().persistent().get::<_, Vec<i128>>(&batch_key) {
+            Self::extend_persistent(&env, &batch_key);
+            return stakes.get(outcome).unwrap_or(0);
+        }
+
+        // Fallback: read Pool to get options_count, then individual OutStake keys
         let pool_key = DataKey::Pool(pool_id);
-        if !env.storage().persistent().has(&pool_key) {
-            return 0;
+        let pool: Option<Pool> = env.storage().persistent().get(&pool_key);
+        match pool {
+            Some(p) => {
+                Self::extend_persistent(&env, &pool_key);
+                if outcome >= p.options_count {
+                    return 0;
+                }
+                let stake_key = DataKey::OutStake(pool_id, outcome);
+                env.storage().persistent().get(&stake_key).unwrap_or(0)
+            }
+            None => 0,
         }
-
-        let pool: Pool = env
-            .storage()
-            .persistent()
-            .get(&pool_key)
-            .expect("Pool not found");
-        Self::extend_persistent(&env, &pool_key);
-
-        if outcome >= pool.options_count {
-            return 0;
-        }
-
-        let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-        stakes.get(outcome).unwrap_or(0)
     }
 
     /// Get a paginated list of pool IDs by category.
