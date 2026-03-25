@@ -515,6 +515,7 @@ pub struct PoolReadyForResolutionEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolCreatedEvent {
     pub pool_id: u64,
+    pub creator: Address,
     pub end_time: u64,
     pub token: Address,
     pub options_count: u32,
@@ -1593,6 +1594,7 @@ impl PredifiContract {
 
         PoolCreatedEvent {
             pool_id,
+            creator: creator.clone(),
             end_time,
             token,
             options_count,

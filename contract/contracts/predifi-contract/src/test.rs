@@ -6,6 +6,8 @@ use soroban_sdk::{
     symbol_short,
     testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger},
     token, vec, Address, BytesN, Env, String, Symbol,
+    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Events, Ledger},
+    token, Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal, Val,
 };
 
 mod dummy_access_control {
@@ -5363,4 +5365,66 @@ fn test_create_pool_respects_configurable_min_duration() {
             ],
         },
     );
+}
+
+#[test]
+fn test_pool_created_event_contains_creator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let end_time = 100000u64;
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let events = env.events().all();
+    let pool_created_topic = Symbol::new(&env, "pool_created");
+
+    let mut found = false;
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == pool_created_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+
+                    let event_pool_id: u64 = event_data
+                        .get(Symbol::new(&env, "pool_id"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_creator: Address = event_data
+                        .get(Symbol::new(&env, "creator"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_end_time: u64 = event_data
+                        .get(Symbol::new(&env, "end_time"))
+                        .unwrap()
+                        .into_val(&env);
+
+                    assert_eq!(event_pool_id, pool_id);
+                    assert_eq!(event_creator, creator);
+                    assert_eq!(event_end_time, end_time);
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(found, "PoolCreatedEvent not found or failed to parse");
 }
