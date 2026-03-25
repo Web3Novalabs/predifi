@@ -5288,6 +5288,24 @@ fn test_outcome_descriptions_length_mismatch_panics() {
         &PoolConfig {
             description: String::from_str(&env, "Mismatch test"),
             metadata_url: String::from_str(&env, "ipfs://mismatch"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            // Only 2 descriptions for 3 outcomes — should panic
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+#[test]
 fn test_admin_can_set_min_pool_duration() {
     let env = Env::default();
     env.mock_all_auths();
