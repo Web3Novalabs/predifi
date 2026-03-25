@@ -4159,3 +4159,24 @@ fn test_bump_ttl_after_claim_winnings() {
         );
     });
 }
+
+// ============================================================================
+// Version tracking tests
+// ============================================================================
+
+#[test]
+fn test_version_is_set_after_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, _creator) =
+        setup(&env);
+    assert_eq!(client.get_version(), 1u32);
+}
+
+#[test]
+fn test_version_returns_zero_before_init() {
+    let env = Env::default();
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    assert_eq!(client.get_version(), 0u32);
+}
