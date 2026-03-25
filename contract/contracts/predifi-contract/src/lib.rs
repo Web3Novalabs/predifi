@@ -2668,6 +2668,103 @@ impl PredifiContract {
             current_odds,
         }
     }
+
+    /// Set a price-based condition for automated pool resolution.
+    /// Only callable by Operator (role 1).
+    pub fn set_price_condition(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        feed_pair: Symbol,
+        target_price: i128,
+        operator_type: u32,
+        tolerance_bps: u32,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        operator.require_auth();
+        Self::require_role(&env, &operator, 1)?; // Role Operator
+
+        PriceFeedAdapter::set_price_condition(
+            &env,
+            pool_id,
+            feed_pair,
+            target_price,
+            operator_type,
+            tolerance_bps,
+        )
+    }
+
+    /// Update price feed data from an external oracle.
+    /// Only callable by authorized oracles.
+    pub fn update_price_feed(
+        env: Env,
+        oracle: Address,
+        feed_pair: Symbol,
+        price: i128,
+        confidence: i128,
+        timestamp: u64,
+        expires_at: u64,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        oracle.require_auth();
+
+        PriceFeedAdapter::update_price_feed(
+            &env,
+            &oracle,
+            feed_pair,
+            price,
+            confidence,
+            timestamp,
+            expires_at,
+        )
+    }
+
+    /// Automatically resolve a pool based on its configured price condition.
+    /// Anyone can trigger this once the pool's end time and resolution delay have passed.
+    pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+
+        let max_age = 3600u64; // Default max age for price data
+        let outcome = PriceFeedAdapter::resolve_pool_from_price(&env, pool_id, max_age)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        if pool.resolved {
+            return Err(PredifiError::PoolNotResolved); // Already resolved
+        }
+        if pool.canceled {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let current_time = env.ledger().timestamp();
+        let config = Self::get_config(&env);
+
+        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+            return Err(PredifiError::ResolutionDelayNotMet);
+        }
+
+        // Apply resolution
+        pool.state = MarketState::Resolved;
+        pool.resolved = true;
+        pool.outcome = outcome;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::bump_ttl(&env, &pool_key);
+
+        PoolResolvedEvent {
+            pool_id,
+            operator: env.current_contract_address(), // System resolved
+            outcome,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
 }
 
 #[contractimpl]

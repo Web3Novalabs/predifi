@@ -19,7 +19,7 @@ fn test_price_based_pool_mock_resolution() {
     let creator = Address::generate(&env);
     let treasury = Address::generate(&env);
 
-    let contract_id = env.register(PredifiContract, ());
+    let contract_id = env.register_contract(None, PredifiContract);
     let client = PredifiContractClient::new(&env, &contract_id);
 
     // Initializing the contract (assuming standard init from lib.rs)
@@ -49,7 +49,7 @@ fn test_price_based_pool_mock_resolution() {
 
     // 3. Set Price Condition (ETH > $4000)
     // Field names: asset, target_price, compare_op
-    let asset = symbol_short!("ETH-USD");
+    let asset = symbol_short!("ETH_USD");
     let target_price = 4000_0000000i128; // 7 decimals
 
     // We use the available set_price_condition method
