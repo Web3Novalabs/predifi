@@ -164,6 +164,10 @@ pub enum PredifiError {
     ResolutionConflict = 105,
     /// This oracle has already cast a vote for this pool.
     OracleAlreadyVoted = 106,
+    /// Stake amount is below the pool minimum.
+    StakeBelowMinimum = 107,
+    /// Stake amount exceeds the pool maximum.
+    StakeAboveMaximum = 108,
 }
 
 /// Represents the current state of a prediction market.
@@ -1904,15 +1908,13 @@ impl PredifiContract {
 
         // --- INTERNAL CHECKS & EFFECTS ---
         // Validate: per-pool stake limits
-        assert!(
-            amount >= pool.min_stake,
-            "amount is below the pool minimum stake"
-        );
-        if pool.max_stake > 0 {
-            assert!(
-                amount <= pool.max_stake,
-                "amount exceeds the pool maximum stake"
-            );
+        if amount < pool.min_stake {
+            Self::exit_reentrancy_guard(&env);
+            soroban_sdk::panic_with_error!(&env, PredifiError::StakeBelowMinimum);
+        }
+        if pool.max_stake > 0 && amount > pool.max_stake {
+            Self::exit_reentrancy_guard(&env);
+            soroban_sdk::panic_with_error!(&env, PredifiError::StakeAboveMaximum);
         }
 
         // Enforce global pool cap (max total stake)
@@ -2313,11 +2315,12 @@ impl PredifiContract {
             return Err(PredifiError::InvalidPoolState);
         }
 
-        assert!(min_stake > 0, "min_stake must be greater than zero");
-        assert!(
-            max_stake == 0 || max_stake >= min_stake,
-            "max_stake must be zero (unlimited) or >= min_stake"
-        );
+        if min_stake <= 0 {
+            return Err(PredifiError::StakeBelowMinimum);
+        }
+        if max_stake != 0 && max_stake < min_stake {
+            return Err(PredifiError::StakeAboveMaximum);
+        }
 
         pool.min_stake = min_stake;
         pool.max_stake = max_stake;

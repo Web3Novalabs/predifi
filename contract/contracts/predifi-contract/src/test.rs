@@ -2000,7 +2000,7 @@ fn test_mark_pool_ready() {
 // ── Staking Limits Tests ──────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "amount is below the pool minimum stake")]
+#[should_panic(expected = "Error(Contract, #107)")]
 fn test_stake_below_minimum_rejected() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2036,7 +2036,7 @@ fn test_stake_below_minimum_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "amount exceeds the pool maximum stake")]
+#[should_panic(expected = "Error(Contract, #108)")]
 fn test_stake_above_maximum_rejected() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2178,6 +2178,68 @@ fn test_set_stake_limits_unauthorized() {
     // Non-operator should be rejected
     let not_operator = Address::generate(&env);
     client.set_stake_limits(&not_operator, &pool_id, &50i128, &500i128);
+}
+
+#[test]
+fn test_set_stake_limits_zero_min_stake_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Min Stake Test"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let result = client.try_set_stake_limits(&operator, &pool_id, &0i128, &0i128);
+    assert_eq!(result, Err(Ok(PredifiError::StakeBelowMinimum)));
+}
+
+#[test]
+fn test_set_stake_limits_max_below_min_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Max Below Min Test"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let result = client.try_set_stake_limits(&operator, &pool_id, &100i128, &50i128);
+    assert_eq!(result, Err(Ok(PredifiError::StakeAboveMaximum)));
 }
 
 #[test]
