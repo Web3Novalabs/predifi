@@ -2709,13 +2709,7 @@ impl PredifiContract {
         oracle.require_auth();
 
         PriceFeedAdapter::update_price_feed(
-            &env,
-            &oracle,
-            feed_pair,
-            price,
-            confidence,
-            timestamp,
-            expires_at,
+            &env, &oracle, feed_pair, price, confidence, timestamp, expires_at,
         )
     }
 
