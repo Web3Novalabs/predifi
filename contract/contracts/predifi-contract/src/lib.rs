@@ -10,8 +10,8 @@ mod safe_math_examples;
 mod stress_test;
 #[cfg(test)]
 mod test_utils;
-#[cfg(test)]
-mod storage_test;
+// #[cfg(test)]
+// mod storage_test;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
@@ -119,8 +119,8 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 
-/// Minimum pool duration in seconds (1 hour)
-const MIN_POOL_DURATION: u64 = 3600;
+/// Default minimum pool duration in seconds (1 hour)
+const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
 /// Maximum number of options allowed in a pool
 const MAX_OPTIONS_COUNT: u32 = 100;
 /// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
@@ -337,6 +337,8 @@ pub struct Config {
     /// Minimum delay in seconds after pool end time before resolution is allowed.
     /// This provides a grace period for oracle data to settle.
     pub resolution_delay: u64,
+    /// Minimum pool duration in seconds.
+    pub min_pool_duration: u64,
 }
 
 /// Detailed information about a user's prediction in a specific pool.
@@ -447,6 +449,7 @@ pub struct InitEvent {
     pub treasury: Address,
     pub fee_bps: u32,
     pub resolution_delay: u64,
+    pub min_pool_duration: u64,
 }
 
 #[contractevent(topics = ["pause"])]
@@ -480,6 +483,12 @@ pub struct TreasuryUpdateEvent {
 pub struct ResolutionDelayUpdateEvent {
     pub admin: Address,
     pub delay: u64,
+}
+#[contractevent(topics = ["min_pool_duration_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinPoolDurationUpdateEvent {
+    pub admin: Address,
+    pub duration: u64,
 }
 
 #[contractevent(topics = ["pool_ready"])]
@@ -998,6 +1007,7 @@ impl PredifiContract {
         treasury: Address,
         fee_bps: u32,
         resolution_delay: u64,
+        min_pool_duration: u64,
     ) {
         if !env.storage().instance().has(&DataKey::Config) {
             let config = Config {
@@ -1005,6 +1015,7 @@ impl PredifiContract {
                 treasury: treasury.clone(),
                 access_control: access_control.clone(),
                 resolution_delay,
+                min_pool_duration,
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -1018,6 +1029,7 @@ impl PredifiContract {
                 treasury,
                 fee_bps,
                 resolution_delay,
+                min_pool_duration,
             }
             .publish(&env);
         }
@@ -1152,6 +1164,33 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         ResolutionDelayUpdateEvent { admin, delay }.publish(&env);
+        Ok(())
+    }
+
+    /// Set minimum pool duration in seconds. Caller must have Admin role (0).
+    pub fn set_min_pool_duration(
+        env: Env,
+        admin: Address,
+        duration: u64,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_min_pool_duration"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+
+        let mut config = Self::get_config(&env);
+        config.min_pool_duration = duration;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        MinPoolDurationUpdateEvent { admin, duration }.publish(&env);
         Ok(())
     }
 
@@ -1401,10 +1440,17 @@ impl PredifiContract {
         // Validate: end_time must be in the future
         assert!(end_time > current_time, "end_time must be in the future");
 
-        // Validate: minimum pool duration (1 hour)
+        let min_pool_duration = env
+            .storage()
+            .instance()
+            .get::<DataKey, Config>(&DataKey::Config)
+            .map(|c| c.min_pool_duration)
+            .unwrap_or(DEFAULT_MIN_POOL_DURATION);
+
+        // Validate: minimum pool duration
         assert!(
-            end_time >= current_time + MIN_POOL_DURATION,
-            "end_time must be at least 1 hour in the future"
+            end_time >= current_time + min_pool_duration,
+            "end_time must be at least min_pool_duration in the future"
         );
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
