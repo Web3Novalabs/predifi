@@ -107,6 +107,7 @@ fn test_claim_winnings() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -171,6 +172,7 @@ fn test_referral_fee_distribution() {
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -224,6 +226,7 @@ fn test_double_claim() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -265,6 +268,7 @@ fn test_claim_unresolved() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -302,6 +306,7 @@ fn test_multiple_pools_independent() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -322,6 +327,7 @@ fn test_multiple_pools_independent() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -390,6 +396,7 @@ fn test_unauthorized_resolve_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -436,6 +443,7 @@ fn test_oracle_can_resolve() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -491,6 +499,7 @@ fn test_unauthorized_oracle_resolve() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -732,6 +741,7 @@ fn test_paused_blocks_create_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -844,6 +854,7 @@ fn test_unpause_restores_functionality() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -879,6 +890,7 @@ fn test_get_user_predictions() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -899,6 +911,7 @@ fn test_get_user_predictions() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -919,6 +932,7 @@ fn test_get_user_predictions() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -974,6 +988,7 @@ fn test_multi_oracle_resolution() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 2u32,
             private: false,
@@ -1041,6 +1056,7 @@ fn test_admin_can_cancel_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1088,6 +1104,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1121,6 +1138,7 @@ fn test_non_admin_non_creator_cannot_cancel() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1165,6 +1183,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 0i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1356,6 +1375,7 @@ fn test_place_prediction_fails_for_non_whitelisted_token() {
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 10i128,
             max_stake: 500i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1403,6 +1423,7 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 10i128,
             max_stake: 500i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1458,6 +1479,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1515,6 +1537,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1567,6 +1590,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1624,6 +1648,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1680,6 +1705,7 @@ fn test_cancel_pool_refunds_predictions() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1720,6 +1746,7 @@ fn test_cannot_cancel_resolved_pool() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1770,6 +1797,7 @@ fn test_cannot_resolve_canceled_pool() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1804,6 +1832,7 @@ fn test_cannot_predict_on_canceled_pool() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1851,6 +1880,7 @@ fn test_resolve_pool_before_delay() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1903,6 +1933,7 @@ fn test_resolve_pool_after_delay() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1947,6 +1978,7 @@ fn test_mark_pool_ready() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -1991,6 +2023,7 @@ fn test_stake_below_minimum_rejected() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 50i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2026,6 +2059,7 @@ fn test_stake_above_maximum_rejected() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 100i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2062,6 +2096,7 @@ fn test_stake_at_boundaries_accepted() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 10i128,
             max_stake: 200i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2097,6 +2132,7 @@ fn test_set_stake_limits_by_operator() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2131,6 +2167,7 @@ fn test_set_stake_limits_unauthorized() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2164,6 +2201,7 @@ fn test_get_pools_by_category() {
             metadata_url: String::from_str(&env, "ipfs://0"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2181,6 +2219,7 @@ fn test_get_pools_by_category() {
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2198,6 +2237,7 @@ fn test_get_pools_by_category() {
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2299,11 +2339,12 @@ fn test_withdraw_treasury_rejects_insufficient_balance() {
 }
 
 #[test]
-fn test_withdraw_treasury_multiple_tokens() {
+fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -2315,19 +2356,121 @@ fn test_withdraw_treasury_multiple_tokens() {
     let token_admin_client2 = token::StellarAssetClient::new(&env, &token_contract2);
     client.add_token_to_whitelist(&admin, &token_contract2);
 
-    // Mint both tokens to contract
-    token_admin_client.mint(&contract_addr, &5000);
-    token_admin_client2.mint(&contract_addr, &3000);
+    // Set protocol fee to 10% (1000 bps) for clear fee calculation
+    client.set_fee_bps(&admin, &1000u32);
 
-    // Withdraw from both tokens
-    client.withdraw_treasury(&admin, &token_address, &2000, &treasury);
-    client.withdraw_treasury(&admin, &token_contract2, &1500, &treasury);
+    // Create two pools with different tokens
+    let pool1_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool 1 - Token 1"),
+            metadata_url: String::from_str(&env, "ipfs://pool1"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
 
-    // Verify balances
-    assert_eq!(token.balance(&treasury), 2000);
-    assert_eq!(token2.balance(&treasury), 1500);
-    assert_eq!(token.balance(&contract_addr), 3000);
-    assert_eq!(token2.balance(&contract_addr), 1500);
+    let pool2_id = client.create_pool(
+        &creator,
+        &100001u64,
+        &token_contract2,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool 2 - Token 2"),
+            metadata_url: String::from_str(&env, "ipfs://pool2"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    // Create users for betting
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    token_admin_client.mint(&user2, &1000);
+    token_admin_client2.mint(&user1, &1000);
+    token_admin_client2.mint(&user2, &1000);
+
+    // Place predictions in pool1 (token1) - user1 bets on outcome 0, user2 on outcome 1
+    client.place_prediction(&user1, &pool1_id, &500, &0, &None, &None);
+    client.place_prediction(&user2, &pool1_id, &500, &1, &None, &None);
+
+    // Place predictions in pool2 (token2) - user1 bets on outcome 0, user2 on outcome 1
+    client.place_prediction(&user1, &pool2_id, &400, &0, &None, &None);
+    client.place_prediction(&user2, &pool2_id, &600, &1, &None, &None);
+
+    // Verify contract balances before resolution
+    assert_eq!(token.balance(&contract_addr), 1000); // 500 + 500 from pool1
+    assert_eq!(token2.balance(&contract_addr), 1000); // 400 + 600 from pool2
+
+    // Advance time to allow resolution
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Resolve both pools with different outcomes
+    // Pool1: outcome 0 wins (user1 wins)
+    client.resolve_pool(&operator, &pool1_id, &0u32);
+    // Pool2: outcome 1 wins (user2 wins)
+    client.resolve_pool(&operator, &pool2_id, &1u32);
+
+    // Users claim winnings - this is where fees are collected
+    // Pool1: total_stake=1000, fee=10% (100), payout=900, user1 gets all 900
+    let winnings1_user1 = client.claim_winnings(&user1, &pool1_id);
+    assert_eq!(winnings1_user1, 900); // 1000 - 10% fee
+
+    // Pool2: total_stake=1000, fee=10% (100), payout=900, user2 gets all 900
+    let winnings2_user2 = client.claim_winnings(&user2, &pool2_id);
+    assert_eq!(winnings2_user2, 900); // 1000 - 10% fee
+
+    // Verify contract balances after claims (should have 100 tokens each as fees)
+    assert_eq!(token.balance(&contract_addr), 100); // 10% fee from pool1
+    assert_eq!(token2.balance(&contract_addr), 100); // 10% fee from pool2
+
+    // Verify treasury balances before withdraw
+    assert_eq!(token.balance(&treasury), 0);
+    assert_eq!(token2.balance(&treasury), 0);
+
+    // Withdraw treasury for token1 (partial withdrawal - 60 out of 100)
+    client.withdraw_treasury(&admin, &token_address, &60, &treasury);
+
+    // Verify first withdrawal
+    assert_eq!(token.balance(&treasury), 60);
+    assert_eq!(token.balance(&contract_addr), 40); // 100 - 60
+                                                   // Token2 should be unaffected
+    assert_eq!(token2.balance(&treasury), 0);
+    assert_eq!(token2.balance(&contract_addr), 100);
+
+    // Withdraw treasury for token2 (full withdrawal - 100)
+    client.withdraw_treasury(&admin, &token_contract2, &100, &treasury);
+
+    // Verify second withdrawal doesn't affect token1
+    assert_eq!(token.balance(&treasury), 60); // Unchanged
+    assert_eq!(token.balance(&contract_addr), 40); // Unchanged
+    assert_eq!(token2.balance(&treasury), 100);
+    assert_eq!(token2.balance(&contract_addr), 0);
+
+    // Withdraw remaining token1 balance
+    client.withdraw_treasury(&admin, &token_address, &40, &treasury);
+
+    // Final verification - all fees withdrawn independently
+    assert_eq!(token.balance(&treasury), 100); // 60 + 40
+    assert_eq!(token.balance(&contract_addr), 0);
+    assert_eq!(token2.balance(&treasury), 100);
+    assert_eq!(token2.balance(&contract_addr), 0);
 }
 
 #[test]
@@ -2377,6 +2520,7 @@ fn test_get_pool_stats() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
         },
@@ -2455,6 +2599,7 @@ fn test_pool_end_time_on_leap_day() {
             metadata_url: String::from_str(&env, "ipfs://leap"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2493,6 +2638,7 @@ fn test_pool_end_time_at_leap_day_already_past() {
             metadata_url: String::from_str(&env, "ipfs://expired"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2526,6 +2672,7 @@ fn test_pool_end_time_spans_leap_day_resolution() {
             metadata_url: String::from_str(&env, "ipfs://span"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2579,6 +2726,7 @@ fn test_maximum_single_stake_roundtrip() {
             metadata_url: String::from_str(&env, "ipfs://max"),
             min_stake: 1i128,
             max_stake: max_amount,
+            max_total_stake: 0,
             initial_liquidity: // max_stake == max_amount is valid
         0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
@@ -2624,6 +2772,7 @@ fn test_large_stake_winnings_split_correctly() {
             metadata_url: String::from_str(&env, "ipfs://large"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: // no max_stake limit
         0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
@@ -2686,6 +2835,7 @@ fn test_double_resolution_attempt() {
             metadata_url: String::from_str(&env, "ipfs://double"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2720,6 +2870,7 @@ fn test_many_users_rapid_claim_after_resolution() {
             metadata_url: String::from_str(&env, "ipfs://rapid"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2788,6 +2939,7 @@ fn test_resolution_then_new_pool_state_isolation() {
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2814,6 +2966,7 @@ fn test_resolution_then_new_pool_state_isolation() {
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2855,6 +3008,7 @@ fn test_create_pool_rejects_zero_min_stake() {
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 0i128, // invalid
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2883,6 +3037,7 @@ fn test_create_pool_rejects_single_option() {
             metadata_url: String::from_str(&env, "ipfs://single"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2911,6 +3066,7 @@ fn test_create_pool_rejects_excess_options_count() {
             metadata_url: String::from_str(&env, "ipfs://many"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2939,6 +3095,7 @@ fn test_create_pool_accepts_maximum_options_count() {
             metadata_url: String::from_str(&env, "ipfs://maxopts"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2973,6 +3130,7 @@ fn test_place_prediction_rejects_out_of_bounds_outcome() {
             metadata_url: String::from_str(&env, "ipfs://three"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3007,6 +3165,7 @@ fn test_place_prediction_rejects_outcome_equal_to_options_count() {
             metadata_url: String::from_str(&env, "ipfs://five"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3041,6 +3200,7 @@ fn test_place_prediction_all_valid_outcomes() {
             metadata_url: String::from_str(&env, "ipfs://ten"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3085,6 +3245,7 @@ fn test_stakes_length_consistency_with_options_count() {
             metadata_url: String::from_str(&env, "ipfs://seven"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3146,6 +3307,7 @@ fn test_outcome_bounds_with_maximum_options_count() {
             metadata_url: String::from_str(&env, "ipfs://maxopts"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3190,6 +3352,7 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
             metadata_url: String::from_str(&env, "ipfs://short"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3219,6 +3382,7 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
             metadata_url: String::from_str(&env, "ipfs://mintime"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3249,8 +3413,9 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
             description: String::from_str(&env, "Inverted stake limits"),
             metadata_url: String::from_str(&env, "ipfs://inverted"),
             min_stake: 100i128,
-            max_stake: 50i128,        // min_stake
-            initial_liquidity: 0i128, // max_stake < min_stake → invalid
+            max_stake: 50i128, // min_stake
+            max_total_stake: 0,
+            initial_liquidity: 0i128, // max_stake < min_stake -> invalid
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
@@ -3276,8 +3441,9 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
             description: String::from_str(&env, "Equal stake limits"),
             metadata_url: String::from_str(&env, "ipfs://equal"),
             min_stake: 100i128,
-            max_stake: 100i128,       // min_stake
-            initial_liquidity: 0i128, // max_stake == min_stake → valid
+            max_stake: 100i128, // min_stake
+            max_total_stake: 0,
+            initial_liquidity: 0i128, // max_stake == min_stake -> valid
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
@@ -3310,6 +3476,7 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
             metadata_url: String::from_str(&env, "ipfs://oob"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3345,6 +3512,7 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
             metadata_url: String::from_str(&env, "ipfs://auth"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3404,6 +3572,7 @@ fn test_unauthorized_admin_op_does_not_mutate_state() {
             metadata_url: String::from_str(&env, "ipfs://postattack"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3433,6 +3602,7 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
             metadata_url: String::from_str(&env, "ipfs://guard"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3475,6 +3645,7 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://0"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3493,6 +3664,7 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3511,6 +3683,7 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3529,6 +3702,7 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://3"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3547,6 +3721,7 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://4"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3638,6 +3813,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3656,6 +3832,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3714,6 +3891,7 @@ fn test_all_bettors_on_winning_side() {
             metadata_url: String::from_str(&env, "ipfs://allwin"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3764,6 +3942,7 @@ fn test_no_bettor_on_winning_side() {
             metadata_url: String::from_str(&env, "ipfs://emptywinner"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3992,6 +4171,7 @@ fn create_test_pool(
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -4421,4 +4601,88 @@ fn test_bump_ttl_after_claim_winnings() {
             "instance TTL should be near BUMP_AMOUNT after claim_winnings, got {instance_ttl}"
         );
     });
+}
+
+// Version tracking tests
+// ============================================================================
+
+#[test]
+fn test_version_is_set_after_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, _creator) =
+        setup(&env);
+    assert_eq!(client.get_version(), 1u32);
+}
+
+#[test]
+fn test_version_returns_zero_before_init() {
+    let env = Env::default();
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    assert_eq!(client.get_version(), 0u32);
+}
+
+// ============================================================================
+// max_total_stake validation tests
+// ============================================================================
+
+#[test]
+fn test_create_pool_with_max_total_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, token_address, _token, _token_admin, _treasury, _operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 100_000),
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Capped pool"),
+            metadata_url: String::from_str(&env, "https://example.com"),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 500_000,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.max_total_stake, 500_000);
+}
+
+#[test]
+fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, token_address, _token, _token_admin, _treasury, _operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 100_000),
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Unlimited pool"),
+            metadata_url: String::from_str(&env, "https://example.com"),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.max_total_stake, 0);
 }
