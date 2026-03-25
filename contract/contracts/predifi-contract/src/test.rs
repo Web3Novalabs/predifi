@@ -28,6 +28,34 @@ mod dummy_access_control {
     }
 }
 
+mod rogue_token {
+    use crate::PredifiContractClient;
+    use soroban_sdk::{contract, contractimpl, Address, Env};
+
+    #[contract]
+    pub struct RogueToken;
+
+    #[contractimpl]
+    impl RogueToken {
+        pub fn transfer(env: Env, _from: Address, _to: Address, _amount: i128) {
+            if env.ledger().timestamp() > 100000 {
+                let target: Address = env.storage().instance().get(&0u32).unwrap();
+                let user: Address = env.storage().instance().get(&1u32).unwrap();
+                let pool_id: u64 = env.storage().instance().get(&2u32).unwrap();
+
+                let client = PredifiContractClient::new(&env, &target);
+                client.claim_winnings(&user, &pool_id);
+            }
+        }
+
+        pub fn setup(env: Env, target: Address, user: Address, pool_id: u64) {
+            env.storage().instance().set(&0u32, &target);
+            env.storage().instance().set(&1u32, &user);
+            env.storage().instance().set(&2u32, &pool_id);
+        }
+    }
+}
+
 const ROLE_ADMIN: u32 = 0; // i am testing this
 const ROLE_OPERATOR: u32 = 1; // i am testing this the second one
 const ROLE_ORACLE: u32 = 3;
@@ -4600,4 +4628,92 @@ fn test_pool_created_event_contains_creator() {
         }
     }
     assert!(found, "PoolCreatedEvent not found or failed to parse");
+}
+
+#[test]
+#[should_panic(expected = "Reentrancy detected")]
+fn test_claim_winnings_blocks_reentrancy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, operator, creator) = setup(&env);
+
+    // Register Rogue Token
+    let rogue_token_id = env.register_contract(None, rogue_token::RogueToken);
+    let rogue_token_client = rogue_token::RogueTokenClient::new(&env, &rogue_token_id);
+
+    // Whitelist Rogue Token
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &0u32); // ROLE_ADMIN = 0
+    client.add_token_to_whitelist(&admin, &rogue_token_id);
+
+    // Create Pool 1 with Rogue Token
+    let end_time = 100000u64;
+    let pool_id_1 = client.create_pool(
+        &creator,
+        &end_time,
+        &rogue_token_id,
+        &2,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Rogue Pool 1"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    // Create Pool 2 with Rogue Token
+    let pool_id_2 = client.create_pool(
+        &creator,
+        &end_time,
+        &rogue_token_id,
+        &2,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Rogue Pool 2"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    // User predicts on both
+    let user = Address::generate(&env);
+    client.place_prediction(&user, &pool_id_1, &1000, &0, &None, &None);
+    client.place_prediction(&user, &pool_id_2, &1000, &0, &None, &None);
+
+    // Resolve Pools
+    let current_time = env.ledger().timestamp();
+    env.ledger().with_mut(|li| li.timestamp = current_time + end_time + 3601);
+    client.resolve_pool(&operator, &pool_id_1, &0);
+    client.resolve_pool(&operator, &pool_id_2, &0);
+
+    // Setup rogue token for callback: claim winnings of pool_id_2 when transferring for pool_id_1
+    rogue_token_client.setup(&client.address, &user, &pool_id_2);
+
+    // Attempt to claim winnings for pool_id_1
+    let winnings_1 = client.claim_winnings(&user, &pool_id_1);
+    assert!(winnings_1 > 0);
+}
+
+#[test]
+#[should_panic(expected = "Reentrancy detected")]
+fn test_guard_basic() {
+    let env = Env::default();
+    let id = env.register_contract(None, PredifiContract);
+    env.as_contract(&id, || {
+        PredifiContract::enter_reentrancy_guard(&env);
+        PredifiContract::enter_reentrancy_guard(&env);
+    });
 }
