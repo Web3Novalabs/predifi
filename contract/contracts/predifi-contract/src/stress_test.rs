@@ -103,7 +103,11 @@ fn test_high_volume_predictions_single_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -148,7 +152,11 @@ fn test_bulk_claim_winnings() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -198,7 +206,11 @@ fn test_sequential_pool_creation_stress() {
                 required_resolutions: 1u32,
                 private: false,
                 whitelist_key: None,
-                outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
             },
         );
         assert_eq!(pool_id, i as u64);
@@ -229,7 +241,25 @@ fn test_max_outcomes_high_volume() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2"), String::from_str(&env, "Outcome 3"), String::from_str(&env, "Outcome 4"), String::from_str(&env, "Outcome 5"), String::from_str(&env, "Outcome 6"), String::from_str(&env, "Outcome 7"), String::from_str(&env, "Outcome 8"), String::from_str(&env, "Outcome 9"), String::from_str(&env, "Outcome 10"), String::from_str(&env, "Outcome 11"), String::from_str(&env, "Outcome 12"), String::from_str(&env, "Outcome 13"), String::from_str(&env, "Outcome 14"), String::from_str(&env, "Outcome 15")],
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+                String::from_str(&env, "Outcome 4"),
+                String::from_str(&env, "Outcome 5"),
+                String::from_str(&env, "Outcome 6"),
+                String::from_str(&env, "Outcome 7"),
+                String::from_str(&env, "Outcome 8"),
+                String::from_str(&env, "Outcome 9"),
+                String::from_str(&env, "Outcome 10"),
+                String::from_str(&env, "Outcome 11"),
+                String::from_str(&env, "Outcome 12"),
+                String::from_str(&env, "Outcome 13"),
+                String::from_str(&env, "Outcome 14"),
+                String::from_str(&env, "Outcome 15"),
+            ],
         },
     );
 
@@ -266,7 +296,11 @@ fn test_prediction_throughput_measurement() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -311,7 +345,11 @@ fn test_resolution_under_load() {
                 required_resolutions: 1u32,
                 private: false,
                 whitelist_key: None,
-                outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
             },
         );
         pool_ids.push(pid);

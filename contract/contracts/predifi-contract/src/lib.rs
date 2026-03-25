@@ -7,11 +7,11 @@ mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
 #[cfg(test)]
+mod storage_test;
+#[cfg(test)]
 mod stress_test;
 #[cfg(test)]
 mod test_utils;
-#[cfg(test)]
-mod storage_test;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,

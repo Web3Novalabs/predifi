@@ -1,11 +1,11 @@
 #![cfg(test)]
 
+use predifi_contract::{MarketState, PoolConfig, PredifiContract, PredifiContractClient};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
     vec, Address, Env, String, Symbol,
 };
-use predifi_contract::{PredifiContract, PredifiContractClient, PoolConfig, MarketState};
 
 #[test]
 fn test_price_based_pool_mock_resolution() {
@@ -44,7 +44,11 @@ fn test_price_based_pool_mock_resolution() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "No"), String::from_str(&env, "Yes")],
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
         },
     );
 
@@ -52,34 +56,34 @@ fn test_price_based_pool_mock_resolution() {
     // Field names: asset, target_price, compare_op
     let asset = symbol_short!("ETH-USD");
     let target_price = 4000_0000000i128; // 7 decimals
-    
+
     // We use the available set_price_condition method
     client.set_price_condition(
         &operator,
         &pool_id,
         &asset,
         &target_price,
-        &1u32, // ComparisonOp::GreaterThan
-        &100u32 // 1% tolerance
+        &1u32,   // ComparisonOp::GreaterThan
+        &100u32, // 1% tolerance
     );
 
     // 4. Mock the PriceFeed update (Setting a fixed price in Env)
     let current_time = env.ledger().timestamp();
     let mock_price = 4100_0000000i128; // ETH is now $4100
-    
+
     client.update_price_feed(
         &oracle,
         &asset,
         &mock_price,
         &100i128, // confidence
         &current_time,
-        &(current_time + 3600) // expires at
+        &(current_time + 3600), // expires at
     );
 
     // 5. Verify Resolution logic
     // Fast forward past end_time and resolution_delay
     env.ledger().with_mut(|li| li.timestamp = 2000);
-    
+
     client.resolve_pool_from_price(&pool_id);
 
     // 6. Assert Result
