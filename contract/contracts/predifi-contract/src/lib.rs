@@ -2092,7 +2092,7 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         user.require_auth();
 
-        // 🛡️ RE-ENTRANCY GUARD: Protect against recursive withdrawal attempts 
+        // 🛡️ RE-ENTRANCY GUARD: Protect against recursive withdrawal attempts
         // during value transfer to external addresses/contracts (INV-3).
         Self::enter_reentrancy_guard(&env);
 
@@ -2242,7 +2242,6 @@ impl PredifiContract {
         Self::exit_reentrancy_guard(&env);
         result
     }
-    }
 
     /// Claim a refund from a canceled pool. Returns the refunded amount.
     /// Only available for canceled pools. User receives their full original stake.
@@ -2268,7 +2267,7 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         user.require_auth();
 
-        // 🛡️ RE-ENTRANCY GUARD: Protect against recursive withdrawal attempts 
+        // 🛡️ RE-ENTRANCY GUARD: Protect against recursive withdrawal attempts
         // during value transfer to external addresses/contracts (INV-3).
         Self::enter_reentrancy_guard(&env);
 

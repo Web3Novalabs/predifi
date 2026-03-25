@@ -42,15 +42,12 @@ fn test_price_based_pool_mock_resolution() {
     let creator = Address::generate(&env);
     let treasury = Address::generate(&env);
 
-    let ac_id = env.register_contract(
-        &Address::generate(&env),
-        dummy_access_control::DummyAccessControl,
-    );
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
     let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
-    let contract_id = env.register_contract(&Address::generate(&env), PredifiContract);
+    let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(&env, &contract_id);
 
     // Initializing the contract

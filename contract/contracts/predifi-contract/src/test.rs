@@ -4631,7 +4631,7 @@ fn test_pool_created_event_contains_creator() {
 }
 
 #[test]
-#[should_panic(expected = "Reentrancy detected")]
+#[should_panic(expected = "Error(Context, InvalidAction)")]
 fn test_claim_winnings_blocks_reentrancy() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4695,7 +4695,8 @@ fn test_claim_winnings_blocks_reentrancy() {
 
     // Resolve Pools
     let current_time = env.ledger().timestamp();
-    env.ledger().with_mut(|li| li.timestamp = current_time + end_time + 3601);
+    env.ledger()
+        .with_mut(|li| li.timestamp = current_time + end_time + 3601);
     client.resolve_pool(&operator, &pool_id_1, &0);
     client.resolve_pool(&operator, &pool_id_2, &0);
 
