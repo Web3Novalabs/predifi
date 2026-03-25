@@ -4,10 +4,8 @@
 use super::*;
 use soroban_sdk::{
     symbol_short,
-    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger},
-    token, vec, Address, BytesN, Env, String, Symbol,
     testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Events, Ledger},
-    token, Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal, Val,
+    token, vec, Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal, Val,
 };
 
 mod dummy_access_control {
@@ -5391,6 +5389,11 @@ fn test_pool_created_event_contains_creator() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
