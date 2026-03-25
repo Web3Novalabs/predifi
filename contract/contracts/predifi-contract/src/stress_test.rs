@@ -61,7 +61,7 @@ fn stress_setup(
     ac_client.grant_role(&admin, &ROLE_OPERATOR); // Grant operator too for convenience
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
-    client.init(&ac_id, &treasury, &500, &3600);
+    client.init(&ac_id, &treasury, &500, &3600, &3600u64);
 
     // Setup Token
     let token_admin = Address::generate(env);

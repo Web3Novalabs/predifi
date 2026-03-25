@@ -5,6 +5,7 @@ use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
     vec, Address, Env, String,
+    Address, Env, String,
 };
 
 mod dummy_access_control {
@@ -19,6 +20,7 @@ mod dummy_access_control {
             let key = (Symbol::new(&env, "role"), user, role);
             env.storage().instance().set(&key, &true);
         }
+
         pub fn has_role(env: Env, user: Address, role: u32) -> bool {
             let key = (Symbol::new(&env, "role"), user, role);
             env.storage().instance().get(&key).unwrap_or(false)
@@ -76,6 +78,40 @@ fn test_price_based_pool_mock_resolution() {
         &creator,
         &end_time,
         &token,
+    // 1. Setup Contracts & Identities
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let ac_id = env.register_contract(
+        &Address::generate(&env),
+        dummy_access_control::DummyAccessControl,
+    );
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    let contract_id = env.register_contract(&Address::generate(&env), PredifiContract);
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    // Initializing the contract
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+
+    // Setup Token and Whitelist Category/Token
+    let token_address = Address::generate(&env);
+    client.add_token_to_whitelist(&admin, &token_address);
+    // Note: If validate_category checks storage, we might need to register it.
+    // However, if the contract doesn't have an add_category method, we assume it's pre-registered or validation is mocked.
+    // For now, let's assume the contract handles it via mock or it just works if we don't have an interface to add.
+
+    // 2. Create a Prediction Pool
+    let end_time = 4000u64; // > min_pool_duration (3600)
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
         &2u32, // 2 outcomes: 0 (No), 1 (Yes)
         &symbol_short!("Crypto"),
         &PoolConfig {
@@ -102,6 +138,39 @@ fn test_price_based_pool_mock_resolution() {
     // Resolve: outcome 1 = "Yes" (condition met: ETH > $4000)
     client.resolve_pool(&operator, &pool_id, &1u32);
 
+    // 3. Set Price Condition (ETH > $4000)
+    let asset = symbol_short!("ETH_USD");
+    let target_price = 4000_0000000i128; // 7 decimals
+
+    client.set_price_condition(
+        &operator,
+        &pool_id,
+        &asset,
+        &target_price,
+        &1u32,   // ComparisonOp::GreaterThan
+        &100u32, // 1% tolerance
+    );
+
+    // 4. Mock the PriceFeed update
+    let current_time = env.ledger().timestamp();
+    let mock_price = 4100_0000000i128; // ETH is now $4100
+
+    client.update_price_feed(
+        &oracle,
+        &asset,
+        &mock_price,
+        &100i128, // confidence
+        &current_time,
+        &(current_time + 10000), // expires at
+    );
+
+    // 5. Verify Resolution logic
+    // Fast forward past end_time (4000) and resolution_delay (0)
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    client.resolve_pool_from_price(&pool_id);
+
+    // 6. Assert Result
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.state, MarketState::Resolved);
     assert_eq!(pool.outcome, 1);

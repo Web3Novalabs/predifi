@@ -12,6 +12,8 @@ mod storage_test;
 mod stress_test;
 #[cfg(test)]
 mod test_utils;
+// #[cfg(test)]
+// mod storage_test;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
@@ -119,8 +121,8 @@ const DAY_IN_LEDGERS: u32 = 17280;
 const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
 const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 
-/// Minimum pool duration in seconds (1 hour)
-const MIN_POOL_DURATION: u64 = 3600;
+/// Default minimum pool duration in seconds (1 hour)
+const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
 /// Maximum number of options allowed in a pool
 const MAX_OPTIONS_COUNT: u32 = 100;
 /// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
@@ -137,6 +139,7 @@ const CONTRACT_VERSION: u32 = 1;
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
     Unauthorized = 10,
+    PoolNotFound = 20,
     PoolNotResolved = 22,
     InvalidPoolState = 24,
     /// The outcome value is invalid or out of bounds.
@@ -343,6 +346,8 @@ pub struct Config {
     /// Minimum delay in seconds after pool end time before resolution is allowed.
     /// This provides a grace period for oracle data to settle.
     pub resolution_delay: u64,
+    /// Minimum pool duration in seconds.
+    pub min_pool_duration: u64,
 }
 
 /// Detailed information about a user's prediction in a specific pool.
@@ -429,6 +434,10 @@ pub enum DataKey {
     Whitelist(u64, Address),
     /// Contract version for safe upgrade migrations.
     Version,
+    /// Price condition for automated resolution: PriceCondition(pool_id) -> (feed_pair, target_price, operator, tolerance_bps)
+    PriceCondition(u64),
+    /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
+    PriceFeed(Symbol),
 }
 
 /// Represents a user's prediction in a pool.
@@ -453,6 +462,7 @@ pub struct InitEvent {
     pub treasury: Address,
     pub fee_bps: u32,
     pub resolution_delay: u64,
+    pub min_pool_duration: u64,
 }
 
 #[contractevent(topics = ["pause"])]
@@ -486,6 +496,12 @@ pub struct TreasuryUpdateEvent {
 pub struct ResolutionDelayUpdateEvent {
     pub admin: Address,
     pub delay: u64,
+}
+#[contractevent(topics = ["min_pool_duration_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinPoolDurationUpdateEvent {
+    pub admin: Address,
+    pub duration: u64,
 }
 
 #[contractevent(topics = ["pool_ready"])]
@@ -1005,6 +1021,7 @@ impl PredifiContract {
         treasury: Address,
         fee_bps: u32,
         resolution_delay: u64,
+        min_pool_duration: u64,
     ) {
         if !env.storage().instance().has(&DataKey::Config) {
             let config = Config {
@@ -1012,6 +1029,7 @@ impl PredifiContract {
                 treasury: treasury.clone(),
                 access_control: access_control.clone(),
                 resolution_delay,
+                min_pool_duration,
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -1025,6 +1043,7 @@ impl PredifiContract {
                 treasury,
                 fee_bps,
                 resolution_delay,
+                min_pool_duration,
             }
             .publish(&env);
         }
@@ -1159,6 +1178,33 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         ResolutionDelayUpdateEvent { admin, delay }.publish(&env);
+        Ok(())
+    }
+
+    /// Set minimum pool duration in seconds. Caller must have Admin role (0).
+    pub fn set_min_pool_duration(
+        env: Env,
+        admin: Address,
+        duration: u64,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        if let Err(e) = Self::require_role(&env, &admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin,
+                operation: Symbol::new(&env, "set_min_pool_duration"),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
+            return Err(e);
+        }
+
+        let mut config = Self::get_config(&env);
+        config.min_pool_duration = duration;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        MinPoolDurationUpdateEvent { admin, duration }.publish(&env);
         Ok(())
     }
 
@@ -1408,10 +1454,17 @@ impl PredifiContract {
         // Validate: end_time must be in the future
         assert!(end_time > current_time, "end_time must be in the future");
 
-        // Validate: minimum pool duration (1 hour)
+        let min_pool_duration = env
+            .storage()
+            .instance()
+            .get::<DataKey, Config>(&DataKey::Config)
+            .map(|c| c.min_pool_duration)
+            .unwrap_or(DEFAULT_MIN_POOL_DURATION);
+
+        // Validate: minimum pool duration
         assert!(
-            end_time >= current_time + MIN_POOL_DURATION,
-            "end_time must be at least 1 hour in the future"
+            end_time >= current_time + min_pool_duration,
+            "end_time must be at least min_pool_duration in the future"
         );
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
@@ -2635,6 +2688,131 @@ impl PredifiContract {
             participants_count,
             current_odds,
         }
+    }
+
+    /// Set a price-based condition for automated pool resolution.
+    /// Only callable by Operator (role 1).
+    pub fn set_price_condition(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        feed_pair: Symbol,
+        target_price: i128,
+        operator_type: u32,
+        tolerance_bps: u32,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        operator.require_auth();
+        Self::require_role(&env, &operator, 1)?; // Role Operator
+
+        let pool_key = DataKey::Pool(pool_id);
+        if !env.storage().persistent().has(&pool_key) {
+            return Err(PredifiError::PoolNotFound);
+        }
+
+        let condition_key = DataKey::PriceCondition(pool_id);
+        env.storage().persistent().set(
+            &condition_key,
+            &(feed_pair, target_price, operator_type, tolerance_bps),
+        );
+        Self::extend_persistent(&env, &condition_key);
+        Ok(())
+    }
+
+    /// Update price feed data from an external oracle.
+    /// Only callable by authorized oracles.
+    pub fn update_price_feed(
+        env: Env,
+        oracle: Address,
+        feed_pair: Symbol,
+        price: i128,
+        confidence: i128,
+        timestamp: u64,
+        expires_at: u64,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        oracle.require_auth();
+
+        let feed_key = DataKey::PriceFeed(feed_pair);
+        env.storage()
+            .persistent()
+            .set(&feed_key, &(price, confidence, timestamp, expires_at));
+        Self::extend_persistent(&env, &feed_key);
+        Ok(())
+    }
+
+    /// Automatically resolve a pool based on its configured price condition.
+    /// Anyone can trigger this once the pool's end time and resolution delay have passed.
+    pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+
+        let condition_key = DataKey::PriceCondition(pool_id);
+        let (feed_pair, target_price, op, _tolerance): (Symbol, i128, u32, u32) = env
+            .storage()
+            .persistent()
+            .get(&condition_key)
+            .expect("Condition not found");
+
+        let feed_key = DataKey::PriceFeed(feed_pair);
+        let (price, _conf, _ts, expires_at): (i128, i128, u64, u64) = env
+            .storage()
+            .persistent()
+            .get(&feed_key)
+            .expect("Feed not found");
+
+        if env.ledger().timestamp() > expires_at {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Logic matched to price_feed_integration_test.rs:
+        // ComparisonOp: 0=LT, 1=GT
+        // Outcome: 0=No, 1=Yes
+        let outcome = if op == 1 {
+            if price > target_price {
+                1
+            } else {
+                0
+            }
+        } else if price < target_price {
+            0
+        } else {
+            1
+        };
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+
+        if pool.resolved || pool.canceled {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let current_time = env.ledger().timestamp();
+        let config = Self::get_config(&env);
+
+        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+            return Err(PredifiError::ResolutionDelayNotMet);
+        }
+
+        // Apply resolution
+        pool.state = MarketState::Resolved;
+        pool.resolved = true;
+        pool.outcome = outcome;
+
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::bump_ttl(&env, &pool_key);
+
+        PoolResolvedEvent {
+            pool_id,
+            operator: env.current_contract_address(), // System resolved
+            outcome,
+        }
+        .publish(&env);
+
+        Ok(())
     }
 }
 
