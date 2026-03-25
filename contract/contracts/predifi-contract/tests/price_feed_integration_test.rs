@@ -3,7 +3,7 @@
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
-    Address, Env, String, Symbol,
+    vec, Address, Env, String, Symbol,
 };
 use predifi_contract::{PredifiContract, PredifiContractClient, PoolConfig, MarketState};
 
@@ -39,10 +39,12 @@ fn test_price_based_pool_mock_resolution() {
             metadata_url: String::from_str(&env, "ipfs://..."),
             min_stake: 100,
             max_stake: 0,
+            max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "No"), String::from_str(&env, "Yes")],
         },
     );
 

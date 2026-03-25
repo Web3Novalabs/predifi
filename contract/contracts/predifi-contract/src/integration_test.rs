@@ -5,7 +5,7 @@ use crate::test_utils::TokenTestContext;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
-    Address, Env, String,
+    vec, Address, Env, String,
 };
 
 mod dummy_access_control {
@@ -101,6 +101,7 @@ fn test_full_market_lifecycle() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -182,6 +183,7 @@ fn test_multi_user_betting_and_balance_verification() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2"), String::from_str(&env, "Outcome 3")],
         },
     );
 
@@ -257,6 +259,7 @@ fn test_market_resolution_multiple_winners() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 

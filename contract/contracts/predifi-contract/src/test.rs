@@ -5,7 +5,7 @@ use super::*;
 use soroban_sdk::{
     symbol_short,
     testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger},
-    token, Address, BytesN, Env, String, Symbol,
+    token, vec, Address, BytesN, Env, String, Symbol,
 };
 
 mod dummy_access_control {
@@ -112,6 +112,7 @@ fn test_claim_winnings() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None, &None);
@@ -177,6 +178,7 @@ fn test_referral_fee_distribution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
     // Referred user places with referrer (100 on outcome 0)
@@ -231,6 +233,7 @@ fn test_double_claim() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None, &None);
@@ -273,6 +276,7 @@ fn test_claim_unresolved() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None, &None);
@@ -311,6 +315,7 @@ fn test_multiple_pools_independent() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
     let pool_b = client.create_pool(
@@ -332,6 +337,7 @@ fn test_multiple_pools_independent() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -401,6 +407,7 @@ fn test_unauthorized_resolve_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
     let not_operator = Address::generate(&env);
@@ -448,6 +455,7 @@ fn test_oracle_can_resolve() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -504,6 +512,7 @@ fn test_unauthorized_oracle_resolve() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -746,6 +755,7 @@ fn test_paused_blocks_create_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 }
@@ -859,6 +869,7 @@ fn test_unpause_restores_functionality() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
     client.place_prediction(&user, &pool_id, &10, &1, &None, &None);
@@ -895,6 +906,7 @@ fn test_get_user_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
     let pool1 = client.create_pool(
@@ -916,6 +928,7 @@ fn test_get_user_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
     let pool2 = client.create_pool(
@@ -937,6 +950,7 @@ fn test_get_user_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -993,6 +1007,7 @@ fn test_multi_oracle_resolution() {
             required_resolutions: 2u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1061,6 +1076,7 @@ fn test_admin_can_cancel_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1109,6 +1125,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1143,6 +1160,7 @@ fn test_non_admin_non_creator_cannot_cancel() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1188,6 +1206,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 }
@@ -1380,6 +1399,7 @@ fn test_place_prediction_fails_for_non_whitelisted_token() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 }
@@ -1428,6 +1448,7 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -1484,6 +1505,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1542,6 +1564,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1595,6 +1618,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1653,6 +1677,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1710,6 +1735,7 @@ fn test_cancel_pool_refunds_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -1751,6 +1777,7 @@ fn test_cannot_cancel_resolved_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -1802,6 +1829,7 @@ fn test_cannot_resolve_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -1837,6 +1865,7 @@ fn test_cannot_predict_on_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -1885,6 +1914,7 @@ fn test_resolve_pool_before_delay() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -1938,6 +1968,7 @@ fn test_resolve_pool_after_delay() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -1983,6 +2014,7 @@ fn test_mark_pool_ready() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2028,6 +2060,7 @@ fn test_stake_below_minimum_rejected() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2064,6 +2097,7 @@ fn test_stake_above_maximum_rejected() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2101,6 +2135,7 @@ fn test_stake_at_boundaries_accepted() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2137,6 +2172,7 @@ fn test_set_stake_limits_by_operator() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2172,6 +2208,7 @@ fn test_set_stake_limits_unauthorized() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2204,6 +2241,7 @@ fn test_set_stake_limits_zero_min_stake_returns_error() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2235,6 +2273,7 @@ fn test_set_stake_limits_max_below_min_returns_error() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2268,6 +2307,7 @@ fn test_get_pools_by_category() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
     let pool1 = client.create_pool(
@@ -2286,6 +2326,7 @@ fn test_get_pools_by_category() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
     let pool2 = client.create_pool(
@@ -2304,6 +2345,7 @@ fn test_get_pools_by_category() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2438,6 +2480,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2457,6 +2500,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2585,6 +2629,7 @@ fn test_get_pool_stats() {
             max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2666,6 +2711,7 @@ fn test_pool_end_time_on_leap_day() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2705,6 +2751,7 @@ fn test_pool_end_time_at_leap_day_already_past() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 }
@@ -2739,6 +2786,7 @@ fn test_pool_end_time_spans_leap_day_resolution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2792,6 +2840,7 @@ fn test_maximum_single_stake_roundtrip() {
             initial_liquidity: // max_stake == max_amount is valid
         0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2838,6 +2887,7 @@ fn test_large_stake_winnings_split_correctly() {
             initial_liquidity: // no max_stake limit
         0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2902,6 +2952,7 @@ fn test_double_resolution_attempt() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2937,6 +2988,7 @@ fn test_many_users_rapid_claim_after_resolution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3006,6 +3058,7 @@ fn test_resolution_then_new_pool_state_isolation() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3033,6 +3086,7 @@ fn test_resolution_then_new_pool_state_isolation() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3075,6 +3129,7 @@ fn test_create_pool_rejects_zero_min_stake() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 }
@@ -3104,6 +3159,7 @@ fn test_create_pool_rejects_single_option() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0")],
         },
     );
 }
@@ -3133,6 +3189,7 @@ fn test_create_pool_rejects_excess_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2"), String::from_str(&env, "Outcome 3"), String::from_str(&env, "Outcome 4"), String::from_str(&env, "Outcome 5"), String::from_str(&env, "Outcome 6"), String::from_str(&env, "Outcome 7"), String::from_str(&env, "Outcome 8"), String::from_str(&env, "Outcome 9"), String::from_str(&env, "Outcome 10"), String::from_str(&env, "Outcome 11"), String::from_str(&env, "Outcome 12"), String::from_str(&env, "Outcome 13"), String::from_str(&env, "Outcome 14"), String::from_str(&env, "Outcome 15"), String::from_str(&env, "Outcome 16"), String::from_str(&env, "Outcome 17"), String::from_str(&env, "Outcome 18"), String::from_str(&env, "Outcome 19"), String::from_str(&env, "Outcome 20"), String::from_str(&env, "Outcome 21"), String::from_str(&env, "Outcome 22"), String::from_str(&env, "Outcome 23"), String::from_str(&env, "Outcome 24"), String::from_str(&env, "Outcome 25"), String::from_str(&env, "Outcome 26"), String::from_str(&env, "Outcome 27"), String::from_str(&env, "Outcome 28"), String::from_str(&env, "Outcome 29"), String::from_str(&env, "Outcome 30"), String::from_str(&env, "Outcome 31"), String::from_str(&env, "Outcome 32"), String::from_str(&env, "Outcome 33"), String::from_str(&env, "Outcome 34"), String::from_str(&env, "Outcome 35"), String::from_str(&env, "Outcome 36"), String::from_str(&env, "Outcome 37"), String::from_str(&env, "Outcome 38"), String::from_str(&env, "Outcome 39"), String::from_str(&env, "Outcome 40"), String::from_str(&env, "Outcome 41"), String::from_str(&env, "Outcome 42"), String::from_str(&env, "Outcome 43"), String::from_str(&env, "Outcome 44"), String::from_str(&env, "Outcome 45"), String::from_str(&env, "Outcome 46"), String::from_str(&env, "Outcome 47"), String::from_str(&env, "Outcome 48"), String::from_str(&env, "Outcome 49"), String::from_str(&env, "Outcome 50"), String::from_str(&env, "Outcome 51"), String::from_str(&env, "Outcome 52"), String::from_str(&env, "Outcome 53"), String::from_str(&env, "Outcome 54"), String::from_str(&env, "Outcome 55"), String::from_str(&env, "Outcome 56"), String::from_str(&env, "Outcome 57"), String::from_str(&env, "Outcome 58"), String::from_str(&env, "Outcome 59"), String::from_str(&env, "Outcome 60"), String::from_str(&env, "Outcome 61"), String::from_str(&env, "Outcome 62"), String::from_str(&env, "Outcome 63"), String::from_str(&env, "Outcome 64"), String::from_str(&env, "Outcome 65"), String::from_str(&env, "Outcome 66"), String::from_str(&env, "Outcome 67"), String::from_str(&env, "Outcome 68"), String::from_str(&env, "Outcome 69"), String::from_str(&env, "Outcome 70"), String::from_str(&env, "Outcome 71"), String::from_str(&env, "Outcome 72"), String::from_str(&env, "Outcome 73"), String::from_str(&env, "Outcome 74"), String::from_str(&env, "Outcome 75"), String::from_str(&env, "Outcome 76"), String::from_str(&env, "Outcome 77"), String::from_str(&env, "Outcome 78"), String::from_str(&env, "Outcome 79"), String::from_str(&env, "Outcome 80"), String::from_str(&env, "Outcome 81"), String::from_str(&env, "Outcome 82"), String::from_str(&env, "Outcome 83"), String::from_str(&env, "Outcome 84"), String::from_str(&env, "Outcome 85"), String::from_str(&env, "Outcome 86"), String::from_str(&env, "Outcome 87"), String::from_str(&env, "Outcome 88"), String::from_str(&env, "Outcome 89"), String::from_str(&env, "Outcome 90"), String::from_str(&env, "Outcome 91"), String::from_str(&env, "Outcome 92"), String::from_str(&env, "Outcome 93"), String::from_str(&env, "Outcome 94"), String::from_str(&env, "Outcome 95"), String::from_str(&env, "Outcome 96"), String::from_str(&env, "Outcome 97"), String::from_str(&env, "Outcome 98"), String::from_str(&env, "Outcome 99"), String::from_str(&env, "Outcome 100")],
         },
     );
 }
@@ -3162,6 +3219,7 @@ fn test_create_pool_accepts_maximum_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2"), String::from_str(&env, "Outcome 3"), String::from_str(&env, "Outcome 4"), String::from_str(&env, "Outcome 5"), String::from_str(&env, "Outcome 6"), String::from_str(&env, "Outcome 7"), String::from_str(&env, "Outcome 8"), String::from_str(&env, "Outcome 9"), String::from_str(&env, "Outcome 10"), String::from_str(&env, "Outcome 11"), String::from_str(&env, "Outcome 12"), String::from_str(&env, "Outcome 13"), String::from_str(&env, "Outcome 14"), String::from_str(&env, "Outcome 15"), String::from_str(&env, "Outcome 16"), String::from_str(&env, "Outcome 17"), String::from_str(&env, "Outcome 18"), String::from_str(&env, "Outcome 19"), String::from_str(&env, "Outcome 20"), String::from_str(&env, "Outcome 21"), String::from_str(&env, "Outcome 22"), String::from_str(&env, "Outcome 23"), String::from_str(&env, "Outcome 24"), String::from_str(&env, "Outcome 25"), String::from_str(&env, "Outcome 26"), String::from_str(&env, "Outcome 27"), String::from_str(&env, "Outcome 28"), String::from_str(&env, "Outcome 29"), String::from_str(&env, "Outcome 30"), String::from_str(&env, "Outcome 31"), String::from_str(&env, "Outcome 32"), String::from_str(&env, "Outcome 33"), String::from_str(&env, "Outcome 34"), String::from_str(&env, "Outcome 35"), String::from_str(&env, "Outcome 36"), String::from_str(&env, "Outcome 37"), String::from_str(&env, "Outcome 38"), String::from_str(&env, "Outcome 39"), String::from_str(&env, "Outcome 40"), String::from_str(&env, "Outcome 41"), String::from_str(&env, "Outcome 42"), String::from_str(&env, "Outcome 43"), String::from_str(&env, "Outcome 44"), String::from_str(&env, "Outcome 45"), String::from_str(&env, "Outcome 46"), String::from_str(&env, "Outcome 47"), String::from_str(&env, "Outcome 48"), String::from_str(&env, "Outcome 49"), String::from_str(&env, "Outcome 50"), String::from_str(&env, "Outcome 51"), String::from_str(&env, "Outcome 52"), String::from_str(&env, "Outcome 53"), String::from_str(&env, "Outcome 54"), String::from_str(&env, "Outcome 55"), String::from_str(&env, "Outcome 56"), String::from_str(&env, "Outcome 57"), String::from_str(&env, "Outcome 58"), String::from_str(&env, "Outcome 59"), String::from_str(&env, "Outcome 60"), String::from_str(&env, "Outcome 61"), String::from_str(&env, "Outcome 62"), String::from_str(&env, "Outcome 63"), String::from_str(&env, "Outcome 64"), String::from_str(&env, "Outcome 65"), String::from_str(&env, "Outcome 66"), String::from_str(&env, "Outcome 67"), String::from_str(&env, "Outcome 68"), String::from_str(&env, "Outcome 69"), String::from_str(&env, "Outcome 70"), String::from_str(&env, "Outcome 71"), String::from_str(&env, "Outcome 72"), String::from_str(&env, "Outcome 73"), String::from_str(&env, "Outcome 74"), String::from_str(&env, "Outcome 75"), String::from_str(&env, "Outcome 76"), String::from_str(&env, "Outcome 77"), String::from_str(&env, "Outcome 78"), String::from_str(&env, "Outcome 79"), String::from_str(&env, "Outcome 80"), String::from_str(&env, "Outcome 81"), String::from_str(&env, "Outcome 82"), String::from_str(&env, "Outcome 83"), String::from_str(&env, "Outcome 84"), String::from_str(&env, "Outcome 85"), String::from_str(&env, "Outcome 86"), String::from_str(&env, "Outcome 87"), String::from_str(&env, "Outcome 88"), String::from_str(&env, "Outcome 89"), String::from_str(&env, "Outcome 90"), String::from_str(&env, "Outcome 91"), String::from_str(&env, "Outcome 92"), String::from_str(&env, "Outcome 93"), String::from_str(&env, "Outcome 94"), String::from_str(&env, "Outcome 95"), String::from_str(&env, "Outcome 96"), String::from_str(&env, "Outcome 97"), String::from_str(&env, "Outcome 98"), String::from_str(&env, "Outcome 99")],
         },
     );
 
@@ -3197,6 +3255,7 @@ fn test_place_prediction_rejects_out_of_bounds_outcome() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -3232,6 +3291,7 @@ fn test_place_prediction_rejects_outcome_equal_to_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2"), String::from_str(&env, "Outcome 3"), String::from_str(&env, "Outcome 4")],
         },
     );
 
@@ -3267,6 +3327,7 @@ fn test_place_prediction_all_valid_outcomes() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2"), String::from_str(&env, "Outcome 3"), String::from_str(&env, "Outcome 4"), String::from_str(&env, "Outcome 5"), String::from_str(&env, "Outcome 6"), String::from_str(&env, "Outcome 7"), String::from_str(&env, "Outcome 8"), String::from_str(&env, "Outcome 9")],
         },
     );
 
@@ -3312,6 +3373,7 @@ fn test_stakes_length_consistency_with_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2"), String::from_str(&env, "Outcome 3"), String::from_str(&env, "Outcome 4"), String::from_str(&env, "Outcome 5"), String::from_str(&env, "Outcome 6")],
         },
     );
 
@@ -3374,6 +3436,7 @@ fn test_outcome_bounds_with_maximum_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2"), String::from_str(&env, "Outcome 3"), String::from_str(&env, "Outcome 4"), String::from_str(&env, "Outcome 5"), String::from_str(&env, "Outcome 6"), String::from_str(&env, "Outcome 7"), String::from_str(&env, "Outcome 8"), String::from_str(&env, "Outcome 9"), String::from_str(&env, "Outcome 10"), String::from_str(&env, "Outcome 11"), String::from_str(&env, "Outcome 12"), String::from_str(&env, "Outcome 13"), String::from_str(&env, "Outcome 14"), String::from_str(&env, "Outcome 15"), String::from_str(&env, "Outcome 16"), String::from_str(&env, "Outcome 17"), String::from_str(&env, "Outcome 18"), String::from_str(&env, "Outcome 19"), String::from_str(&env, "Outcome 20"), String::from_str(&env, "Outcome 21"), String::from_str(&env, "Outcome 22"), String::from_str(&env, "Outcome 23"), String::from_str(&env, "Outcome 24"), String::from_str(&env, "Outcome 25"), String::from_str(&env, "Outcome 26"), String::from_str(&env, "Outcome 27"), String::from_str(&env, "Outcome 28"), String::from_str(&env, "Outcome 29"), String::from_str(&env, "Outcome 30"), String::from_str(&env, "Outcome 31"), String::from_str(&env, "Outcome 32"), String::from_str(&env, "Outcome 33"), String::from_str(&env, "Outcome 34"), String::from_str(&env, "Outcome 35"), String::from_str(&env, "Outcome 36"), String::from_str(&env, "Outcome 37"), String::from_str(&env, "Outcome 38"), String::from_str(&env, "Outcome 39"), String::from_str(&env, "Outcome 40"), String::from_str(&env, "Outcome 41"), String::from_str(&env, "Outcome 42"), String::from_str(&env, "Outcome 43"), String::from_str(&env, "Outcome 44"), String::from_str(&env, "Outcome 45"), String::from_str(&env, "Outcome 46"), String::from_str(&env, "Outcome 47"), String::from_str(&env, "Outcome 48"), String::from_str(&env, "Outcome 49"), String::from_str(&env, "Outcome 50"), String::from_str(&env, "Outcome 51"), String::from_str(&env, "Outcome 52"), String::from_str(&env, "Outcome 53"), String::from_str(&env, "Outcome 54"), String::from_str(&env, "Outcome 55"), String::from_str(&env, "Outcome 56"), String::from_str(&env, "Outcome 57"), String::from_str(&env, "Outcome 58"), String::from_str(&env, "Outcome 59"), String::from_str(&env, "Outcome 60"), String::from_str(&env, "Outcome 61"), String::from_str(&env, "Outcome 62"), String::from_str(&env, "Outcome 63"), String::from_str(&env, "Outcome 64"), String::from_str(&env, "Outcome 65"), String::from_str(&env, "Outcome 66"), String::from_str(&env, "Outcome 67"), String::from_str(&env, "Outcome 68"), String::from_str(&env, "Outcome 69"), String::from_str(&env, "Outcome 70"), String::from_str(&env, "Outcome 71"), String::from_str(&env, "Outcome 72"), String::from_str(&env, "Outcome 73"), String::from_str(&env, "Outcome 74"), String::from_str(&env, "Outcome 75"), String::from_str(&env, "Outcome 76"), String::from_str(&env, "Outcome 77"), String::from_str(&env, "Outcome 78"), String::from_str(&env, "Outcome 79"), String::from_str(&env, "Outcome 80"), String::from_str(&env, "Outcome 81"), String::from_str(&env, "Outcome 82"), String::from_str(&env, "Outcome 83"), String::from_str(&env, "Outcome 84"), String::from_str(&env, "Outcome 85"), String::from_str(&env, "Outcome 86"), String::from_str(&env, "Outcome 87"), String::from_str(&env, "Outcome 88"), String::from_str(&env, "Outcome 89"), String::from_str(&env, "Outcome 90"), String::from_str(&env, "Outcome 91"), String::from_str(&env, "Outcome 92"), String::from_str(&env, "Outcome 93"), String::from_str(&env, "Outcome 94"), String::from_str(&env, "Outcome 95"), String::from_str(&env, "Outcome 96"), String::from_str(&env, "Outcome 97"), String::from_str(&env, "Outcome 98"), String::from_str(&env, "Outcome 99")],
         },
     );
 
@@ -3419,6 +3482,7 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 }
@@ -3449,6 +3513,7 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3481,6 +3546,7 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 }
@@ -3509,6 +3575,7 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3543,6 +3610,7 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -3579,6 +3647,7 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3639,6 +3708,7 @@ fn test_unauthorized_admin_op_does_not_mutate_state() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
     let _ = new_pool; // pool creation succeeds → state is healthy
@@ -3669,6 +3739,7 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3712,6 +3783,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
     // ── Pool 1 ──
@@ -3731,6 +3803,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
     // ── Pool 2 ──
@@ -3750,6 +3823,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
     // ── Pool 3 ──
@@ -3769,6 +3843,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
     // ── Pool 4 ──
@@ -3788,6 +3863,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3880,6 +3956,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3899,6 +3976,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3958,6 +4036,7 @@ fn test_all_bettors_on_winning_side() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -4009,6 +4088,7 @@ fn test_no_bettor_on_winning_side() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1"), String::from_str(&env, "Outcome 2")],
         },
     );
 
@@ -4217,6 +4297,7 @@ fn create_test_pool(
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     )
 }
@@ -4449,6 +4530,7 @@ fn test_create_pool_with_max_total_stake() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -4479,9 +4561,85 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.max_total_stake, 0);
+}
+
+#[test]
+fn test_outcome_descriptions_stored_and_retrieved() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let descriptions = vec![
+        &env,
+        String::from_str(&env, "Team A wins"),
+        String::from_str(&env, "Draw"),
+        String::from_str(&env, "Team B wins"),
+    ];
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Match outcome"),
+            metadata_url: String::from_str(&env, "ipfs://match"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: descriptions.clone(),
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.outcome_descriptions.len(), 3);
+    assert_eq!(pool.outcome_descriptions.get(0).unwrap(), String::from_str(&env, "Team A wins"));
+    assert_eq!(pool.outcome_descriptions.get(1).unwrap(), String::from_str(&env, "Draw"));
+    assert_eq!(pool.outcome_descriptions.get(2).unwrap(), String::from_str(&env, "Team B wins"));
+}
+
+#[test]
+#[should_panic(expected = "outcome_descriptions length must equal options_count")]
+fn test_outcome_descriptions_length_mismatch_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Mismatch test"),
+            metadata_url: String::from_str(&env, "ipfs://mismatch"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            // Only 2 descriptions for 3 outcomes — should panic
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
 }
