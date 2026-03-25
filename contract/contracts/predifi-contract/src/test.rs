@@ -5495,6 +5495,7 @@ fn test_claim_winnings_blocks_reentrancy() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: soroban_sdk::Vec::new(&env),
         },
     );
 
@@ -5515,6 +5516,7 @@ fn test_claim_winnings_blocks_reentrancy() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: soroban_sdk::Vec::new(&env),
         },
     );
 
