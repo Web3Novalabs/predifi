@@ -128,6 +128,9 @@ const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 /// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
 const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 
+/// Current contract version. Bump on each release to support safe migrations.
+const CONTRACT_VERSION: u32 = 1;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
@@ -410,6 +413,8 @@ pub enum DataKey {
     Referrer(Address, u64),
     /// User whitelist for private pools: Whitelist(pool_id, user_address)
     Whitelist(u64, Address),
+    /// Contract version for safe upgrade migrations.
+    Version,
 }
 
 /// Represents a user's prediction in a pool.
@@ -994,6 +999,7 @@ impl PredifiContract {
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
+            env.storage().instance().set(&DataKey::Version, &CONTRACT_VERSION);
             Self::extend_instance(&env);
 
             InitEvent {
@@ -1058,6 +1064,15 @@ impl PredifiContract {
     /// `true` if the contract is paused, `false` otherwise.
     pub fn is_contract_paused(env: Env) -> bool {
         Self::is_paused(&env)
+    }
+
+    /// Return the contract version stored during initialization.
+    /// Returns 0 if the contract was deployed before version tracking was added.
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or(0u32)
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
