@@ -807,15 +807,11 @@ pub struct PredifiContract;
 impl PredifiContract {
     // ====== Pure Helper Functions (side-effect free, verifiable) ======
 
-    /// Validate that a category symbol is in the allowed list.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `category` - The category symbol to validate
-    ///
-    /// # Returns
-    /// `true` if the category is valid, `false` otherwise
-    fn validate_category(env: &Env, category: &Symbol) -> bool {
+    /// Validate that a category symbol is in the allowed list, falling back to CATEGORY_OTHER if not.
+    /// Canonical categories are defined as constants at the top of the file.
+    /// Any non-matching category is normalized to CATEGORY_OTHER to ensure compatibility
+    /// with off-chain analytics while allowing specialized categories in metadata if needed.
+    fn validate_category(env: &Env, category: &Symbol) -> Symbol {
         let mut allowed = Vec::new(env);
         allowed.push_back(CATEGORY_SPORTS);
         allowed.push_back(CATEGORY_FINANCE);
@@ -828,11 +824,11 @@ impl PredifiContract {
         for i in 0..allowed.len() {
             if let Some(allowed_cat) = allowed.get(i) {
                 if &allowed_cat == category {
-                    return true;
+                    return category.clone();
                 }
             }
         }
-        false
+        CATEGORY_OTHER
     }
 
     /// Pure: Check if pool state transition is valid
@@ -1439,11 +1435,8 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         creator.require_auth();
 
-        // Validate: category must be in the allowed list
-        assert!(
-            Self::validate_category(&env, &category),
-            "category must be one of the allowed categories"
-        );
+        // Validate: category must be in the allowed list, else fallback to CATEGORY_OTHER
+        let normalized_category = Self::validate_category(&env, &category);
 
         // Validate: token must be on the allowed betting whitelist
         if !Self::is_token_whitelisted(&env, &token) {
@@ -1537,7 +1530,7 @@ impl PredifiContract {
             outcome: 0,
             token: token.clone(),
             total_stake: config.initial_liquidity,
-            category: category.clone(),
+            category: normalized_category,
             description: config.description.clone(),
             metadata_url: config.metadata_url.clone(),
             options_count,
