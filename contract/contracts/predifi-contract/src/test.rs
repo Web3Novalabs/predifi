@@ -4967,8 +4967,8 @@ fn create_test_pool(
             whitelist_key: None,
             outcome_descriptions: vec![
                 &env,
-                String::from_str(&env, "Outcome 0"),
-                String::from_str(&env, "Outcome 1"),
+                String::from_str(env, "Outcome 0"),
+                String::from_str(env, "Outcome 1"),
             ],
         },
     )

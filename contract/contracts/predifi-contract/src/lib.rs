@@ -1516,7 +1516,7 @@ impl PredifiContract {
         );
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
-        if config.outcome_descriptions.len() > 0 {
+        if !config.outcome_descriptions.is_empty() {
             assert!(
                 config.outcome_descriptions.len() == options_count,
                 "outcome_descriptions length must equal options_count"
