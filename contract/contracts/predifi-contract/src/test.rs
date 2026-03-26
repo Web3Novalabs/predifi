@@ -413,6 +413,41 @@ fn test_multiple_pools_independent() {
     assert_eq!(w2, 0);
 }
 
+#[test]
+fn test_invalid_category_fallback() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "InvalidCat"),
+        &PoolConfig {
+            description: String::from_str(&env, "Invalid Category Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.category, CATEGORY_OTHER);
+}
+
 // ── Access control tests ─────────────────────────────────────────────────────
 
 #[test]
