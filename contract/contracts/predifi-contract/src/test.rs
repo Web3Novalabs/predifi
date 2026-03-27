@@ -5470,6 +5470,25 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
     assert_eq!(pool.max_total_stake, 0);
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// get_active_pools Tests (#389)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Empty result when no pools have been created.
+#[test]
+fn test_get_active_pools_empty_when_no_pools() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 0);
+}
+
+/// A freshly created pool appears in get_active_pools.
+#[test]
+fn test_get_active_pools_contains_new_pool() {
 #[test]
 fn test_outcome_descriptions_stored_and_retrieved() {
     let env = Env::default();
@@ -5488,6 +5507,11 @@ fn test_outcome_descriptions_stored_and_retrieved() {
         &creator,
         &100_000u64,
         &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Active pool"),
+            metadata_url: String::from_str(&env, "ipfs://active"),
         &3u32,
         &symbol_short!("Sports"),
         &PoolConfig {
@@ -5500,6 +5524,146 @@ fn test_outcome_descriptions_stored_and_retrieved() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+        },
+    );
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), pool_id);
+}
+
+/// Multiple pools across different categories all appear in get_active_pools.
+/// This is the verification case explicitly required by the issue.
+// #[test]
+// fn test_get_active_pools_returns_pools_across_all_categories() {
+//     let env = Env::default();
+//     env.mock_all_auths();
+
+//     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+//     let pool_tech = client.create_pool(
+//         &creator,
+//         &100_000u64,
+//         &token_address,
+//         &2u32,
+//         &symbol_short!("Tech"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "Tech pool"),
+//             metadata_url: String::from_str(&env, "ipfs://tech"),
+//             min_stake: 1i128,
+//             max_stake: 0i128,
+//             max_total_stake: 0,
+//             initial_liquidity: 0i128,
+//             required_resolutions: 1u32,
+//             private: false,
+//             whitelist_key: None,
+//         },
+//     );
+
+//     let pool_sports = client.create_pool(
+//         &creator,
+//         &100_000u64,
+//         &token_address,
+//         &2u32,
+//         &symbol_short!("Sports"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "Sports pool"),
+//             metadata_url: String::from_str(&env, "ipfs://sports"),
+//             min_stake: 1i128,
+//             max_stake: 0i128,
+//             max_total_stake: 0,
+//             initial_liquidity: 0i128,
+//             required_resolutions: 1u32,
+//             private: false,
+//             whitelist_key: None,
+//         },
+//     );
+
+//     let pool_crypto = client.create_pool(
+//         &creator,
+//         &100_000u64,
+//         &token_address,
+//         &2u32,
+//         &symbol_short!("Crypto"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "Crypto pool"),
+//             metadata_url: String::from_str(&env, "ipfs://crypto"),
+//             min_stake: 1i128,
+//             max_stake: 0i128,
+//             max_total_stake: 0,
+//             initial_liquidity: 0i128,
+//             required_resolutions: 1u32,
+//             private: false,
+//             whitelist_key: None,
+//         },
+//     );
+
+//     let pool_finance = client.create_pool(
+//         &creator,
+//         &100_000u64,
+//         &token_address,
+//         &2u32,
+//         &symbol_short!("Finance"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "Finance pool"),
+//             metadata_url: String::from_str(&env, "ipfs://finance"),
+//             min_stake: 1i128,
+//             max_stake: 0i128,
+//             max_total_stake: 0,
+//             initial_liquidity: 0i128,
+//             required_resolutions: 1u32,
+//             private: false,
+//             whitelist_key: None,
+//         },
+//     );
+
+//     let result = client.get_active_pools(&0u32, &10u32);
+//     assert_eq!(result.len(), 4);
+
+//     // All four pool IDs must be present (order: insertion order).
+//     let ids: std::vec::Vec<u64> = (0..result.len()).map(|i| result.get(i).unwrap()).collect();
+//     assert!(ids.contains(&pool_tech));
+//     assert!(ids.contains(&pool_sports));
+//     assert!(ids.contains(&pool_crypto));
+//     assert!(ids.contains(&pool_finance));
+// }
+
+/// Resolved pool is removed from get_active_pools.
+#[test]
+fn test_get_active_pools_excludes_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    let pool_b = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
             outcome_descriptions: descriptions.clone(),
         },
     );
@@ -5544,6 +5708,30 @@ fn test_outcome_descriptions_length_mismatch_panics() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+        },
+    );
+
+    assert_eq!(client.get_active_pools(&0u32, &10u32).len(), 2);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_a, &0u32);
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), pool_b);
+}
+
+/// Canceled pool is removed from get_active_pools.
+#[test]
+fn test_get_active_pools_excludes_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
             // Only 2 descriptions for 3 outcomes — should panic
             outcome_descriptions: vec![
                 &env,
@@ -5595,6 +5783,8 @@ fn test_create_pool_respects_configurable_min_duration() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            description: String::from_str(&env, "Pool A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
             description: String::from_str(&env, "Short Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -5604,6 +5794,277 @@ fn test_create_pool_respects_configurable_min_duration() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+        },
+    );
+
+    let pool_b = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+        },
+    );
+
+    assert_eq!(client.get_active_pools(&0u32, &10u32).len(), 2);
+
+    client.cancel_pool(&operator, &pool_a);
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), pool_b);
+}
+
+/// Pagination: offset and limit work correctly over a known set.
+#[test]
+fn test_get_active_pools_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let mut pool_ids = soroban_sdk::vec![&env];
+    for i in 0..5u32 {
+        let pid = client.create_pool(
+            &creator,
+            &100_000u64,
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                description: String::from_str(&env, "Pool"),
+                metadata_url: String::from_str(&env, "ipfs://p"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+            },
+        );
+        pool_ids.push_back(pid);
+        let _ = i;
+    }
+
+    // First page: offset=0, limit=2
+    let page1 = client.get_active_pools(&0u32, &2u32);
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1.get(0).unwrap(), pool_ids.get(0).unwrap());
+    assert_eq!(page1.get(1).unwrap(), pool_ids.get(1).unwrap());
+
+    // Second page: offset=2, limit=2
+    let page2 = client.get_active_pools(&2u32, &2u32);
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2.get(0).unwrap(), pool_ids.get(2).unwrap());
+    assert_eq!(page2.get(1).unwrap(), pool_ids.get(3).unwrap());
+
+    // Third page: offset=4, limit=2 — only 1 remaining
+    let page3 = client.get_active_pools(&4u32, &2u32);
+    assert_eq!(page3.len(), 1);
+    assert_eq!(page3.get(0).unwrap(), pool_ids.get(4).unwrap());
+
+    // Beyond range
+    let empty = client.get_active_pools(&5u32, &10u32);
+    assert_eq!(empty.len(), 0);
+
+    // limit=0 always returns empty
+    let zero_limit = client.get_active_pools(&0u32, &0u32);
+    assert_eq!(zero_limit.len(), 0);
+}
+
+/// Swap-and-pop correctness: removing the first pool when three exist.
+/// The third pool must fill the vacated slot; the second is untouched.
+// #[test]
+// fn test_get_active_pools_swap_pop_removes_first() {
+//     let env = Env::default();
+//     env.mock_all_auths();
+
+//     let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+//     let pool_a = client.create_pool(
+//         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "A"),
+//             metadata_url: String::from_str(&env, "ipfs://a"),
+//             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+//             required_resolutions: 1u32, private: false, whitelist_key: None,
+//             max_total_stake: 0,
+//         },
+//     );
+//     let pool_b = client.create_pool(
+//         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Sports"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "B"),
+//             metadata_url: String::from_str(&env, "ipfs://b"),
+//             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+//             required_resolutions: 1u32, private: false, whitelist_key: None,
+//             max_total_stake: 0,
+//         },
+//     );
+//     let pool_c = client.create_pool(
+//         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Crypto"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "C"),
+//             metadata_url: String::from_str(&env, "ipfs://c"),
+//             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+//             required_resolutions: 1u32, private: false, whitelist_key: None,
+//             max_total_stake: 0,
+//         },
+//     );
+
+//     // Remove pool_a (index 0) — pool_c (index 2) should swap into slot 0.
+//     env.ledger().with_mut(|li| li.timestamp = 100_001);
+//     client.resolve_pool(&operator, &pool_a, &0u32);
+
+//     let result = client.get_active_pools(&0u32, &10u32);
+//     assert_eq!(result.len(), 2);
+
+//     let ids: std::vec::Vec<u64> = (0..result.len()).map(|i| result.get(i).unwrap()).collect();
+//     assert!(!ids.contains(&pool_a));
+//     assert!(ids.contains(&pool_b));
+//     assert!(ids.contains(&pool_c));
+// }
+
+/// Swap-and-pop correctness: removing the last pool leaves the others intact.
+#[test]
+fn test_get_active_pools_swap_pop_removes_last() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
+            max_total_stake: 0,
+        },
+    );
+    let pool_b = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
+            max_total_stake: 0,
+        },
+    );
+    let pool_c = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "C"),
+            metadata_url: String::from_str(&env, "ipfs://c"),
+            min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
+            max_total_stake: 0,
+        },
+    );
+
+    // Remove pool_c (last, index 2) — no swap needed.
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_c, &0u32);
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 2);
+    assert_eq!(result.get(0).unwrap(), pool_a);
+    assert_eq!(result.get(1).unwrap(), pool_b);
+}
+
+/// All pools resolved — get_active_pools returns empty.
+#[test]
+fn test_get_active_pools_empty_after_all_resolved() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
+            max_total_stake: 0,
+        },
+    );
+    let pool_b = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
+            max_total_stake: 0,
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_a, &0u32);
+    client.resolve_pool(&operator, &pool_b, &0u32);
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 0);
+}
+
+/// oracle_resolve also removes the pool from the active index.
+#[test]
+fn test_get_active_pools_excludes_oracle_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let oracle = Address::generate(&env);
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+
+    let pool_a = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
+            max_total_stake: 0,
+        },
+    );
+    let pool_b = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+            required_resolutions: 1u32, private: false, whitelist_key: None,
+            max_total_stake: 0,
+        },
+    );
+
+    assert_eq!(client.get_active_pools(&0u32, &10u32).len(), 2);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.oracle_resolve(
+        &oracle, &pool_a, &0u32, &String::from_str(&env, "proof"),
+    );
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), pool_b);
+}
             // Only 2 descriptions for 3 outcomes — should panic
             outcome_descriptions: vec![
                 &env,

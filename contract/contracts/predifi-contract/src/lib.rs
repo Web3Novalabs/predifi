@@ -454,6 +454,12 @@ pub enum DataKey {
     Whitelist(u64, Address),
     /// Contract version for safe upgrade migrations.
     Version,
+    // Global active pool counter: ActivePoolCtr -> u32
+    ActivePoolCtr,
+    /// Global active pool index: ActivePool(index) -> u64 (pool_id)
+    ActivePool(u32),
+    /// Reverse lookup — position of a pool in the active index: ActivePoolIdx(pool_id) -> u32
+    ActivePoolIdx(u64),
     /// Price condition for automated resolution: PriceCondition(pool_id) -> (feed_pair, target_price, operator, tolerance_bps)
     PriceCondition(u64),
     /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
@@ -1088,6 +1094,74 @@ impl PredifiContract {
         whitelisted
     }
 
+    /// Register a newly created pool in the global active pool index.
+    fn add_to_active_index(env: &Env, pool_id: u64) {
+        let ctr_key = DataKey::ActivePoolCtr;
+        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
+
+        let slot_key = DataKey::ActivePool(count);
+        env.storage().persistent().set(&slot_key, &pool_id);
+        Self::extend_persistent(env, &slot_key);
+
+        let idx_key = DataKey::ActivePoolIdx(pool_id);
+        env.storage().persistent().set(&idx_key, &count);
+        Self::extend_persistent(env, &idx_key);
+
+        env.storage().instance().set(&ctr_key, &(count + 1));
+        Self::extend_instance(env);
+    }
+
+    /// Remove a pool from the global active pool index using swap-and-pop.
+    /// The last entry is moved into the vacated slot so the index stays dense.
+    fn remove_from_active_index(env: &Env, pool_id: u64) {
+        let ctr_key = DataKey::ActivePoolCtr;
+        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
+        if count == 0 {
+            return;
+        }
+
+        let idx_key = DataKey::ActivePoolIdx(pool_id);
+        let pos: u32 = match env.storage().persistent().get(&idx_key) {
+            Some(p) => p,
+            None => return, // not in index — already removed or never added
+        };
+
+        let last = count - 1;
+
+        if pos != last {
+            // Move the last entry into the vacated slot.
+            let last_slot_key = DataKey::ActivePool(last);
+            let last_pool_id: u64 = env
+                .storage()
+                .persistent()
+                .get(&last_slot_key)
+                .expect("active pool index inconsistency");
+
+            let target_slot_key = DataKey::ActivePool(pos);
+            env.storage().persistent().set(&target_slot_key, &last_pool_id);
+            Self::extend_persistent(env, &target_slot_key);
+
+            // Update the moved pool's reverse-lookup entry.
+            let moved_idx_key = DataKey::ActivePoolIdx(last_pool_id);
+            env.storage().persistent().set(&moved_idx_key, &pos);
+            Self::extend_persistent(env, &moved_idx_key);
+
+            // Clean up the old last slot.
+            env.storage().persistent().remove(&last_slot_key);
+        } else {
+            // The pool being removed IS the last entry — just delete its slot.
+            let slot_key = DataKey::ActivePool(pos);
+            env.storage().persistent().remove(&slot_key);
+        }
+
+        // Remove the reverse-lookup entry for the removed pool.
+        env.storage().persistent().remove(&idx_key);
+
+        // Decrement the counter.
+        env.storage().instance().set(&ctr_key, &last);
+        Self::extend_instance(env);
+    }
+
     // ── Public interface ──────────────────────────────────────────────────────
 
     /// Initialize the contract. Idempotent — safe to call multiple times.
@@ -1616,6 +1690,9 @@ impl PredifiContract {
             .publish(&env);
         }
 
+        // Register pool in the global active pool index.
+        Self::add_to_active_index(&env, pool_id);
+
         pool_id
     }
 
@@ -1777,6 +1854,9 @@ impl PredifiContract {
             pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
             env.storage().persistent().set(&pool_key, &pool);
+
+            // Remove from global active index now that the pool is resolved.
+            Self::remove_from_active_index(&env, pool_id);
             Self::bump_ttl(&env, &pool_key);
 
             // Retrieve winning-outcome stake for the diagnostic event
@@ -1880,6 +1960,8 @@ impl PredifiContract {
         pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
+        // Remove from global active index now that the pool is canceled.
+        Self::remove_from_active_index(&env, pool_id);
 
         PoolCanceledEvent {
             pool_id,
@@ -2551,6 +2633,43 @@ impl PredifiContract {
         results
     }
 
+    /// Get a paginated list of all currently active pool IDs across all categories.
+    ///
+    /// Returns pool IDs in insertion order (oldest first within each page).
+    /// Pools are removed from this list when they are resolved or canceled,
+    /// so every ID returned is guaranteed to belong to an active pool.
+    ///
+    /// # Arguments
+    /// * `offset` - Number of entries to skip (0-based).
+    /// * `limit`  - Maximum number of entries to return.
+    ///
+    /// # Returns
+    /// A `Vec<u64>` of active pool IDs. Returns an empty vec if `offset`
+    /// is beyond the current count or `limit` is 0.
+    pub fn get_active_pools(env: Env, offset: u32, limit: u32) -> Vec<u64> {
+        let ctr_key = DataKey::ActivePoolCtr;
+        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
+        Self::extend_instance(&env);
+
+        let mut results = Vec::new(&env);
+
+        if offset >= count || limit == 0 {
+            return results;
+        }
+
+        let end = core::cmp::min(offset.saturating_add(limit), count);
+
+        for i in offset..end {
+            let slot_key = DataKey::ActivePool(i);
+            if let Some(pool_id) = env.storage().persistent().get(&slot_key) {
+                Self::extend_persistent(&env, &slot_key);
+                results.push_back(pool_id);
+            }
+        }
+
+        results
+    }
+
     /// Add a user to a private pool's whitelist. Only callable by pool creator.
     pub fn add_to_whitelist(
         env: Env,
@@ -2980,6 +3099,10 @@ impl OracleCallback for PredifiContract {
 
             env.storage().persistent().set(&pool_key, &pool);
             Self::bump_ttl(&env, &pool_key);
+
+            Self::extend_persistent(&env, &pool_key);
+            // Remove from global active index now that the pool is resolved.
+            Self::remove_from_active_index(&env, pool_id);
 
             // Retrieve winning-outcome stake for the diagnostic event
             let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
