@@ -1,10 +1,15 @@
 #![cfg(test)]
 #![allow(deprecated)]
 
+extern crate std;
+
 use super::*;
 use soroban_sdk::{
     symbol_short,
-    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Events, Ledger},
+    testutils::{
+        storage::Instance as _, storage::Persistent as _, Address as _, AuthorizedFunction,
+        AuthorizedInvocation, Events, Ledger,
+    },
     token, vec, Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal, Val,
 };
 
@@ -106,7 +111,188 @@ fn setup(
     )
 }
 
+fn assert_single_contract_auth(
+    env: &Env,
+    expected_address: &Address,
+    contract: &Address,
+    fn_name: &str,
+    args: soroban_sdk::Vec<Val>,
+) {
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    assert_eq!(
+        auths,
+        std::vec![(
+            expected_address.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    contract.clone(),
+                    Symbol::new(env, fn_name),
+                    args,
+                )),
+                sub_invocations: std::vec![],
+            }
+        )]
+    );
+}
+
 // ── Core prediction tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_set_fee_bps_auth_only_happens_at_entry_point() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &250u32);
+
+    assert_single_contract_auth(
+        &env,
+        &admin,
+        &client.address,
+        "set_fee_bps",
+        (&admin, 250u32).into_val(&env),
+    );
+}
+
+#[test]
+fn test_increase_max_total_stake_auth_only_happens_at_entry_point() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Cap Increase Pool"),
+            metadata_url: String::from_str(&env, "ipfs://cap-increase"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 100i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    client.increase_max_total_stake(&creator, &pool_id, &250i128);
+
+    assert_single_contract_auth(
+        &env,
+        &creator,
+        &client.address,
+        "increase_max_total_stake",
+        (&creator, pool_id, 250i128).into_val(&env),
+    );
+}
+
+#[test]
+fn test_resolve_pool_auth_only_happens_at_entry_point() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Resolve Auth Pool"),
+            metadata_url: String::from_str(&env, "ipfs://resolve-auth"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+    client.place_prediction(&user, &pool_id, &100, &1u32, &None, &None);
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    assert_single_contract_auth(
+        &env,
+        &operator,
+        &client.address,
+        "resolve_pool",
+        (&operator, pool_id, 1u32).into_val(&env),
+    );
+}
+
+#[test]
+fn test_oracle_resolve_auth_only_happens_at_entry_point() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Oracle Auth Pool"),
+            metadata_url: String::from_str(&env, "ipfs://oracle-auth"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+    client.place_prediction(&user, &pool_id, &100, &1u32, &None, &None);
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.oracle_resolve(&oracle, &pool_id, &1u32, &String::from_str(&env, "proof"));
+
+    assert_single_contract_auth(
+        &env,
+        &oracle,
+        &client.address,
+        "oracle_resolve",
+        (&oracle, pool_id, 1u32, String::from_str(&env, "proof")).into_val(&env),
+    );
+}
 
 #[test]
 fn test_claim_winnings() {
