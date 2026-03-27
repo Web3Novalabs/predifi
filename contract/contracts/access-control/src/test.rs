@@ -524,9 +524,6 @@ fn test_transfer_role_from_address_without_role_returns_error() {
     assert_eq!(result, Err(Ok(PrediFiError::InsufficientPermissions)));
 }
 
-
-
-
 #[test]
 fn test_create_pool_with_max_options_count() {
     // Arrange

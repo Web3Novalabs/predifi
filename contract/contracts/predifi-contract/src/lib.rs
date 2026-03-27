@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+mod benchmark_test;
 #[cfg(test)]
 mod payout_proptests;
 mod price_feed;
@@ -14,7 +15,6 @@ mod storage_test;
 mod stress_test;
 #[cfg(test)]
 mod test_utils;
-mod benchmark_test;
 // #[cfg(test)]
 // mod storage_test;
 
@@ -1149,7 +1149,9 @@ impl PredifiContract {
                 .expect("active pool index inconsistency");
 
             let target_slot_key = DataKey::ActivePool(pos);
-            env.storage().persistent().set(&target_slot_key, &last_pool_id);
+            env.storage()
+                .persistent()
+                .set(&target_slot_key, &last_pool_id);
             Self::extend_persistent(env, &target_slot_key);
 
             // Update the moved pool's reverse-lookup entry.
@@ -1746,7 +1748,7 @@ impl PredifiContract {
         // if pool.state != MarketState::Active || pool.resolved || pool.canceled {
         //     return Err(PredifiError::InvalidPoolState);
         // }
-        if !Self::is_pool_active(&pool){
+        if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -1800,7 +1802,7 @@ impl PredifiContract {
         //     return Err(PredifiError::InvalidPoolState);
         // }
         if !Self::is_pool_active(&pool) {
-            return Err(PredifiError::InvalidPoolState)
+            return Err(PredifiError::InvalidPoolState);
         }
 
         let current_time = env.ledger().timestamp();
@@ -1971,7 +1973,7 @@ impl PredifiContract {
         if pool.resolved {
             return Err(PredifiError::PoolNotResolved);
         }
-        
+
         // Prevent double cancellation
         assert!(!pool.canceled, "Pool already canceled");
         // Verify state transition validity (INV-2)
@@ -2574,58 +2576,6 @@ impl PredifiContract {
 
         results
     }
-
-    #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn mock_predictions(count: usize) -> Vec<Prediction> {
-        (0..count)
-            .map(|i| Prediction {
-                id: i as u64,
-                user_id: 1,
-                value: format!("Prediction {}", i),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn test_limit_zero_returns_empty() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 0, 0);
-
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_offset_beyond_total_returns_empty() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 100, 10);
-
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_offset_plus_limit_normal_case() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 2, 5);
-
-        assert_eq!(result.len(), 5);
-        assert_eq!(result[0].id, 2);
-    }
-
-    #[test]
-    fn test_offset_plus_limit_overflow_safe() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, usize::MAX - 5, 10);
-
-        assert!(result.is_empty());
-    }
-}
 
     /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
     /// Instead of making N storage reads (one per outcome), it makes a single read.
