@@ -950,6 +950,57 @@ impl PredifiContract {
         Ok(())
     }
 
+    fn require_admin_role(
+        env: &Env,
+        admin: &Address,
+        operation: &'static str,
+    ) -> Result<(), PredifiError> {
+        if let Err(e) = Self::require_role(env, admin, 0) {
+            UnauthorizedAdminAttemptEvent {
+                caller: admin.clone(),
+                operation: Symbol::new(env, operation),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(env);
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    fn require_operator_role_for_resolution(
+        env: &Env,
+        operator: &Address,
+        pool_id: u64,
+    ) -> Result<(), PredifiError> {
+        if let Err(e) = Self::require_role(env, operator, 1) {
+            UnauthorizedResolveAttemptEvent {
+                caller: operator.clone(),
+                pool_id,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(env);
+            return Err(e);
+        }
+        Ok(())
+    }
+
+    fn require_oracle_role_for_resolution(
+        env: &Env,
+        oracle: &Address,
+        pool_id: u64,
+    ) -> Result<(), PredifiError> {
+        if let Err(e) = Self::require_role(env, oracle, 3) {
+            UnauthorizedResolveAttemptEvent {
+                caller: oracle.clone(),
+                pool_id,
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(env);
+            return Err(e);
+        }
+        Ok(())
+    }
+
     fn get_config(env: &Env) -> Config {
         let config = env
             .storage()
@@ -1049,13 +1100,7 @@ impl PredifiContract {
     /// Pause the contract. Only callable by Admin (role 0).
     pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
-        if Self::require_role(&env, &admin, 0).is_err() {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "pause"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
+        if Self::require_admin_role(&env, &admin, "pause").is_err() {
             panic!("Unauthorized: missing required role");
         }
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -1074,13 +1119,7 @@ impl PredifiContract {
     /// Unpause the contract. Only callable by Admin (role 0).
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
-        if Self::require_role(&env, &admin, 0).is_err() {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "unpause"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
+        if Self::require_admin_role(&env, &admin, "unpause").is_err() {
             panic!("Unauthorized: missing required role");
         }
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -1115,15 +1154,7 @@ impl PredifiContract {
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        if let Err(e) = Self::require_role(&env, &admin, 0) {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "set_fee_bps"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_admin_role(&env, &admin, "set_fee_bps")?;
         assert!(Self::is_valid_fee_bps(fee_bps), "fee_bps exceeds 10000");
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
@@ -1138,15 +1169,7 @@ impl PredifiContract {
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        if let Err(e) = Self::require_role(&env, &admin, 0) {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "set_treasury"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_admin_role(&env, &admin, "set_treasury")?;
         let mut config = Self::get_config(&env);
         config.treasury = treasury.clone();
         env.storage().instance().set(&DataKey::Config, &config);
@@ -1160,15 +1183,7 @@ impl PredifiContract {
     pub fn set_resolution_delay(env: Env, admin: Address, delay: u64) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        if let Err(e) = Self::require_role(&env, &admin, 0) {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "set_resolution_delay"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_admin_role(&env, &admin, "set_resolution_delay")?;
         let mut config = Self::get_config(&env);
         config.resolution_delay = delay;
         env.storage().instance().set(&DataKey::Config, &config);
@@ -1186,15 +1201,7 @@ impl PredifiContract {
     ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        if let Err(e) = Self::require_role(&env, &admin, 0) {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "set_min_pool_duration"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_admin_role(&env, &admin, "set_min_pool_duration")?;
 
         let mut config = Self::get_config(&env);
         config.min_pool_duration = duration;
@@ -1214,15 +1221,7 @@ impl PredifiContract {
     ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        if let Err(e) = Self::require_role(&env, &admin, 0) {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "set_referral_cut_bps"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_admin_role(&env, &admin, "set_referral_cut_bps")?;
         assert!(
             referral_cut_bps <= 10_000,
             "referral_cut_bps must be at most 10000"
@@ -1242,15 +1241,7 @@ impl PredifiContract {
     ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        if let Err(e) = Self::require_role(&env, &admin, 0) {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "add_token_to_whitelist"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_admin_role(&env, &admin, "add_token_to_whitelist")?;
         let key = DataKey::TokenWl(token.clone());
         env.storage().persistent().set(&key, &true);
         Self::extend_persistent(&env, &key);
@@ -1271,15 +1262,7 @@ impl PredifiContract {
     ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         admin.require_auth();
-        if let Err(e) = Self::require_role(&env, &admin, 0) {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "remove_token_from_whitelist"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_admin_role(&env, &admin, "remove_token_from_whitelist")?;
         let key = DataKey::TokenWl(token.clone());
         env.storage().persistent().remove(&key);
 
@@ -1298,7 +1281,7 @@ impl PredifiContract {
         new_wasm_hash: BytesN<32>,
     ) -> Result<(), PredifiError> {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
+        Self::require_admin_role(&env, &admin, "upgrade_contract")?;
 
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
@@ -1315,7 +1298,7 @@ impl PredifiContract {
     /// Placeholder for post-upgrade migration logic.
     pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
         admin.require_auth();
-        Self::require_role(&env, &admin, 0)?;
+        Self::require_admin_role(&env, &admin, "migrate_state")?;
         // Initial implementation has no state migration needed.
         Ok(())
     }
@@ -1368,15 +1351,7 @@ impl PredifiContract {
         admin.require_auth();
 
         // Verify admin role
-        if let Err(e) = Self::require_role(&env, &admin, 0) {
-            UnauthorizedAdminAttemptEvent {
-                caller: admin,
-                operation: Symbol::new(&env, "withdraw_treasury"),
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_admin_role(&env, &admin, "withdraw_treasury")?;
 
         // Validate amount
         if amount <= 0 {
@@ -1680,16 +1655,7 @@ impl PredifiContract {
     ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
-        if let Err(e) = Self::require_role(&env, &operator, 1) {
-            // 🔴 HIGH ALERT: unauthorized attempt to resolve a pool.
-            UnauthorizedResolveAttemptEvent {
-                caller: operator,
-                pool_id,
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_operator_role_for_resolution(&env, &operator, pool_id)?;
 
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
@@ -2823,17 +2789,7 @@ impl OracleCallback for PredifiContract {
         Self::require_not_paused(&env);
         oracle.require_auth();
 
-        // Check authorization: oracle must have role 3
-        if let Err(e) = Self::require_role(&env, &oracle, 3) {
-            // 🔴 HIGH ALERT: unauthorized attempt to resolve a pool by an oracle
-            UnauthorizedResolveAttemptEvent {
-                caller: oracle,
-                pool_id,
-                timestamp: env.ledger().timestamp(),
-            }
-            .publish(&env);
-            return Err(e);
-        }
+        Self::require_oracle_role_for_resolution(&env, &oracle, pool_id)?;
 
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
