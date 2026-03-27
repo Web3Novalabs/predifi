@@ -173,6 +173,10 @@ pub enum PredifiError {
     StakeBelowMinimum = 107,
     /// Stake amount exceeds the pool maximum.
     StakeAboveMaximum = 108,
+    /// The fee basis points exceed the maximum allowed value (10000).
+    InvalidFeeBps = 93,
+    /// An arithmetic overflow, underflow, or division by zero occurred.
+    ArithmeticError = 110,
 }
 
 /// Represents the current state of a prediction market.
@@ -276,6 +280,7 @@ pub struct Pool {
     pub whitelist_key: Option<Symbol>,
     /// Human-readable labels for each outcome (length must equal options_count).
     pub outcome_descriptions: Vec<String>,
+    pub fee_bps: u32,
 }
 
 /// Configuration parameters for creating a prediction pool.
@@ -350,6 +355,19 @@ pub struct Config {
     pub resolution_delay: u64,
     /// Minimum pool duration in seconds.
     pub min_pool_duration: u64,
+}
+
+/// Represents a single tier in the dynamic fee system.
+///
+/// Tiers are applied based on the total stake (volume) of the pool at resolution time.
+/// Higher volumes typically result in lower fee percentages to encourage participation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTier {
+    /// The total stake threshold at or above which this tier applies.
+    pub stake_threshold: i128,
+    /// The fee in basis points to apply for this tier (0-10,000).
+    pub fee_bps: u32,
 }
 
 /// Detailed information about a user's prediction in a specific pool.
@@ -440,6 +458,7 @@ pub enum DataKey {
     PriceCondition(u64),
     /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
     PriceFeed(Symbol),
+    FeeTiers,
 }
 
 /// Represents a user's prediction in a pool.
@@ -484,6 +503,13 @@ pub struct UnpauseEvent {
 pub struct FeeUpdateEvent {
     pub admin: Address,
     pub fee_bps: u32,
+}
+
+#[contractevent(topics = ["fee_tiers_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTiersUpdateEvent {
+    pub admin: Address,
+    pub tiers_count: u32,
 }
 
 #[contractevent(topics = ["treasury_update"])]
@@ -1520,6 +1546,7 @@ impl PredifiContract {
             private: config.private,
             whitelist_key: config.whitelist_key.clone(),
             outcome_descriptions: config.outcome_descriptions.clone(),
+            fee_bps: 0, // Will be set at resolution
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -1747,6 +1774,7 @@ impl PredifiContract {
             pool.state = MarketState::Resolved;
             pool.resolved = true;
             pool.outcome = outcome;
+            pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
             env.storage().persistent().set(&pool_key, &pool);
             Self::bump_ttl(&env, &pool_key);
@@ -2149,9 +2177,14 @@ impl PredifiContract {
                 return Ok(0);
             }
 
-            // Protocol fee: deducted from pool before distribution (flat fee_bps, no dependency on 317)
-            let config = Self::get_config(&env);
-            let fee_bps_i = config.fee_bps as i128;
+            // Protocol fee: deducted from pool before distribution
+            // Use pool-specific fee (calculated at resolution) if available, else fallback to global
+            let fee_bps_i = if pool.fee_bps > 0 || pool.state == MarketState::Resolved {
+                pool.fee_bps as i128
+            } else {
+                let config = Self::get_config(&env);
+                config.fee_bps as i128
+            };
             let protocol_fee_total =
                 SafeMath::percentage(pool.total_stake, fee_bps_i, RoundingMode::ProtocolFavor)
                     .map_err(|_| PredifiError::InvalidAmount)?;
@@ -2764,6 +2797,7 @@ impl PredifiContract {
         pool.state = MarketState::Resolved;
         pool.resolved = true;
         pool.outcome = outcome;
+        pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
@@ -2776,6 +2810,59 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(())
+    }
+    pub fn set_fee_tiers(
+        env: Env,
+        admin: Address,
+        tiers: Vec<FeeTier>,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_fee_tiers")?;
+
+        for i in 0..tiers.len() {
+            if let Some(tier) = tiers.get(i) {
+                if tier.fee_bps > 10_000 {
+                    return Err(PredifiError::InvalidFeeBps);
+                }
+            }
+        }
+
+        env.storage().persistent().set(&DataKey::FeeTiers, &tiers);
+        Self::bump_ttl(&env, &DataKey::FeeTiers);
+
+        FeeTiersUpdateEvent {
+            admin,
+            tiers_count: tiers.len(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    pub fn get_fee_tiers(env: Env) -> Vec<FeeTier> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeTiers)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    fn calculate_dynamic_fee(env: &Env, pool: &Pool) -> u32 {
+        let config = Self::get_config(env);
+        let tiers = Self::get_fee_tiers(env.clone());
+        let mut applied_fee = config.fee_bps;
+
+        let mut max_threshold = -1i128;
+        for i in 0..tiers.len() {
+            if let Some(tier) = tiers.get(i) {
+                if pool.total_stake >= tier.stake_threshold && tier.stake_threshold > max_threshold
+                {
+                    max_threshold = tier.stake_threshold;
+                    applied_fee = tier.fee_bps;
+                }
+            }
+        }
+        applied_fee
     }
 }
 
@@ -2889,6 +2976,7 @@ impl OracleCallback for PredifiContract {
             pool.state = MarketState::Resolved;
             pool.resolved = true;
             pool.outcome = outcome;
+            pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
             env.storage().persistent().set(&pool_key, &pool);
             Self::bump_ttl(&env, &pool_key);
@@ -2919,5 +3007,6 @@ impl OracleCallback for PredifiContract {
     }
 }
 
+mod fee_tiers_test;
 mod integration_test;
 mod test;
