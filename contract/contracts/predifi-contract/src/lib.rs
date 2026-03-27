@@ -96,6 +96,26 @@ pub struct UserPredictionDetail {
     pub pool_outcome: u32,
 }
 
+/// Statistics for a prediction pool, including optional odds calculation.
+/// Odds are represented as fixed-point numbers with 4 decimal places.
+/// For example, odds of 0.75 (75%) would be represented as 7500.
+#[contracttype]
+#[derive(Clone)]
+pub struct PoolStats {
+    pub pool_id: u64,
+    pub end_time: u64,
+    pub state: MarketState,
+    pub outcome: u32,
+    pub token: Address,
+    pub total_stake: i128,
+    pub options_count: u32,
+    pub description: String,
+    pub metadata_url: String,
+    /// Optional odds for each outcome (fixed-point with 4 decimals).
+    /// None if include_odds was false or pool has no stakes.
+    pub odds: Option<Vec<i128>>,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -1056,6 +1076,69 @@ impl PredifiContract {
         }
 
         results
+    }
+
+    // ── View Functions ─────────────────────────────────────────────────────────
+
+    /// Get pool statistics including optional odds calculation.
+    /// 
+    /// # Arguments
+    /// * `pool_id` - The ID of the pool to get statistics for
+    /// * `include_odds` - If true, calculates odds for all outcomes (expensive for large pools)
+    /// 
+    /// Returns PoolStats with basic pool information and optionally calculated odds.
+    /// Odds are calculated as fixed-point numbers with 4 decimal places.
+    pub fn get_pool_stats(env: Env, pool_id: u64, include_odds: bool) -> PoolStats {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        let odds = if include_odds && pool.total_stake > 0 {
+            // Calculate odds for each outcome
+            // Odds = (outcome_stake / total_stake) with 4 decimal precision
+            let mut odds = Vec::new(&env);
+            
+            for outcome in 0..pool.options_count {
+                let outcome_key = DataKey::OutcomeStake(pool_id, outcome);
+                let outcome_stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
+                Self::extend_persistent(&env, &outcome_key);
+                
+                // Calculate odds with 4 decimal precision (multiply by 10000)
+                // This avoids floating point arithmetic on-chain
+                let odds_value = if pool.total_stake > 0 {
+                    outcome_stake
+                        .checked_mul(10_000)
+                        .expect("odds calculation overflow")
+                        .checked_div(pool.total_stake)
+                        .expect("division by zero")
+                } else {
+                    0
+                };
+                
+                odds.push_back(odds_value);
+            }
+            
+            Some(odds)
+        } else {
+            None
+        };
+
+        PoolStats {
+            pool_id,
+            end_time: pool.end_time,
+            state: pool.state,
+            outcome: pool.outcome,
+            token: pool.token,
+            total_stake: pool.total_stake,
+            options_count: pool.options_count,
+            description: pool.description,
+            metadata_url: pool.metadata_url,
+            odds,
+        }
     }
 }
 

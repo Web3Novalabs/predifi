@@ -1109,3 +1109,156 @@ fn test_mark_pool_ready() {
     let res = client.try_mark_pool_ready(&pool_id);
     assert!(res.is_ok());
 }
+
+// ── Pool statistics tests for Issue #418 ───────────────────────────────────────
+
+#[test]
+fn test_get_pool_stats_without_odds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _operator) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &3u32,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    // Place some predictions
+    client.place_prediction(&user, &pool_id, &100, &0);
+    client.place_prediction(&user, &pool_id, &200, &1);
+    client.place_prediction(&user, &pool_id, &300, &2);
+
+    // Get stats without odds (should be faster)
+    let stats = client.get_pool_stats(&pool_id, &false);
+    
+    assert_eq!(stats.pool_id, pool_id);
+    assert_eq!(stats.total_stake, 600);
+    assert_eq!(stats.options_count, 3);
+    assert_eq!(stats.state, MarketState::Active);
+    assert!(stats.odds.is_none()); // Should not include odds when include_odds=false
+}
+
+#[test]
+fn test_get_pool_stats_with_odds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _operator) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &3u32,
+        &String::from_str(&env, "Test Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    // Place predictions: 100 on outcome 0, 200 on outcome 1, 300 on outcome 2
+    // Total: 600
+    // Expected odds (with 4 decimals): 
+    // Outcome 0: 100/600 = 0.1666... -> 1666
+    // Outcome 1: 200/600 = 0.3333... -> 3333
+    // Outcome 2: 300/600 = 0.5     -> 5000
+    client.place_prediction(&user, &pool_id, &100, &0);
+    client.place_prediction(&user, &pool_id, &200, &1);
+    client.place_prediction(&user, &pool_id, &300, &2);
+
+    // Get stats with odds
+    let stats = client.get_pool_stats(&pool_id, &true);
+    
+    assert_eq!(stats.pool_id, pool_id);
+    assert_eq!(stats.total_stake, 600);
+    assert_eq!(stats.options_count, 3);
+    assert!(stats.odds.is_some());
+    
+    let odds = stats.odds.unwrap();
+    assert_eq!(odds.len(), 3);
+    
+    // Check odds are approximately correct (fixed-point with 4 decimals)
+    // Allow small rounding differences
+    assert!(odds.get(0).unwrap() >= 1666 && odds.get(0).unwrap() <= 1667);
+    assert!(odds.get(1).unwrap() >= 3333 && odds.get(1).unwrap() <= 3334);
+    assert_eq!(odds.get(2).unwrap(), 5000);
+}
+
+#[test]
+fn test_get_pool_stats_empty_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Empty Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    // Get stats for empty pool (no predictions yet)
+    let stats = client.get_pool_stats(&pool_id, &true);
+    
+    assert_eq!(stats.pool_id, pool_id);
+    assert_eq!(stats.total_stake, 0);
+    assert_eq!(stats.options_count, 2);
+    // Odds should be None for empty pool even if include_odds=true
+    assert!(stats.odds.is_none() || stats.odds.as_ref().map_or(true, |o| o.is_empty()));
+}
+
+#[test]
+fn test_get_pool_stats_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Resolved Pool"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    client.place_prediction(&user, &pool_id, &100, &0);
+    client.place_prediction(&user, &pool_id, &200, &1);
+
+    // Resolve the pool
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // Get stats for resolved pool
+    let stats = client.get_pool_stats(&pool_id, &true);
+    
+    assert_eq!(stats.pool_id, pool_id);
+    assert_eq!(stats.total_stake, 300);
+    assert_eq!(stats.state, MarketState::Resolved);
+    assert_eq!(stats.outcome, 1); // Winning outcome
+    assert!(stats.odds.is_some());
+}
