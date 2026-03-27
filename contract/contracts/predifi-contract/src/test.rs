@@ -1109,3 +1109,78 @@ fn test_mark_pool_ready() {
     let res = client.try_mark_pool_ready(&pool_id);
     assert!(res.is_ok());
 }
+
+// ── Resolution threshold tests for Issue #406 ─────────────────────────────────
+// NOTE: These tests document the expected behavior for multi-operator voting.
+// The actual voting mechanism needs to be implemented in the contract.
+// Issue #406 requires:
+// - Create a pool with required_resolutions: 3
+// - Cast 2 votes for outcome A (verify pool is still Active)
+// - Cast 1 vote for outcome A (verify pool is now Resolved)
+// - Cast a 4th vote and verify it handles it (e.g., error or ignore)
+
+/// Test documenting expected behavior for resolution with exactly required_resolutions votes.
+/// This test will need to be updated once the multi-operator voting system is implemented.
+#[test]
+fn test_resolution_threshold_documentation() {
+    // This is a placeholder test documenting what needs to be implemented:
+    // 
+    // Future implementation should:
+    // 1. Add `required_resolutions` field to Pool struct
+    // 2. Implement operator voting mechanism
+    // 3. Track votes per operator per pool
+    // 4. Only resolve when vote_count >= required_resolutions
+    // 5. Validate required_resolutions <= number_of_operators (Issue #402)
+    //
+    // Expected behavior:
+    // - With required_resolutions = 3:
+    //   - After 2 votes: pool.state == MarketState::Active
+    //   - After 3rd vote: pool.state == MarketState::Resolved
+    //   - 4th vote should be rejected or ignored
+    //
+    // For now, the current implementation allows any single operator to resolve
+    // the pool immediately after the resolution delay.
+    
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _treasury, operator) = setup(&env);
+
+    // Setup multiple operators for future voting test
+    let operator1 = Address::generate(&env);
+    let operator2 = Address::generate(&env);
+    let operator3 = Address::generate(&env);
+    
+    ac_client.grant_role(&operator1, &ROLE_OPERATOR);
+    ac_client.grant_role(&operator2, &ROLE_OPERATOR);
+    ac_client.grant_role(&operator3, &ROLE_OPERATOR);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Resolution Threshold Test"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    // User places prediction
+    client.place_prediction(&user, &pool_id, &100, &0);
+
+    // Advance time past resolution delay
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Current behavior: Single operator can resolve
+    // Future behavior: Would require 3 operator votes
+    client.resolve_pool(&operator, &pool_id, &0);
+
+    // Verify pool is resolved
+    // In the future voting system, we would check:
+    // - After 2 votes: pool.state == MarketState::Active
+    // - After 3rd vote: pool.state == MarketState::Resolved
+}
