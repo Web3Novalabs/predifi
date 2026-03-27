@@ -13,7 +13,7 @@ use soroban_sdk::{
     token, vec, Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal, Val,
 };
 
-mod dummy_access_control {
+pub(crate) mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
     #[contract]
@@ -61,11 +61,11 @@ mod rogue_token {
     }
 }
 
-const ROLE_ADMIN: u32 = 0; // i am testing this
-const ROLE_OPERATOR: u32 = 1; // i am testing this the second one
+pub(crate) const ROLE_ADMIN: u32 = 0; // i am testing this
+pub(crate) const ROLE_OPERATOR: u32 = 1; // i am testing this the second one
 const ROLE_ORACLE: u32 = 3;
 
-fn setup(
+pub(crate) fn setup(
     env: &Env,
 ) -> (
     dummy_access_control::DummyAccessControlClient<'_>,
