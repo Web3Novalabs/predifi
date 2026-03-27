@@ -868,6 +868,7 @@ impl PredifiContract {
     /// Pure: Check if pool state transition is valid
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
+    #[allow(dead_code)]
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
@@ -1148,7 +1149,9 @@ impl PredifiContract {
                 .expect("active pool index inconsistency");
 
             let target_slot_key = DataKey::ActivePool(pos);
-            env.storage().persistent().set(&target_slot_key, &last_pool_id);
+            env.storage()
+                .persistent()
+                .set(&target_slot_key, &last_pool_id);
             Self::extend_persistent(env, &target_slot_key);
 
             // Update the moved pool's reverse-lookup entry.
@@ -1736,7 +1739,7 @@ impl PredifiContract {
         // if pool.state != MarketState::Active || pool.resolved || pool.canceled {
         //     return Err(PredifiError::InvalidPoolState);
         // }
-        if !Self::is_pool_active(&pool){
+        if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -1790,7 +1793,7 @@ impl PredifiContract {
         //     return Err(PredifiError::InvalidPoolState);
         // }
         if !Self::is_pool_active(&pool) {
-            return Err(PredifiError::InvalidPoolState)
+            return Err(PredifiError::InvalidPoolState);
         }
 
         let current_time = env.ledger().timestamp();
@@ -1939,16 +1942,19 @@ impl PredifiContract {
     /// * `reason`  - A short description of why the pool is being canceled.
     ///
     /// # Errors
-    /// - `Unauthorized` if caller is not admin.
+    /// - `Unauthorized` if caller is not admin/operator and not the pool creator, or if creator
+    ///   attempts to cancel a pool that already has bets beyond initial liquidity.
     /// - `PoolNotResolved` error (code 22) is returned if trying to cancel an already resolved pool.
-    /// PRE: pool.state = Active, operator has role 1
+    /// PRE: pool.state = Active, caller has role 0/1 OR (caller == pool.creator AND total_stake <= initial_liquidity)
     /// POST: pool.state = Canceled, state transition valid (INV-2)
-    pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
+    pub fn cancel_pool(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        reason: String,
+    ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
-
-        // Check authorization: operator must have role 1
-        Self::require_role(&env, &operator, 1)?;
 
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
@@ -1958,35 +1964,39 @@ impl PredifiContract {
             .expect("Pool not found");
         Self::extend_persistent(&env, &pool_key);
 
+        // Determine if caller is admin/operator (role 0 or 1)
+        let is_privileged = Self::require_role(&env, &operator, 0).is_ok()
+            || Self::require_role(&env, &operator, 1).is_ok();
+
+        if !is_privileged {
+            // Allow creator to cancel only if no bets have been placed beyond initial liquidity
+            if operator != pool.creator {
+                return Err(PredifiError::Unauthorized);
+            }
+            if pool.total_stake > pool.initial_liquidity {
+                return Err(PredifiError::Unauthorized);
+            }
+        }
+
         // Ensure resolved pools cannot be canceled
         if pool.resolved {
             return Err(PredifiError::PoolNotResolved);
         }
-        
-        // Prevent double cancellation
-        assert!(!pool.canceled, "Pool already canceled");
-        // Verify state transition validity (INV-2)
-        // assert!(
-        //     Self::is_valid_state_transition(pool.state, MarketState::Canceled),
-        //     "Invalid state transition"
-        // );
+
         if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 
         pool.state = MarketState::Canceled;
-
-        // Mark pool as canceled
         pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
-        // Remove from global active index now that the pool is canceled.
         Self::remove_from_active_index(&env, pool_id);
 
         PoolCanceledEvent {
             pool_id,
             caller: operator.clone(),
-            reason: String::from_str(&env, ""),
+            reason,
             operator,
         }
         .publish(&env);
@@ -2565,58 +2575,6 @@ impl PredifiContract {
 
         results
     }
-
-    #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn mock_predictions(count: usize) -> Vec<Prediction> {
-        (0..count)
-            .map(|i| Prediction {
-                id: i as u64,
-                user_id: 1,
-                value: format!("Prediction {}", i),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn test_limit_zero_returns_empty() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 0, 0);
-
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_offset_beyond_total_returns_empty() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 100, 10);
-
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_offset_plus_limit_normal_case() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 2, 5);
-
-        assert_eq!(result.len(), 5);
-        assert_eq!(result[0].id, 2);
-    }
-
-    #[test]
-    fn test_offset_plus_limit_overflow_safe() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, usize::MAX - 5, 10);
-
-        assert!(result.is_empty());
-    }
-}
 
     /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
     /// Instead of making N storage reads (one per outcome), it makes a single read.
