@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+mod benchmark_test;
 #[cfg(test)]
 mod payout_proptests;
 mod price_feed;
@@ -868,6 +869,7 @@ impl PredifiContract {
     /// Pure: Check if pool state transition is valid
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
+    #[allow(dead_code)]
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
@@ -878,6 +880,7 @@ impl PredifiContract {
 
     /// Pure: Validate fee basis points
     /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
+    #[allow(dead_code)]
     fn is_valid_fee_bps(fee_bps: u32) -> bool {
         fee_bps <= 10_000
     }
@@ -888,6 +891,7 @@ impl PredifiContract {
     ///
     /// PRE: pool is a valid Pool instance
     /// POST: returns true only when all three conditions hold simultaneously
+    #[allow(dead_code)]
     fn is_pool_active(pool: &Pool) -> bool {
         !pool.resolved && !pool.canceled && pool.state == MarketState::Active
     }
@@ -1148,7 +1152,9 @@ impl PredifiContract {
                 .expect("active pool index inconsistency");
 
             let target_slot_key = DataKey::ActivePool(pos);
-            env.storage().persistent().set(&target_slot_key, &last_pool_id);
+            env.storage()
+                .persistent()
+                .set(&target_slot_key, &last_pool_id);
             Self::extend_persistent(env, &target_slot_key);
 
             // Update the moved pool's reverse-lookup entry.
@@ -1641,6 +1647,15 @@ impl PredifiContract {
         env.storage().persistent().set(&pc_key, &0u32);
         Self::bump_ttl(&env, &pc_key);
 
+        // Initialize optimized batch storage with zeros to avoid expensive fallback reads
+        let mut initial_stakes = Vec::new(&env);
+        for _ in 0..options_count {
+            initial_stakes.push_back(0i128);
+        }
+        let stakes_key = DataKey::OutStakes(pool_id);
+        env.storage().persistent().set(&stakes_key, &initial_stakes);
+        Self::extend_persistent(&env, &stakes_key);
+
         // Transfer initial liquidity from creator to contract if provided
         if config.initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
@@ -1736,7 +1751,7 @@ impl PredifiContract {
         // if pool.state != MarketState::Active || pool.resolved || pool.canceled {
         //     return Err(PredifiError::InvalidPoolState);
         // }
-        if !Self::is_pool_active(&pool){
+        if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -1790,7 +1805,7 @@ impl PredifiContract {
         //     return Err(PredifiError::InvalidPoolState);
         // }
         if !Self::is_pool_active(&pool) {
-            return Err(PredifiError::InvalidPoolState)
+            return Err(PredifiError::InvalidPoolState);
         }
 
         let current_time = env.ledger().timestamp();
@@ -1876,9 +1891,8 @@ impl PredifiContract {
             Self::remove_from_active_index(&env, pool_id);
             Self::bump_ttl(&env, &pool_key);
 
-            // Retrieve winning-outcome stake for the diagnostic event
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+            // Retrieve winning-outcome stake for the diagnostic event efficiently
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, outcome);
 
             PoolResolvedEvent {
                 pool_id,
@@ -1962,7 +1976,7 @@ impl PredifiContract {
         if pool.resolved {
             return Err(PredifiError::PoolNotResolved);
         }
-        
+
         // Prevent double cancellation
         assert!(!pool.canceled, "Pool already canceled");
         // Verify state transition validity (INV-2)
@@ -2275,8 +2289,8 @@ impl PredifiContract {
             }
 
             // Get winning stake using optimized batch storage
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(pool.outcome).unwrap_or(0);
+            // Get winning stake efficiently using single outcome getter
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, pool.outcome);
 
             if winning_stake == 0 {
                 return Ok(0);
@@ -2566,58 +2580,6 @@ impl PredifiContract {
         results
     }
 
-    #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn mock_predictions(count: usize) -> Vec<Prediction> {
-        (0..count)
-            .map(|i| Prediction {
-                id: i as u64,
-                user_id: 1,
-                value: format!("Prediction {}", i),
-            })
-            .collect()
-    }
-
-    #[test]
-    fn test_limit_zero_returns_empty() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 0, 0);
-
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_offset_beyond_total_returns_empty() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 100, 10);
-
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_offset_plus_limit_normal_case() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, 2, 5);
-
-        assert_eq!(result.len(), 5);
-        assert_eq!(result[0].id, 2);
-    }
-
-    #[test]
-    fn test_offset_plus_limit_overflow_safe() {
-        let predictions = mock_predictions(10);
-
-        let result = get_user_predictions(&predictions, usize::MAX - 5, 10);
-
-        assert!(result.is_empty());
-    }
-}
-
     /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
     /// Instead of making N storage reads (one per outcome), it makes a single read.
     ///
@@ -2652,27 +2614,22 @@ mod tests {
     /// avoiding a full `Pool` struct deserialization. Falls back to loading
     /// the pool only when the batch key is missing (pre-optimization data).
     pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
-        // Try the optimized batch key first (avoids Pool deserialization)
+        // Optimization: Try individual key first (most common case, cheapest to read)
+        let stake_key = DataKey::OutStake(pool_id, outcome);
+        if let Some(stake) = env.storage().persistent().get::<_, i128>(&stake_key) {
+            Self::extend_persistent(&env, &stake_key);
+            return stake;
+        }
+
+        // Fallback: Try optimized batch key
         let batch_key = DataKey::OutStakes(pool_id);
         if let Some(stakes) = env.storage().persistent().get::<_, Vec<i128>>(&batch_key) {
             Self::extend_persistent(&env, &batch_key);
             return stakes.get(outcome).unwrap_or(0);
         }
 
-        // Fallback: read Pool to get options_count, then individual OutStake keys
-        let pool_key = DataKey::Pool(pool_id);
-        let pool: Option<Pool> = env.storage().persistent().get(&pool_key);
-        match pool {
-            Some(p) => {
-                Self::extend_persistent(&env, &pool_key);
-                if outcome >= p.options_count {
-                    return 0;
-                }
-                let stake_key = DataKey::OutStake(pool_id, outcome);
-                env.storage().persistent().get(&stake_key).unwrap_or(0)
-            }
-            None => 0,
-        }
+        // Final fallback: reconstructed if neither exists (unlikely in modern version)
+        0
     }
 
     /// Get a paginated list of pool IDs by category.
@@ -3182,9 +3139,8 @@ impl OracleCallback for PredifiContract {
             // Remove from global active index now that the pool is resolved.
             Self::remove_from_active_index(&env, pool_id);
 
-            // Retrieve winning-outcome stake for the diagnostic event
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+            // Retrieve winning-outcome stake for the diagnostic event efficiently
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, outcome);
 
             // Emit resolution events once threshold is met
             PoolResolvedEvent {
