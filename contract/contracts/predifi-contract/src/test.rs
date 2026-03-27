@@ -5771,3 +5771,167 @@ fn test_guard_basic() {
         PredifiContract::enter_reentrancy_guard(&env);
     });
 }
+
+// ── cancel_pool with zero participants ───────────────────────────────────────
+
+#[test]
+fn test_cancel_pool_zero_participants_state_is_canceled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Cancel immediately with no bets placed
+    client.cancel_pool(&operator, &pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Canceled);
+    assert!(pool.canceled);
+}
+
+#[test]
+fn test_cancel_pool_zero_participants_no_contract_balance_change() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let balance_before = token.balance(&client.address);
+    client.cancel_pool(&operator, &pool_id);
+    let balance_after = token.balance(&client.address);
+
+    // No funds should move when there are no participants
+    assert_eq!(balance_before, balance_after);
+}
+
+#[test]
+fn test_claim_refund_on_zero_participant_canceled_pool_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+
+    // A user who never bet tries to claim a refund — must fail gracefully
+    let non_participant = Address::generate(&env);
+    let result = client.try_claim_refund(&non_participant, &pool_id);
+    assert!(
+        result.is_err(),
+        "claim_refund for non-participant on canceled pool must return an error"
+    );
+}
+
+#[test]
+fn test_claim_winnings_on_zero_participant_canceled_pool_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+
+    // claim_winnings on a canceled pool with no participants must fail gracefully
+    let non_participant = Address::generate(&env);
+    let result = client.try_claim_winnings(&non_participant, &pool_id);
+    assert!(
+        result.is_err(),
+        "claim_winnings for non-participant on canceled pool must return an error"
+    );
+}
