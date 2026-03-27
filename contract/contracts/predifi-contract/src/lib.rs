@@ -1,6 +1,8 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+#[cfg(test)]
+mod payout_proptests;
 mod price_feed;
 mod price_feed_simple;
 mod safe_math;
