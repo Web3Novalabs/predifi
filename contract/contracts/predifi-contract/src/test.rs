@@ -1109,3 +1109,107 @@ fn test_mark_pool_ready() {
     let res = client.try_mark_pool_ready(&pool_id);
     assert!(res.is_ok());
 }
+
+// ── Edge case tests for Issue #404 ───────────────────────────────────────────
+
+#[test]
+fn test_place_prediction_with_maximum_i128_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, _operator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let user = Address::generate(&env);
+    
+    // Mint maximum i128 value to user
+    let max_stake = i128::MAX;
+    token_admin_client.mint(&user, &max_stake);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Max Stake Test"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    // Place prediction with maximum stake - should succeed or return clear error
+    client.place_prediction(&user, &pool_id, &max_stake, &0);
+
+    // Verify the contract received the tokens
+    assert_eq!(token.balance(&contract_addr), max_stake);
+    
+    // Verify user balance is now 0
+    assert_eq!(token.balance(&user), 0);
+}
+
+#[test]
+fn test_place_prediction_with_large_but_valid_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, _operator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let user = Address::generate(&env);
+    
+    // Use a large but more realistic stake (close to i128::MAX / 2)
+    let large_stake = i128::MAX / 2;
+    token_admin_client.mint(&user, &large_stake);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Large Stake Test"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    // Place prediction with large stake
+    client.place_prediction(&user, &pool_id, &large_stake, &1);
+
+    // Verify the contract received the tokens
+    assert_eq!(token.balance(&contract_addr), large_stake);
+}
+
+#[test]
+#[should_panic(expected = "overflow")]
+fn test_place_prediction_overflow_detection() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    
+    // Mint very large amounts to both users
+    let large_amount = i128::MAX / 2 + 1;
+    token_admin_client.mint(&user1, &large_amount);
+    token_admin_client.mint(&user2, &large_amount);
+
+    let pool_id = client.create_pool(
+        &100000u64,
+        &token_address,
+        &2u32,
+        &String::from_str(&env, "Overflow Test"),
+        &String::from_str(
+            &env,
+            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+        ),
+    );
+
+    // First user places large prediction
+    client.place_prediction(&user1, &pool_id, &large_amount, &0);
+    
+    // Second user tries to place another large prediction that would overflow
+    // This should panic due to overflow in total_stake calculation
+    client.place_prediction(&user2, &pool_id, &large_amount, &0);
+}
