@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use soroban_sdk::{token, Address, Env};
 
 pub struct TokenTestContext {
