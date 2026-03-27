@@ -2566,6 +2566,58 @@ impl PredifiContract {
         results
     }
 
+    #[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mock_predictions(count: usize) -> Vec<Prediction> {
+        (0..count)
+            .map(|i| Prediction {
+                id: i as u64,
+                user_id: 1,
+                value: format!("Prediction {}", i),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_limit_zero_returns_empty() {
+        let predictions = mock_predictions(10);
+
+        let result = get_user_predictions(&predictions, 0, 0);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_offset_beyond_total_returns_empty() {
+        let predictions = mock_predictions(10);
+
+        let result = get_user_predictions(&predictions, 100, 10);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_offset_plus_limit_normal_case() {
+        let predictions = mock_predictions(10);
+
+        let result = get_user_predictions(&predictions, 2, 5);
+
+        assert_eq!(result.len(), 5);
+        assert_eq!(result[0].id, 2);
+    }
+
+    #[test]
+    fn test_offset_plus_limit_overflow_safe() {
+        let predictions = mock_predictions(10);
+
+        let result = get_user_predictions(&predictions, usize::MAX - 5, 10);
+
+        assert!(result.is_empty());
+    }
+}
+
     /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
     /// Instead of making N storage reads (one per outcome), it makes a single read.
     ///

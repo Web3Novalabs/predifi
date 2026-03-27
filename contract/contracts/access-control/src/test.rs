@@ -476,6 +476,18 @@ fn test_revoke_all_roles_clears_all_five_roles() {
     assert!(!client.has_role(&user, &Role::User));
 }
 
+#[test]
+fn test_init_success() {
+    let env = mock_env();
+
+    let admin = mock_admin();
+    init(env.clone(), admin.clone(), 10);
+
+    let config = get_config(&env).unwrap();
+    assert_eq!(config.admin, admin);
+    assert_eq!(config.fee, 10);
+}
+
 /// Revoking a role that was never assigned returns `InsufficientPermissions`.
 #[test]
 fn test_revoke_unassigned_role_returns_error() {
@@ -510,4 +522,44 @@ fn test_transfer_role_from_address_without_role_returns_error() {
 
     let result = client.try_transfer_role(&admin, &from, &to, &Role::Oracle);
     assert_eq!(result, Err(Ok(PrediFiError::InsufficientPermissions)));
+}
+
+
+
+
+#[test]
+fn test_create_pool_with_max_options_count() {
+    // Arrange
+    let options_count = MAX_OPTIONS_COUNT;
+
+    let outcomes: Vec<String> = (0..options_count)
+        .map(|i| format!("Outcome {}", i))
+        .collect();
+
+    // Create pool
+    let mut pool = create_pool(outcomes.clone());
+
+    // Assert pool created with full capacity
+    assert_eq!(pool.outcomes.len(), MAX_OPTIONS_COUNT);
+
+    // Place predictions on first and last outcome
+    place_prediction(&mut pool, 0, 10); // first index
+    place_prediction(&mut pool, MAX_OPTIONS_COUNT - 1, 20); // last index
+
+    // Verify predictions were recorded
+    assert_eq!(pool.outcomes[0].total_stake, 10);
+    assert_eq!(pool.outcomes[MAX_OPTIONS_COUNT - 1].total_stake, 20);
+
+    // Resolve using last outcome
+    resolve_pool(&mut pool, MAX_OPTIONS_COUNT - 1);
+
+    // Assert resolution is correct
+    assert_eq!(pool.resolved_outcome, Some(MAX_OPTIONS_COUNT - 1));
+
+    // Optional: verify state consistency
+    for (i, outcome) in pool.outcomes.iter().enumerate() {
+        if i == MAX_OPTIONS_COUNT - 1 {
+            assert!(outcome.total_stake > 0);
+        }
+    }
 }

@@ -147,6 +147,30 @@ pub enum PoolStatus {
     Disputed,
 }
 
+
+fn require_active_pool(env: &Env, pool_id: u64) -> Result<Pool, Error> {
+    // Load pool from storage
+    let pool = get_pool(env, pool_id).ok_or(Error::PoolNotFound)?;
+
+    // Check not resolved
+    if pool.resolved_outcome.is_some() {
+        return Err(Error::PoolAlreadyResolved);
+    }
+
+    // Check not canceled
+    if pool.is_canceled {
+        return Err(Error::PoolCanceled);
+    }
+
+    // Check time constraint
+    let current_time = env.ledger().timestamp();
+    if current_time >= pool.end_time {
+        return Err(Error::PoolExpired);
+    }
+
+    Ok(pool)
+}
+
 /// Category classification for prediction pools.
 ///
 /// This enum provides a standardized set of categories for organizing
