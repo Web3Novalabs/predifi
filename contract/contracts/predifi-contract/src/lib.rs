@@ -171,6 +171,8 @@ pub enum PredifiError {
     StakeBelowMinimum = 107,
     /// Stake amount exceeds the pool maximum.
     StakeAboveMaximum = 108,
+    /// metadata_url exceeds the maximum allowed length.
+    MetadataUrlInvalid = 109,
 }
 
 /// Represents the current state of a prediction market.
@@ -1471,10 +1473,9 @@ impl PredifiContract {
             config.description.len() <= 256,
             "description exceeds 256 bytes"
         );
-        assert!(
-            config.metadata_url.len() <= 512,
-            "metadata_url exceeds 512 bytes"
-        );
+        if config.metadata_url.len() > 512 {
+            soroban_sdk::panic_with_error!(&env, PredifiError::MetadataUrlInvalid);
+        }
 
         // Validate stake limits
         assert!(config.min_stake > 0, "min_stake must be greater than zero");

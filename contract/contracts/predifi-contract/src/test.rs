@@ -5935,3 +5935,115 @@ fn test_claim_winnings_on_zero_participant_canceled_pool_returns_error() {
         "claim_winnings for non-participant on canceled pool must return an error"
     );
 }
+
+// ── MetadataUrlInvalid error tests ───────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #109)")]
+fn test_create_pool_rejects_metadata_url_exceeding_512_bytes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // Build a 513-byte string
+    let long_url = String::from_str(&env, &"x".repeat(513));
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Valid description"),
+            metadata_url: long_url,
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+#[test]
+fn test_create_pool_accepts_metadata_url_at_512_bytes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let exact_url = String::from_str(&env, &"x".repeat(512));
+
+    // Should not panic
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Valid description"),
+            metadata_url: exact_url.clone(),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.metadata_url, exact_url);
+}
+
+#[test]
+fn test_create_pool_accepts_empty_metadata_url() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // Empty string is valid (length 0 <= 512)
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Valid description"),
+            metadata_url: String::from_str(&env, ""),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.metadata_url.len(), 0);
+}
