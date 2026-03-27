@@ -869,6 +869,7 @@ impl PredifiContract {
     /// Pure: Check if pool state transition is valid
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
+    #[allow(dead_code)]
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
@@ -879,6 +880,7 @@ impl PredifiContract {
 
     /// Pure: Validate fee basis points
     /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
+    #[allow(dead_code)]
     fn is_valid_fee_bps(fee_bps: u32) -> bool {
         fee_bps <= 10_000
     }
@@ -889,6 +891,7 @@ impl PredifiContract {
     ///
     /// PRE: pool is a valid Pool instance
     /// POST: returns true only when all three conditions hold simultaneously
+    #[allow(dead_code)]
     fn is_pool_active(pool: &Pool) -> bool {
         !pool.resolved && !pool.canceled && pool.state == MarketState::Active
     }
