@@ -820,6 +820,166 @@ fn test_unauthorized_oracle_resolve() {
 }
 
 #[test]
+fn test_oracle_resolve_long_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Create a 1024-byte proof string
+    let long_proof = "a".repeat(1024);
+    let proof_str = String::from_str(&env, &long_proof);
+
+    // Call oracle_resolve which should succeed
+    client.oracle_resolve(&oracle, &pool_id, &1u32, &proof_str);
+
+    let events = env.events().all();
+    let oracle_resolved_topic = Symbol::new(&env, "oracle_resolved");
+
+    let mut found = false;
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == oracle_resolved_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let event_proof: String = event_data
+                        .get(Symbol::new(&env, "proof"))
+                        .unwrap()
+                        .into_val(&env);
+                    assert_eq!(event_proof, proof_str);
+                    found = true;
+                }
+            }
+        }
+    }
+    assert!(found, "OracleResolvedEvent not found");
+}
+
+#[test]
+fn test_oracle_resolve_utf8_emoji_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Create a proof string with emojis and UTF-8 characters
+    let emoji_proof = "Proof ✨🔗 🧑‍💻 ✓ æøå 🔥 test end";
+    let proof_str = String::from_str(&env, emoji_proof);
+
+    // Call oracle_resolve which should succeed
+    client.oracle_resolve(&oracle, &pool_id, &1u32, &proof_str);
+
+    let events = env.events().all();
+    let oracle_resolved_topic = Symbol::new(&env, "oracle_resolved");
+
+    let mut found = false;
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == oracle_resolved_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let event_proof: String = event_data
+                        .get(Symbol::new(&env, "proof"))
+                        .unwrap()
+                        .into_val(&env);
+                    assert_eq!(event_proof, proof_str);
+                    found = true;
+                }
+            }
+        }
+    }
+    assert!(found, "OracleResolvedEvent not found for emoji proof");
+}
+
+#[test]
 fn test_admin_can_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
