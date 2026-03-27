@@ -5,7 +5,7 @@ use crate::test_utils::TokenTestContext;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
-    Address, Env, String,
+    vec, Address, Env, String,
 };
 
 mod dummy_access_control {
@@ -51,7 +51,7 @@ fn setup_integration(
 
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(env, &contract_id);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     let token_ctx = TokenTestContext::deploy(env, &admin);
     client.add_token_to_whitelist(&admin, &token_ctx.token_address);
@@ -101,6 +101,12 @@ fn test_full_market_lifecycle() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -182,6 +188,13 @@ fn test_multi_user_betting_and_balance_verification() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+            ],
         },
     );
 
@@ -257,6 +270,12 @@ fn test_market_resolution_multiple_winners() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
