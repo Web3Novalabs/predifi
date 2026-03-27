@@ -14,6 +14,7 @@ mod storage_test;
 mod stress_test;
 #[cfg(test)]
 mod test_utils;
+mod benchmark_test;
 // #[cfg(test)]
 // mod storage_test;
 
@@ -1641,6 +1642,15 @@ impl PredifiContract {
         env.storage().persistent().set(&pc_key, &0u32);
         Self::bump_ttl(&env, &pc_key);
 
+        // Initialize optimized batch storage with zeros to avoid expensive fallback reads
+        let mut initial_stakes = Vec::new(&env);
+        for _ in 0..options_count {
+            initial_stakes.push_back(0i128);
+        }
+        let stakes_key = DataKey::OutStakes(pool_id);
+        env.storage().persistent().set(&stakes_key, &initial_stakes);
+        Self::extend_persistent(&env, &stakes_key);
+
         // Transfer initial liquidity from creator to contract if provided
         if config.initial_liquidity > 0 {
             let token_client = token::Client::new(&env, &token);
@@ -1876,9 +1886,8 @@ impl PredifiContract {
             Self::remove_from_active_index(&env, pool_id);
             Self::bump_ttl(&env, &pool_key);
 
-            // Retrieve winning-outcome stake for the diagnostic event
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+            // Retrieve winning-outcome stake for the diagnostic event efficiently
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, outcome);
 
             PoolResolvedEvent {
                 pool_id,
@@ -2275,8 +2284,8 @@ impl PredifiContract {
             }
 
             // Get winning stake using optimized batch storage
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(pool.outcome).unwrap_or(0);
+            // Get winning stake efficiently using single outcome getter
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, pool.outcome);
 
             if winning_stake == 0 {
                 return Ok(0);
@@ -2652,27 +2661,22 @@ mod tests {
     /// avoiding a full `Pool` struct deserialization. Falls back to loading
     /// the pool only when the batch key is missing (pre-optimization data).
     pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
-        // Try the optimized batch key first (avoids Pool deserialization)
+        // Optimization: Try individual key first (most common case, cheapest to read)
+        let stake_key = DataKey::OutStake(pool_id, outcome);
+        if let Some(stake) = env.storage().persistent().get::<_, i128>(&stake_key) {
+            Self::extend_persistent(&env, &stake_key);
+            return stake;
+        }
+
+        // Fallback: Try optimized batch key
         let batch_key = DataKey::OutStakes(pool_id);
         if let Some(stakes) = env.storage().persistent().get::<_, Vec<i128>>(&batch_key) {
             Self::extend_persistent(&env, &batch_key);
             return stakes.get(outcome).unwrap_or(0);
         }
 
-        // Fallback: read Pool to get options_count, then individual OutStake keys
-        let pool_key = DataKey::Pool(pool_id);
-        let pool: Option<Pool> = env.storage().persistent().get(&pool_key);
-        match pool {
-            Some(p) => {
-                Self::extend_persistent(&env, &pool_key);
-                if outcome >= p.options_count {
-                    return 0;
-                }
-                let stake_key = DataKey::OutStake(pool_id, outcome);
-                env.storage().persistent().get(&stake_key).unwrap_or(0)
-            }
-            None => 0,
-        }
+        // Final fallback: reconstructed if neither exists (unlikely in modern version)
+        0
     }
 
     /// Get a paginated list of pool IDs by category.
@@ -3182,9 +3186,8 @@ impl OracleCallback for PredifiContract {
             // Remove from global active index now that the pool is resolved.
             Self::remove_from_active_index(&env, pool_id);
 
-            // Retrieve winning-outcome stake for the diagnostic event
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+            // Retrieve winning-outcome stake for the diagnostic event efficiently
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, outcome);
 
             // Emit resolution events once threshold is met
             PoolResolvedEvent {
