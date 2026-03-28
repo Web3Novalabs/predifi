@@ -19,8 +19,9 @@ The repository is organized into two main workspaces:
 
 The smart contract logic is written in **Rust** for the **Soroban** platform.
 
-- `contracts/`: Directory containing individual contract crates.
-  - `hello-world/`: Initial template contract (to be replaced/expanded with PrediFi logic).
+- `contracts/predifi-contract/`: Main prediction market contract.
+- `contracts/access-control/`: Shared role-based access control contract.
+- `contracts/predifi-errors/`: Shared error types and helpers used across backend crates.
 
 ### Frontend (`frontend/`)
 
@@ -64,6 +65,22 @@ The user interface is built with **Next.js**, **Tailwind CSS**, and **TypeScript
    cargo test
    ```
 
+   Install the WASM target used by CI if you do not already have it:
+
+   ```bash
+   rustup target add wasm32-unknown-unknown
+   ```
+
+   Match the backend CI checks locally:
+
+   ```bash
+   cargo fmt --all -- --check
+   cargo clippy --workspace --target wasm32-unknown-unknown -- -D warnings
+   cargo build --workspace --target wasm32-unknown-unknown --release
+   cargo test --workspace
+   bash scripts/wasm_size_check.sh
+   ```
+
 3. **Frontend:**
 
    Navigate to the frontend directory:
@@ -85,6 +102,10 @@ The user interface is built with **Next.js**, **Tailwind CSS**, and **TypeScript
    ```
 
    Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+### Backend CI
+
+The backend workflow lives at `.github/workflows/backend.yml`. It runs formatting, clippy, release WASM builds, unit tests, and the contract size check whenever backend files change.
 
 ## PriceFeed Integration
 

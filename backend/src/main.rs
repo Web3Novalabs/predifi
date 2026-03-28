@@ -1,99 +1,68 @@
-//! # PrediFi Backend Error Handling
+//! # predifi-backend
 //!
-//! Provides a unified [`AppError`] enum for all API and database errors,
-//! enabling consistent error propagation and HTTP response mapping across
-//! the backend service.
+//! A minimal Axum HTTP server that demonstrates the [`logging`] middleware.
+//!
+//! Run with:
+//! ```bash
+//! cargo run
+//! ```
+//! Then in another terminal:
+//! ```bash
+//! curl http://localhost:3000/
+//! curl http://localhost:3000/health
+//! curl http://localhost:3000/missing   # produces a 404
+//! ```
+//! You should see log lines like:
+//! ```text
+//! [REQ] GET / → 200 OK (0ms)
+//! [REQ] GET /health → 200 OK (0ms)
+//! [REQ] GET /missing → 404 Not Found (0ms)
+//! ```
 
-use thiserror::Error;
+pub mod request_logger;
 
-/// Top-level application error.
+use axum::{routing::get, Json, Router};
+use request_logger::LoggingLayer;
+use serde_json::json;
+
+/// Simple health-check handler — returns `{ "status": "ok" }`.
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+/// Root handler — returns a welcome message.
+async fn root() -> Json<serde_json::Value> {
+    Json(json!({ "message": "Welcome to the request-logger demo" }))
+}
+
+/// Build the Axum router with the logging middleware attached.
 ///
-/// All fallible operations in the backend should return `Result<T, AppError>`.
-/// Variants are grouped by origin:
-/// - [`AppError::Api`]  — request validation / business-logic errors (4xx)
-/// - [`AppError::Database`] — storage layer failures (5xx)
-#[derive(Debug, Error)]
-pub enum AppError {
-    // ── API / request errors (4xx) ─────────────────────────────────────────
-    /// A required field was missing or a value failed validation.
-    #[error("validation error: {0}")]
-    Validation(String),
-
-    /// The requested resource does not exist.
-    #[error("not found: {0}")]
-    NotFound(String),
-
-    /// The caller is not authorised to perform this action.
-    #[error("unauthorized: {0}")]
-    Unauthorized(String),
-
-    // ── Database / storage errors (5xx) ────────────────────────────────────
-    /// A database query failed.
-    #[error("database error: {0}")]
-    Database(String),
-
-    /// A database connection could not be established.
-    #[error("database connection error: {0}")]
-    DatabaseConnection(String),
+/// Keeping router construction in its own function makes it easy to reuse
+/// in tests without binding to a real TCP port.
+pub fn build_router() -> Router {
+    Router::new()
+        .route("/", get(root))
+        .route("/health", get(health))
+        // `.layer()` wraps every route in this router with the middleware.
+        // Layers are applied from bottom to top, so LoggingLayer is the
+        // outermost wrapper — it sees every request first and every
+        // response last.
+        .layer(LoggingLayer)
 }
 
-impl AppError {
-    /// Returns the HTTP status code that best represents this error.
-    pub fn status_code(&self) -> u16 {
-        match self {
-            Self::Validation(_) => 400,
-            Self::Unauthorized(_) => 401,
-            Self::NotFound(_) => 404,
-            Self::Database(_) | Self::DatabaseConnection(_) => 500,
-        }
-    }
+#[tokio::main]
+async fn main() {
+    let app = build_router();
 
-    /// Returns `true` for errors caused by the caller (4xx).
-    pub fn is_client_error(&self) -> bool {
-        self.status_code() < 500
-    }
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+        .await
+        .expect("failed to bind to port 3000");
+
+    println!("Listening on http://0.0.0.0:3000");
+
+    axum::serve(listener, app)
+        .await
+        .expect("server error");
 }
 
-fn main() {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validation_error_is_client_error() {
-        let err = AppError::Validation("amount must be positive".into());
-        assert_eq!(err.status_code(), 400);
-        assert!(err.is_client_error());
-        assert_eq!(err.to_string(), "validation error: amount must be positive");
-    }
-
-    #[test]
-    fn not_found_error_is_client_error() {
-        let err = AppError::NotFound("pool 42".into());
-        assert_eq!(err.status_code(), 404);
-        assert!(err.is_client_error());
-    }
-
-    #[test]
-    fn unauthorized_error_is_client_error() {
-        let err = AppError::Unauthorized("missing token".into());
-        assert_eq!(err.status_code(), 401);
-        assert!(err.is_client_error());
-    }
-
-    #[test]
-    fn database_error_is_server_error() {
-        let err = AppError::Database("query timeout".into());
-        assert_eq!(err.status_code(), 500);
-        assert!(!err.is_client_error());
-        assert_eq!(err.to_string(), "database error: query timeout");
-    }
-
-    #[test]
-    fn database_connection_error_is_server_error() {
-        let err = AppError::DatabaseConnection("refused".into());
-        assert_eq!(err.status_code(), 500);
-        assert!(!err.is_client_error());
-    }
-}
+mod tests;
