@@ -108,7 +108,7 @@ pub struct OracleConfig {
 /// - `DataKey::OracleConfig` — oracle configuration
 /// - `DataKey::PriceFeed(feed_pair)` — price feed data
 /// - `DataKey::PriceCondition(pool_id)` — per-pool price conditions
-
+///
 /// Price feed adapter for external oracle integration
 #[allow(dead_code)]
 pub struct PriceFeedAdapter;

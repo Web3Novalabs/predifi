@@ -351,16 +351,25 @@ mod tests {
         env.mock_all_auths();
         let (_, contract_id, _) = setup(&env);
 
-        let oracle = Address::generate(&env);
+        let oracle1 = Address::generate(&env);
+        let oracle2 = Address::generate(&env);
         let eth = symbol_short!("ETHUSD");
         let btc = symbol_short!("BTCUSD");
         let ts = env.ledger().timestamp();
 
         env.as_contract(&contract_id, || {
-            PriceFeedAdapter::update_price_feed(&env, &oracle, eth.clone(), 3000, 5, ts, ts + 60)
+            PriceFeedAdapter::update_price_feed(&env, &oracle1, eth.clone(), 3000, 5, ts, ts + 60)
                 .unwrap();
-            PriceFeedAdapter::update_price_feed(&env, &oracle, btc.clone(), 60000, 50, ts, ts + 60)
-                .unwrap();
+            PriceFeedAdapter::update_price_feed(
+                &env,
+                &oracle2,
+                btc.clone(),
+                60000,
+                50,
+                ts,
+                ts + 60,
+            )
+            .unwrap();
         });
 
         env.as_contract(&contract_id, || {

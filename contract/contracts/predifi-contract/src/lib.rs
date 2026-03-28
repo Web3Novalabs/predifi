@@ -486,8 +486,6 @@ pub enum DataKey {
     // ── Private pools ────────────────────────────────────────────────────────
     /// User whitelist for private pools: `Whitelist(pool_id, user_address)` -> `()`
     Whitelist(u64, Address),
-    /// Contract version for safe upgrade migrations.
-    Version,
     // Global active pool counter: ActivePoolCtr -> u32
     ActivePoolCtr,
     /// Global active pool index: ActivePool(index) -> u64 (pool_id)
@@ -499,6 +497,8 @@ pub enum DataKey {
     /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
     PriceFeed(Symbol),
     FeeTiers,
+    /// Oracle configuration for price feed validation
+    OracleConfig,
 }
 
 /// Represents a user's prediction in a pool.
