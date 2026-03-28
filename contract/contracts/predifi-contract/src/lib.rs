@@ -2742,7 +2742,11 @@ impl PredifiContract {
     /// A `Vec<u64>` of active pool IDs. Returns an empty vec if `offset`
     /// is beyond the current count or `limit` is 0.
     pub fn get_active_pools(env: Env, offset: u32, limit: u32) -> Vec<u64> {
-        let count: u32 = env.storage().instance().get(&DataKey::ActivePoolCtr).unwrap_or(0);
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ActivePoolCtr)
+            .unwrap_or(0);
         let mut results = Vec::new(&env);
 
         if offset >= count || limit == 0 {
