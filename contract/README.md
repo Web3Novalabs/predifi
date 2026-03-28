@@ -46,8 +46,8 @@ Price-based pools are initialized in two distinct steps to ensure flexibility:
 
 Once the pool's `end_time` plus the global `resolution_delay` has passed, anyone can call `resolve_pool_from_price`. The contract will fetch the latest price and resolve the pool automatically to Outcome 1 (condition met) or Outcome 0 (condition not met).
 
-For manual `resolve_pool` calls, the contract now emits Soroban debug logs before common rejection paths such as:
-- resolving before `resolution_delay` has elapsed
-- using an out-of-bounds outcome index
-- re-resolving or resolving a canceled/inactive pool
-- submitting a duplicate operator vote
+### Private Pool Whitelist Helper
+
+The contract exposes a public read-only `is_whitelisted(pool_id, user)` helper.
+It returns `true` only when that address has an explicit whitelist entry stored
+for the pool, and `false` otherwise.

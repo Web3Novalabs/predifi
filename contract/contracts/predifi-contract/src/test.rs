@@ -1940,6 +1940,85 @@ fn test_whitelist_persists_in_persistent_storage() {
 }
 
 #[test]
+fn test_is_whitelisted_tracks_explicit_private_pool_membership() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let invited_user = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Private whitelist helper"),
+            metadata_url: String::from_str(&env, "ipfs://private-whitelist-helper"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    assert!(!client.is_whitelisted(&pool_id, &creator));
+    assert!(!client.is_whitelisted(&pool_id, &invited_user));
+
+    client.add_to_whitelist(&creator, &pool_id, &invited_user);
+    assert!(client.is_whitelisted(&pool_id, &invited_user));
+
+    client.remove_from_whitelist(&creator, &pool_id, &invited_user);
+    assert!(!client.is_whitelisted(&pool_id, &invited_user));
+}
+
+#[test]
+fn test_is_whitelisted_returns_false_for_public_pool_without_entry() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Public whitelist helper"),
+            metadata_url: String::from_str(&env, "ipfs://public-whitelist-helper"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    assert!(!client.is_whitelisted(&pool_id, &user));
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #91)")]
 fn test_place_prediction_fails_for_non_whitelisted_token() {
     let env = Env::default();
