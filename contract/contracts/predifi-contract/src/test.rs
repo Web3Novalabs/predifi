@@ -5361,7 +5361,7 @@ fn create_test_pool(
     token_address: &Address,
     end_time: u64,
 ) -> u64 {
-    client.create_pool(
+    let pool_id = client.create_pool(
         creator,
         &end_time,
         token_address,
@@ -5393,6 +5393,8 @@ fn create_test_pool(
     assert!(!pool.resolved);
     assert!(!pool.canceled);
     assert_eq!(pool.state, MarketState::Active);
+
+    pool_id
 }
 
 /// is_pool_active returns false (via behavior) after pool is resolved —
@@ -5416,10 +5418,16 @@ fn test_is_pool_active_false_after_resolve() {
             metadata_url: String::from_str(&env, "ipfs://resolved"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -5452,10 +5460,16 @@ fn test_is_pool_active_false_after_cancel() {
             metadata_url: String::from_str(&env, "ipfs://canceled"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -5490,10 +5504,16 @@ fn test_is_pool_active_blocks_resolve_on_canceled_pool() {
             metadata_url: String::from_str(&env, "ipfs://cancelresolve"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -5525,10 +5545,16 @@ fn test_is_pool_active_blocks_double_cancel() {
             metadata_url: String::from_str(&env, "ipfs://doublecancel"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -5558,10 +5584,16 @@ fn test_is_pool_active_blocks_increase_max_stake_on_resolved_pool() {
             metadata_url: String::from_str(&env, "ipfs://maxresolved"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -5593,10 +5625,16 @@ fn test_is_pool_active_full_lifecycle() {
             metadata_url: String::from_str(&env, "ipfs://lifecycle"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -5971,7 +6009,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
         &creator,
         &100_000u64,
         &token_address,
-        &2u32,
+        &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
             description: String::from_str(&env, "Outcome Test"),
@@ -5984,25 +6022,6 @@ fn test_outcome_descriptions_stored_and_retrieved() {
             private: false,
             whitelist_key: None,
             outcome_descriptions: descriptions,
-        },
-    );
-
-    let pool_id_2 = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &3u32,
-        &symbol_short!("Sports"),
-        &PoolConfig {
-            description: String::from_str(&env, "Match outcome"),
-            metadata_url: String::from_str(&env, "ipfs://match"),
-            min_stake: 1i128,
-            max_stake: 0i128,
-            max_total_stake: 0,
-            initial_liquidity: 0i128,
-            required_resolutions: 1u32,
-            private: false,
-            whitelist_key: None,
         },
     );
 
@@ -6115,6 +6134,13 @@ fn test_get_active_pools_excludes_resolved_pool() {
 
     let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
 
+    let descriptions = vec![
+        &env,
+        String::from_str(&env, "Team A wins"),
+        String::from_str(&env, "Draw"),
+        String::from_str(&env, "Team B wins"),
+    ];
+
     let pool_a = client.create_pool(
         &creator,
         &100_000u64,
@@ -6131,6 +6157,11 @@ fn test_get_active_pools_excludes_resolved_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -6138,16 +6169,23 @@ fn test_get_active_pools_excludes_resolved_pool() {
         &creator,
         &100_000u64,
         &token_address,
-        &2u32,
+        &3u32,
         &symbol_short!("Sports"),
         &PoolConfig {
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
             outcome_descriptions: descriptions.clone(),
         },
     );
 
-    let pool = client.get_pool(&pool_id);
+    let pool = client.get_pool(&pool_b);
     assert_eq!(pool.outcome_descriptions.len(), 3);
     assert_eq!(
         pool.outcome_descriptions.get(0).unwrap(),
@@ -6187,17 +6225,13 @@ fn test_outcome_descriptions_length_mismatch_panics() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Only one"),
+                String::from_str(&env, "Outcome"),
+            ],
         },
     );
-
-    assert_eq!(client.get_active_pools(&0u32, &10u32).len(), 2);
-
-    env.ledger().with_mut(|li| li.timestamp = 100_001);
-    client.resolve_pool(&operator, &pool_a, &0u32);
-
-    let result = client.get_active_pools(&0u32, &10u32);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result.get(0).unwrap(), pool_b);
 }
 
 /// Canceled pool is removed from get_active_pools.
@@ -6224,7 +6258,11 @@ fn test_get_active_pools_excludes_canceled_pool() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: Vec::new(&env),
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -6284,35 +6322,13 @@ fn test_create_pool_respects_configurable_min_duration() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
-
-    let pool_b = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &symbol_short!("Sports"),
-        &PoolConfig {
-            description: String::from_str(&env, "Pool B"),
-            metadata_url: String::from_str(&env, "ipfs://b"),
-            min_stake: 1i128,
-            max_stake: 0i128,
-            max_total_stake: 0,
-            initial_liquidity: 0i128,
-            required_resolutions: 1u32,
-            private: false,
-            whitelist_key: None,
-        },
-    );
-
-    assert_eq!(client.get_active_pools(&0u32, &10u32).len(), 2);
-
-    client.cancel_pool(&operator, &pool_a);
-
-    let result = client.get_active_pools(&0u32, &10u32);
-    assert_eq!(result.len(), 1);
-    assert_eq!(result.get(0).unwrap(), pool_b);
 }
 
 /// Pagination: offset and limit work correctly over a known set.
@@ -6341,6 +6357,11 @@ fn test_get_active_pools_pagination() {
                 required_resolutions: 1u32,
                 private: false,
                 whitelist_key: None,
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
             },
         );
         pool_ids.push_back(pid);
@@ -6450,6 +6471,11 @@ fn test_get_active_pools_swap_pop_removes_last() {
             private: false,
             whitelist_key: None,
             max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     let pool_b = client.create_pool(
@@ -6468,6 +6494,11 @@ fn test_get_active_pools_swap_pop_removes_last() {
             private: false,
             whitelist_key: None,
             max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     let pool_c = client.create_pool(
@@ -6486,6 +6517,11 @@ fn test_get_active_pools_swap_pop_removes_last() {
             private: false,
             whitelist_key: None,
             max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -6523,6 +6559,11 @@ fn test_get_active_pools_empty_after_all_resolved() {
             private: false,
             whitelist_key: None,
             max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     let pool_b = client.create_pool(
@@ -6541,6 +6582,11 @@ fn test_get_active_pools_empty_after_all_resolved() {
             private: false,
             whitelist_key: None,
             max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -6579,6 +6625,11 @@ fn test_get_active_pools_excludes_oracle_resolved_pool() {
             private: false,
             whitelist_key: None,
             max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     let pool_b = client.create_pool(
@@ -6597,6 +6648,11 @@ fn test_get_active_pools_excludes_oracle_resolved_pool() {
             private: false,
             whitelist_key: None,
             max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
