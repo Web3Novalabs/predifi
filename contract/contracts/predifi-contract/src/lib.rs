@@ -2824,23 +2824,18 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Check if a user is whitelisted for a private pool.
+    /// Check whether a user has an explicit whitelist entry for a pool.
+    ///
+    /// This helper only reports stored whitelist membership. It does not treat
+    /// public pools, pool creators, or invite-based access as implicit
+    /// whitelist membership.
     pub fn is_whitelisted(env: Env, pool_id: u64, user: Address) -> bool {
         let pool_key = DataKey::Pool(pool_id);
-        let pool: Pool = env
-            .storage()
+        env.storage()
             .persistent()
-            .get(&pool_key)
+            .get::<_, Pool>(&pool_key)
             .expect("Pool not found");
         Self::extend_persistent(&env, &pool_key);
-
-        if !pool.private {
-            return true;
-        }
-
-        if user == pool.creator {
-            return true;
-        }
 
         let whitelist_key = DataKey::Whitelist(pool_id, user);
         let is_whitelisted = env

@@ -45,3 +45,9 @@ Price-based pools are initialized in two distinct steps to ensure flexibility:
 ### Automated Resolution
 
 Once the pool's `end_time` plus the global `resolution_delay` has passed, anyone can call `resolve_pool_from_price`. The contract will fetch the latest price and resolve the pool automatically to Outcome 1 (condition met) or Outcome 0 (condition not met).
+
+### Private Pool Whitelist Helper
+
+The contract exposes a public read-only `is_whitelisted(pool_id, user)` helper.
+It returns `true` only when that address has an explicit whitelist entry stored
+for the pool, and `false` otherwise.
