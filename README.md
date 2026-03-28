@@ -19,8 +19,9 @@ The repository is organized into two main workspaces:
 
 The smart contract logic is written in **Rust** for the **Soroban** platform.
 
-- `contracts/`: Directory containing individual contract crates.
-  - `hello-world/`: Initial template contract (to be replaced/expanded with PrediFi logic).
+- `contracts/predifi-contract/`: Main prediction market contract.
+- `contracts/access-control/`: Shared role-based access control contract.
+- `contracts/predifi-errors/`: Shared error types and helpers used across backend crates.
 
 ### Frontend (`frontend/`)
 
@@ -64,6 +65,22 @@ The user interface is built with **Next.js**, **Tailwind CSS**, and **TypeScript
    cargo test
    ```
 
+   Install the WASM target used by CI if you do not already have it:
+
+   ```bash
+   rustup target add wasm32-unknown-unknown
+   ```
+
+   Match the backend CI checks locally:
+
+   ```bash
+   cargo fmt --all -- --check
+   cargo clippy --workspace --target wasm32-unknown-unknown -- -D warnings
+   cargo build --workspace --target wasm32-unknown-unknown --release
+   cargo test --workspace
+   bash scripts/wasm_size_check.sh
+   ```
+
 3. **Frontend:**
 
    Navigate to the frontend directory:
@@ -85,6 +102,10 @@ The user interface is built with **Next.js**, **Tailwind CSS**, and **TypeScript
    ```
 
    Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+### Backend CI
+
+The backend workflow lives at `.github/workflows/backend.yml`. It runs formatting, clippy, release WASM builds, unit tests, and the contract size check whenever backend files change.
 
 ## PriceFeed Integration
 
@@ -116,6 +137,33 @@ Once the pool's end time is reached, anyone can trigger the resolution by callin
 2.  Verify the price data is fresh and reliable (confidence check).
 3.  Evaluate the `PriceCondition`.
 4.  Resolve the pool to outcome `1` (Condition Met) or `0` (Condition Not Met).
+
+## Backend Error Handling
+
+The `backend/` crate provides a unified `AppError` enum (via [`thiserror`](https://docs.rs/thiserror)) for all API and database errors.
+
+| Variant | HTTP | When |
+| :--- | :--- | :--- |
+| `Validation(String)` | 400 | Invalid input / missing field |
+| `Unauthorized(String)` | 401 | Missing or invalid auth token |
+| `NotFound(String)` | 404 | Resource does not exist |
+| `Database(String)` | 500 | Query failure |
+| `DatabaseConnection(String)` | 500 | Connection refused / timeout |
+
+```rust
+use predifi_backend::AppError;
+
+fn get_pool(id: u64) -> Result<Pool, AppError> {
+    db.find(id).ok_or_else(|| AppError::NotFound(format!("pool {id}")))
+}
+```
+
+Run backend tests:
+
+```bash
+cd backend
+cargo test
+```
 
 ## Contributing
 

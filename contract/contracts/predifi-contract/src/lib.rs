@@ -176,6 +176,8 @@ pub enum PredifiError {
     StakeAboveMaximum = 108,
     /// The fee basis points exceed the maximum allowed value (10000).
     InvalidFeeBps = 93,
+    /// Metadata URL exceeds maximum length (512 bytes).
+    MetadataUrlInvalid = 109,
     /// An arithmetic overflow, underflow, or division by zero occurred.
     ArithmeticError = 110,
 }
@@ -358,6 +360,17 @@ pub struct Config {
     pub min_pool_duration: u64,
 }
 
+/// Fee percentages returned by [`PredifiContract::get_fees`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeInfo {
+    /// Protocol (treasury) fee in basis points (1 bp = 0.01%). Range: 0-10,000.
+    pub treasury_fee_bps: u32,
+    /// Referral cut in basis points — the share of the protocol fee paid to referrers.
+    /// Range: 0-10,000. Default: 5,000 (50%).
+    pub referral_fee_bps: u32,
+}
+
 /// Represents a single tier in the dynamic fee system.
 ///
 /// Tiers are applied based on the total stake (volume) of the pool at resolution time.
@@ -394,53 +407,82 @@ pub struct UserPredictionDetail {
 
 /// Internal storage keys for contract data.
 ///
-/// This enum defines all the keys used to store and retrieve data from
-/// Soroban's storage. Each variant corresponds to a specific data type.
+/// All variants use PascalCase. Abbreviated names are preserved for existing
+/// on-chain keys to avoid storage migration (Soroban uses the variant name as
+/// the XDR discriminant). New variants added here use full descriptive names.
+///
+/// # Naming conventions
+/// - Existing abbreviated variants (e.g. `OutStake`, `UsrPrdCnt`) are kept
+///   verbatim to preserve on-chain discriminant values.
+/// - New variants added after the initial deployment use full PascalCase names
+///   (e.g. `OracleConfig`, `PriceFeed`, `PriceCondition`).
+/// - All variants are documented with their storage type mapping.
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
-    /// Pool data by pool ID: Pool(pool_id) -> Pool
+    // ── Pool data ────────────────────────────────────────────────────────────
+    /// Pool data by pool ID: `Pool(pool_id)` -> `Pool`
     Pool(u64),
-    /// User prediction by user address and pool ID: Pred(user, pool_id) -> Prediction
-    Pred(Address, u64),
-    /// Pool ID counter for generating unique pool IDs.
+    /// Pool ID counter for generating unique pool IDs: `PoolIdCtr` -> `u64`
     PoolIdCtr,
-    /// Tracks whether a user has claimed winnings for a pool: Claimed(user, pool_id) -> bool
-    Claimed(Address, u64),
-    /// Stake amount for a specific outcome: OutStake(pool_id, outcome) -> i128
-    OutStake(u64, u32),
-    /// Optimized storage for markets with many outcomes (e.g., 32+ teams).
-    /// Stores all outcome stakes as a single `Vec<i128>` to reduce storage reads.
-    OutStakes(u64),
-    /// User prediction count: UsrPrdCnt(user) -> u32
-    UsrPrdCnt(Address),
-    /// User prediction index: UsrPrdIdx(user, index) -> UserPredictionDetail
-    UsrPrdIdx(Address, u32),
-    /// Global protocol configuration: Config -> Config
-    Config,
-    /// Contract pause state: Paused -> bool
-    Paused,
-    /// Reentrancy guard: RentGuard -> bool
-    RentGuard,
-    /// Category pool count: CatPoolCt(category) -> u32
-    CatPoolCt(Symbol),
-    /// Category pool index: CatPoolIx(category, index) -> u64
-    CatPoolIx(Symbol, u32),
-    /// Token whitelist: TokenWl(token_address) -> true if allowed for betting.
-    TokenWl(Address),
-    /// Participant count for a pool: PartCnt(pool_id) -> u32
+    /// Participant count for a pool: `PartCnt(pool_id)` -> `u32`
     PartCnt(u64),
-    /// Tracks if an oracle has already voted: ResVote(pool_id, oracle_address)
-    ResVote(u64, Address),
-    /// Tracks vote count for a specific outcome: ResVoteCt(pool_id, outcome)
-    ResVoteCt(u64, u32),
-    /// Tracks total number of votes cast for a pool: ResTotal(pool_id)
-    ResTotal(u64),
-    /// Referral cut in basis points: ReferralCutBps -> u32
+
+    // ── Predictions & stakes ─────────────────────────────────────────────────
+    /// User prediction by user address and pool ID: `Pred(user, pool_id)` -> `Prediction`
+    Pred(Address, u64),
+    /// Tracks whether a user has claimed winnings for a pool: `Claimed(user, pool_id)` -> `bool`
+    Claimed(Address, u64),
+    /// Stake amount for a specific outcome (backward-compat individual key):
+    /// `OutStake(pool_id, outcome)` -> `i128`
+    OutStake(u64, u32),
+    /// Optimized batch storage for all outcome stakes in a pool:
+    /// `OutStakes(pool_id)` -> `Vec<i128>`
+    ///
+    /// Preferred over `OutStake` for pools with many outcomes. Falls back to
+    /// `OutStake` for backward compatibility when this key is absent.
+    OutStakes(u64),
+    /// User prediction count: `UsrPrdCnt(user)` -> `u32`
+    UsrPrdCnt(Address),
+    /// User prediction index: `UsrPrdIdx(user, index)` -> `UserPredictionDetail`
+    UsrPrdIdx(Address, u32),
+
+    // ── Protocol configuration ───────────────────────────────────────────────
+    /// Global protocol configuration: `Config` -> `Config`
+    Config,
+    /// Contract pause state: `Paused` -> `bool`
+    Paused,
+    /// Contract version for safe upgrade migrations: `Version` -> `u32`
+    Version,
+    /// Referral cut in basis points: `ReferralCutBps` -> `u32`
     ReferralCutBps,
-    /// Referred volume for a referrer and pool: ReferredVolume(referrer, pool_id) -> i128
+    /// Reentrancy guard (temporary storage): `RentGuard` -> `bool`
+    RentGuard,
+
+    // ── Token whitelist ──────────────────────────────────────────────────────
+    /// Token whitelist entry: `TokenWl(token_address)` -> `bool`
+    ///
+    /// Present (with value `true`) when the token is allowed for betting.
+    TokenWl(Address),
+
+    // ── Categories ───────────────────────────────────────────────────────────
+    /// Category pool count: `CatPoolCt(category)` -> `u32`
+    CatPoolCt(Symbol),
+    /// Category pool index: `CatPoolIx(category, index)` -> `u64` (pool_id)
+    CatPoolIx(Symbol, u32),
+
+    // ── Resolution voting ────────────────────────────────────────────────────
+    /// Tracks if an oracle/operator has already voted: `ResVote(pool_id, voter_address)` -> `()`
+    ResVote(u64, Address),
+    /// Vote count for a specific outcome: `ResVoteCt(pool_id, outcome)` -> `u32`
+    ResVoteCt(u64, u32),
+    /// Total number of votes cast for a pool: `ResTotal(pool_id)` -> `u32`
+    ResTotal(u64),
+
+    // ── Referrals ────────────────────────────────────────────────────────────
+    /// Referred volume for a referrer and pool: `ReferredVolume(referrer, pool_id)` -> `i128`
     ReferredVolume(Address, u64),
-    /// Referrer address for a user and pool: Referrer(user, pool_id) -> Address
+    /// Referrer address for a user and pool: `Referrer(user, pool_id)` -> `Address`
     ///
     /// FUTURE: Multiple referrers per user per pool
     /// Currently a user can only have one referrer per pool. If multiple referrers are needed
@@ -451,10 +493,10 @@ pub enum DataKey {
     /// and distribute proportional cuts. Until that requirement is confirmed, the single-referrer
     /// model is kept for simplicity and gas efficiency.
     Referrer(Address, u64),
-    /// User whitelist for private pools: Whitelist(pool_id, user_address)
+
+    // ── Private pools ────────────────────────────────────────────────────────
+    /// User whitelist for private pools: `Whitelist(pool_id, user_address)` -> `()`
     Whitelist(u64, Address),
-    /// Contract version for safe upgrade migrations.
-    Version,
     // Global active pool counter: ActivePoolCtr -> u32
     ActivePoolCtr,
     /// Global active pool index: ActivePool(index) -> u64 (pool_id)
@@ -466,6 +508,8 @@ pub enum DataKey {
     /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
     PriceFeed(Symbol),
     FeeTiers,
+    /// Oracle configuration for price feed validation
+    OracleConfig,
 }
 
 /// Represents a user's prediction in a pool.
@@ -1431,6 +1475,17 @@ impl PredifiContract {
         Self::read_referral_cut_bps(&env)
     }
 
+    /// Returns the current treasury and referral fee percentages as a [`FeeInfo`].
+    ///
+    /// - `treasury_fee_bps`: protocol fee charged on winnings (set via `set_fee_bps`).
+    /// - `referral_fee_bps`: share of the protocol fee paid to referrers (set via `set_referral_cut_bps`).
+    pub fn get_fees(env: Env) -> FeeInfo {
+        FeeInfo {
+            treasury_fee_bps: Self::get_config(&env).fee_bps,
+            referral_fee_bps: Self::read_referral_cut_bps(&env),
+        }
+    }
+
     /// Get total referred volume for a (referrer, pool_id) in base token units.
     pub fn get_referred_volume(env: Env, referrer: Address, pool_id: u64) -> i128 {
         let key = DataKey::ReferredVolume(referrer, pool_id);
@@ -1589,10 +1644,9 @@ impl PredifiContract {
             config.description.len() <= 256,
             "description exceeds 256 bytes"
         );
-        assert!(
-            config.metadata_url.len() <= 512,
-            "metadata_url exceeds 512 bytes"
-        );
+        if config.metadata_url.len() > 512 {
+            soroban_sdk::panic_with_error!(&env, PredifiError::MetadataUrlInvalid);
+        }
 
         // Validate stake limits
         assert!(config.min_stake > 0, "min_stake must be greater than zero");
@@ -1953,16 +2007,19 @@ impl PredifiContract {
     /// * `reason`  - A short description of why the pool is being canceled.
     ///
     /// # Errors
-    /// - `Unauthorized` if caller is not admin.
+    /// - `Unauthorized` if caller is not admin/operator and not the pool creator, or if creator
+    ///   attempts to cancel a pool that already has bets beyond initial liquidity.
     /// - `PoolNotResolved` error (code 22) is returned if trying to cancel an already resolved pool.
-    /// PRE: pool.state = Active, operator has role 1
+    /// PRE: pool.state = Active, caller has role 0/1 OR (caller == pool.creator AND total_stake <= initial_liquidity)
     /// POST: pool.state = Canceled, state transition valid (INV-2)
-    pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
+    pub fn cancel_pool(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        reason: String,
+    ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
-
-        // Check authorization: operator must have role 1
-        Self::require_role(&env, &operator, 1)?;
 
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
@@ -1972,35 +2029,39 @@ impl PredifiContract {
             .expect("Pool not found");
         Self::extend_persistent(&env, &pool_key);
 
+        // Determine if caller is admin/operator (role 0 or 1)
+        let is_privileged = Self::require_role(&env, &operator, 0).is_ok()
+            || Self::require_role(&env, &operator, 1).is_ok();
+
+        if !is_privileged {
+            // Allow creator to cancel only if no bets have been placed beyond initial liquidity
+            if operator != pool.creator {
+                return Err(PredifiError::Unauthorized);
+            }
+            if pool.total_stake > pool.initial_liquidity {
+                return Err(PredifiError::Unauthorized);
+            }
+        }
+
         // Ensure resolved pools cannot be canceled
         if pool.resolved {
             return Err(PredifiError::PoolNotResolved);
         }
 
-        // Prevent double cancellation
-        assert!(!pool.canceled, "Pool already canceled");
-        // Verify state transition validity (INV-2)
-        // assert!(
-        //     Self::is_valid_state_transition(pool.state, MarketState::Canceled),
-        //     "Invalid state transition"
-        // );
         if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 
         pool.state = MarketState::Canceled;
-
-        // Mark pool as canceled
         pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
-        // Remove from global active index now that the pool is canceled.
         Self::remove_from_active_index(&env, pool_id);
 
         PoolCanceledEvent {
             pool_id,
             caller: operator.clone(),
-            reason: String::from_str(&env, ""),
+            reason,
             operator,
         }
         .publish(&env);

@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod benchmark_tests {
-    use crate::{DataKey, PoolConfig, PredifiContract, PredifiContractClient};
+    use crate::{PoolConfig, PredifiContract, PredifiContractClient};
     use soroban_sdk::{
         symbol_short,
         testutils::{Address as _, Ledger},
-        token, vec, Address, Env, String, Vec,
+        token, Address, Env, String, Vec,
     };
 
     mod dummy_access_control {
@@ -46,6 +46,7 @@ mod benchmark_tests {
         let admin = Address::generate(env);
         let treasury = Address::generate(env);
         ac_client.grant_role(&admin, &ROLE_ADMIN);
+        ac_client.grant_role(&admin, &ROLE_OPERATOR);
         client.init(&ac_id, &treasury, &500, &3600, &3600u64);
         let token_admin = Address::generate(env);
         let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
@@ -64,12 +65,12 @@ mod benchmark_tests {
         let options_count = 100;
 
         let mut outcome_descriptions = Vec::new(&env);
-        for i in 0..options_count {
+        for _i in 0..options_count {
             outcome_descriptions.push_back(String::from_str(&env, "Outcome"));
         }
 
         // Measure create_pool
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         let pool_id = client.create_pool(
             &creator,
             &(env.ledger().timestamp() + 10000),
@@ -89,49 +90,29 @@ mod benchmark_tests {
                 outcome_descriptions,
             },
         );
-        let budget_create = env.budget().cpu_insns();
-        let storage_reads_create = env.budget().storage_read_count();
-        eprintln!(
-            "CREATE_POOL ({} outcomes) -> CPU: {}, Reads: {}",
-            options_count, budget_create, storage_reads_create
-        );
+        let _budget_create = env.cost_estimate().budget().cpu_instruction_cost();
 
         // Measure first prediction (triggers fallback if not initialized)
         let user1 = Address::generate(&env);
         token_admin_client.mint(&user1, &1000);
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.place_prediction(&user1, &pool_id, &1000, &0, &None, &None);
-        let budget_pred1 = env.budget().cpu_insns();
-        let storage_reads_pred1 = env.budget().storage_read_count();
-        eprintln!(
-            "FIRST_PREDICTION -> CPU: {}, Reads: {}",
-            budget_pred1, storage_reads_pred1
-        );
+        let _budget_pred1 = env.cost_estimate().budget().cpu_instruction_cost();
 
         // Measure second prediction (should use batch key)
         let user2 = Address::generate(&env);
         token_admin_client.mint(&user2, &1000);
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.place_prediction(&user2, &pool_id, &1000, &1, &None, &None);
-        let budget_pred2 = env.budget().cpu_insns();
-        let storage_reads_pred2 = env.budget().storage_read_count();
-        eprintln!(
-            "SECOND_PREDICTION -> CPU: {}, Reads: {}",
-            budget_pred2, storage_reads_pred2
-        );
+        let _budget_pred2 = env.cost_estimate().budget().cpu_instruction_cost();
 
         // Resolve
         env.ledger().with_mut(|li| li.timestamp += 20000);
         client.resolve_pool(&admin, &pool_id, &0);
 
         // Measure claim_winnings
-        env.budget().reset_default();
+        env.cost_estimate().budget().reset_default();
         client.claim_winnings(&user1, &pool_id);
-        let budget_claim = env.budget().cpu_insns();
-        let storage_reads_claim = env.budget().storage_read_count();
-        eprintln!(
-            "CLAIM_WINNINGS -> CPU: {}, Reads: {}",
-            budget_claim, storage_reads_claim
-        );
+        let _budget_claim = env.cost_estimate().budget().cpu_instruction_cost();
     }
 }
