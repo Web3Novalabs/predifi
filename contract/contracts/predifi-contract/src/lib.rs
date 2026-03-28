@@ -1,6 +1,7 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+mod benchmark_test;
 #[cfg(test)]
 mod payout_proptests;
 mod price_feed;
@@ -175,6 +176,8 @@ pub enum PredifiError {
     StakeAboveMaximum = 108,
     /// The fee basis points exceed the maximum allowed value (10000).
     InvalidFeeBps = 93,
+    /// Metadata URL exceeds maximum length (512 bytes).
+    MetadataUrlInvalid = 109,
     /// An arithmetic overflow, underflow, or division by zero occurred.
     ArithmeticError = 110,
 }
@@ -393,53 +396,82 @@ pub struct UserPredictionDetail {
 
 /// Internal storage keys for contract data.
 ///
-/// This enum defines all the keys used to store and retrieve data from
-/// Soroban's storage. Each variant corresponds to a specific data type.
+/// All variants use PascalCase. Abbreviated names are preserved for existing
+/// on-chain keys to avoid storage migration (Soroban uses the variant name as
+/// the XDR discriminant). New variants added here use full descriptive names.
+///
+/// # Naming conventions
+/// - Existing abbreviated variants (e.g. `OutStake`, `UsrPrdCnt`) are kept
+///   verbatim to preserve on-chain discriminant values.
+/// - New variants added after the initial deployment use full PascalCase names
+///   (e.g. `OracleConfig`, `PriceFeed`, `PriceCondition`).
+/// - All variants are documented with their storage type mapping.
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
-    /// Pool data by pool ID: Pool(pool_id) -> Pool
+    // ── Pool data ────────────────────────────────────────────────────────────
+    /// Pool data by pool ID: `Pool(pool_id)` -> `Pool`
     Pool(u64),
-    /// User prediction by user address and pool ID: Pred(user, pool_id) -> Prediction
-    Pred(Address, u64),
-    /// Pool ID counter for generating unique pool IDs.
+    /// Pool ID counter for generating unique pool IDs: `PoolIdCtr` -> `u64`
     PoolIdCtr,
-    /// Tracks whether a user has claimed winnings for a pool: Claimed(user, pool_id) -> bool
-    Claimed(Address, u64),
-    /// Stake amount for a specific outcome: OutStake(pool_id, outcome) -> i128
-    OutStake(u64, u32),
-    /// Optimized storage for markets with many outcomes (e.g., 32+ teams).
-    /// Stores all outcome stakes as a single `Vec<i128>` to reduce storage reads.
-    OutStakes(u64),
-    /// User prediction count: UsrPrdCnt(user) -> u32
-    UsrPrdCnt(Address),
-    /// User prediction index: UsrPrdIdx(user, index) -> UserPredictionDetail
-    UsrPrdIdx(Address, u32),
-    /// Global protocol configuration: Config -> Config
-    Config,
-    /// Contract pause state: Paused -> bool
-    Paused,
-    /// Reentrancy guard: RentGuard -> bool
-    RentGuard,
-    /// Category pool count: CatPoolCt(category) -> u32
-    CatPoolCt(Symbol),
-    /// Category pool index: CatPoolIx(category, index) -> u64
-    CatPoolIx(Symbol, u32),
-    /// Token whitelist: TokenWl(token_address) -> true if allowed for betting.
-    TokenWl(Address),
-    /// Participant count for a pool: PartCnt(pool_id) -> u32
+    /// Participant count for a pool: `PartCnt(pool_id)` -> `u32`
     PartCnt(u64),
-    /// Tracks if an oracle has already voted: ResVote(pool_id, oracle_address)
-    ResVote(u64, Address),
-    /// Tracks vote count for a specific outcome: ResVoteCt(pool_id, outcome)
-    ResVoteCt(u64, u32),
-    /// Tracks total number of votes cast for a pool: ResTotal(pool_id)
-    ResTotal(u64),
-    /// Referral cut in basis points: ReferralCutBps -> u32
+
+    // ── Predictions & stakes ─────────────────────────────────────────────────
+    /// User prediction by user address and pool ID: `Pred(user, pool_id)` -> `Prediction`
+    Pred(Address, u64),
+    /// Tracks whether a user has claimed winnings for a pool: `Claimed(user, pool_id)` -> `bool`
+    Claimed(Address, u64),
+    /// Stake amount for a specific outcome (backward-compat individual key):
+    /// `OutStake(pool_id, outcome)` -> `i128`
+    OutStake(u64, u32),
+    /// Optimized batch storage for all outcome stakes in a pool:
+    /// `OutStakes(pool_id)` -> `Vec<i128>`
+    ///
+    /// Preferred over `OutStake` for pools with many outcomes. Falls back to
+    /// `OutStake` for backward compatibility when this key is absent.
+    OutStakes(u64),
+    /// User prediction count: `UsrPrdCnt(user)` -> `u32`
+    UsrPrdCnt(Address),
+    /// User prediction index: `UsrPrdIdx(user, index)` -> `UserPredictionDetail`
+    UsrPrdIdx(Address, u32),
+
+    // ── Protocol configuration ───────────────────────────────────────────────
+    /// Global protocol configuration: `Config` -> `Config`
+    Config,
+    /// Contract pause state: `Paused` -> `bool`
+    Paused,
+    /// Contract version for safe upgrade migrations: `Version` -> `u32`
+    Version,
+    /// Referral cut in basis points: `ReferralCutBps` -> `u32`
     ReferralCutBps,
-    /// Referred volume for a referrer and pool: ReferredVolume(referrer, pool_id) -> i128
+    /// Reentrancy guard (temporary storage): `RentGuard` -> `bool`
+    RentGuard,
+
+    // ── Token whitelist ──────────────────────────────────────────────────────
+    /// Token whitelist entry: `TokenWl(token_address)` -> `bool`
+    ///
+    /// Present (with value `true`) when the token is allowed for betting.
+    TokenWl(Address),
+
+    // ── Categories ───────────────────────────────────────────────────────────
+    /// Category pool count: `CatPoolCt(category)` -> `u32`
+    CatPoolCt(Symbol),
+    /// Category pool index: `CatPoolIx(category, index)` -> `u64` (pool_id)
+    CatPoolIx(Symbol, u32),
+
+    // ── Resolution voting ────────────────────────────────────────────────────
+    /// Tracks if an oracle/operator has already voted: `ResVote(pool_id, voter_address)` -> `()`
+    ResVote(u64, Address),
+    /// Vote count for a specific outcome: `ResVoteCt(pool_id, outcome)` -> `u32`
+    ResVoteCt(u64, u32),
+    /// Total number of votes cast for a pool: `ResTotal(pool_id)` -> `u32`
+    ResTotal(u64),
+
+    // ── Referrals ────────────────────────────────────────────────────────────
+    /// Referred volume for a referrer and pool: `ReferredVolume(referrer, pool_id)` -> `i128`
     ReferredVolume(Address, u64),
-    /// Referrer address for a user and pool: Referrer(user, pool_id) -> Address
+    /// Referrer address for a user and pool: `Referrer(user, pool_id)` -> `Address`
     ///
     /// FUTURE: Multiple referrers per user per pool
     /// Currently a user can only have one referrer per pool. If multiple referrers are needed
@@ -450,10 +482,10 @@ pub enum DataKey {
     /// and distribute proportional cuts. Until that requirement is confirmed, the single-referrer
     /// model is kept for simplicity and gas efficiency.
     Referrer(Address, u64),
-    /// User whitelist for private pools: Whitelist(pool_id, user_address)
+
+    // ── Private pools ────────────────────────────────────────────────────────
+    /// User whitelist for private pools: `Whitelist(pool_id, user_address)` -> `()`
     Whitelist(u64, Address),
-    /// Contract version for safe upgrade migrations.
-    Version,
     // Global active pool counter: ActivePoolCtr -> u32
     ActivePoolCtr,
     /// Global active pool index: ActivePool(index) -> u64 (pool_id)
@@ -465,6 +497,8 @@ pub enum DataKey {
     /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
     PriceFeed(Symbol),
     FeeTiers,
+    /// Oracle configuration for price feed validation
+    OracleConfig,
 }
 
 /// Represents a user's prediction in a pool.
@@ -879,6 +913,7 @@ impl PredifiContract {
 
     /// Pure: Validate fee basis points
     /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
+    #[allow(dead_code)]
     fn is_valid_fee_bps(fee_bps: u32) -> bool {
         fee_bps <= 10_000
     }
@@ -889,6 +924,7 @@ impl PredifiContract {
     ///
     /// PRE: pool is a valid Pool instance
     /// POST: returns true only when all three conditions hold simultaneously
+    #[allow(dead_code)]
     fn is_pool_active(pool: &Pool) -> bool {
         !pool.resolved && !pool.canceled && pool.state == MarketState::Active
     }
@@ -1586,10 +1622,9 @@ impl PredifiContract {
             config.description.len() <= 256,
             "description exceeds 256 bytes"
         );
-        assert!(
-            config.metadata_url.len() <= 512,
-            "metadata_url exceeds 512 bytes"
-        );
+        if config.metadata_url.len() > 512 {
+            soroban_sdk::panic_with_error!(&env, PredifiError::MetadataUrlInvalid);
+        }
 
         // Validate stake limits
         assert!(config.min_stake > 0, "min_stake must be greater than zero");
@@ -1643,6 +1678,15 @@ impl PredifiContract {
         let pc_key = DataKey::PartCnt(pool_id);
         env.storage().persistent().set(&pc_key, &0u32);
         Self::bump_ttl(&env, &pc_key);
+
+        // Initialize optimized batch storage with zeros to avoid expensive fallback reads
+        let mut initial_stakes = Vec::new(&env);
+        for _ in 0..options_count {
+            initial_stakes.push_back(0i128);
+        }
+        let stakes_key = DataKey::OutStakes(pool_id);
+        env.storage().persistent().set(&stakes_key, &initial_stakes);
+        Self::extend_persistent(&env, &stakes_key);
 
         // Transfer initial liquidity from creator to contract if provided
         if config.initial_liquidity > 0 {
@@ -1879,9 +1923,8 @@ impl PredifiContract {
             Self::remove_from_active_index(&env, pool_id);
             Self::bump_ttl(&env, &pool_key);
 
-            // Retrieve winning-outcome stake for the diagnostic event
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+            // Retrieve winning-outcome stake for the diagnostic event efficiently
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, outcome);
 
             PoolResolvedEvent {
                 pool_id,
@@ -2285,8 +2328,8 @@ impl PredifiContract {
             }
 
             // Get winning stake using optimized batch storage
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(pool.outcome).unwrap_or(0);
+            // Get winning stake efficiently using single outcome getter
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, pool.outcome);
 
             if winning_stake == 0 {
                 return Ok(0);
@@ -2610,27 +2653,22 @@ impl PredifiContract {
     /// avoiding a full `Pool` struct deserialization. Falls back to loading
     /// the pool only when the batch key is missing (pre-optimization data).
     pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
-        // Try the optimized batch key first (avoids Pool deserialization)
+        // Optimization: Try individual key first (most common case, cheapest to read)
+        let stake_key = DataKey::OutStake(pool_id, outcome);
+        if let Some(stake) = env.storage().persistent().get::<_, i128>(&stake_key) {
+            Self::extend_persistent(&env, &stake_key);
+            return stake;
+        }
+
+        // Fallback: Try optimized batch key
         let batch_key = DataKey::OutStakes(pool_id);
         if let Some(stakes) = env.storage().persistent().get::<_, Vec<i128>>(&batch_key) {
             Self::extend_persistent(&env, &batch_key);
             return stakes.get(outcome).unwrap_or(0);
         }
 
-        // Fallback: read Pool to get options_count, then individual OutStake keys
-        let pool_key = DataKey::Pool(pool_id);
-        let pool: Option<Pool> = env.storage().persistent().get(&pool_key);
-        match pool {
-            Some(p) => {
-                Self::extend_persistent(&env, &pool_key);
-                if outcome >= p.options_count {
-                    return 0;
-                }
-                let stake_key = DataKey::OutStake(pool_id, outcome);
-                env.storage().persistent().get(&stake_key).unwrap_or(0)
-            }
-            None => 0,
-        }
+        // Final fallback: reconstructed if neither exists (unlikely in modern version)
+        0
     }
 
     /// Get a paginated list of pool IDs by category.
@@ -3140,9 +3178,8 @@ impl OracleCallback for PredifiContract {
             // Remove from global active index now that the pool is resolved.
             Self::remove_from_active_index(&env, pool_id);
 
-            // Retrieve winning-outcome stake for the diagnostic event
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+            // Retrieve winning-outcome stake for the diagnostic event efficiently
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, outcome);
 
             // Emit resolution events once threshold is met
             PoolResolvedEvent {
