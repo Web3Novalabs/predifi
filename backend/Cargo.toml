@@ -2,6 +2,8 @@
 name = "predifi-backend"
 version = "0.1.0"
 edition = "2021"
+description = "Axum HTTP backend for the PrediFi platform"
+readme = "README.md"
 
 [[bin]]
 name = "predifi-backend"

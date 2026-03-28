@@ -49,7 +49,7 @@ Verify it is running:
 
 ```bash
 curl http://localhost:3000/           # 200 — welcome message
-curl http://localhost:3000/health     # 200 — {"status":"ok"}
+curl http://localhost:3000/health     # 200 — {"status":"ok","service":"predifi-backend","version":"0.1.0"}
 curl http://localhost:3000/missing    # 404 — unknown route
 ```
 
