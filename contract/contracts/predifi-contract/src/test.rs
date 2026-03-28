@@ -7428,7 +7428,6 @@ fn test_operator_can_cancel_pool_with_bets() {
 
 #[test]
 fn test_category_constants_values() {
-    let env = Env::default();
     assert_eq!(CATEGORY_SPORTS, symbol_short!("Sports"));
     assert_eq!(CATEGORY_FINANCE, symbol_short!("Finance"));
     assert_eq!(CATEGORY_CRYPTO, symbol_short!("Crypto"));
@@ -7436,7 +7435,6 @@ fn test_category_constants_values() {
     assert_eq!(CATEGORY_ENTERTAIN, symbol_short!("Entertain"));
     assert_eq!(CATEGORY_TECH, symbol_short!("Tech"));
     assert_eq!(CATEGORY_OTHER, symbol_short!("Other"));
-    let _ = env; // env required for Symbol context
 }
 
 #[test]
