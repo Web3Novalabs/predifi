@@ -1,4 +1,3 @@
-
 #[cfg(test)]
 mod tests {
     use axum::http::{Request, StatusCode};
@@ -55,6 +54,34 @@ mod tests {
         );
     }
 
+    /// GET /api/v1/health must return HTTP 200 from the nested v1 router.
+    #[tokio::test]
+    async fn api_v1_health_returns_200_with_versioned_body() {
+        let response = build_router()
+            .oneshot(get("/api/v1/health"))
+            .await
+            .expect("request failed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = body_string(response.into_body()).await;
+        assert!(
+            body.contains("\"status\"") && body.contains("\"version\":\"v1\""),
+            "body should contain status and version fields, got: {body}"
+        );
+    }
+
+    /// GET /api/v1 must return HTTP 200 from the version discovery route.
+    #[tokio::test]
+    async fn api_v1_index_returns_200() {
+        let response = build_router()
+            .oneshot(get("/api/v1"))
+            .await
+            .expect("request failed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
     /// GET /nonexistent must return HTTP 404 (Axum's built-in fallback).
     #[tokio::test]
     async fn unknown_route_returns_404() {
@@ -65,7 +92,6 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
-
 
     /// Verify the middleware does not alter the status code of a 200 response.
     /// The middleware is purely observational — it must be transparent to callers.
