@@ -7423,3 +7423,82 @@ fn test_operator_can_cancel_pool_with_bets() {
     let pool = client.get_pool(&pool_id);
     assert!(pool.canceled);
 }
+
+// ── Category constant tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_category_constants_values() {
+    let env = Env::default();
+    assert_eq!(CATEGORY_SPORTS, symbol_short!("Sports"));
+    assert_eq!(CATEGORY_FINANCE, symbol_short!("Finance"));
+    assert_eq!(CATEGORY_CRYPTO, symbol_short!("Crypto"));
+    assert_eq!(CATEGORY_POLITICS, symbol_short!("Politics"));
+    assert_eq!(CATEGORY_ENTERTAIN, symbol_short!("Entertain"));
+    assert_eq!(CATEGORY_TECH, symbol_short!("Tech"));
+    assert_eq!(CATEGORY_OTHER, symbol_short!("Other"));
+    let _ = env; // env required for Symbol context
+}
+
+#[test]
+fn test_category_constants_are_unique() {
+    let all = [
+        CATEGORY_SPORTS,
+        CATEGORY_FINANCE,
+        CATEGORY_CRYPTO,
+        CATEGORY_POLITICS,
+        CATEGORY_ENTERTAIN,
+        CATEGORY_TECH,
+        CATEGORY_OTHER,
+    ];
+    for i in 0..all.len() {
+        for j in (i + 1)..all.len() {
+            assert_ne!(all[i], all[j], "duplicate category constants at {i} and {j}");
+        }
+    }
+}
+
+#[test]
+fn test_pool_created_with_each_category() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let categories = [
+        CATEGORY_SPORTS,
+        CATEGORY_FINANCE,
+        CATEGORY_CRYPTO,
+        CATEGORY_POLITICS,
+        CATEGORY_ENTERTAIN,
+        CATEGORY_TECH,
+        CATEGORY_OTHER,
+    ];
+
+    for cat in categories {
+        let pool_id = client.create_pool(
+            &creator,
+            &100000u64,
+            &token_address,
+            &2u32,
+            &cat,
+            &PoolConfig {
+                description: String::from_str(&env, "Category test pool"),
+                metadata_url: String::from_str(&env, "ipfs://test"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "Yes"),
+                    String::from_str(&env, "No"),
+                ],
+            },
+        );
+        let pool = client.get_pool(&pool_id);
+        assert_eq!(pool.category, cat);
+    }
+}
