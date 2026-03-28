@@ -475,4 +475,3 @@ fn test_revoke_all_roles_clears_all_five_roles() {
     assert!(!client.has_role(&user, &Role::Oracle));
     assert!(!client.has_role(&user, &Role::User));
 }
-
