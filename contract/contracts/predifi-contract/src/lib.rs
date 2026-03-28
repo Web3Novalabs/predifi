@@ -396,53 +396,89 @@ pub struct UserPredictionDetail {
 
 /// Internal storage keys for contract data.
 ///
-/// This enum defines all the keys used to store and retrieve data from
-/// Soroban's storage. Each variant corresponds to a specific data type.
+/// All variants use PascalCase. Abbreviated names are preserved for existing
+/// on-chain keys to avoid storage migration (Soroban uses the variant name as
+/// the XDR discriminant). New variants added here use full descriptive names.
+///
+/// # Naming conventions
+/// - Existing abbreviated variants (e.g. `OutStake`, `UsrPrdCnt`) are kept
+///   verbatim to preserve on-chain discriminant values.
+/// - New variants added after the initial deployment use full PascalCase names
+///   (e.g. `OracleConfig`, `PriceFeed`, `PriceCondition`).
+/// - All variants are documented with their storage type mapping.
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
-    /// Pool data by pool ID: Pool(pool_id) -> Pool
+    // ── Pool data ────────────────────────────────────────────────────────────
+
+    /// Pool data by pool ID: `Pool(pool_id)` -> `Pool`
     Pool(u64),
-    /// User prediction by user address and pool ID: Pred(user, pool_id) -> Prediction
-    Pred(Address, u64),
-    /// Pool ID counter for generating unique pool IDs.
+    /// Pool ID counter for generating unique pool IDs: `PoolIdCtr` -> `u64`
     PoolIdCtr,
-    /// Tracks whether a user has claimed winnings for a pool: Claimed(user, pool_id) -> bool
-    Claimed(Address, u64),
-    /// Stake amount for a specific outcome: OutStake(pool_id, outcome) -> i128
-    OutStake(u64, u32),
-    /// Optimized storage for markets with many outcomes (e.g., 32+ teams).
-    /// Stores all outcome stakes as a single `Vec<i128>` to reduce storage reads.
-    OutStakes(u64),
-    /// User prediction count: UsrPrdCnt(user) -> u32
-    UsrPrdCnt(Address),
-    /// User prediction index: UsrPrdIdx(user, index) -> UserPredictionDetail
-    UsrPrdIdx(Address, u32),
-    /// Global protocol configuration: Config -> Config
-    Config,
-    /// Contract pause state: Paused -> bool
-    Paused,
-    /// Reentrancy guard: RentGuard -> bool
-    RentGuard,
-    /// Category pool count: CatPoolCt(category) -> u32
-    CatPoolCt(Symbol),
-    /// Category pool index: CatPoolIx(category, index) -> u64
-    CatPoolIx(Symbol, u32),
-    /// Token whitelist: TokenWl(token_address) -> true if allowed for betting.
-    TokenWl(Address),
-    /// Participant count for a pool: PartCnt(pool_id) -> u32
+    /// Participant count for a pool: `PartCnt(pool_id)` -> `u32`
     PartCnt(u64),
-    /// Tracks if an oracle has already voted: ResVote(pool_id, oracle_address)
-    ResVote(u64, Address),
-    /// Tracks vote count for a specific outcome: ResVoteCt(pool_id, outcome)
-    ResVoteCt(u64, u32),
-    /// Tracks total number of votes cast for a pool: ResTotal(pool_id)
-    ResTotal(u64),
-    /// Referral cut in basis points: ReferralCutBps -> u32
+
+    // ── Predictions & stakes ─────────────────────────────────────────────────
+
+    /// User prediction by user address and pool ID: `Pred(user, pool_id)` -> `Prediction`
+    Pred(Address, u64),
+    /// Tracks whether a user has claimed winnings for a pool: `Claimed(user, pool_id)` -> `bool`
+    Claimed(Address, u64),
+    /// Stake amount for a specific outcome (backward-compat individual key):
+    /// `OutStake(pool_id, outcome)` -> `i128`
+    OutStake(u64, u32),
+    /// Optimized batch storage for all outcome stakes in a pool:
+    /// `OutStakes(pool_id)` -> `Vec<i128>`
+    ///
+    /// Preferred over `OutStake` for pools with many outcomes. Falls back to
+    /// `OutStake` for backward compatibility when this key is absent.
+    OutStakes(u64),
+    /// User prediction count: `UsrPrdCnt(user)` -> `u32`
+    UsrPrdCnt(Address),
+    /// User prediction index: `UsrPrdIdx(user, index)` -> `UserPredictionDetail`
+    UsrPrdIdx(Address, u32),
+
+    // ── Protocol configuration ───────────────────────────────────────────────
+
+    /// Global protocol configuration: `Config` -> `Config`
+    Config,
+    /// Contract pause state: `Paused` -> `bool`
+    Paused,
+    /// Contract version for safe upgrade migrations: `Version` -> `u32`
+    Version,
+    /// Referral cut in basis points: `ReferralCutBps` -> `u32`
     ReferralCutBps,
-    /// Referred volume for a referrer and pool: ReferredVolume(referrer, pool_id) -> i128
+    /// Reentrancy guard (temporary storage): `RentGuard` -> `bool`
+    RentGuard,
+
+    // ── Token whitelist ──────────────────────────────────────────────────────
+
+    /// Token whitelist entry: `TokenWl(token_address)` -> `bool`
+    ///
+    /// Present (with value `true`) when the token is allowed for betting.
+    TokenWl(Address),
+
+    // ── Categories ───────────────────────────────────────────────────────────
+
+    /// Category pool count: `CatPoolCt(category)` -> `u32`
+    CatPoolCt(Symbol),
+    /// Category pool index: `CatPoolIx(category, index)` -> `u64` (pool_id)
+    CatPoolIx(Symbol, u32),
+
+    // ── Resolution voting ────────────────────────────────────────────────────
+
+    /// Tracks if an oracle/operator has already voted: `ResVote(pool_id, voter_address)` -> `()`
+    ResVote(u64, Address),
+    /// Vote count for a specific outcome: `ResVoteCt(pool_id, outcome)` -> `u32`
+    ResVoteCt(u64, u32),
+    /// Total number of votes cast for a pool: `ResTotal(pool_id)` -> `u32`
+    ResTotal(u64),
+
+    // ── Referrals ────────────────────────────────────────────────────────────
+
+    /// Referred volume for a referrer and pool: `ReferredVolume(referrer, pool_id)` -> `i128`
     ReferredVolume(Address, u64),
-    /// Referrer address for a user and pool: Referrer(user, pool_id) -> Address
+    /// Referrer address for a user and pool: `Referrer(user, pool_id)` -> `Address`
     ///
     /// FUTURE: Multiple referrers per user per pool
     /// Currently a user can only have one referrer per pool. If multiple referrers are needed
@@ -453,7 +489,10 @@ pub enum DataKey {
     /// and distribute proportional cuts. Until that requirement is confirmed, the single-referrer
     /// model is kept for simplicity and gas efficiency.
     Referrer(Address, u64),
-    /// User whitelist for private pools: Whitelist(pool_id, user_address)
+
+    // ── Private pools ────────────────────────────────────────────────────────
+
+    /// User whitelist for private pools: `Whitelist(pool_id, user_address)` -> `()`
     Whitelist(u64, Address),
     /// Contract version for safe upgrade migrations.
     Version,
