@@ -7182,3 +7182,98 @@ fn test_create_pool_accepts_empty_metadata_url() {
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.metadata_url.len(), 0);
 }
+
+// ── cancel_pool zero participants: index cleanup ─────────────────────────────
+
+#[test]
+fn test_cancel_pool_zero_participants_removed_from_active_index() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Pool must appear in active index before cancel
+    let before = client.get_active_pools(&0u32, &10u32);
+    assert!(before.contains(&pool_id));
+
+    client.cancel_pool(&operator, &pool_id);
+
+    // After cancel the active index must be empty
+    let after = client.get_active_pools(&0u32, &10u32);
+    assert!(!after.contains(&pool_id));
+    assert_eq!(after.len(), 0);
+}
+
+#[test]
+fn test_cancel_pool_zero_participants_catpoolix_still_readable() {
+    // CatPoolIx is a write-once historical index; cancel_pool does not remove
+    // entries from it (by design). This test documents that behaviour and
+    // verifies no panic occurs when reading the category index after a
+    // zero-participant pool is canceled.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let category = symbol_short!("Tech");
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &category,
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id);
+
+    // get_pools_by_category must not panic and must still return the pool id
+    // (CatPoolIx is not pruned on cancel — callers should check pool.state).
+    let cat_pools = client.get_pools_by_category(&category, &0u32, &10u32);
+    assert_eq!(cat_pools.len(), 1);
+    assert_eq!(cat_pools.get(0).unwrap(), pool_id);
+
+    // The returned pool must be in Canceled state
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Canceled);
+}
