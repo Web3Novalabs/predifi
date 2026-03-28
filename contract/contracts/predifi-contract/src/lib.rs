@@ -176,6 +176,8 @@ pub enum PredifiError {
     StakeAboveMaximum = 108,
     /// The fee basis points exceed the maximum allowed value (10000).
     InvalidFeeBps = 93,
+    /// Metadata URL exceeds maximum length (512 bytes).
+    MetadataUrlInvalid = 109,
     /// An arithmetic overflow, underflow, or division by zero occurred.
     ArithmeticError = 110,
 }

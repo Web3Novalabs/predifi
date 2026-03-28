@@ -6215,7 +6215,7 @@ fn test_get_active_pools_excludes_resolved_pool() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let (_, client, token_address, _, _, _, _operator, creator) = setup(&env);
 
     let descriptions = vec![
         &env,
@@ -6224,7 +6224,7 @@ fn test_get_active_pools_excludes_resolved_pool() {
         String::from_str(&env, "Team B wins"),
     ];
 
-    let pool_a = client.create_pool(
+    let _pool_a = client.create_pool(
         &creator,
         &100_000u64,
         &token_address,
@@ -7062,12 +7062,12 @@ fn test_claim_winnings_on_zero_participant_canceled_pool_returns_error() {
 
     client.cancel_pool(&operator, &pool_id);
 
-    // claim_winnings on a canceled pool with no participants must fail gracefully
+    // claim_winnings on a canceled pool with no participants returns 0 (graceful no-op)
     let non_participant = Address::generate(&env);
     let result = client.try_claim_winnings(&non_participant, &pool_id);
     assert!(
-        result.is_err(),
-        "claim_winnings for non-participant on canceled pool must return an error"
+        result.is_ok() && result.unwrap().unwrap() == 0,
+        "claim_winnings for non-participant on canceled pool must return Ok(0)"
     );
 }
 

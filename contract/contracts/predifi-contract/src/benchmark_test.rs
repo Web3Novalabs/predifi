@@ -65,7 +65,7 @@ mod benchmark_tests {
         let options_count = 100;
 
         let mut outcome_descriptions = Vec::new(&env);
-        for i in 0..options_count {
+        for _i in 0..options_count {
             outcome_descriptions.push_back(String::from_str(&env, "Outcome"));
         }
 
