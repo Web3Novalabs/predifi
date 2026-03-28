@@ -8,7 +8,7 @@ use soroban_sdk::{
     symbol_short,
     testutils::{
         storage::Instance as _, storage::Persistent as _, Address as _, AuthorizedFunction,
-        AuthorizedInvocation, Events, Ledger,
+        AuthorizedInvocation, Events, Ledger, Logs,
     },
     token, vec, Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal, Val,
 };
@@ -2640,6 +2640,65 @@ fn test_resolve_pool_before_delay() {
 
     // Should panic with ResolutionDelayNotMet (81)
     client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+fn test_resolve_pool_logs_reason_when_resolution_delay_not_met() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    client.init(&ac_id, &treasury, &0u32, &3600u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token);
+
+    let end_time = 10_000u64;
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Delay log test"),
+            metadata_url: String::from_str(&env, "ipfs://delay-log"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = end_time + 10);
+
+    let result = PredifiContract::resolve_pool(env.clone(), operator.clone(), pool_id, 1u32);
+    assert_eq!(result, Err(PredifiError::ResolutionDelayNotMet));
+
+    let logs = env.logs().all();
+    assert!(
+        logs.iter()
+            .any(|entry| entry.contains("resolve_pool rejected: resolution delay not met")),
+        "expected a resolve_pool delay diagnostic log, got: {logs:?}"
+    );
 }
 
 #[test]
