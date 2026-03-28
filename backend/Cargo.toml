@@ -1,0 +1,10 @@
+[package]
+name    = "predifi-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1"
+
+[dev-dependencies]
+mockall = "0.13"
