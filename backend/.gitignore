@@ -1,1 +1,6 @@
 target
+
+Cargo.lock
+
+# Test snapshots
+test_snapshots
