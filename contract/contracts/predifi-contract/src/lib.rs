@@ -19,7 +19,7 @@ mod test_utils;
 // mod storage_test;
 
 use soroban_sdk::{
-    contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
+    contract, contracterror, contractevent, contractimpl, contracttype, log, symbol_short, token,
     Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
@@ -1853,24 +1853,70 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
+        if pool.resolved {
+            log!(
+                &env,
+                "resolve_pool rejected: pool already resolved",
+                pool_id,
+                operator.clone(),
+                outcome
+            );
+        }
         assert!(!pool.resolved, "Pool already resolved");
+        if pool.canceled {
+            log!(
+                &env,
+                "resolve_pool rejected: pool is canceled",
+                pool_id,
+                operator.clone(),
+                outcome
+            );
+        }
         assert!(!pool.canceled, "Cannot resolve a canceled pool");
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
         if !Self::is_pool_active(&pool) {
+            log!(
+                &env,
+                "resolve_pool rejected: pool is not active",
+                pool_id,
+                operator.clone(),
+                outcome,
+                pool.end_time,
+                pool.resolved,
+                pool.canceled
+            );
             return Err(PredifiError::InvalidPoolState);
         }
 
         let current_time = env.ledger().timestamp();
         let config = Self::get_config(&env);
+        let eligible_at = pool.end_time.saturating_add(config.resolution_delay);
 
-        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+        if current_time < eligible_at {
+            log!(
+                &env,
+                "resolve_pool rejected: resolution delay not met",
+                pool_id,
+                operator.clone(),
+                outcome,
+                current_time,
+                eligible_at
+            );
             return Err(PredifiError::ResolutionDelayNotMet);
         }
 
         // Validate: outcome must be within the valid options range
         if outcome >= pool.options_count {
+            log!(
+                &env,
+                "resolve_pool rejected: outcome is out of bounds",
+                pool_id,
+                operator.clone(),
+                outcome,
+                pool.options_count
+            );
             soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
         }
 
@@ -1879,6 +1925,13 @@ impl PredifiContract {
         // Check if this operator has already voted for this pool
         let vote_key = DataKey::ResVote(pool_id, operator.clone());
         if env.storage().persistent().has(&vote_key) {
+            log!(
+                &env,
+                "resolve_pool rejected: operator already voted",
+                pool_id,
+                operator.clone(),
+                outcome
+            );
             return Err(PredifiError::OracleAlreadyVoted); // Reusing error code for operators
         }
 
