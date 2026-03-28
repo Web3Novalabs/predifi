@@ -7504,3 +7504,34 @@ fn test_pool_created_with_each_category() {
         assert_eq!(pool.category, cat);
     }
 }
+
+#[test]
+fn test_get_fees_returns_treasury_and_referral_fee_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, _client, token_address, _, _, treasury, _, _) = setup(&env);
+
+    // init sets fee_bps = 300; referral_cut_bps defaults to 5000
+    let ac_id = ac_client.address.clone();
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Re-register a fresh contract with a known fee_bps
+    let contract_id = env.register(PredifiContract, ());
+    let c = PredifiContractClient::new(&env, &contract_id);
+    c.init(&ac_id, &treasury, &300u32, &0u64, &3600u64);
+    c.add_token_to_whitelist(&admin, &token_address);
+
+    let fees = c.get_fees();
+    assert_eq!(fees.treasury_fee_bps, 300);
+    assert_eq!(fees.referral_fee_bps, 5000); // default
+
+    // Update both and verify get_fees reflects the changes
+    c.set_fee_bps(&admin, &750u32);
+    c.set_referral_cut_bps(&admin, &2000u32);
+
+    let fees = c.get_fees();
+    assert_eq!(fees.treasury_fee_bps, 750);
+    assert_eq!(fees.referral_fee_bps, 2000);
+}
