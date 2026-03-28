@@ -4553,6 +4553,42 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
     );
 }
 
+/// Zero-duration pools (end_time == current ledger timestamp) must be rejected.
+#[test]
+#[should_panic(expected = "end_time must be in the future")]
+fn test_create_pool_rejects_zero_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    client.create_pool(
+        &creator,
+        &1_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero duration pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero-duration"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+}
+
 /// end_time == current_time + MIN_POOL_DURATION must be accepted (lower
 /// boundary is inclusive).
 #[test]
