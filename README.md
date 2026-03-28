@@ -138,13 +138,9 @@ Once the pool's end time is reached, anyone can trigger the resolution by callin
 3.  Evaluate the `PriceCondition`.
 4.  Resolve the pool to outcome `1` (Condition Met) or `0` (Condition Not Met).
 
-## Backend
+## Backend Error Handling
 
-The `backend/` crate is a standalone Rust service providing unified error handling and core traits.
-
-### Error Handling
-
-`AppError` (via [`thiserror`](https://docs.rs/thiserror)) covers all API and database errors:
+The `backend/` crate provides a unified `AppError` enum (via [`thiserror`](https://docs.rs/thiserror)) for all API and database errors.
 
 | Variant | HTTP | When |
 | :--- | :--- | :--- |
@@ -154,17 +150,12 @@ The `backend/` crate is a standalone Rust service providing unified error handli
 | `Database(String)` | 500 | Query failure |
 | `DatabaseConnection(String)` | 500 | Connection refused / timeout |
 
-### Testing with Mockall
-
-Traits are annotated with `#[cfg_attr(test, mockall::automock)]` so unit tests can inject mock implementations without a real database:
-
 ```rust
-let mut mock = MockPoolRepository::new();
-mock.expect_get_total_stake()
-    .with(eq(1u64))
-    .returning(|_| Ok(500));
+use predifi_backend::AppError;
 
-assert!(pool_has_min_stake(&mock, 1, 500).unwrap());
+fn get_pool(id: u64) -> Result<Pool, AppError> {
+    db.find(id).ok_or_else(|| AppError::NotFound(format!("pool {id}")))
+}
 ```
 
 Run backend tests:

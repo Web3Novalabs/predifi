@@ -360,6 +360,17 @@ pub struct Config {
     pub min_pool_duration: u64,
 }
 
+/// Fee percentages returned by [`PredifiContract::get_fees`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeInfo {
+    /// Protocol (treasury) fee in basis points (1 bp = 0.01%). Range: 0-10,000.
+    pub treasury_fee_bps: u32,
+    /// Referral cut in basis points — the share of the protocol fee paid to referrers.
+    /// Range: 0-10,000. Default: 5,000 (50%).
+    pub referral_fee_bps: u32,
+}
+
 /// Represents a single tier in the dynamic fee system.
 ///
 /// Tiers are applied based on the total stake (volume) of the pool at resolution time.
@@ -1462,6 +1473,17 @@ impl PredifiContract {
     /// Get referral cut in basis points (e.g. 5000 = 50% of referrer's fee share).
     pub fn get_referral_cut_bps(env: Env) -> u32 {
         Self::read_referral_cut_bps(&env)
+    }
+
+    /// Returns the current treasury and referral fee percentages as a [`FeeInfo`].
+    ///
+    /// - `treasury_fee_bps`: protocol fee charged on winnings (set via `set_fee_bps`).
+    /// - `referral_fee_bps`: share of the protocol fee paid to referrers (set via `set_referral_cut_bps`).
+    pub fn get_fees(env: Env) -> FeeInfo {
+        FeeInfo {
+            treasury_fee_bps: Self::get_config(&env).fee_bps,
+            referral_fee_bps: Self::read_referral_cut_bps(&env),
+        }
     }
 
     /// Get total referred volume for a (referrer, pool_id) in base token units.
