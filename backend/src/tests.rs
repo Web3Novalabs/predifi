@@ -1,4 +1,3 @@
-
 #[cfg(test)]
 mod tests {
     use axum::http::{Request, StatusCode};
@@ -66,9 +65,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
-
     /// Verify the middleware does not alter the status code of a 200 response.
-    /// The middleware is purely observational — it must be transparent to callers.
     #[tokio::test]
     async fn middleware_does_not_alter_200_status() {
         let response = build_router()
@@ -84,7 +81,6 @@ mod tests {
     }
 
     /// Verify the middleware does not alter the status code of a 404 response.
-    /// Same transparency guarantee, but for error responses.
     #[tokio::test]
     async fn middleware_does_not_alter_404_status() {
         let response = build_router()
@@ -121,5 +117,30 @@ mod tests {
                 "unexpected status for {path}"
             );
         }
+    }
+
+    /// GET /health must return basic system info including service and version.
+    #[tokio::test]
+    async fn health_returns_system_info() {
+        let response = build_router()
+            .oneshot(get("/health"))
+            .await
+            .expect("request failed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = body_string(response.into_body()).await;
+        assert!(
+            body.contains("\"service\""),
+            "body should contain a service field, got: {body}"
+        );
+        assert!(
+            body.contains("\"version\""),
+            "body should contain a version field, got: {body}"
+        );
+        assert!(
+            body.contains("predifi-backend"),
+            "body should contain the service name, got: {body}"
+        );
     }
 }

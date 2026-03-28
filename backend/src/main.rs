@@ -25,9 +25,18 @@ use axum::{routing::get, Json, Router};
 use request_logger::LoggingLayer;
 use serde_json::json;
 
-/// Simple health-check handler — returns `{ "status": "ok" }`.
+/// Health-check handler.
+///
+/// Returns HTTP 200 with basic system info:
+/// - `status`: always `"ok"` when the server is running
+/// - `service`: name of the service
+/// - `version`: current package version from Cargo.toml
 async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "status": "ok" }))
+    Json(json!({
+        "status": "ok",
+        "service": "predifi-backend",
+        "version": env!("CARGO_PKG_VERSION")
+    }))
 }
 
 /// Root handler — returns a welcome message.
