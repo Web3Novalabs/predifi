@@ -7451,7 +7451,10 @@ fn test_category_constants_are_unique() {
     ];
     for i in 0..all.len() {
         for j in (i + 1)..all.len() {
-            assert_ne!(all[i], all[j], "duplicate category constants at {i} and {j}");
+            assert_ne!(
+                all[i], all[j],
+                "duplicate category constants at {i} and {j}"
+            );
         }
     }
 }
