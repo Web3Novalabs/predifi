@@ -1,8 +1,8 @@
 # predifi-backend
 
-A minimal Axum HTTP server with a custom request logging middleware.
+A minimal Axum HTTP server for the PrediFi platform, featuring a custom Tower request-logging middleware.
 
-Every request is logged to stdout with its HTTP method, path, response status, and duration.
+Every request is logged to stdout with its method, path, response status, and duration:
 
 ```
 [REQ] GET /health → 200 OK (1ms)
@@ -11,18 +11,33 @@ Every request is logged to stdout with its HTTP method, path, response status, a
 
 ---
 
-## Project layout
+## Prerequisites
 
-```
-src/
-├── lib.rs      — router setup and server entry point
-├── request_logger.rs   — LoggingLayer / LoggingService middleware
-└── tests.rs     — unit and integration tests
+| Tool | Version | Install |
+| :--- | :--- | :--- |
+| Rust + Cargo | stable | `curl https://sh.rustup.rs -sSf \| sh` |
+| (optional) cargo-watch | any | `cargo install cargo-watch` |
+
+Verify your installation:
+
+```bash
+rustc --version
+cargo --version
 ```
 
 ---
 
-## Run
+## Installation
+
+```bash
+# from the repo root
+cd backend
+cargo build
+```
+
+---
+
+## Run the dev server
 
 ```bash
 cargo run
@@ -30,32 +45,46 @@ cargo run
 
 The server listens on `http://localhost:3000`.
 
-Try it:
+Verify it is running:
 
 ```bash
-curl http://localhost:3000/
-curl http://localhost:3000/health
-curl http://localhost:3000/missing    # produces a 404
+curl http://localhost:3000/           # 200 — welcome message
+curl http://localhost:3000/health     # 200 — {"status":"ok"}
+curl http://localhost:3000/missing    # 404 — unknown route
+```
+
+Auto-restart on file changes (requires `cargo-watch`):
+
+```bash
+cargo watch -x run
 ```
 
 ---
 
-## Test
+## Run tests
+
+Tests use Tower's `.oneshot()` helper — no live server needed.
 
 ```bash
 cargo test
 ```
 
-Tests run without a live server — Tower's `.oneshot()` helper fires requests
-directly into the service in memory.
+---
+
+## Project layout
+
+```
+src/
+├── main.rs            — router setup and server entry point
+├── request_logger.rs  — LoggingLayer / LoggingService middleware
+└── tests.rs           — unit and integration tests
+```
 
 ---
 
-## How the middleware works (plain English)
+## How the middleware works
 
-A Tower middleware sits between the server and your route handlers. Every
-request passes *through* it before reaching a handler, and every response
-passes back *through* it on the way out.
+A Tower middleware wraps every route handler. Requests pass through it on the way in and responses pass through it on the way out — giving a single place to observe both.
 
 ```
 HTTP request
@@ -64,7 +93,7 @@ HTTP request
 LoggingLayer      ← records method + path, starts a timer
      │
      ▼
-Route handler     ← your normal code runs here
+Route handler     ← normal handler code runs here
      │
      ▼
 LoggingLayer      ← records status + elapsed time, prints the log line
@@ -73,17 +102,12 @@ LoggingLayer      ← records status + elapsed time, prints the log line
 HTTP response
 ```
 
-The implementation has two parts:
-
 | Type | Role |
-|---|---|
+| :--- | :--- |
 | `LoggingLayer` | Factory — wraps any service with `LoggingService` |
-| `LoggingService<S>` | Does the actual work per request |
+| `LoggingService<S>` | Intercepts each request/response pair and emits a log line |
 
-`LoggingLayer` implements Tower's `Layer` trait.
-`LoggingService` implements Tower's `Service` trait.
-
-Attach it to an Axum router with:
+Attach it to a router with:
 
 ```rust
 let app = Router::new()
