@@ -1,129 +1,68 @@
-//! # PrediFi Backend
+//! # predifi-backend
 //!
-//! Provides unified error handling and core traits for the PrediFi backend service.
+//! A minimal Axum HTTP server that demonstrates the [`logging`] middleware.
+//!
+//! Run with:
+//! ```bash
+//! cargo run
+//! ```
+//! Then in another terminal:
+//! ```bash
+//! curl http://localhost:3000/
+//! curl http://localhost:3000/health
+//! curl http://localhost:3000/missing   # produces a 404
+//! ```
+//! You should see log lines like:
+//! ```text
+//! [REQ] GET / → 200 OK (0ms)
+//! [REQ] GET /health → 200 OK (0ms)
+//! [REQ] GET /missing → 404 Not Found (0ms)
+//! ```
 
-use thiserror::Error;
+pub mod request_logger;
 
-// ── Error types ───────────────────────────────────────────────────────────────
+use axum::{routing::get, Json, Router};
+use request_logger::LoggingLayer;
+use serde_json::json;
 
-/// Top-level application error.
+/// Simple health-check handler — returns `{ "status": "ok" }`.
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+/// Root handler — returns a welcome message.
+async fn root() -> Json<serde_json::Value> {
+    Json(json!({ "message": "Welcome to the request-logger demo" }))
+}
+
+/// Build the Axum router with the logging middleware attached.
 ///
-/// All fallible operations should return `Result<T, AppError>`.
-/// Variants map directly to HTTP status codes via [`AppError::status_code`].
-#[derive(Debug, Error)]
-pub enum AppError {
-    /// A required field was missing or a value failed validation (400).
-    #[error("validation error: {0}")]
-    Validation(String),
-
-    /// The caller is not authorised to perform this action (401).
-    #[error("unauthorized: {0}")]
-    Unauthorized(String),
-
-    /// The requested resource does not exist (404).
-    #[error("not found: {0}")]
-    NotFound(String),
-
-    /// A database query failed (500).
-    #[error("database error: {0}")]
-    Database(String),
-
-    /// A database connection could not be established (500).
-    #[error("database connection error: {0}")]
-    DatabaseConnection(String),
+/// Keeping router construction in its own function makes it easy to reuse
+/// in tests without binding to a real TCP port.
+pub fn build_router() -> Router {
+    Router::new()
+        .route("/", get(root))
+        .route("/health", get(health))
+        // `.layer()` wraps every route in this router with the middleware.
+        // Layers are applied from bottom to top, so LoggingLayer is the
+        // outermost wrapper — it sees every request first and every
+        // response last.
+        .layer(LoggingLayer)
 }
 
-impl AppError {
-    /// Returns the HTTP status code that best represents this error.
-    pub fn status_code(&self) -> u16 {
-        match self {
-            Self::Validation(_) => 400,
-            Self::Unauthorized(_) => 401,
-            Self::NotFound(_) => 404,
-            Self::Database(_) | Self::DatabaseConnection(_) => 500,
-        }
-    }
+#[tokio::main]
+async fn main() {
+    let app = build_router();
 
-    /// Returns `true` for errors caused by the caller (4xx).
-    pub fn is_client_error(&self) -> bool {
-        self.status_code() < 500
-    }
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+        .await
+        .expect("failed to bind to port 3000");
+
+    println!("Listening on http://0.0.0.0:3000");
+
+    axum::serve(listener, app)
+        .await
+        .expect("server error");
 }
 
-// ── Pool helper ───────────────────────────────────────────────────────────────
-
-/// Trait for fetching pool data — abstracted so it can be mocked in tests.
-#[cfg_attr(test, mockall::automock)]
-pub trait PoolRepository {
-    /// Returns the total stake for a pool, or an error if not found.
-    fn get_total_stake(&self, pool_id: u64) -> Result<u64, AppError>;
-}
-
-/// Returns `true` when the pool's total stake meets or exceeds `min_stake`.
-///
-/// # Errors
-/// Propagates any [`AppError`] returned by the repository.
-pub fn pool_has_min_stake(
-    repo: &dyn PoolRepository,
-    pool_id: u64,
-    min_stake: u64,
-) -> Result<bool, AppError> {
-    let stake = repo.get_total_stake(pool_id)?;
-    Ok(stake >= min_stake)
-}
-
-fn main() {}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use mockall::predicate::eq;
-
-    #[test]
-    fn returns_true_when_stake_meets_minimum() {
-        let mut mock = MockPoolRepository::new();
-        mock.expect_get_total_stake()
-            .with(eq(1u64))
-            .returning(|_| Ok(500));
-
-        assert!(pool_has_min_stake(&mock, 1, 500).unwrap());
-    }
-
-    #[test]
-    fn returns_false_when_stake_below_minimum() {
-        let mut mock = MockPoolRepository::new();
-        mock.expect_get_total_stake()
-            .with(eq(2u64))
-            .returning(|_| Ok(99));
-
-        assert!(!pool_has_min_stake(&mock, 2, 100).unwrap());
-    }
-
-    #[test]
-    fn propagates_not_found_error() {
-        let mut mock = MockPoolRepository::new();
-        mock.expect_get_total_stake()
-            .returning(|id| Err(AppError::NotFound(format!("pool {id}"))));
-
-        let err = pool_has_min_stake(&mock, 99, 1).unwrap_err();
-        assert_eq!(err.status_code(), 404);
-        assert!(err.is_client_error());
-    }
-
-    #[test]
-    fn app_error_display_and_status_codes() {
-        let cases: &[(AppError, u16, &str)] = &[
-            (AppError::Validation("bad input".into()), 400, "validation error: bad input"),
-            (AppError::Unauthorized("no token".into()), 401, "unauthorized: no token"),
-            (AppError::NotFound("pool 1".into()), 404, "not found: pool 1"),
-            (AppError::Database("timeout".into()), 500, "database error: timeout"),
-            (AppError::DatabaseConnection("refused".into()), 500, "database connection error: refused"),
-        ];
-        for (err, code, msg) in cases {
-            assert_eq!(err.status_code(), *code);
-            assert_eq!(err.to_string(), *msg);
-        }
-    }
-}
+mod tests;
