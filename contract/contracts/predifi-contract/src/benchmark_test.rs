@@ -16,13 +16,28 @@ mod benchmark_tests {
         #[contractimpl]
         impl DummyAccessControl {
             pub fn grant_role(env: Env, user: Address, role: u32) {
-                let key = (Symbol::new(&env, "role"), user, role);
-                env.storage().instance().set(&key, &true);
+                let already_has_key = (Symbol::new(&env, "role"), user.clone(), role);
+                let already_has: bool = env
+                    .storage()
+                    .instance()
+                    .get(&already_has_key)
+                    .unwrap_or(false);
+                env.storage().instance().set(&already_has_key, &true);
+                if role == 1 && !already_has {
+                    let count_key = Symbol::new(&env, "op_count");
+                    let count: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+                    env.storage().instance().set(&count_key, &(count + 1));
+                }
             }
 
             pub fn has_role(env: Env, user: Address, role: u32) -> bool {
                 let key = (Symbol::new(&env, "role"), user, role);
                 env.storage().instance().get(&key).unwrap_or(false)
+            }
+
+            pub fn get_operator_count(env: Env) -> u32 {
+                let count_key = Symbol::new(&env, "op_count");
+                env.storage().instance().get(&count_key).unwrap_or(0)
             }
         }
     }

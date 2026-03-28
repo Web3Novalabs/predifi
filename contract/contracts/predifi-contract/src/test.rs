@@ -22,13 +22,45 @@ pub(crate) mod dummy_access_control {
     #[contractimpl]
     impl DummyAccessControl {
         pub fn grant_role(env: Env, user: Address, role: u32) {
+            let already_has_key = (Symbol::new(&env, "role"), user.clone(), role);
+            let already_has: bool = env
+                .storage()
+                .instance()
+                .get(&already_has_key)
+                .unwrap_or(false);
+
+            env.storage().instance().set(&already_has_key, &true);
+
+            // Track operator count
+            if role == 1 && !already_has {
+                let count_key = Symbol::new(&env, "op_count");
+                let count: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+                env.storage().instance().set(&count_key, &(count + 1));
+            }
+        }
+
+        pub fn revoke_role(env: Env, user: Address, role: u32) {
             let key = (Symbol::new(&env, "role"), user, role);
-            env.storage().instance().set(&key, &true);
+            let had_role: bool = env.storage().instance().get(&key).unwrap_or(false);
+            env.storage().instance().set(&key, &false);
+
+            if role == 1 && had_role {
+                let count_key = Symbol::new(&env, "op_count");
+                let count: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+                if count > 0 {
+                    env.storage().instance().set(&count_key, &(count - 1));
+                }
+            }
         }
 
         pub fn has_role(env: Env, user: Address, role: u32) -> bool {
             let key = (Symbol::new(&env, "role"), user, role);
             env.storage().instance().get(&key).unwrap_or(false)
+        }
+
+        pub fn get_operator_count(env: Env) -> u32 {
+            let count_key = Symbol::new(&env, "op_count");
+            env.storage().instance().get(&count_key).unwrap_or(0)
         }
     }
 }
@@ -7422,4 +7454,245 @@ fn test_operator_can_cancel_pool_with_bets() {
 
     let pool = client.get_pool(&pool_id);
     assert!(pool.canceled);
+}
+
+// ── required_resolutions validation tests ────────────────────────────────────
+
+/// create_pool succeeds when required_resolutions equals the number of operators.
+#[test]
+fn test_create_pool_required_resolutions_equals_operator_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // setup() already grants 1 operator; add a second
+    let op2 = Address::generate(&env);
+    ac_client.grant_role(&op2, &ROLE_OPERATOR);
+
+    // required_resolutions == 2 == operator_count → should succeed
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Exact match pool"),
+            metadata_url: String::from_str(&env, "ipfs://exact"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 2u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.required_resolutions, 2);
+}
+
+/// create_pool succeeds when required_resolutions is less than operator count.
+#[test]
+fn test_create_pool_required_resolutions_less_than_operator_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // Add 2 more operators (total = 3)
+    let op2 = Address::generate(&env);
+    let op3 = Address::generate(&env);
+    ac_client.grant_role(&op2, &ROLE_OPERATOR);
+    ac_client.grant_role(&op3, &ROLE_OPERATOR);
+
+    // required_resolutions = 1 < 3 operators → should succeed
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Under threshold pool"),
+            metadata_url: String::from_str(&env, "ipfs://under"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.required_resolutions, 1);
+}
+
+/// create_pool fails with error #200 when required_resolutions exceeds operator count.
+#[test]
+#[should_panic(expected = "Error(Contract, #200)")]
+fn test_create_pool_required_resolutions_exceeds_operator_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // setup() grants 1 operator; required_resolutions = 2 > 1 → should panic
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Too many resolutions"),
+            metadata_url: String::from_str(&env, "ipfs://toomany"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 2u32, // only 1 operator exists
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+/// create_pool fails when required_resolutions is much larger than operator count.
+#[test]
+#[should_panic(expected = "Error(Contract, #200)")]
+fn test_create_pool_required_resolutions_far_exceeds_operator_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    // setup() grants 1 operator; required_resolutions = 10 >> 1 → should panic
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Way too many resolutions"),
+            metadata_url: String::from_str(&env, "ipfs://waytoomany"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 10u32, // only 1 operator exists
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+/// After revoking an operator, create_pool with required_resolutions > remaining count fails.
+#[test]
+#[should_panic(expected = "Error(Contract, #200)")]
+fn test_create_pool_fails_after_operator_revoked() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    // Add a second operator so count = 2
+    let op2 = Address::generate(&env);
+    ac_client.grant_role(&op2, &ROLE_OPERATOR);
+
+    // Revoke the original operator → count = 1
+    ac_client.revoke_role(&operator, &ROLE_OPERATOR);
+
+    // required_resolutions = 2 > 1 remaining operator → should panic
+    client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Post-revoke pool"),
+            metadata_url: String::from_str(&env, "ipfs://postrevoke"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 2u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+/// After adding more operators, create_pool with previously-failing required_resolutions succeeds.
+#[test]
+fn test_create_pool_succeeds_after_adding_operators() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // Add 4 more operators → total = 5
+    for _ in 0..4 {
+        let op = Address::generate(&env);
+        ac_client.grant_role(&op, &ROLE_OPERATOR);
+    }
+
+    // required_resolutions = 5 == operator_count → should succeed
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Five operator pool"),
+            metadata_url: String::from_str(&env, "ipfs://fiveops"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 5u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.required_resolutions, 5);
 }

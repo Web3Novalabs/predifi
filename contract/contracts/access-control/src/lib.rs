@@ -179,6 +179,8 @@ pub enum DataKey {
     Pool(u64),
     /// Pool counter: PoolCount -> u64
     PoolCount,
+    /// Count of addresses currently holding the Operator role: OperatorCount -> u32
+    OperatorCount,
 }
 
 #[contract]
@@ -218,9 +220,24 @@ impl AccessControl {
             return Err(PrediFiError::Unauthorized);
         }
 
+        // Only increment operator count if the role is newly assigned
+        let role_key = DataKey::Role(user.clone(), role.clone());
+        let is_new = !env.storage().persistent().has(&role_key);
+
         env.storage()
             .persistent()
-            .set(&DataKey::Role(user.clone(), role.clone()), &());
+            .set(&role_key, &());
+
+        if matches!(role, Role::Operator) && is_new {
+            let count: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::OperatorCount)
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&DataKey::OperatorCount, &(count + 1));
+        }
 
         RoleAssignedEvent {
             admin: admin_caller,
@@ -255,6 +272,19 @@ impl AccessControl {
         env.storage()
             .persistent()
             .remove(&DataKey::Role(user.clone(), role.clone()));
+
+        if matches!(role, Role::Operator) {
+            let count: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::OperatorCount)
+                .unwrap_or(0);
+            if count > 0 {
+                env.storage()
+                    .instance()
+                    .set(&DataKey::OperatorCount, &(count - 1));
+            }
+        }
 
         RoleRevokedEvent {
             admin: admin_caller,
@@ -294,9 +324,26 @@ impl AccessControl {
         env.storage()
             .persistent()
             .remove(&DataKey::Role(from.clone(), role.clone()));
-        env.storage()
-            .persistent()
-            .set(&DataKey::Role(to.clone(), role.clone()), &());
+
+        // Only increment if `to` doesn't already hold the role
+        let to_key = DataKey::Role(to.clone(), role.clone());
+        let to_is_new = !env.storage().persistent().has(&to_key);
+        env.storage().persistent().set(&to_key, &());
+
+        // Operator count: removed from `from` (always), added to `to` only if new
+        if matches!(role, Role::Operator) {
+            let count: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::OperatorCount)
+                .unwrap_or(0);
+            // `from` lost the role; `to` gains it only if they didn't already have it
+            // Net change: -1 (from) + (1 if to_is_new else 0)
+            let new_count = if to_is_new { count } else { count.saturating_sub(1) };
+            env.storage()
+                .instance()
+                .set(&DataKey::OperatorCount, &new_count);
+        }
 
         RoleTransferredEvent {
             admin: admin_caller,
@@ -370,6 +417,19 @@ impl AccessControl {
             let key = DataKey::Role(user.clone(), role.clone());
             if env.storage().persistent().has(&key) {
                 env.storage().persistent().remove(&key);
+                // Decrement operator count if the Operator role is being removed
+                if matches!(role, Role::Operator) {
+                    let count: u32 = env
+                        .storage()
+                        .instance()
+                        .get(&DataKey::OperatorCount)
+                        .unwrap_or(0);
+                    if count > 0 {
+                        env.storage()
+                            .instance()
+                            .set(&DataKey::OperatorCount, &(count - 1));
+                    }
+                }
             }
         }
 
@@ -393,6 +453,18 @@ impl AccessControl {
             }
         }
         false
+    }
+
+    /// Returns the number of addresses currently holding the Operator role.
+    ///
+    /// This is used by the predifi-contract to validate that `required_resolutions`
+    /// does not exceed the number of active operators (which would make the pool
+    /// permanently unresolvable).
+    pub fn get_operator_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::OperatorCount)
+            .unwrap_or(0)
     }
 }
 
