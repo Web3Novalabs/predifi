@@ -410,7 +410,6 @@ pub struct UserPredictionDetail {
 #[derive(Clone)]
 pub enum DataKey {
     // ── Pool data ────────────────────────────────────────────────────────────
-
     /// Pool data by pool ID: `Pool(pool_id)` -> `Pool`
     Pool(u64),
     /// Pool ID counter for generating unique pool IDs: `PoolIdCtr` -> `u64`
@@ -419,7 +418,6 @@ pub enum DataKey {
     PartCnt(u64),
 
     // ── Predictions & stakes ─────────────────────────────────────────────────
-
     /// User prediction by user address and pool ID: `Pred(user, pool_id)` -> `Prediction`
     Pred(Address, u64),
     /// Tracks whether a user has claimed winnings for a pool: `Claimed(user, pool_id)` -> `bool`
@@ -439,7 +437,6 @@ pub enum DataKey {
     UsrPrdIdx(Address, u32),
 
     // ── Protocol configuration ───────────────────────────────────────────────
-
     /// Global protocol configuration: `Config` -> `Config`
     Config,
     /// Contract pause state: `Paused` -> `bool`
@@ -452,21 +449,18 @@ pub enum DataKey {
     RentGuard,
 
     // ── Token whitelist ──────────────────────────────────────────────────────
-
     /// Token whitelist entry: `TokenWl(token_address)` -> `bool`
     ///
     /// Present (with value `true`) when the token is allowed for betting.
     TokenWl(Address),
 
     // ── Categories ───────────────────────────────────────────────────────────
-
     /// Category pool count: `CatPoolCt(category)` -> `u32`
     CatPoolCt(Symbol),
     /// Category pool index: `CatPoolIx(category, index)` -> `u64` (pool_id)
     CatPoolIx(Symbol, u32),
 
     // ── Resolution voting ────────────────────────────────────────────────────
-
     /// Tracks if an oracle/operator has already voted: `ResVote(pool_id, voter_address)` -> `()`
     ResVote(u64, Address),
     /// Vote count for a specific outcome: `ResVoteCt(pool_id, outcome)` -> `u32`
@@ -475,7 +469,6 @@ pub enum DataKey {
     ResTotal(u64),
 
     // ── Referrals ────────────────────────────────────────────────────────────
-
     /// Referred volume for a referrer and pool: `ReferredVolume(referrer, pool_id)` -> `i128`
     ReferredVolume(Address, u64),
     /// Referrer address for a user and pool: `Referrer(user, pool_id)` -> `Address`
@@ -491,7 +484,6 @@ pub enum DataKey {
     Referrer(Address, u64),
 
     // ── Private pools ────────────────────────────────────────────────────────
-
     /// User whitelist for private pools: `Whitelist(pool_id, user_address)` -> `()`
     Whitelist(u64, Address),
     /// Contract version for safe upgrade migrations.

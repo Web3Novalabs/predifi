@@ -13,7 +13,7 @@
 #[cfg(test)]
 mod tests {
     use crate::{
-        price_feed_simple::{PriceFeedAdapter, SimplePriceFeed, SimpleOracleConfig},
+        price_feed_simple::{PriceFeedAdapter, SimpleOracleConfig, SimplePriceFeed},
         DataKey, PredifiContract, PredifiContractClient,
     };
     use soroban_sdk::{
@@ -116,10 +116,8 @@ mod tests {
         let ts = env.ledger().timestamp();
 
         env.as_contract(&contract_id, || {
-            PriceFeedAdapter::update_price_feed(
-                &env, &oracle, pair.clone(), 3000, 10, ts, ts + 60,
-            )
-            .unwrap();
+            PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3000, 10, ts, ts + 60)
+                .unwrap();
         });
 
         env.as_contract(&contract_id, || {
@@ -208,15 +206,15 @@ mod tests {
         let ts = env.ledger().timestamp();
 
         env.as_contract(&contract_id, || {
-            PriceFeedAdapter::update_price_feed(
-                &env, &oracle, pair.clone(), 3000, 10, ts, ts + 60,
-            )
-            .unwrap();
+            PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3000, 10, ts, ts + 60)
+                .unwrap();
         });
 
         env.as_contract(&contract_id, || {
-            let feed: Option<SimplePriceFeed> =
-                env.storage().persistent().get(&DataKey::PriceFeed(pair.clone()));
+            let feed: Option<SimplePriceFeed> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::PriceFeed(pair.clone()));
             let feed = feed.expect("PriceFeed must be present");
             assert_eq!(feed.pair, pair);
             assert_eq!(feed.price, 3000);
@@ -242,8 +240,10 @@ mod tests {
         });
 
         env.as_contract(&contract_id, || {
-            let cond: Option<(Symbol, i128, u32, u32)> =
-                env.storage().persistent().get(&DataKey::PriceCondition(pool_id));
+            let cond: Option<(Symbol, i128, u32, u32)> = env
+                .storage()
+                .persistent()
+                .get(&DataKey::PriceCondition(pool_id));
             let (fp, tp, op, tol) = cond.expect("PriceCondition must be present");
             assert_eq!(fp, pair);
             assert_eq!(tp, 60000);
@@ -337,7 +337,10 @@ mod tests {
 
             assert_eq!(c1.1, 3000, "Pool 1 target price must be 3000");
             assert_eq!(c2.1, 4000, "Pool 2 target price must be 4000");
-            assert_ne!(c1.1, c2.1, "Different pools must have independent conditions");
+            assert_ne!(
+                c1.1, c2.1,
+                "Different pools must have independent conditions"
+            );
         });
     }
 
@@ -393,10 +396,8 @@ mod tests {
         env.ledger().with_mut(|l| l.timestamp = ts);
 
         env.as_contract(&contract_id, || {
-            PriceFeedAdapter::update_price_feed(
-                &env, &oracle, pair.clone(), 3000, 10, ts, ts + 30,
-            )
-            .unwrap();
+            PriceFeedAdapter::update_price_feed(&env, &oracle, pair.clone(), 3000, 10, ts, ts + 30)
+                .unwrap();
         });
 
         // Advance past expiry
@@ -429,7 +430,13 @@ mod tests {
 
         env.as_contract(&contract_id, || {
             PriceFeedAdapter::update_price_feed(
-                &env, &oracle, pair.clone(), 3000, 10, ts, ts + 300,
+                &env,
+                &oracle,
+                pair.clone(),
+                3000,
+                10,
+                ts,
+                ts + 300,
             )
             .unwrap();
         });

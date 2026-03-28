@@ -163,8 +163,7 @@ impl PriceFeedAdapter {
     ) -> Result<bool, PredifiError> {
         let (feed_pair, target_price, operator_type, tolerance_bps) = condition;
 
-        let feed =
-            Self::get_price_feed(env, feed_pair).ok_or(PredifiError::PriceFeedNotFound)?;
+        let feed = Self::get_price_feed(env, feed_pair).ok_or(PredifiError::PriceFeedNotFound)?;
 
         if !Self::is_price_valid(env, &feed, max_age) {
             return Err(PredifiError::PriceDataInvalid);
@@ -173,7 +172,10 @@ impl PriceFeedAdapter {
         let tolerance_amount = (target_price * *tolerance_bps as i128) / 10000;
 
         let result = match operator_type {
-            0 => feed.price >= target_price - tolerance_amount && feed.price <= target_price + tolerance_amount,
+            0 => {
+                feed.price >= target_price - tolerance_amount
+                    && feed.price <= target_price + tolerance_amount
+            }
             1 => feed.price > target_price + tolerance_amount,
             2 => feed.price < target_price - tolerance_amount,
             _ => return Err(PredifiError::InvalidPoolState),
