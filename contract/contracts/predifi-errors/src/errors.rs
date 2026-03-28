@@ -303,3 +303,26 @@ impl core::fmt::Display for PrediFiError {
         write!(f, "{}", self.as_str())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PrediFiError;
+
+    #[test]
+    fn error_helpers_return_expected_metadata() {
+        let error = PrediFiError::Unauthorized;
+
+        assert_eq!(error.code(), 10);
+        assert_eq!(error.category(), "authorization");
+        assert!(error.is_recoverable());
+        assert_eq!(error.as_str(), "Unauthorized access");
+    }
+
+    #[test]
+    fn system_errors_are_marked_non_recoverable() {
+        let error = PrediFiError::StorageError;
+
+        assert_eq!(error.category(), "storage");
+        assert!(!error.is_recoverable());
+    }
+}
