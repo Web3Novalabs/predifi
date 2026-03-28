@@ -117,6 +117,33 @@ Once the pool's end time is reached, anyone can trigger the resolution by callin
 3.  Evaluate the `PriceCondition`.
 4.  Resolve the pool to outcome `1` (Condition Met) or `0` (Condition Not Met).
 
+## Backend Error Handling
+
+The `backend/` crate provides a unified `AppError` enum (via [`thiserror`](https://docs.rs/thiserror)) for all API and database errors.
+
+| Variant | HTTP | When |
+| :--- | :--- | :--- |
+| `Validation(String)` | 400 | Invalid input / missing field |
+| `Unauthorized(String)` | 401 | Missing or invalid auth token |
+| `NotFound(String)` | 404 | Resource does not exist |
+| `Database(String)` | 500 | Query failure |
+| `DatabaseConnection(String)` | 500 | Connection refused / timeout |
+
+```rust
+use predifi_backend::AppError;
+
+fn get_pool(id: u64) -> Result<Pool, AppError> {
+    db.find(id).ok_or_else(|| AppError::NotFound(format!("pool {id}")))
+}
+```
+
+Run backend tests:
+
+```bash
+cd backend
+cargo test
+```
+
 ## Contributing
 
 We welcome contributions! Please follow these steps:
