@@ -7438,6 +7438,7 @@ fn test_category_constants_values() {
 }
 
 #[test]
+#[allow(clippy::needless_range_loop)]
 fn test_category_constants_are_unique() {
     let all = [
         CATEGORY_SPORTS,
