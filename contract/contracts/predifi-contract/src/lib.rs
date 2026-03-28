@@ -1,6 +1,9 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+mod benchmark_test;
+#[cfg(test)]
+mod payout_proptests;
 mod price_feed;
 mod price_feed_simple;
 mod safe_math;
@@ -171,8 +174,10 @@ pub enum PredifiError {
     StakeBelowMinimum = 107,
     /// Stake amount exceeds the pool maximum.
     StakeAboveMaximum = 108,
-    /// metadata_url exceeds the maximum allowed length.
-    MetadataUrlInvalid = 109,
+    /// The fee basis points exceed the maximum allowed value (10000).
+    InvalidFeeBps = 93,
+    /// An arithmetic overflow, underflow, or division by zero occurred.
+    ArithmeticError = 110,
 }
 
 /// Represents the current state of a prediction market.
@@ -276,6 +281,7 @@ pub struct Pool {
     pub whitelist_key: Option<Symbol>,
     /// Human-readable labels for each outcome (length must equal options_count).
     pub outcome_descriptions: Vec<String>,
+    pub fee_bps: u32,
 }
 
 /// Configuration parameters for creating a prediction pool.
@@ -350,6 +356,19 @@ pub struct Config {
     pub resolution_delay: u64,
     /// Minimum pool duration in seconds.
     pub min_pool_duration: u64,
+}
+
+/// Represents a single tier in the dynamic fee system.
+///
+/// Tiers are applied based on the total stake (volume) of the pool at resolution time.
+/// Higher volumes typically result in lower fee percentages to encourage participation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTier {
+    /// The total stake threshold at or above which this tier applies.
+    pub stake_threshold: i128,
+    /// The fee in basis points to apply for this tier (0-10,000).
+    pub fee_bps: u32,
 }
 
 /// Detailed information about a user's prediction in a specific pool.
@@ -436,10 +455,17 @@ pub enum DataKey {
     Whitelist(u64, Address),
     /// Contract version for safe upgrade migrations.
     Version,
+    // Global active pool counter: ActivePoolCtr -> u32
+    ActivePoolCtr,
+    /// Global active pool index: ActivePool(index) -> u64 (pool_id)
+    ActivePool(u32),
+    /// Reverse lookup — position of a pool in the active index: ActivePoolIdx(pool_id) -> u32
+    ActivePoolIdx(u64),
     /// Price condition for automated resolution: PriceCondition(pool_id) -> (feed_pair, target_price, operator, tolerance_bps)
     PriceCondition(u64),
     /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
     PriceFeed(Symbol),
+    FeeTiers,
 }
 
 /// Represents a user's prediction in a pool.
@@ -484,6 +510,13 @@ pub struct UnpauseEvent {
 pub struct FeeUpdateEvent {
     pub admin: Address,
     pub fee_bps: u32,
+}
+
+#[contractevent(topics = ["fee_tiers_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTiersUpdateEvent {
+    pub admin: Address,
+    pub tiers_count: u32,
 }
 
 #[contractevent(topics = ["treasury_update"])]
@@ -836,6 +869,7 @@ impl PredifiContract {
     /// Pure: Check if pool state transition is valid
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
+    #[allow(dead_code)]
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
@@ -846,8 +880,20 @@ impl PredifiContract {
 
     /// Pure: Validate fee basis points
     /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
+    #[allow(dead_code)]
     fn is_valid_fee_bps(fee_bps: u32) -> bool {
         fee_bps <= 10_000
+    }
+
+    /// Pure: Check if a pool is currently active.
+    /// A pool is active iff it has not been resolved, not been canceled,
+    /// and its state is explicitly `MarketState::Active`.
+    ///
+    /// PRE: pool is a valid Pool instance
+    /// POST: returns true only when all three conditions hold simultaneously
+    #[allow(dead_code)]
+    fn is_pool_active(pool: &Pool) -> bool {
+        !pool.resolved && !pool.canceled && pool.state == MarketState::Active
     }
 
     /// Pure: Initialize outcome stakes vector with zeros
@@ -1060,6 +1106,76 @@ impl PredifiContract {
             Self::extend_persistent(env, &key);
         }
         whitelisted
+    }
+
+    /// Register a newly created pool in the global active pool index.
+    fn add_to_active_index(env: &Env, pool_id: u64) {
+        let ctr_key = DataKey::ActivePoolCtr;
+        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
+
+        let slot_key = DataKey::ActivePool(count);
+        env.storage().persistent().set(&slot_key, &pool_id);
+        Self::extend_persistent(env, &slot_key);
+
+        let idx_key = DataKey::ActivePoolIdx(pool_id);
+        env.storage().persistent().set(&idx_key, &count);
+        Self::extend_persistent(env, &idx_key);
+
+        env.storage().instance().set(&ctr_key, &(count + 1));
+        Self::extend_instance(env);
+    }
+
+    /// Remove a pool from the global active pool index using swap-and-pop.
+    /// The last entry is moved into the vacated slot so the index stays dense.
+    fn remove_from_active_index(env: &Env, pool_id: u64) {
+        let ctr_key = DataKey::ActivePoolCtr;
+        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
+        if count == 0 {
+            return;
+        }
+
+        let idx_key = DataKey::ActivePoolIdx(pool_id);
+        let pos: u32 = match env.storage().persistent().get(&idx_key) {
+            Some(p) => p,
+            None => return, // not in index — already removed or never added
+        };
+
+        let last = count - 1;
+
+        if pos != last {
+            // Move the last entry into the vacated slot.
+            let last_slot_key = DataKey::ActivePool(last);
+            let last_pool_id: u64 = env
+                .storage()
+                .persistent()
+                .get(&last_slot_key)
+                .expect("active pool index inconsistency");
+
+            let target_slot_key = DataKey::ActivePool(pos);
+            env.storage()
+                .persistent()
+                .set(&target_slot_key, &last_pool_id);
+            Self::extend_persistent(env, &target_slot_key);
+
+            // Update the moved pool's reverse-lookup entry.
+            let moved_idx_key = DataKey::ActivePoolIdx(last_pool_id);
+            env.storage().persistent().set(&moved_idx_key, &pos);
+            Self::extend_persistent(env, &moved_idx_key);
+
+            // Clean up the old last slot.
+            env.storage().persistent().remove(&last_slot_key);
+        } else {
+            // The pool being removed IS the last entry — just delete its slot.
+            let slot_key = DataKey::ActivePool(pos);
+            env.storage().persistent().remove(&slot_key);
+        }
+
+        // Remove the reverse-lookup entry for the removed pool.
+        env.storage().persistent().remove(&idx_key);
+
+        // Decrement the counter.
+        env.storage().instance().set(&ctr_key, &last);
+        Self::extend_instance(env);
     }
 
     // ── Public interface ──────────────────────────────────────────────────────
@@ -1519,6 +1635,7 @@ impl PredifiContract {
             private: config.private,
             whitelist_key: config.whitelist_key.clone(),
             outcome_descriptions: config.outcome_descriptions.clone(),
+            fee_bps: 0, // Will be set at resolution
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -1528,6 +1645,15 @@ impl PredifiContract {
         let pc_key = DataKey::PartCnt(pool_id);
         env.storage().persistent().set(&pc_key, &0u32);
         Self::bump_ttl(&env, &pc_key);
+
+        // Initialize optimized batch storage with zeros to avoid expensive fallback reads
+        let mut initial_stakes = Vec::new(&env);
+        for _ in 0..options_count {
+            initial_stakes.push_back(0i128);
+        }
+        let stakes_key = DataKey::OutStakes(pool_id);
+        env.storage().persistent().set(&stakes_key, &initial_stakes);
+        Self::extend_persistent(&env, &stakes_key);
 
         // Transfer initial liquidity from creator to contract if provided
         if config.initial_liquidity > 0 {
@@ -1588,6 +1714,9 @@ impl PredifiContract {
             .publish(&env);
         }
 
+        // Register pool in the global active pool index.
+        Self::add_to_active_index(&env, pool_id);
+
         pool_id
     }
 
@@ -1618,9 +1747,13 @@ impl PredifiContract {
         }
 
         // Pool must still be active and not ended
-        if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+        // if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+        //     return Err(PredifiError::InvalidPoolState);
+        // }
+        if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
+
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         // Must not set a cap below what is already staked
@@ -1667,7 +1800,10 @@ impl PredifiContract {
 
         assert!(!pool.resolved, "Pool already resolved");
         assert!(!pool.canceled, "Cannot resolve a canceled pool");
-        if pool.state != MarketState::Active {
+        // if pool.state != MarketState::Active {
+        //     return Err(PredifiError::InvalidPoolState);
+        // }
+        if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -1746,13 +1882,16 @@ impl PredifiContract {
             pool.state = MarketState::Resolved;
             pool.resolved = true;
             pool.outcome = outcome;
+            pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
             env.storage().persistent().set(&pool_key, &pool);
+
+            // Remove from global active index now that the pool is resolved.
+            Self::remove_from_active_index(&env, pool_id);
             Self::bump_ttl(&env, &pool_key);
 
-            // Retrieve winning-outcome stake for the diagnostic event
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+            // Retrieve winning-outcome stake for the diagnostic event efficiently
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, outcome);
 
             PoolResolvedEvent {
                 pool_id,
@@ -1840,10 +1979,13 @@ impl PredifiContract {
         // Prevent double cancellation
         assert!(!pool.canceled, "Pool already canceled");
         // Verify state transition validity (INV-2)
-        assert!(
-            Self::is_valid_state_transition(pool.state, MarketState::Canceled),
-            "Invalid state transition"
-        );
+        // assert!(
+        //     Self::is_valid_state_transition(pool.state, MarketState::Canceled),
+        //     "Invalid state transition"
+        // );
+        if !Self::is_pool_active(&pool) {
+            return Err(PredifiError::InvalidPoolState);
+        }
 
         pool.state = MarketState::Canceled;
 
@@ -1851,6 +1993,8 @@ impl PredifiContract {
         pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
+        // Remove from global active index now that the pool is canceled.
+        Self::remove_from_active_index(&env, pool_id);
 
         PoolCanceledEvent {
             pool_id,
@@ -1903,7 +2047,10 @@ impl PredifiContract {
 
         assert!(!pool.resolved, "Pool already resolved");
         assert!(!pool.canceled, "Cannot place prediction on canceled pool");
-        assert!(pool.state == MarketState::Active, "Pool is not active");
+        // assert!(pool.state == MarketState::Active, "Pool is not active");
+        if !Self::is_pool_active(&pool) {
+            panic!("Pool is not active");
+        }
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
         // Check private pool authorization
@@ -2141,16 +2288,21 @@ impl PredifiContract {
             }
 
             // Get winning stake using optimized batch storage
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(pool.outcome).unwrap_or(0);
+            // Get winning stake efficiently using single outcome getter
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, pool.outcome);
 
             if winning_stake == 0 {
                 return Ok(0);
             }
 
-            // Protocol fee: deducted from pool before distribution (flat fee_bps, no dependency on 317)
-            let config = Self::get_config(&env);
-            let fee_bps_i = config.fee_bps as i128;
+            // Protocol fee: deducted from pool before distribution
+            // Use pool-specific fee (calculated at resolution) if available, else fallback to global
+            let fee_bps_i = if pool.fee_bps > 0 || pool.state == MarketState::Resolved {
+                pool.fee_bps as i128
+            } else {
+                let config = Self::get_config(&env);
+                config.fee_bps as i128
+            };
             let protocol_fee_total =
                 SafeMath::percentage(pool.total_stake, fee_bps_i, RoundingMode::ProtocolFavor)
                     .map_err(|_| PredifiError::InvalidAmount)?;
@@ -2461,27 +2613,22 @@ impl PredifiContract {
     /// avoiding a full `Pool` struct deserialization. Falls back to loading
     /// the pool only when the batch key is missing (pre-optimization data).
     pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
-        // Try the optimized batch key first (avoids Pool deserialization)
+        // Optimization: Try individual key first (most common case, cheapest to read)
+        let stake_key = DataKey::OutStake(pool_id, outcome);
+        if let Some(stake) = env.storage().persistent().get::<_, i128>(&stake_key) {
+            Self::extend_persistent(&env, &stake_key);
+            return stake;
+        }
+
+        // Fallback: Try optimized batch key
         let batch_key = DataKey::OutStakes(pool_id);
         if let Some(stakes) = env.storage().persistent().get::<_, Vec<i128>>(&batch_key) {
             Self::extend_persistent(&env, &batch_key);
             return stakes.get(outcome).unwrap_or(0);
         }
 
-        // Fallback: read Pool to get options_count, then individual OutStake keys
-        let pool_key = DataKey::Pool(pool_id);
-        let pool: Option<Pool> = env.storage().persistent().get(&pool_key);
-        match pool {
-            Some(p) => {
-                Self::extend_persistent(&env, &pool_key);
-                if outcome >= p.options_count {
-                    return 0;
-                }
-                let stake_key = DataKey::OutStake(pool_id, outcome);
-                env.storage().persistent().get(&stake_key).unwrap_or(0)
-            }
-            None => 0,
-        }
+        // Final fallback: reconstructed if neither exists (unlikely in modern version)
+        0
     }
 
     /// Get a paginated list of pool IDs by category.
@@ -2512,6 +2659,43 @@ impl PredifiContract {
             Self::extend_persistent(&env, &index_key);
 
             results.push_back(pool_id);
+        }
+
+        results
+    }
+
+    /// Get a paginated list of all currently active pool IDs across all categories.
+    ///
+    /// Returns pool IDs in insertion order (oldest first within each page).
+    /// Pools are removed from this list when they are resolved or canceled,
+    /// so every ID returned is guaranteed to belong to an active pool.
+    ///
+    /// # Arguments
+    /// * `offset` - Number of entries to skip (0-based).
+    /// * `limit`  - Maximum number of entries to return.
+    ///
+    /// # Returns
+    /// A `Vec<u64>` of active pool IDs. Returns an empty vec if `offset`
+    /// is beyond the current count or `limit` is 0.
+    pub fn get_active_pools(env: Env, offset: u32, limit: u32) -> Vec<u64> {
+        let ctr_key = DataKey::ActivePoolCtr;
+        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
+        Self::extend_instance(&env);
+
+        let mut results = Vec::new(&env);
+
+        if offset >= count || limit == 0 {
+            return results;
+        }
+
+        let end = core::cmp::min(offset.saturating_add(limit), count);
+
+        for i in offset..end {
+            let slot_key = DataKey::ActivePool(i);
+            if let Some(pool_id) = env.storage().persistent().get(&slot_key) {
+                Self::extend_persistent(&env, &slot_key);
+                results.push_back(pool_id);
+            }
         }
 
         results
@@ -2763,6 +2947,7 @@ impl PredifiContract {
         pool.state = MarketState::Resolved;
         pool.resolved = true;
         pool.outcome = outcome;
+        pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
@@ -2775,6 +2960,59 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(())
+    }
+    pub fn set_fee_tiers(
+        env: Env,
+        admin: Address,
+        tiers: Vec<FeeTier>,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_fee_tiers")?;
+
+        for i in 0..tiers.len() {
+            if let Some(tier) = tiers.get(i) {
+                if tier.fee_bps > 10_000 {
+                    return Err(PredifiError::InvalidFeeBps);
+                }
+            }
+        }
+
+        env.storage().persistent().set(&DataKey::FeeTiers, &tiers);
+        Self::bump_ttl(&env, &DataKey::FeeTiers);
+
+        FeeTiersUpdateEvent {
+            admin,
+            tiers_count: tiers.len(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    pub fn get_fee_tiers(env: Env) -> Vec<FeeTier> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::FeeTiers)
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
+    fn calculate_dynamic_fee(env: &Env, pool: &Pool) -> u32 {
+        let config = Self::get_config(env);
+        let tiers = Self::get_fee_tiers(env.clone());
+        let mut applied_fee = config.fee_bps;
+
+        let mut max_threshold = -1i128;
+        for i in 0..tiers.len() {
+            if let Some(tier) = tiers.get(i) {
+                if pool.total_stake >= tier.stake_threshold && tier.stake_threshold > max_threshold
+                {
+                    max_threshold = tier.stake_threshold;
+                    applied_fee = tier.fee_bps;
+                }
+            }
+        }
+        applied_fee
     }
 }
 
@@ -2801,7 +3039,10 @@ impl OracleCallback for PredifiContract {
 
         assert!(!pool.resolved, "Pool already resolved");
         assert!(!pool.canceled, "Cannot resolve a canceled pool");
-        if pool.state != MarketState::Active {
+        // if pool.state != MarketState::Active {
+        //     return Err(PredifiError::InvalidPoolState);
+        // }
+        if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -2888,13 +3129,17 @@ impl OracleCallback for PredifiContract {
             pool.state = MarketState::Resolved;
             pool.resolved = true;
             pool.outcome = outcome;
+            pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
             env.storage().persistent().set(&pool_key, &pool);
             Self::bump_ttl(&env, &pool_key);
 
-            // Retrieve winning-outcome stake for the diagnostic event
-            let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-            let winning_stake: i128 = stakes.get(outcome).unwrap_or(0);
+            Self::extend_persistent(&env, &pool_key);
+            // Remove from global active index now that the pool is resolved.
+            Self::remove_from_active_index(&env, pool_id);
+
+            // Retrieve winning-outcome stake for the diagnostic event efficiently
+            let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, outcome);
 
             // Emit resolution events once threshold is met
             PoolResolvedEvent {
@@ -2918,5 +3163,6 @@ impl OracleCallback for PredifiContract {
     }
 }
 
+mod fee_tiers_test;
 mod integration_test;
 mod test;
