@@ -147,6 +147,25 @@ pub enum PoolStatus {
     Disputed,
 }
 
+/// Category classification for prediction pools.
+///
+/// This enum provides a standardized set of categories for organizing
+/// prediction markets. Categories help users discover relevant pools.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PoolCategory {
+    /// Sports-related predictions (e.g., game outcomes, tournaments, player performance).
+    Sports,
+    /// Political event predictions (e.g., elections, policy decisions, approvals).
+    Politics,
+    /// Financial market predictions (e.g., stock prices, indices, economic indicators).
+    Finance,
+    /// Entertainment industry predictions (e.g., awards, box office, TV shows).
+    Entertainment,
+    /// Miscellaneous predictions that don't fit other categories.
+    Other,
+}
+
 /// Storage keys for access control data.
 ///
 /// This enum defines all storage keys used by the access control contract.

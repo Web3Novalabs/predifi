@@ -475,3 +475,39 @@ fn test_revoke_all_roles_clears_all_five_roles() {
     assert!(!client.has_role(&user, &Role::Oracle));
     assert!(!client.has_role(&user, &Role::User));
 }
+
+/// Revoking a role that was never assigned returns `InsufficientPermissions`.
+#[test]
+fn test_revoke_unassigned_role_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.init(&admin);
+
+    let result = client.try_revoke_role(&admin, &user, &Role::Operator);
+    assert_eq!(result, Err(Ok(PrediFiError::InsufficientPermissions)));
+}
+
+/// Transferring a role that the `from` address does not hold returns
+/// `InsufficientPermissions`.
+#[test]
+fn test_transfer_role_from_address_without_role_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let from = Address::generate(&env);
+    let to = Address::generate(&env);
+    client.init(&admin);
+
+    let result = client.try_transfer_role(&admin, &from, &to, &Role::Oracle);
+    assert_eq!(result, Err(Ok(PrediFiError::InsufficientPermissions)));
+}

@@ -1985,16 +1985,19 @@ impl PredifiContract {
     /// * `reason`  - A short description of why the pool is being canceled.
     ///
     /// # Errors
-    /// - `Unauthorized` if caller is not admin.
+    /// - `Unauthorized` if caller is not admin/operator and not the pool creator, or if creator
+    ///   attempts to cancel a pool that already has bets beyond initial liquidity.
     /// - `PoolNotResolved` error (code 22) is returned if trying to cancel an already resolved pool.
-    /// PRE: pool.state = Active, operator has role 1
+    /// PRE: pool.state = Active, caller has role 0/1 OR (caller == pool.creator AND total_stake <= initial_liquidity)
     /// POST: pool.state = Canceled, state transition valid (INV-2)
-    pub fn cancel_pool(env: Env, operator: Address, pool_id: u64) -> Result<(), PredifiError> {
+    pub fn cancel_pool(
+        env: Env,
+        operator: Address,
+        pool_id: u64,
+        reason: String,
+    ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
         operator.require_auth();
-
-        // Check authorization: operator must have role 1
-        Self::require_role(&env, &operator, 1)?;
 
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
@@ -2004,35 +2007,39 @@ impl PredifiContract {
             .expect("Pool not found");
         Self::extend_persistent(&env, &pool_key);
 
+        // Determine if caller is admin/operator (role 0 or 1)
+        let is_privileged = Self::require_role(&env, &operator, 0).is_ok()
+            || Self::require_role(&env, &operator, 1).is_ok();
+
+        if !is_privileged {
+            // Allow creator to cancel only if no bets have been placed beyond initial liquidity
+            if operator != pool.creator {
+                return Err(PredifiError::Unauthorized);
+            }
+            if pool.total_stake > pool.initial_liquidity {
+                return Err(PredifiError::Unauthorized);
+            }
+        }
+
         // Ensure resolved pools cannot be canceled
         if pool.resolved {
             return Err(PredifiError::PoolNotResolved);
         }
 
-        // Prevent double cancellation
-        assert!(!pool.canceled, "Pool already canceled");
-        // Verify state transition validity (INV-2)
-        // assert!(
-        //     Self::is_valid_state_transition(pool.state, MarketState::Canceled),
-        //     "Invalid state transition"
-        // );
         if !Self::is_pool_active(&pool) {
             return Err(PredifiError::InvalidPoolState);
         }
 
         pool.state = MarketState::Canceled;
-
-        // Mark pool as canceled
         pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
-        // Remove from global active index now that the pool is canceled.
         Self::remove_from_active_index(&env, pool_id);
 
         PoolCanceledEvent {
             pool_id,
             caller: operator.clone(),
-            reason: String::from_str(&env, ""),
+            reason,
             operator,
         }
         .publish(&env);
