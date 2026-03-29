@@ -2749,10 +2749,12 @@ impl PredifiContract {
     /// Get a paginated list of pool IDs by category.
     pub fn get_pools_by_category(env: Env, category: Symbol, offset: u32, limit: u32) -> Vec<u64> {
         let count_key = DataKey::CatPoolCt(category.clone());
-        let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
-        if env.storage().persistent().has(&count_key) {
+        let count: u32 = if let Some(c) = env.storage().persistent().get(&count_key) {
             Self::extend_persistent(&env, &count_key);
-        }
+            c
+        } else {
+            0
+        };
 
         let mut results = Vec::new(&env);
 
@@ -2793,15 +2795,18 @@ impl PredifiContract {
     /// A `Vec<u64>` of active pool IDs. Returns an empty vec if `offset`
     /// is beyond the current count or `limit` is 0.
     pub fn get_active_pools(env: Env, offset: u32, limit: u32) -> Vec<u64> {
-        let ctr_key = DataKey::ActivePoolCtr;
-        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
-        Self::extend_instance(&env);
-
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ActivePoolCtr)
+            .unwrap_or(0);
         let mut results = Vec::new(&env);
 
         if offset >= count || limit == 0 {
             return results;
         }
+
+        Self::extend_instance(&env);
 
         let end = core::cmp::min(offset.saturating_add(limit), count);
 
