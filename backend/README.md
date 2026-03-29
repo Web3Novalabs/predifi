@@ -1,14 +1,16 @@
 # predifi-backend
 
 A minimal Axum HTTP server for the PrediFi platform, featuring a custom Tower
-request-logging middleware and a versioned API router layout.
+request-logging middleware, environment-based configuration, and a PostgreSQL
+connection pool scaffold.
 
-Every request is logged to stdout with its method, path, response status, and duration:
+Every request is logged through `tracing` with method, path, response status,
+and duration fields:
 
 ```text
-[REQ] GET /health -> 200 OK (1ms)
-[REQ] GET /api/v1/health -> 200 OK (0ms)
-[REQ] GET /missing -> 404 Not Found (0ms)
+2026-03-29T12:00:00Z  INFO request complete method=GET path=/health status=200 OK elapsed_ms=1
+2026-03-29T12:00:01Z  INFO request complete method=GET path=/api/v1/health status=200 OK elapsed_ms=0
+2026-03-29T12:00:02Z  INFO request complete method=GET path=/missing status=404 Not Found elapsed_ms=0
 ```
 
 ---
@@ -42,6 +44,7 @@ cargo build
 ## Run the dev server
 
 ```bash
+cp .env.example .env
 cargo run
 ```
 
@@ -65,6 +68,58 @@ cargo watch -x run
 
 ---
 
+## Environment configuration
+
+The backend loads `.env` automatically at startup (via `dotenvy`) and then
+reads environment variables into a typed `Config` struct.
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `APP_HOST` | `0.0.0.0` | Host interface to bind |
+| `APP_PORT` | `3000` | HTTP port |
+| `RUST_LOG` | `info` | Tracing filter level |
+| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/predifi` | PostgreSQL DSN |
+| `DB_MAX_CONNECTIONS` | `10` | SQLx pool max connections |
+| `DB_MIN_CONNECTIONS` | `1` | SQLx pool min connections |
+| `DB_ACQUIRE_TIMEOUT_SECS` | `30` | Pool acquire timeout (seconds) |
+
+If an environment variable has an invalid value (for example, a non-numeric
+port), startup fails with a clear configuration error.
+
+---
+
+## SQLx connection pool
+
+The application initializes a PostgreSQL pool at startup using
+`sqlx::postgres::PgPoolOptions` with sensible defaults from `Config`.
+
+The pool uses lazy mode (`connect_lazy`) to keep local development simple while
+still validating pool configuration and creating a reusable `PgPool` handle.
+
+---
+
+## Structured tracing
+
+`tracing-subscriber` is initialized once in `main`, using `RUST_LOG` for
+filtering. The request middleware now emits structured tracing events rather
+than plain `println!` output.
+
+---
+
+## Docker (multi-stage)
+
+Build and run the backend container from this directory:
+
+```bash
+docker build -t predifi-backend:local .
+docker run --rm -p 3000:3000 --env-file .env predifi-backend:local
+```
+
+The Dockerfile uses a multi-stage build to compile a release binary in a Rust
+builder image, then copies only the binary into a slim runtime image.
+
+---
+
 ## Run tests
 
 Tests use Tower's `.oneshot()` helper, so no live server is needed.
@@ -80,6 +135,8 @@ cargo test
 ```text
 src/
 |-- main.rs            # top-level app router and server entry point
+|-- config.rs          # typed env configuration loader
+|-- db.rs              # SQLx PostgreSQL pool initialization
 |-- request_logger.rs  # LoggingLayer / LoggingService middleware
 |-- routes/
 |   |-- mod.rs         # API router tree (/api)
