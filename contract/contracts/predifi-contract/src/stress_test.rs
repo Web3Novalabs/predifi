@@ -2,7 +2,7 @@ use crate::{PoolConfig, PredifiContract, PredifiContractClient};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
-    token, Address, Env, String,
+    token, vec, Address, Env, String,
 };
 
 extern crate alloc;
@@ -61,7 +61,7 @@ fn stress_setup(
     ac_client.grant_role(&admin, &ROLE_OPERATOR); // Grant operator too for convenience
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
-    client.init(&ac_id, &treasury, &500, &3600);
+    client.init(&ac_id, &treasury, &500, &3600, &3600u64);
 
     // Setup Token
     let token_admin = Address::generate(env);
@@ -98,10 +98,16 @@ fn test_high_volume_predictions_single_pool() {
             metadata_url: String::from_str(&env, "ipfs://stress"),
             min_stake: 10i128,
             max_stake: 10000i128,
+            max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -141,10 +147,16 @@ fn test_bulk_claim_winnings() {
             metadata_url: String::from_str(&env, "ipfs://bulk"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -189,10 +201,16 @@ fn test_sequential_pool_creation_stress() {
                 metadata_url: String::from_str(&env, "ipfs://meta"),
                 min_stake: 1i128,
                 max_stake: 0i128,
+                max_total_stake: 0,
                 initial_liquidity: 0,
                 required_resolutions: 1u32,
                 private: false,
                 whitelist_key: None,
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
             },
         );
         assert_eq!(pool_id, i as u64);
@@ -218,10 +236,30 @@ fn test_max_outcomes_high_volume() {
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+                String::from_str(&env, "Outcome 4"),
+                String::from_str(&env, "Outcome 5"),
+                String::from_str(&env, "Outcome 6"),
+                String::from_str(&env, "Outcome 7"),
+                String::from_str(&env, "Outcome 8"),
+                String::from_str(&env, "Outcome 9"),
+                String::from_str(&env, "Outcome 10"),
+                String::from_str(&env, "Outcome 11"),
+                String::from_str(&env, "Outcome 12"),
+                String::from_str(&env, "Outcome 13"),
+                String::from_str(&env, "Outcome 14"),
+                String::from_str(&env, "Outcome 15"),
+            ],
         },
     );
 
@@ -253,10 +291,16 @@ fn test_prediction_throughput_measurement() {
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -296,10 +340,16 @@ fn test_resolution_under_load() {
                 metadata_url: String::from_str(&env, "ipfs://load"),
                 min_stake: 1i128,
                 max_stake: 0i128,
+                max_total_stake: 0,
                 initial_liquidity: 0,
                 required_resolutions: 1u32,
                 private: false,
                 whitelist_key: None,
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
             },
         );
         pool_ids.push(pid);

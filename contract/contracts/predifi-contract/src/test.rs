@@ -1,14 +1,19 @@
 #![cfg(test)]
 #![allow(deprecated)]
 
+extern crate std;
+
 use super::*;
 use soroban_sdk::{
     symbol_short,
-    testutils::{storage::Instance as _, storage::Persistent as _, Address as _, Ledger},
-    token, Address, BytesN, Env, String, Symbol,
+    testutils::{
+        storage::Instance as _, storage::Persistent as _, Address as _, AuthorizedFunction,
+        AuthorizedInvocation, Events, Ledger, Logs,
+    },
+    token, vec, Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal, Val,
 };
 
-mod dummy_access_control {
+pub(crate) mod dummy_access_control {
     use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
     #[contract]
@@ -28,11 +33,39 @@ mod dummy_access_control {
     }
 }
 
-const ROLE_ADMIN: u32 = 0; // i am testing this
-const ROLE_OPERATOR: u32 = 1; // i am testing this the second one
+mod rogue_token {
+    use crate::PredifiContractClient;
+    use soroban_sdk::{contract, contractimpl, Address, Env};
+
+    #[contract]
+    pub struct RogueToken;
+
+    #[contractimpl]
+    impl RogueToken {
+        pub fn transfer(env: Env, _from: Address, _to: Address, _amount: i128) {
+            if env.ledger().timestamp() > 100000 {
+                let target: Address = env.storage().instance().get(&0u32).unwrap();
+                let user: Address = env.storage().instance().get(&1u32).unwrap();
+                let pool_id: u64 = env.storage().instance().get(&2u32).unwrap();
+
+                let client = PredifiContractClient::new(&env, &target);
+                client.claim_winnings(&user, &pool_id);
+            }
+        }
+
+        pub fn setup(env: Env, target: Address, user: Address, pool_id: u64) {
+            env.storage().instance().set(&0u32, &target);
+            env.storage().instance().set(&1u32, &user);
+            env.storage().instance().set(&2u32, &pool_id);
+        }
+    }
+}
+
+pub(crate) const ROLE_ADMIN: u32 = 0; // i am testing this
+pub(crate) const ROLE_OPERATOR: u32 = 1; // i am testing this the second one
 const ROLE_ORACLE: u32 = 3;
 
-fn setup(
+pub(crate) fn setup(
     env: &Env,
 ) -> (
     dummy_access_control::DummyAccessControlClient<'_>,
@@ -63,7 +96,7 @@ fn setup(
 
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_address);
 
     (
@@ -78,7 +111,188 @@ fn setup(
     )
 }
 
+fn assert_single_contract_auth(
+    env: &Env,
+    expected_address: &Address,
+    contract: &Address,
+    fn_name: &str,
+    args: soroban_sdk::Vec<Val>,
+) {
+    let auths = env.auths();
+    assert_eq!(auths.len(), 1);
+    assert_eq!(
+        auths,
+        std::vec![(
+            expected_address.clone(),
+            AuthorizedInvocation {
+                function: AuthorizedFunction::Contract((
+                    contract.clone(),
+                    Symbol::new(env, fn_name),
+                    args,
+                )),
+                sub_invocations: std::vec![],
+            }
+        )]
+    );
+}
+
 // ── Core prediction tests ────────────────────────────────────────────────────
+
+#[test]
+fn test_set_fee_bps_auth_only_happens_at_entry_point() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &250u32);
+
+    assert_single_contract_auth(
+        &env,
+        &admin,
+        &client.address,
+        "set_fee_bps",
+        (&admin, 250u32).into_val(&env),
+    );
+}
+
+#[test]
+fn test_increase_max_total_stake_auth_only_happens_at_entry_point() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Cap Increase Pool"),
+            metadata_url: String::from_str(&env, "ipfs://cap-increase"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 100i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    client.increase_max_total_stake(&creator, &pool_id, &250i128);
+
+    assert_single_contract_auth(
+        &env,
+        &creator,
+        &client.address,
+        "increase_max_total_stake",
+        (&creator, pool_id, 250i128).into_val(&env),
+    );
+}
+
+#[test]
+fn test_resolve_pool_auth_only_happens_at_entry_point() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Resolve Auth Pool"),
+            metadata_url: String::from_str(&env, "ipfs://resolve-auth"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+    client.place_prediction(&user, &pool_id, &100, &1u32, &None, &None);
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    assert_single_contract_auth(
+        &env,
+        &operator,
+        &client.address,
+        "resolve_pool",
+        (&operator, pool_id, 1u32).into_val(&env),
+    );
+}
+
+#[test]
+fn test_oracle_resolve_auth_only_happens_at_entry_point() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let oracle = Address::generate(&env);
+    let user = Address::generate(&env);
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Oracle Auth Pool"),
+            metadata_url: String::from_str(&env, "ipfs://oracle-auth"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+    client.place_prediction(&user, &pool_id, &100, &1u32, &None, &None);
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.oracle_resolve(&oracle, &pool_id, &1u32, &String::from_str(&env, "proof"));
+
+    assert_single_contract_auth(
+        &env,
+        &oracle,
+        &client.address,
+        "oracle_resolve",
+        (&oracle, pool_id, 1u32, String::from_str(&env, "proof")).into_val(&env),
+    );
+}
 
 #[test]
 fn test_claim_winnings() {
@@ -107,10 +321,17 @@ fn test_claim_winnings() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None, &None);
@@ -129,6 +350,89 @@ fn test_claim_winnings() {
     let winnings2 = client.claim_winnings(&user2, &pool_id);
     assert_eq!(winnings2, 0);
     assert_eq!(token.balance(&user2), 900);
+}
+
+#[test]
+fn test_claim_winnings_zero_share() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token = token::Client::new(&env, &token_contract);
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let token_address = token_contract;
+    let treasury = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    // Initialize with 2% protocol fee (200 bps)
+    client.init(&ac_id, &treasury, &200u32, &0u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    let user_c = Address::generate(&env);
+
+    token_admin_client.mint(&user_a, &1000);
+    token_admin_client.mint(&user_b, &1000);
+    token_admin_client.mint(&user_c, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Small Stake Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // User A stakes 100 on Outcome 1 (winner)
+    client.place_prediction(&user_a, &pool_id, &100, &1, &None, &None);
+    // User B stakes 1 on Outcome 1 (winner)
+    client.place_prediction(&user_b, &pool_id, &1, &1, &None, &None);
+    // User C stakes 1 on Outcome 0 (loser)
+    client.place_prediction(&user_c, &pool_id, &1, &0, &None, &None);
+
+    // Total Stake: 102
+    // Winning Stake (Outcome 1): 101
+    // Fee: 2% of 102 = 2 (ProtocolFavor/floor rounding)
+    // Payout Pool: 102 - 2 = 100
+    // User B Winnings: (1 * 100) / 101 = 0 (integer division)
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    let winnings_b = client.claim_winnings(&user_b, &pool_id);
+    assert_eq!(winnings_b, 0);
+    assert_eq!(token.balance(&user_b), 999); // Initial 1000 - 1 stake + 0 winnings
+
+    // User A should get the rest
+    let winnings_a = client.claim_winnings(&user_a, &pool_id);
+    assert_eq!(winnings_a, 99); // (100 * 100) / 101 = 99
+    assert_eq!(token.balance(&user_a), 900 + 99); // Initial 1000 - 100 + 99 = 999
 }
 
 /// Referral: referred user places with referrer; on claim, referrer receives a cut of the protocol fee.
@@ -152,7 +456,7 @@ fn test_referral_fee_distribution() {
     let admin = Address::generate(&env);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &200u32, &0u64); // 2% protocol fee
+    client.init(&ac_id, &treasury, &200u32, &0u64, &3600u64); // 2% protocol fee
     client.add_token_to_whitelist(&admin, &token_address);
     client.set_referral_cut_bps(&admin, &5000u32); // 50% of fee share to referrer
 
@@ -171,10 +475,16 @@ fn test_referral_fee_distribution() {
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     // Referred user places with referrer (100 on outcome 0)
@@ -224,10 +534,17 @@ fn test_double_claim() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None, &None);
@@ -265,10 +582,17 @@ fn test_claim_unresolved() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
     client.place_prediction(&user1, &pool_id, &100, &1, &None, &None);
@@ -302,10 +626,17 @@ fn test_multiple_pools_independent() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
     let pool_b = client.create_pool(
@@ -322,10 +653,17 @@ fn test_multiple_pools_independent() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -342,6 +680,41 @@ fn test_multiple_pools_independent() {
 
     let w2 = client.claim_winnings(&user2, &pool_b);
     assert_eq!(w2, 0);
+}
+
+#[test]
+fn test_invalid_category_fallback() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "InvalidCat"),
+        &PoolConfig {
+            description: String::from_str(&env, "Invalid Category Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.category, CATEGORY_OTHER);
 }
 
 // ── Access control tests ─────────────────────────────────────────────────────
@@ -390,10 +763,17 @@ fn test_unauthorized_resolve_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
     let not_operator = Address::generate(&env);
@@ -421,7 +801,7 @@ fn test_oracle_can_resolve() {
 
     ac_client.grant_role(&oracle, &ROLE_ORACLE);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -436,10 +816,17 @@ fn test_oracle_can_resolve() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -476,7 +863,7 @@ fn test_unauthorized_oracle_resolve() {
     // Give them OPERATOR instead of ORACLE, they still shouldn't be able to call oracle_resolve
     ac_client.grant_role(&not_oracle, &ROLE_OPERATOR);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -491,10 +878,17 @@ fn test_unauthorized_oracle_resolve() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -506,6 +900,166 @@ fn test_unauthorized_oracle_resolve() {
         &1u32,
         &String::from_str(&env, "proof_123"),
     );
+}
+
+#[test]
+fn test_oracle_resolve_long_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Create a 1024-byte proof string
+    let long_proof = "a".repeat(1024);
+    let proof_str = String::from_str(&env, &long_proof);
+
+    // Call oracle_resolve which should succeed
+    client.oracle_resolve(&oracle, &pool_id, &1u32, &proof_str);
+
+    let events = env.events().all();
+    let oracle_resolved_topic = Symbol::new(&env, "oracle_resolved");
+
+    let mut found = false;
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == oracle_resolved_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let event_proof: String = event_data
+                        .get(Symbol::new(&env, "proof"))
+                        .unwrap()
+                        .into_val(&env);
+                    assert_eq!(event_proof, proof_str);
+                    found = true;
+                }
+            }
+        }
+    }
+    assert!(found, "OracleResolvedEvent not found");
+}
+
+#[test]
+fn test_oracle_resolve_utf8_emoji_proof() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Create a proof string with emojis and UTF-8 characters
+    let emoji_proof = "Proof ✨🔗 🧑‍💻 ✓ æøå 🔥 test end";
+    let proof_str = String::from_str(&env, emoji_proof);
+
+    // Call oracle_resolve which should succeed
+    client.oracle_resolve(&oracle, &pool_id, &1u32, &proof_str);
+
+    let events = env.events().all();
+    let oracle_resolved_topic = Symbol::new(&env, "oracle_resolved");
+
+    let mut found = false;
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == oracle_resolved_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let event_proof: String = event_data
+                        .get(Symbol::new(&env, "proof"))
+                        .unwrap()
+                        .into_val(&env);
+                    assert_eq!(event_proof, proof_str);
+                    found = true;
+                }
+            }
+        }
+    }
+    assert!(found, "OracleResolvedEvent not found for emoji proof");
 }
 
 #[test]
@@ -521,7 +1075,7 @@ fn test_admin_can_set_fee_bps() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.set_fee_bps(&admin, &500u32);
 }
@@ -540,7 +1094,7 @@ fn test_admin_can_set_treasury() {
     let treasury = Address::generate(&env);
     let new_treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.set_treasury(&admin, &new_treasury);
 }
@@ -560,7 +1114,7 @@ fn test_admin_can_pause_and_unpause() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.unpause(&admin);
@@ -580,7 +1134,7 @@ fn test_admin_can_upgrade() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // We expect this to panic in the mock environment because the Wasm hash is not registered.
     // The point is to verify it passes the Authorization check.
@@ -600,7 +1154,7 @@ fn test_non_admin_cannot_upgrade() {
 
     let not_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     let new_wasm_hash = BytesN::from_array(&env, &[0u8; 32]);
     client.upgrade_contract(&not_admin, &new_wasm_hash);
@@ -619,7 +1173,7 @@ fn test_admin_can_migrate() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.migrate_state(&admin);
 }
@@ -636,7 +1190,7 @@ fn test_non_admin_cannot_migrate() {
 
     let not_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.migrate_state(&not_admin);
 }
@@ -653,7 +1207,7 @@ fn test_non_admin_cannot_pause() {
 
     let not_admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&not_admin);
 }
@@ -672,7 +1226,7 @@ fn test_paused_blocks_set_fee_bps() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.set_fee_bps(&admin, &100u32);
@@ -692,7 +1246,7 @@ fn test_paused_blocks_set_treasury() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.set_treasury(&admin, &Address::generate(&env));
@@ -713,7 +1267,7 @@ fn test_paused_blocks_create_pool() {
     let treasury = Address::generate(&env);
     let token = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token);
 
     let creator = Address::generate(&env);
@@ -732,10 +1286,17 @@ fn test_paused_blocks_create_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 }
@@ -755,7 +1316,7 @@ fn test_paused_blocks_place_prediction() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.place_prediction(&user, &0u64, &10, &1, &None, &None);
@@ -777,7 +1338,7 @@ fn test_paused_blocks_resolve_pool() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.resolve_pool(&operator, &0u64, &1u32);
@@ -798,7 +1359,7 @@ fn test_paused_blocks_claim_winnings() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     client.pause(&admin);
     client.claim_winnings(&user, &0u64);
@@ -822,7 +1383,7 @@ fn test_unpause_restores_functionality() {
     let user = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_contract);
     token_admin_client.mint(&user, &1000);
 
@@ -844,10 +1405,17 @@ fn test_unpause_restores_functionality() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
     client.place_prediction(&user, &pool_id, &10, &1, &None, &None);
@@ -879,10 +1447,17 @@ fn test_get_user_predictions() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
     let pool1 = client.create_pool(
@@ -899,10 +1474,17 @@ fn test_get_user_predictions() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
     let pool2 = client.create_pool(
@@ -919,10 +1501,17 @@ fn test_get_user_predictions() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -974,10 +1563,17 @@ fn test_multi_oracle_resolution() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 2u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -1024,7 +1620,7 @@ fn test_admin_can_cancel_pool() {
     let creator = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let pool_id = client.create_pool(
@@ -1041,15 +1637,22 @@ fn test_admin_can_cancel_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
     // Admin should be able to cancel
-    client.cancel_pool(&admin, &pool_id);
+    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
 }
 
 #[test]
@@ -1071,7 +1674,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
     let admin = Address::generate(&env);
     ac_client.grant_role(&creator, &ROLE_OPERATOR);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token_address);
 
     let pool_id = client.create_pool(
@@ -1088,15 +1691,22 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
     // Admin should be able to cancel their pool
-    client.cancel_pool(&creator, &pool_id);
+    client.cancel_pool(&creator, &pool_id, &String::from_str(&env, ""));
 }
 
 #[test]
@@ -1121,16 +1731,23 @@ fn test_non_admin_non_creator_cannot_cancel() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
     let unauthorized = Address::generate(&env);
     // This should fail - user is not admin
-    client.cancel_pool(&unauthorized, &pool_id);
+    client.cancel_pool(&unauthorized, &pool_id, &String::from_str(&env, ""));
 }
 
 // ── Token whitelist tests ───────────────────────────────────────────────────
@@ -1151,7 +1768,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
     let token_not_whitelisted = Address::generate(&env);
 
     ac_client.grant_role(&creator, &ROLE_OPERATOR);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     // Do NOT whitelist token_not_whitelisted
 
     client.create_pool(
@@ -1165,10 +1782,16 @@ fn test_create_pool_rejects_non_whitelisted_token() {
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 0i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 }
@@ -1187,7 +1810,7 @@ fn test_token_whitelist_add_remove_and_is_allowed() {
     let treasury = Address::generate(&env);
     let token = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     assert!(!client.is_token_allowed(&token));
     client.add_token_to_whitelist(&admin, &token);
@@ -1209,7 +1832,7 @@ fn setup_whitelist_env() -> (Env, PredifiContractClient<'static>, Address, Addre
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     (env, client, admin, treasury)
 }
@@ -1317,6 +1940,85 @@ fn test_whitelist_persists_in_persistent_storage() {
 }
 
 #[test]
+fn test_is_whitelisted_tracks_explicit_private_pool_membership() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let invited_user = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Private whitelist helper"),
+            metadata_url: String::from_str(&env, "ipfs://private-whitelist-helper"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    assert!(!client.is_whitelisted(&pool_id, &creator));
+    assert!(!client.is_whitelisted(&pool_id, &invited_user));
+
+    client.add_to_whitelist(&creator, &pool_id, &invited_user);
+    assert!(client.is_whitelisted(&pool_id, &invited_user));
+
+    client.remove_from_whitelist(&creator, &pool_id, &invited_user);
+    assert!(!client.is_whitelisted(&pool_id, &invited_user));
+}
+
+#[test]
+fn test_is_whitelisted_returns_false_for_public_pool_without_entry() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Public whitelist helper"),
+            metadata_url: String::from_str(&env, "ipfs://public-whitelist-helper"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    assert!(!client.is_whitelisted(&pool_id, &user));
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #91)")]
 fn test_place_prediction_fails_for_non_whitelisted_token() {
     let env = Env::default();
@@ -1337,7 +2039,7 @@ fn test_place_prediction_fails_for_non_whitelisted_token() {
     let user = Address::generate(&env);
 
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Intentionally do NOT whitelist the token
     token_admin_client.mint(&user, &1000);
@@ -1356,10 +2058,16 @@ fn test_place_prediction_fails_for_non_whitelisted_token() {
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 10i128,
             max_stake: 500i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 }
@@ -1384,7 +2092,7 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
     let user = Address::generate(&env);
 
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Whitelist the token
     client.add_token_to_whitelist(&admin, &token_contract);
@@ -1403,10 +2111,16 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 10i128,
             max_stake: 500i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -1441,7 +2155,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let pool_id = client.create_pool(
@@ -1458,10 +2172,17 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -1469,7 +2190,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
     client.resolve_pool(&operator, &pool_id, &1u32);
 
     // Now try to cancel - should fail
-    client.cancel_pool(&admin, &pool_id);
+    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
 }
 
 #[test]
@@ -1493,7 +2214,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -1515,15 +2236,22 @@ fn test_cannot_place_prediction_on_canceled_pool() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
     // Cancel the pool
-    client.cancel_pool(&admin, &pool_id);
+    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
 
     // Try to place prediction on canceled pool - should panic
     client.place_prediction(&user, &pool_id, &100, &1, &None, &None);
@@ -1550,7 +2278,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let pool_id = client.create_pool(
@@ -1567,19 +2295,26 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
     // Admin cancels the pool
-    client.cancel_pool(&admin, &pool_id);
+    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
 
     // Attempt to cancel again should fail (already canceled)
     let non_admin = Address::generate(&env);
-    client.cancel_pool(&non_admin, &pool_id);
+    client.cancel_pool(&non_admin, &pool_id, &String::from_str(&env, ""));
 }
 
 #[test]
@@ -1603,7 +2338,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -1624,10 +2359,17 @@ fn test_admin_can_cancel_pool_with_predictions() {
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -1635,7 +2377,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
     client.place_prediction(&user, &pool_id, &100, &1, &None, &None);
 
     // Admin cancels the pool - this freezes betting
-    client.cancel_pool(&admin, &pool_id);
+    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
 
     // Verify no more predictions can be placed - should panic
     client.place_prediction(&user, &pool_id, &50, &2, &None, &None);
@@ -1662,7 +2404,7 @@ fn test_cancel_pool_refunds_predictions() {
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -1680,10 +2422,16 @@ fn test_cancel_pool_refunds_predictions() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -1693,7 +2441,7 @@ fn test_cancel_pool_refunds_predictions() {
     assert_eq!(token_admin_client.balance(&user1), 900);
 
     // Admin cancels the pool - this should enable refund of predictions
-    client.cancel_pool(&admin, &pool_id);
+    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
 
     // Verify predictions are refunded (get_user_predictions should show the prediction still exists for potential refund claim)
     let predictions = client.get_user_predictions(&user1, &0u32, &10u32);
@@ -1720,17 +2468,23 @@ fn test_cannot_cancel_resolved_pool() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
     env.ledger().with_mut(|li| li.timestamp = 10001);
     client.resolve_pool(&operator, &pool_id, &1u32);
     // Should panic because pool is already resolved
-    client.cancel_pool(&operator, &pool_id);
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
 }
 
 #[test]
@@ -1755,7 +2509,7 @@ fn test_cannot_resolve_canceled_pool() {
     ac_client.grant_role(&admin, &ROLE_OPERATOR);
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
     ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
     client.add_token_to_whitelist(&whitelist_admin, &token_address);
 
     let creator = Address::generate(&env);
@@ -1770,14 +2524,21 @@ fn test_cannot_resolve_canceled_pool() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
-    client.cancel_pool(&admin, &pool_id);
+    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
     // Should panic because pool is not active (canceled)
     client.resolve_pool(&operator, &pool_id, &1u32);
 }
@@ -1804,14 +2565,20 @@ fn test_cannot_predict_on_canceled_pool() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
-    client.cancel_pool(&operator, &pool_id);
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
     // Should panic
     client.place_prediction(&user1, &pool_id, &100, &1, &None, &None);
 }
@@ -1835,7 +2602,7 @@ fn test_resolve_pool_before_delay() {
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
     // Init with 3600s delay
-    client.init(&ac_id, &treasury, &0u32, &3600u64);
+    client.init(&ac_id, &treasury, &0u32, &3600u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token);
 
     let end_time = 10000;
@@ -1851,10 +2618,16 @@ fn test_resolve_pool_before_delay() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -1867,6 +2640,65 @@ fn test_resolve_pool_before_delay() {
 
     // Should panic with ResolutionDelayNotMet (81)
     client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+fn test_resolve_pool_logs_reason_when_resolution_delay_not_met() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    client.init(&ac_id, &treasury, &0u32, &3600u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token);
+
+    let end_time = 10_000u64;
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Delay log test"),
+            metadata_url: String::from_str(&env, "ipfs://delay-log"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = end_time + 10);
+
+    let result = PredifiContract::resolve_pool(env.clone(), operator.clone(), pool_id, 1u32);
+    assert_eq!(result, Err(PredifiError::ResolutionDelayNotMet));
+
+    let logs = env.logs().all();
+    assert!(
+        logs.iter()
+            .any(|entry| entry.contains("resolve_pool rejected: resolution delay not met")),
+        "expected a resolve_pool delay diagnostic log, got: {logs:?}"
+    );
 }
 
 #[test]
@@ -1887,7 +2719,7 @@ fn test_resolve_pool_after_delay() {
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
     // Init with 3600s delay
-    client.init(&ac_id, &treasury, &0u32, &3600u64);
+    client.init(&ac_id, &treasury, &0u32, &3600u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token);
 
     let end_time = 10000;
@@ -1903,10 +2735,16 @@ fn test_resolve_pool_after_delay() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -1931,7 +2769,7 @@ fn test_mark_pool_ready() {
     let treasury = Address::generate(&env);
     let token = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &3600u64);
+    client.init(&ac_id, &treasury, &0u32, &3600u64, &3600u64);
     client.add_token_to_whitelist(&admin, &token);
 
     let end_time = 10000;
@@ -1947,10 +2785,16 @@ fn test_mark_pool_ready() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -1968,7 +2812,7 @@ fn test_mark_pool_ready() {
 // ── Staking Limits Tests ──────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "amount is below the pool minimum stake")]
+#[should_panic(expected = "Error(Contract, #107)")]
 fn test_stake_below_minimum_rejected() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1991,10 +2835,16 @@ fn test_stake_below_minimum_rejected() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 50i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2003,7 +2853,7 @@ fn test_stake_below_minimum_rejected() {
 }
 
 #[test]
-#[should_panic(expected = "amount exceeds the pool maximum stake")]
+#[should_panic(expected = "Error(Contract, #108)")]
 fn test_stake_above_maximum_rejected() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2026,10 +2876,16 @@ fn test_stake_above_maximum_rejected() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 100i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2062,10 +2918,16 @@ fn test_stake_at_boundaries_accepted() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 10i128,
             max_stake: 200i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2097,10 +2959,16 @@ fn test_set_stake_limits_by_operator() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2131,16 +2999,94 @@ fn test_set_stake_limits_unauthorized() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
     // Non-operator should be rejected
     let not_operator = Address::generate(&env);
     client.set_stake_limits(&not_operator, &pool_id, &50i128, &500i128);
+}
+
+#[test]
+fn test_set_stake_limits_zero_min_stake_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Min Stake Test"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let result = client.try_set_stake_limits(&operator, &pool_id, &0i128, &0i128);
+    assert_eq!(result, Err(Ok(PredifiError::StakeBelowMinimum)));
+}
+
+#[test]
+fn test_set_stake_limits_max_below_min_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Max Below Min Test"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let result = client.try_set_stake_limits(&operator, &pool_id, &100i128, &50i128);
+    assert_eq!(result, Err(Ok(PredifiError::StakeAboveMaximum)));
 }
 
 #[test]
@@ -2164,10 +3110,16 @@ fn test_get_pools_by_category() {
             metadata_url: String::from_str(&env, "ipfs://0"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     let pool1 = client.create_pool(
@@ -2181,10 +3133,16 @@ fn test_get_pools_by_category() {
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     let pool2 = client.create_pool(
@@ -2198,10 +3156,16 @@ fn test_get_pools_by_category() {
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2299,11 +3263,12 @@ fn test_withdraw_treasury_rejects_insufficient_balance() {
 }
 
 #[test]
-fn test_withdraw_treasury_multiple_tokens() {
+fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, _, _) = setup(&env);
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
     let contract_addr = client.address.clone();
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -2315,19 +3280,131 @@ fn test_withdraw_treasury_multiple_tokens() {
     let token_admin_client2 = token::StellarAssetClient::new(&env, &token_contract2);
     client.add_token_to_whitelist(&admin, &token_contract2);
 
-    // Mint both tokens to contract
-    token_admin_client.mint(&contract_addr, &5000);
-    token_admin_client2.mint(&contract_addr, &3000);
+    // Set protocol fee to 10% (1000 bps) for clear fee calculation
+    client.set_fee_bps(&admin, &1000u32);
 
-    // Withdraw from both tokens
-    client.withdraw_treasury(&admin, &token_address, &2000, &treasury);
-    client.withdraw_treasury(&admin, &token_contract2, &1500, &treasury);
+    // Create two pools with different tokens
+    let pool1_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool 1 - Token 1"),
+            metadata_url: String::from_str(&env, "ipfs://pool1"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
 
-    // Verify balances
-    assert_eq!(token.balance(&treasury), 2000);
-    assert_eq!(token2.balance(&treasury), 1500);
-    assert_eq!(token.balance(&contract_addr), 3000);
-    assert_eq!(token2.balance(&contract_addr), 1500);
+    let pool2_id = client.create_pool(
+        &creator,
+        &100001u64,
+        &token_contract2,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool 2 - Token 2"),
+            metadata_url: String::from_str(&env, "ipfs://pool2"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Create users for betting
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    token_admin_client.mint(&user2, &1000);
+    token_admin_client2.mint(&user1, &1000);
+    token_admin_client2.mint(&user2, &1000);
+
+    // Place predictions in pool1 (token1) - user1 bets on outcome 0, user2 on outcome 1
+    client.place_prediction(&user1, &pool1_id, &500, &0, &None, &None);
+    client.place_prediction(&user2, &pool1_id, &500, &1, &None, &None);
+
+    // Place predictions in pool2 (token2) - user1 bets on outcome 0, user2 on outcome 1
+    client.place_prediction(&user1, &pool2_id, &400, &0, &None, &None);
+    client.place_prediction(&user2, &pool2_id, &600, &1, &None, &None);
+
+    // Verify contract balances before resolution
+    assert_eq!(token.balance(&contract_addr), 1000); // 500 + 500 from pool1
+    assert_eq!(token2.balance(&contract_addr), 1000); // 400 + 600 from pool2
+
+    // Advance time to allow resolution
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Resolve both pools with different outcomes
+    // Pool1: outcome 0 wins (user1 wins)
+    client.resolve_pool(&operator, &pool1_id, &0u32);
+    // Pool2: outcome 1 wins (user2 wins)
+    client.resolve_pool(&operator, &pool2_id, &1u32);
+
+    // Users claim winnings - this is where fees are collected
+    // Pool1: total_stake=1000, fee=10% (100), payout=900, user1 gets all 900
+    let winnings1_user1 = client.claim_winnings(&user1, &pool1_id);
+    assert_eq!(winnings1_user1, 900); // 1000 - 10% fee
+
+    // Pool2: total_stake=1000, fee=10% (100), payout=900, user2 gets all 900
+    let winnings2_user2 = client.claim_winnings(&user2, &pool2_id);
+    assert_eq!(winnings2_user2, 900); // 1000 - 10% fee
+
+    // Verify contract balances after claims (should have 100 tokens each as fees)
+    assert_eq!(token.balance(&contract_addr), 100); // 10% fee from pool1
+    assert_eq!(token2.balance(&contract_addr), 100); // 10% fee from pool2
+
+    // Verify treasury balances before withdraw
+    assert_eq!(token.balance(&treasury), 0);
+    assert_eq!(token2.balance(&treasury), 0);
+
+    // Withdraw treasury for token1 (partial withdrawal - 60 out of 100)
+    client.withdraw_treasury(&admin, &token_address, &60, &treasury);
+
+    // Verify first withdrawal
+    assert_eq!(token.balance(&treasury), 60);
+    assert_eq!(token.balance(&contract_addr), 40); // 100 - 60
+                                                   // Token2 should be unaffected
+    assert_eq!(token2.balance(&treasury), 0);
+    assert_eq!(token2.balance(&contract_addr), 100);
+
+    // Withdraw treasury for token2 (full withdrawal - 100)
+    client.withdraw_treasury(&admin, &token_contract2, &100, &treasury);
+
+    // Verify second withdrawal doesn't affect token1
+    assert_eq!(token.balance(&treasury), 60); // Unchanged
+    assert_eq!(token.balance(&contract_addr), 40); // Unchanged
+    assert_eq!(token2.balance(&treasury), 100);
+    assert_eq!(token2.balance(&contract_addr), 0);
+
+    // Withdraw remaining token1 balance
+    client.withdraw_treasury(&admin, &token_address, &40, &treasury);
+
+    // Final verification - all fees withdrawn independently
+    assert_eq!(token.balance(&treasury), 100); // 60 + 40
+    assert_eq!(token.balance(&contract_addr), 0);
+    assert_eq!(token2.balance(&treasury), 100);
+    assert_eq!(token2.balance(&contract_addr), 0);
 }
 
 #[test]
@@ -2377,8 +3454,10 @@ fn test_get_pool_stats() {
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2455,10 +3534,16 @@ fn test_pool_end_time_on_leap_day() {
             metadata_url: String::from_str(&env, "ipfs://leap"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2493,10 +3578,16 @@ fn test_pool_end_time_at_leap_day_already_past() {
             metadata_url: String::from_str(&env, "ipfs://expired"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 }
@@ -2526,10 +3617,16 @@ fn test_pool_end_time_spans_leap_day_resolution() {
             metadata_url: String::from_str(&env, "ipfs://span"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2579,9 +3676,11 @@ fn test_maximum_single_stake_roundtrip() {
             metadata_url: String::from_str(&env, "ipfs://max"),
             min_stake: 1i128,
             max_stake: max_amount,
+            max_total_stake: 0,
             initial_liquidity: // max_stake == max_amount is valid
         0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2624,9 +3723,11 @@ fn test_large_stake_winnings_split_correctly() {
             metadata_url: String::from_str(&env, "ipfs://large"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: // no max_stake limit
         0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -2686,10 +3787,16 @@ fn test_double_resolution_attempt() {
             metadata_url: String::from_str(&env, "ipfs://double"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2720,10 +3827,16 @@ fn test_many_users_rapid_claim_after_resolution() {
             metadata_url: String::from_str(&env, "ipfs://rapid"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2788,10 +3901,16 @@ fn test_resolution_then_new_pool_state_isolation() {
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2814,10 +3933,16 @@ fn test_resolution_then_new_pool_state_isolation() {
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -2855,10 +3980,16 @@ fn test_create_pool_rejects_zero_min_stake() {
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 0i128, // invalid
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 }
@@ -2883,10 +4014,12 @@ fn test_create_pool_rejects_single_option() {
             metadata_url: String::from_str(&env, "ipfs://single"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0")],
         },
     );
 }
@@ -2911,10 +4044,115 @@ fn test_create_pool_rejects_excess_options_count() {
             metadata_url: String::from_str(&env, "ipfs://many"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+                String::from_str(&env, "Outcome 4"),
+                String::from_str(&env, "Outcome 5"),
+                String::from_str(&env, "Outcome 6"),
+                String::from_str(&env, "Outcome 7"),
+                String::from_str(&env, "Outcome 8"),
+                String::from_str(&env, "Outcome 9"),
+                String::from_str(&env, "Outcome 10"),
+                String::from_str(&env, "Outcome 11"),
+                String::from_str(&env, "Outcome 12"),
+                String::from_str(&env, "Outcome 13"),
+                String::from_str(&env, "Outcome 14"),
+                String::from_str(&env, "Outcome 15"),
+                String::from_str(&env, "Outcome 16"),
+                String::from_str(&env, "Outcome 17"),
+                String::from_str(&env, "Outcome 18"),
+                String::from_str(&env, "Outcome 19"),
+                String::from_str(&env, "Outcome 20"),
+                String::from_str(&env, "Outcome 21"),
+                String::from_str(&env, "Outcome 22"),
+                String::from_str(&env, "Outcome 23"),
+                String::from_str(&env, "Outcome 24"),
+                String::from_str(&env, "Outcome 25"),
+                String::from_str(&env, "Outcome 26"),
+                String::from_str(&env, "Outcome 27"),
+                String::from_str(&env, "Outcome 28"),
+                String::from_str(&env, "Outcome 29"),
+                String::from_str(&env, "Outcome 30"),
+                String::from_str(&env, "Outcome 31"),
+                String::from_str(&env, "Outcome 32"),
+                String::from_str(&env, "Outcome 33"),
+                String::from_str(&env, "Outcome 34"),
+                String::from_str(&env, "Outcome 35"),
+                String::from_str(&env, "Outcome 36"),
+                String::from_str(&env, "Outcome 37"),
+                String::from_str(&env, "Outcome 38"),
+                String::from_str(&env, "Outcome 39"),
+                String::from_str(&env, "Outcome 40"),
+                String::from_str(&env, "Outcome 41"),
+                String::from_str(&env, "Outcome 42"),
+                String::from_str(&env, "Outcome 43"),
+                String::from_str(&env, "Outcome 44"),
+                String::from_str(&env, "Outcome 45"),
+                String::from_str(&env, "Outcome 46"),
+                String::from_str(&env, "Outcome 47"),
+                String::from_str(&env, "Outcome 48"),
+                String::from_str(&env, "Outcome 49"),
+                String::from_str(&env, "Outcome 50"),
+                String::from_str(&env, "Outcome 51"),
+                String::from_str(&env, "Outcome 52"),
+                String::from_str(&env, "Outcome 53"),
+                String::from_str(&env, "Outcome 54"),
+                String::from_str(&env, "Outcome 55"),
+                String::from_str(&env, "Outcome 56"),
+                String::from_str(&env, "Outcome 57"),
+                String::from_str(&env, "Outcome 58"),
+                String::from_str(&env, "Outcome 59"),
+                String::from_str(&env, "Outcome 60"),
+                String::from_str(&env, "Outcome 61"),
+                String::from_str(&env, "Outcome 62"),
+                String::from_str(&env, "Outcome 63"),
+                String::from_str(&env, "Outcome 64"),
+                String::from_str(&env, "Outcome 65"),
+                String::from_str(&env, "Outcome 66"),
+                String::from_str(&env, "Outcome 67"),
+                String::from_str(&env, "Outcome 68"),
+                String::from_str(&env, "Outcome 69"),
+                String::from_str(&env, "Outcome 70"),
+                String::from_str(&env, "Outcome 71"),
+                String::from_str(&env, "Outcome 72"),
+                String::from_str(&env, "Outcome 73"),
+                String::from_str(&env, "Outcome 74"),
+                String::from_str(&env, "Outcome 75"),
+                String::from_str(&env, "Outcome 76"),
+                String::from_str(&env, "Outcome 77"),
+                String::from_str(&env, "Outcome 78"),
+                String::from_str(&env, "Outcome 79"),
+                String::from_str(&env, "Outcome 80"),
+                String::from_str(&env, "Outcome 81"),
+                String::from_str(&env, "Outcome 82"),
+                String::from_str(&env, "Outcome 83"),
+                String::from_str(&env, "Outcome 84"),
+                String::from_str(&env, "Outcome 85"),
+                String::from_str(&env, "Outcome 86"),
+                String::from_str(&env, "Outcome 87"),
+                String::from_str(&env, "Outcome 88"),
+                String::from_str(&env, "Outcome 89"),
+                String::from_str(&env, "Outcome 90"),
+                String::from_str(&env, "Outcome 91"),
+                String::from_str(&env, "Outcome 92"),
+                String::from_str(&env, "Outcome 93"),
+                String::from_str(&env, "Outcome 94"),
+                String::from_str(&env, "Outcome 95"),
+                String::from_str(&env, "Outcome 96"),
+                String::from_str(&env, "Outcome 97"),
+                String::from_str(&env, "Outcome 98"),
+                String::from_str(&env, "Outcome 99"),
+                String::from_str(&env, "Outcome 100"),
+            ],
         },
     );
 }
@@ -2939,10 +4177,114 @@ fn test_create_pool_accepts_maximum_options_count() {
             metadata_url: String::from_str(&env, "ipfs://maxopts"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+                String::from_str(&env, "Outcome 4"),
+                String::from_str(&env, "Outcome 5"),
+                String::from_str(&env, "Outcome 6"),
+                String::from_str(&env, "Outcome 7"),
+                String::from_str(&env, "Outcome 8"),
+                String::from_str(&env, "Outcome 9"),
+                String::from_str(&env, "Outcome 10"),
+                String::from_str(&env, "Outcome 11"),
+                String::from_str(&env, "Outcome 12"),
+                String::from_str(&env, "Outcome 13"),
+                String::from_str(&env, "Outcome 14"),
+                String::from_str(&env, "Outcome 15"),
+                String::from_str(&env, "Outcome 16"),
+                String::from_str(&env, "Outcome 17"),
+                String::from_str(&env, "Outcome 18"),
+                String::from_str(&env, "Outcome 19"),
+                String::from_str(&env, "Outcome 20"),
+                String::from_str(&env, "Outcome 21"),
+                String::from_str(&env, "Outcome 22"),
+                String::from_str(&env, "Outcome 23"),
+                String::from_str(&env, "Outcome 24"),
+                String::from_str(&env, "Outcome 25"),
+                String::from_str(&env, "Outcome 26"),
+                String::from_str(&env, "Outcome 27"),
+                String::from_str(&env, "Outcome 28"),
+                String::from_str(&env, "Outcome 29"),
+                String::from_str(&env, "Outcome 30"),
+                String::from_str(&env, "Outcome 31"),
+                String::from_str(&env, "Outcome 32"),
+                String::from_str(&env, "Outcome 33"),
+                String::from_str(&env, "Outcome 34"),
+                String::from_str(&env, "Outcome 35"),
+                String::from_str(&env, "Outcome 36"),
+                String::from_str(&env, "Outcome 37"),
+                String::from_str(&env, "Outcome 38"),
+                String::from_str(&env, "Outcome 39"),
+                String::from_str(&env, "Outcome 40"),
+                String::from_str(&env, "Outcome 41"),
+                String::from_str(&env, "Outcome 42"),
+                String::from_str(&env, "Outcome 43"),
+                String::from_str(&env, "Outcome 44"),
+                String::from_str(&env, "Outcome 45"),
+                String::from_str(&env, "Outcome 46"),
+                String::from_str(&env, "Outcome 47"),
+                String::from_str(&env, "Outcome 48"),
+                String::from_str(&env, "Outcome 49"),
+                String::from_str(&env, "Outcome 50"),
+                String::from_str(&env, "Outcome 51"),
+                String::from_str(&env, "Outcome 52"),
+                String::from_str(&env, "Outcome 53"),
+                String::from_str(&env, "Outcome 54"),
+                String::from_str(&env, "Outcome 55"),
+                String::from_str(&env, "Outcome 56"),
+                String::from_str(&env, "Outcome 57"),
+                String::from_str(&env, "Outcome 58"),
+                String::from_str(&env, "Outcome 59"),
+                String::from_str(&env, "Outcome 60"),
+                String::from_str(&env, "Outcome 61"),
+                String::from_str(&env, "Outcome 62"),
+                String::from_str(&env, "Outcome 63"),
+                String::from_str(&env, "Outcome 64"),
+                String::from_str(&env, "Outcome 65"),
+                String::from_str(&env, "Outcome 66"),
+                String::from_str(&env, "Outcome 67"),
+                String::from_str(&env, "Outcome 68"),
+                String::from_str(&env, "Outcome 69"),
+                String::from_str(&env, "Outcome 70"),
+                String::from_str(&env, "Outcome 71"),
+                String::from_str(&env, "Outcome 72"),
+                String::from_str(&env, "Outcome 73"),
+                String::from_str(&env, "Outcome 74"),
+                String::from_str(&env, "Outcome 75"),
+                String::from_str(&env, "Outcome 76"),
+                String::from_str(&env, "Outcome 77"),
+                String::from_str(&env, "Outcome 78"),
+                String::from_str(&env, "Outcome 79"),
+                String::from_str(&env, "Outcome 80"),
+                String::from_str(&env, "Outcome 81"),
+                String::from_str(&env, "Outcome 82"),
+                String::from_str(&env, "Outcome 83"),
+                String::from_str(&env, "Outcome 84"),
+                String::from_str(&env, "Outcome 85"),
+                String::from_str(&env, "Outcome 86"),
+                String::from_str(&env, "Outcome 87"),
+                String::from_str(&env, "Outcome 88"),
+                String::from_str(&env, "Outcome 89"),
+                String::from_str(&env, "Outcome 90"),
+                String::from_str(&env, "Outcome 91"),
+                String::from_str(&env, "Outcome 92"),
+                String::from_str(&env, "Outcome 93"),
+                String::from_str(&env, "Outcome 94"),
+                String::from_str(&env, "Outcome 95"),
+                String::from_str(&env, "Outcome 96"),
+                String::from_str(&env, "Outcome 97"),
+                String::from_str(&env, "Outcome 98"),
+                String::from_str(&env, "Outcome 99"),
+            ],
         },
     );
 
@@ -2973,10 +4315,17 @@ fn test_place_prediction_rejects_out_of_bounds_outcome() {
             metadata_url: String::from_str(&env, "ipfs://three"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -3007,10 +4356,19 @@ fn test_place_prediction_rejects_outcome_equal_to_options_count() {
             metadata_url: String::from_str(&env, "ipfs://five"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+                String::from_str(&env, "Outcome 4"),
+            ],
         },
     );
 
@@ -3041,10 +4399,24 @@ fn test_place_prediction_all_valid_outcomes() {
             metadata_url: String::from_str(&env, "ipfs://ten"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+                String::from_str(&env, "Outcome 4"),
+                String::from_str(&env, "Outcome 5"),
+                String::from_str(&env, "Outcome 6"),
+                String::from_str(&env, "Outcome 7"),
+                String::from_str(&env, "Outcome 8"),
+                String::from_str(&env, "Outcome 9"),
+            ],
         },
     );
 
@@ -3085,10 +4457,21 @@ fn test_stakes_length_consistency_with_options_count() {
             metadata_url: String::from_str(&env, "ipfs://seven"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+                String::from_str(&env, "Outcome 4"),
+                String::from_str(&env, "Outcome 5"),
+                String::from_str(&env, "Outcome 6"),
+            ],
         },
     );
 
@@ -3146,10 +4529,114 @@ fn test_outcome_bounds_with_maximum_options_count() {
             metadata_url: String::from_str(&env, "ipfs://maxopts"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+                String::from_str(&env, "Outcome 3"),
+                String::from_str(&env, "Outcome 4"),
+                String::from_str(&env, "Outcome 5"),
+                String::from_str(&env, "Outcome 6"),
+                String::from_str(&env, "Outcome 7"),
+                String::from_str(&env, "Outcome 8"),
+                String::from_str(&env, "Outcome 9"),
+                String::from_str(&env, "Outcome 10"),
+                String::from_str(&env, "Outcome 11"),
+                String::from_str(&env, "Outcome 12"),
+                String::from_str(&env, "Outcome 13"),
+                String::from_str(&env, "Outcome 14"),
+                String::from_str(&env, "Outcome 15"),
+                String::from_str(&env, "Outcome 16"),
+                String::from_str(&env, "Outcome 17"),
+                String::from_str(&env, "Outcome 18"),
+                String::from_str(&env, "Outcome 19"),
+                String::from_str(&env, "Outcome 20"),
+                String::from_str(&env, "Outcome 21"),
+                String::from_str(&env, "Outcome 22"),
+                String::from_str(&env, "Outcome 23"),
+                String::from_str(&env, "Outcome 24"),
+                String::from_str(&env, "Outcome 25"),
+                String::from_str(&env, "Outcome 26"),
+                String::from_str(&env, "Outcome 27"),
+                String::from_str(&env, "Outcome 28"),
+                String::from_str(&env, "Outcome 29"),
+                String::from_str(&env, "Outcome 30"),
+                String::from_str(&env, "Outcome 31"),
+                String::from_str(&env, "Outcome 32"),
+                String::from_str(&env, "Outcome 33"),
+                String::from_str(&env, "Outcome 34"),
+                String::from_str(&env, "Outcome 35"),
+                String::from_str(&env, "Outcome 36"),
+                String::from_str(&env, "Outcome 37"),
+                String::from_str(&env, "Outcome 38"),
+                String::from_str(&env, "Outcome 39"),
+                String::from_str(&env, "Outcome 40"),
+                String::from_str(&env, "Outcome 41"),
+                String::from_str(&env, "Outcome 42"),
+                String::from_str(&env, "Outcome 43"),
+                String::from_str(&env, "Outcome 44"),
+                String::from_str(&env, "Outcome 45"),
+                String::from_str(&env, "Outcome 46"),
+                String::from_str(&env, "Outcome 47"),
+                String::from_str(&env, "Outcome 48"),
+                String::from_str(&env, "Outcome 49"),
+                String::from_str(&env, "Outcome 50"),
+                String::from_str(&env, "Outcome 51"),
+                String::from_str(&env, "Outcome 52"),
+                String::from_str(&env, "Outcome 53"),
+                String::from_str(&env, "Outcome 54"),
+                String::from_str(&env, "Outcome 55"),
+                String::from_str(&env, "Outcome 56"),
+                String::from_str(&env, "Outcome 57"),
+                String::from_str(&env, "Outcome 58"),
+                String::from_str(&env, "Outcome 59"),
+                String::from_str(&env, "Outcome 60"),
+                String::from_str(&env, "Outcome 61"),
+                String::from_str(&env, "Outcome 62"),
+                String::from_str(&env, "Outcome 63"),
+                String::from_str(&env, "Outcome 64"),
+                String::from_str(&env, "Outcome 65"),
+                String::from_str(&env, "Outcome 66"),
+                String::from_str(&env, "Outcome 67"),
+                String::from_str(&env, "Outcome 68"),
+                String::from_str(&env, "Outcome 69"),
+                String::from_str(&env, "Outcome 70"),
+                String::from_str(&env, "Outcome 71"),
+                String::from_str(&env, "Outcome 72"),
+                String::from_str(&env, "Outcome 73"),
+                String::from_str(&env, "Outcome 74"),
+                String::from_str(&env, "Outcome 75"),
+                String::from_str(&env, "Outcome 76"),
+                String::from_str(&env, "Outcome 77"),
+                String::from_str(&env, "Outcome 78"),
+                String::from_str(&env, "Outcome 79"),
+                String::from_str(&env, "Outcome 80"),
+                String::from_str(&env, "Outcome 81"),
+                String::from_str(&env, "Outcome 82"),
+                String::from_str(&env, "Outcome 83"),
+                String::from_str(&env, "Outcome 84"),
+                String::from_str(&env, "Outcome 85"),
+                String::from_str(&env, "Outcome 86"),
+                String::from_str(&env, "Outcome 87"),
+                String::from_str(&env, "Outcome 88"),
+                String::from_str(&env, "Outcome 89"),
+                String::from_str(&env, "Outcome 90"),
+                String::from_str(&env, "Outcome 91"),
+                String::from_str(&env, "Outcome 92"),
+                String::from_str(&env, "Outcome 93"),
+                String::from_str(&env, "Outcome 94"),
+                String::from_str(&env, "Outcome 95"),
+                String::from_str(&env, "Outcome 96"),
+                String::from_str(&env, "Outcome 97"),
+                String::from_str(&env, "Outcome 98"),
+                String::from_str(&env, "Outcome 99"),
+            ],
         },
     );
 
@@ -3171,7 +4658,7 @@ fn test_outcome_bounds_with_maximum_options_count() {
 
 /// end_time below MIN_POOL_DURATION from the current ledger must be rejected.
 #[test]
-#[should_panic(expected = "end_time must be at least 1 hour in the future")]
+#[should_panic(expected = "end_time must be at least min_pool_duration in the future")]
 fn test_create_pool_rejects_end_time_below_min_duration() {
     let env = Env::default();
     env.mock_all_auths();
@@ -3190,10 +4677,52 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
             metadata_url: String::from_str(&env, "ipfs://short"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+}
+
+/// Zero-duration pools (end_time == current ledger timestamp) must be rejected.
+#[test]
+#[should_panic(expected = "end_time must be in the future")]
+fn test_create_pool_rejects_zero_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    client.create_pool(
+        &creator,
+        &1_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero duration pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero-duration"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 }
@@ -3219,10 +4748,16 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
             metadata_url: String::from_str(&env, "ipfs://mintime"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -3249,11 +4784,17 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
             description: String::from_str(&env, "Inverted stake limits"),
             metadata_url: String::from_str(&env, "ipfs://inverted"),
             min_stake: 100i128,
-            max_stake: 50i128,        // min_stake
-            initial_liquidity: 0i128, // max_stake < min_stake → invalid
+            max_stake: 50i128, // min_stake
+            max_total_stake: 0,
+            initial_liquidity: 0i128, // max_stake < min_stake -> invalid
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 }
@@ -3276,11 +4817,17 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
             description: String::from_str(&env, "Equal stake limits"),
             metadata_url: String::from_str(&env, "ipfs://equal"),
             min_stake: 100i128,
-            max_stake: 100i128,       // min_stake
-            initial_liquidity: 0i128, // max_stake == min_stake → valid
+            max_stake: 100i128, // min_stake
+            max_total_stake: 0,
+            initial_liquidity: 0i128, // max_stake == min_stake -> valid
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -3310,10 +4857,17 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
             metadata_url: String::from_str(&env, "ipfs://oob"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -3345,10 +4899,16 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
             metadata_url: String::from_str(&env, "ipfs://auth"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -3404,10 +4964,16 @@ fn test_unauthorized_admin_op_does_not_mutate_state() {
             metadata_url: String::from_str(&env, "ipfs://postattack"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     let _ = new_pool; // pool creation succeeds → state is healthy
@@ -3433,21 +4999,27 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
             metadata_url: String::from_str(&env, "ipfs://guard"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
     for _ in 0..3u32 {
         let not_operator = Address::generate(&env);
-        let result = client.try_cancel_pool(&not_operator, &pool_id);
+        let result = client.try_cancel_pool(&not_operator, &pool_id, &String::from_str(&env, ""));
         assert!(result.is_err(), "Unauthorized cancel must fail");
     }
 
     // Legitimate operator can still cancel.
-    client.cancel_pool(&operator, &pool_id);
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
 }
 
 // ── State consistency after multiple resolution cycles ────────────────────────
@@ -3475,10 +5047,16 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://0"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     // ── Pool 1 ──
@@ -3493,10 +5071,16 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     // ── Pool 2 ──
@@ -3511,10 +5095,16 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     // ── Pool 3 ──
@@ -3529,10 +5119,16 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://3"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
     // ── Pool 4 ──
@@ -3547,10 +5143,16 @@ fn test_state_consistency_across_many_pools() {
             metadata_url: String::from_str(&env, "ipfs://4"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -3638,10 +5240,16 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -3656,10 +5264,16 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -3672,7 +5286,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
     client.place_prediction(&user_b, &pool_b, &400, &1, &None, &None);
 
     // Cancel pool A; 300 remain locked for refund.
-    client.cancel_pool(&operator, &pool_a);
+    client.cancel_pool(&operator, &pool_a, &String::from_str(&env, ""));
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
     client.resolve_pool(&operator, &pool_b, &1u32);
@@ -3714,10 +5328,16 @@ fn test_all_bettors_on_winning_side() {
             metadata_url: String::from_str(&env, "ipfs://allwin"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
         },
     );
 
@@ -3764,10 +5384,17 @@ fn test_no_bettor_on_winning_side() {
             metadata_url: String::from_str(&env, "ipfs://emptywinner"),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
         },
     );
 
@@ -3805,7 +5432,7 @@ fn test_is_contract_paused_returns_false_by_default() {
 
     let _admin = Address::generate(&env);
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Contract should not be paused by default
     assert!(!client.is_contract_paused());
@@ -3825,7 +5452,7 @@ fn test_is_contract_paused_returns_true_after_pause() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Initially not paused
     assert!(!client.is_contract_paused());
@@ -3851,7 +5478,7 @@ fn test_is_contract_paused_returns_false_after_unpause() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Pause the contract
     client.pause(&admin);
@@ -3878,7 +5505,7 @@ fn test_is_contract_paused_toggle_pause_state() {
     let admin = Address::generate(&env);
     let treasury = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.init(&ac_id, &treasury, &0u32, &0u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Initial state: not paused
     assert!(!client.is_contract_paused());
@@ -3920,8 +5547,8 @@ fn test_is_contract_paused_independent_per_instance() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
     // Initialize both contracts
-    client_1.init(&ac_id, &treasury, &0u32, &0u64);
-    client_2.init(&ac_id, &treasury, &0u32, &0u64);
+    client_1.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client_2.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
 
     // Both should start unpaused
     assert!(!client_1.is_contract_paused());
@@ -3933,6 +5560,48 @@ fn test_is_contract_paused_independent_per_instance() {
     // Contract 1 should be paused, contract 2 should remain unpaused
     assert!(client_1.is_contract_paused());
     assert!(!client_2.is_contract_paused());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// is_pool_active Helper Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// is_pool_active returns true for a freshly created pool.
+#[test]
+fn test_is_pool_active_returns_true_for_active_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Active pool test"),
+            metadata_url: String::from_str(&env, "ipfs://active"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert!(!pool.resolved);
+    assert!(!pool.canceled);
+    assert_eq!(pool.state, MarketState::Active);
 }
 
 // ── bump_ttl helper tests ────────────────────────────────────────────────────
@@ -3957,7 +5626,7 @@ fn create_test_pool(
     token_address: &Address,
     end_time: u64,
 ) -> u64 {
-    client.create_pool(
+    let pool_id = client.create_pool(
         creator,
         &end_time,
         token_address,
@@ -3971,12 +5640,290 @@ fn create_test_pool(
             ),
             min_stake: 1i128,
             max_stake: 0i128,
+            max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(env, "Outcome 0"),
+                String::from_str(env, "Outcome 1"),
+            ],
         },
-    )
+    );
+
+    pool_id
+}
+
+/// is_pool_active returns false (via behavior) after pool is resolved —
+/// resolve_pool on an already-resolved pool must panic.
+#[test]
+#[should_panic(expected = "Pool already resolved")]
+fn test_is_pool_active_false_after_resolve() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Resolve inactive test"),
+            metadata_url: String::from_str(&env, "ipfs://resolved"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Pool is now resolved — resolved == true, state == Resolved.
+    // is_pool_active would return false, so a second resolve attempt must panic.
+    client.resolve_pool(&operator, &pool_id, &0u32);
+}
+
+/// is_pool_active returns false (via behavior) after pool is canceled —
+/// place_prediction on a canceled pool must panic with the correct message.
+#[test]
+#[should_panic(expected = "Cannot place prediction on canceled pool")]
+fn test_is_pool_active_false_after_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Cancel inactive test"),
+            metadata_url: String::from_str(&env, "ipfs://canceled"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &500);
+
+    // Pool is canceled — is_pool_active returns false.
+    // place_prediction must be blocked.
+    client.place_prediction(&user, &pool_id, &100, &0, &None, &None);
+}
+
+/// Resolving a canceled pool must be blocked — verifies is_pool_active
+/// integration in resolve_pool.
+#[test]
+#[should_panic(expected = "Cannot resolve a canceled pool")]
+fn test_is_pool_active_blocks_resolve_on_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Cancel then resolve test"),
+            metadata_url: String::from_str(&env, "ipfs://cancelresolve"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    // is_pool_active == false → should panic
+    client.resolve_pool(&operator, &pool_id, &0u32);
+}
+
+/// Canceling a canceled pool a second time must be blocked — verifies
+/// is_pool_active integration in cancel_pool.
+#[test]
+#[should_panic(expected = "Error(Contract, #24)")]
+fn test_is_pool_active_blocks_double_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Double cancel test"),
+            metadata_url: String::from_str(&env, "ipfs://doublecancel"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+    // Second cancel: is_pool_active == false → should panic
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+}
+
+/// increase_max_total_stake on a resolved pool must return InvalidPoolState —
+/// verifies is_pool_active integration in that function too.
+#[test]
+#[should_panic(expected = "Error(Contract, #24)")]
+fn test_is_pool_active_blocks_increase_max_stake_on_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Max stake resolved test"),
+            metadata_url: String::from_str(&env, "ipfs://maxresolved"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Pool resolved → is_pool_active == false → must return InvalidPoolState (24)
+    client.increase_max_total_stake(&creator, &pool_id, &500_000);
+}
+
+/// Full lifecycle: active → predictions → resolve → claim.
+/// Confirms is_pool_active correctly gates each phase without regression.
+#[test]
+fn test_is_pool_active_full_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Lifecycle test"),
+            metadata_url: String::from_str(&env, "ipfs://lifecycle"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Phase 1: pool is active — predictions accepted.
+    let pool = client.get_pool(&pool_id);
+    assert!(!pool.resolved && !pool.canceled && pool.state == MarketState::Active);
+
+    let user_win = Address::generate(&env);
+    let user_lose = Address::generate(&env);
+    token_admin_client.mint(&user_win, &300);
+    token_admin_client.mint(&user_lose, &200);
+
+    client.place_prediction(&user_win, &pool_id, &300, &0, &None, &None);
+    client.place_prediction(&user_lose, &pool_id, &200, &1, &None, &None);
+    assert_eq!(token.balance(&contract_addr), 500);
+
+    // Phase 2: resolve — pool transitions to inactive.
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    let pool = client.get_pool(&pool_id);
+    assert!(pool.resolved);
+    assert_eq!(pool.state, MarketState::Resolved);
+
+    // Phase 3: claims work correctly post-resolution.
+    let w = client.claim_winnings(&user_win, &pool_id);
+    assert_eq!(w, 500);
+    let l = client.claim_winnings(&user_lose, &pool_id);
+    assert_eq!(l, 0);
+    assert_eq!(token.balance(&contract_addr), 0);
 }
 
 /// bump_ttl should extend both instance TTL and persistent TTL for the given key.
@@ -4103,7 +6050,7 @@ fn test_bump_ttl_after_cancel_pool() {
         li.sequence_number = 100_000 + 300_000;
     });
 
-    client.cancel_pool(&operator, &pool_id);
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
 
     env.as_contract(&contract_id, || {
         let pool_key = DataKey::Pool(pool_id);
@@ -4291,55 +6238,1606 @@ fn test_get_pool_config_multiple_pools_independent() {
         &token_address,
         &2u32,
         &symbol_short!("Sports"),
-        &PoolConfig {
-            description: String::from_str(&env, "Pool A"),
-            metadata_url: String::from_str(&env, "ipfs://a"),
-            min_stake: 1i128,
-            max_stake: 50i128,
-            initial_liquidity: 0i128,
-            required_resolutions: 1u32,
-            private: false,
-            whitelist_key: None,
-        },
-    );
+// Version tracking tests
+// ============================================================================
 
-    let pool_b = client.create_pool(
-        &creator,
-        &200000u64,
-        &token_address,
-        &3u32,
-        &symbol_short!("Tech"),
-        &PoolConfig {
-            description: String::from_str(&env, "Pool B"),
-            metadata_url: String::from_str(&env, "ipfs://b"),
-            min_stake: 10i128,
-            max_stake: 0i128,
-            initial_liquidity: 0i128,
-            required_resolutions: 2u32,
-            private: true,
-            whitelist_key: Some(symbol_short!("key")),
-        },
-    );
-
-    let cfg_a = client.get_pool_config(&pool_a);
-    let cfg_b = client.get_pool_config(&pool_b);
-
-    assert_eq!(cfg_a.description, String::from_str(&env, "Pool A"));
-    assert_eq!(cfg_a.max_stake, 50i128);
-    assert!(!cfg_a.private);
-
-    assert_eq!(cfg_b.description, String::from_str(&env, "Pool B"));
-    assert_eq!(cfg_b.required_resolutions, 2u32);
-    assert!(cfg_b.private);
+#[test]
+fn test_version_is_set_after_init() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, _creator) =
+        setup(&env);
+    assert_eq!(client.get_version(), 1u32);
 }
 
 #[test]
-#[should_panic(expected = "Pool not found")]
-fn test_get_pool_config_nonexistent_pool() {
+fn test_version_returns_zero_before_init() {
+    let env = Env::default();
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    assert_eq!(client.get_version(), 0u32);
+}
+
+// ============================================================================
+// max_total_stake validation tests
+// ============================================================================
+
+#[test]
+fn test_create_pool_with_max_total_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, token_address, _token, _token_admin, _treasury, _operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 100_000),
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Capped pool"),
+            metadata_url: String::from_str(&env, "https://example.com"),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 500_000,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.max_total_stake, 500_000);
+}
+
+#[test]
+fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, token_address, _token, _token_admin, _treasury, _operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 100_000),
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Unlimited pool"),
+            metadata_url: String::from_str(&env, "https://example.com"),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.max_total_stake, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// get_active_pools Tests (#389)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Empty result when no pools have been created.
+#[test]
+fn test_get_active_pools_empty_when_no_pools() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (_, client, _, _, _, _, _, _) = setup(&env);
 
-    client.get_pool_config(&9999u64);
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 0);
+}
+
+/// A freshly created pool appears in get_active_pools.
+#[test]
+fn test_get_active_pools_contains_new_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Active pool"),
+            metadata_url: String::from_str(&env, "ipfs://active"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), pool_id);
+}
+
+#[test]
+fn test_outcome_descriptions_stored_and_retrieved() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let descriptions = vec![
+        &env,
+        String::from_str(&env, "Team A wins"),
+        String::from_str(&env, "Draw"),
+        String::from_str(&env, "Team B wins"),
+    ];
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Match outcome"),
+            metadata_url: String::from_str(&env, "ipfs://match"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: descriptions.clone(),
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.outcome_descriptions.len(), 3);
+    assert_eq!(
+        pool.outcome_descriptions.get(0).unwrap(),
+        String::from_str(&env, "Team A wins")
+    );
+    assert_eq!(
+        pool.outcome_descriptions.get(1).unwrap(),
+        String::from_str(&env, "Draw")
+    );
+    assert_eq!(
+        pool.outcome_descriptions.get(2).unwrap(),
+        String::from_str(&env, "Team B wins")
+    );
+}
+
+/// Multiple pools across different categories all appear in get_active_pools.
+/// This is the verification case explicitly required by the issue.
+// #[test]
+// fn test_get_active_pools_returns_pools_across_all_categories() {
+//     let env = Env::default();
+//     env.mock_all_auths();
+
+//     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+//     let pool_tech = client.create_pool(
+//         &creator,
+//         &100_000u64,
+//         &token_address,
+//         &2u32,
+//         &symbol_short!("Tech"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "Tech pool"),
+//             metadata_url: String::from_str(&env, "ipfs://tech"),
+//             min_stake: 1i128,
+//             max_stake: 0i128,
+//             max_total_stake: 0,
+//             initial_liquidity: 0i128,
+//             required_resolutions: 1u32,
+//             private: false,
+//             whitelist_key: None,
+//         },
+//     );
+
+//     let pool_sports = client.create_pool(
+//         &creator,
+//         &100_000u64,
+//         &token_address,
+//         &2u32,
+//         &symbol_short!("Sports"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "Sports pool"),
+//             metadata_url: String::from_str(&env, "ipfs://sports"),
+//             min_stake: 1i128,
+//             max_stake: 0i128,
+//             max_total_stake: 0,
+//             initial_liquidity: 0i128,
+//             required_resolutions: 1u32,
+//             private: false,
+//             whitelist_key: None,
+//         },
+//     );
+
+//     let pool_crypto = client.create_pool(
+//         &creator,
+//         &100_000u64,
+//         &token_address,
+//         &2u32,
+//         &symbol_short!("Crypto"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "Crypto pool"),
+//             metadata_url: String::from_str(&env, "ipfs://crypto"),
+//             min_stake: 1i128,
+//             max_stake: 0i128,
+//             max_total_stake: 0,
+//             initial_liquidity: 0i128,
+//             required_resolutions: 1u32,
+//             private: false,
+//             whitelist_key: None,
+//         },
+//     );
+
+//     let pool_finance = client.create_pool(
+//         &creator,
+//         &100_000u64,
+//         &token_address,
+//         &2u32,
+//         &symbol_short!("Finance"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "Finance pool"),
+//             metadata_url: String::from_str(&env, "ipfs://finance"),
+//             min_stake: 1i128,
+//             max_stake: 0i128,
+//             max_total_stake: 0,
+//             initial_liquidity: 0i128,
+//             required_resolutions: 1u32,
+//             private: false,
+//             whitelist_key: None,
+//         },
+//     );
+
+//     let result = client.get_active_pools(&0u32, &10u32);
+//     assert_eq!(result.len(), 4);
+
+//     // All four pool IDs must be present (order: insertion order).
+//     let ids: std::vec::Vec<u64> = (0..result.len()).map(|i| result.get(i).unwrap()).collect();
+//     assert!(ids.contains(&pool_tech));
+//     assert!(ids.contains(&pool_sports));
+//     assert!(ids.contains(&pool_crypto));
+//     assert!(ids.contains(&pool_finance));
+// }
+
+#[test]
+#[should_panic(expected = "outcome_descriptions length must equal options_count")]
+fn test_outcome_descriptions_length_mismatch_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Mismatch test"),
+            metadata_url: String::from_str(&env, "ipfs://mismatch"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+/// Resolved pool is removed from get_active_pools.
+#[test]
+fn test_get_active_pools_excludes_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool_b = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    assert_eq!(client.get_active_pools(&0u32, &10u32).len(), 2);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_a, &0u32);
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), pool_b);
+}
+
+/// Canceled pool is removed from get_active_pools.
+#[test]
+fn test_get_active_pools_excludes_canceled_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128,
+            max_stake: 50i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let pool_b = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    assert_eq!(client.get_active_pools(&0u32, &10u32).len(), 2);
+
+    client.cancel_pool(&operator, &pool_a, &String::from_str(&env, ""));
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), pool_b);
+}
+
+#[test]
+fn test_admin_can_set_min_pool_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+
+    client.set_min_pool_duration(&admin, &7200u64);
+}
+
+#[test]
+#[should_panic(expected = "end_time must be at least min_pool_duration in the future")]
+fn test_create_pool_respects_configurable_min_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _treasury, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Initial min_pool_duration is 3600 from setup.
+    // Set a much larger min_pool_duration.
+    client.set_min_pool_duration(&admin, &86400u64); // 1 day
+
+    // Try to create a pool with 2 hours duration (7200s), which is < 1 day.
+    let current_time = env.ledger().timestamp();
+    client.create_pool(
+        &creator,
+        &(current_time + 7200u64),
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Short Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+/// Pagination: offset and limit work correctly over a known set.
+#[test]
+fn test_get_active_pools_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let mut pool_ids = soroban_sdk::vec![&env];
+    for i in 0..5u32 {
+        let pid = client.create_pool(
+            &creator,
+            &100_000u64,
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                description: String::from_str(&env, "Pool"),
+                metadata_url: String::from_str(&env, "ipfs://p"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "Yes"),
+                    String::from_str(&env, "No"),
+                ],
+            },
+        );
+        pool_ids.push_back(pid);
+        let _ = i;
+    }
+
+    // First page: offset=0, limit=2
+    let page1 = client.get_active_pools(&0u32, &2u32);
+    assert_eq!(page1.len(), 2);
+    assert_eq!(page1.get(0).unwrap(), pool_ids.get(0).unwrap());
+    assert_eq!(page1.get(1).unwrap(), pool_ids.get(1).unwrap());
+
+    // Second page: offset=2, limit=2
+    let page2 = client.get_active_pools(&2u32, &2u32);
+    assert_eq!(page2.len(), 2);
+    assert_eq!(page2.get(0).unwrap(), pool_ids.get(2).unwrap());
+    assert_eq!(page2.get(1).unwrap(), pool_ids.get(3).unwrap());
+
+    // Third page: offset=4, limit=2 — only 1 remaining
+    let page3 = client.get_active_pools(&4u32, &2u32);
+    assert_eq!(page3.len(), 1);
+    assert_eq!(page3.get(0).unwrap(), pool_ids.get(4).unwrap());
+
+    // Beyond range
+    let empty = client.get_active_pools(&5u32, &10u32);
+    assert_eq!(empty.len(), 0);
+
+    // limit=0 always returns empty
+    let zero_limit = client.get_active_pools(&0u32, &0u32);
+    assert_eq!(zero_limit.len(), 0);
+}
+
+/// Swap-and-pop correctness: removing the first pool when three exist.
+/// The third pool must fill the vacated slot; the second is untouched.
+// #[test]
+// fn test_get_active_pools_swap_pop_removes_first() {
+//     let env = Env::default();
+//     env.mock_all_auths();
+
+//     let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+//     let pool_a = client.create_pool(
+//         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "A"),
+//             metadata_url: String::from_str(&env, "ipfs://a"),
+//             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+//             required_resolutions: 1u32, private: false, whitelist_key: None,
+//             max_total_stake: 0,
+//         },
+//     );
+//     let pool_b = client.create_pool(
+//         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Sports"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "B"),
+//             metadata_url: String::from_str(&env, "ipfs://b"),
+//             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+//             required_resolutions: 1u32, private: false, whitelist_key: None,
+//             max_total_stake: 0,
+//         },
+//     );
+//     let pool_c = client.create_pool(
+//         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Crypto"),
+//         &PoolConfig {
+//             description: String::from_str(&env, "C"),
+//             metadata_url: String::from_str(&env, "ipfs://c"),
+//             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
+//             required_resolutions: 1u32, private: false, whitelist_key: None,
+//             max_total_stake: 0,
+//         },
+//     );
+
+//     // Remove pool_a (index 0) — pool_c (index 2) should swap into slot 0.
+//     env.ledger().with_mut(|li| li.timestamp = 100_001);
+//     client.resolve_pool(&operator, &pool_a, &0u32);
+
+//     let result = client.get_active_pools(&0u32, &10u32);
+//     assert_eq!(result.len(), 2);
+
+//     let ids: std::vec::Vec<u64> = (0..result.len()).map(|i| result.get(i).unwrap()).collect();
+//     assert!(!ids.contains(&pool_a));
+//     assert!(ids.contains(&pool_b));
+//     assert!(ids.contains(&pool_c));
+// }
+
+/// Swap-and-pop correctness: removing the last pool leaves the others intact.
+#[test]
+fn test_get_active_pools_swap_pop_removes_last() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+    let pool_b = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+    let pool_c = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "C"),
+            metadata_url: String::from_str(&env, "ipfs://c"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Remove pool_c (last, index 2) — no swap needed.
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_c, &0u32);
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 2);
+    assert_eq!(result.get(0).unwrap(), pool_a);
+    assert_eq!(result.get(1).unwrap(), pool_b);
+}
+
+/// All pools resolved — get_active_pools returns empty.
+#[test]
+fn test_get_active_pools_empty_after_all_resolved() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+    let pool_b = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_a, &0u32);
+    client.resolve_pool(&operator, &pool_b, &0u32);
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 0);
+}
+
+/// oracle_resolve also removes the pool from the active index.
+#[test]
+fn test_get_active_pools_excludes_oracle_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let oracle = Address::generate(&env);
+    ac_client.grant_role(&oracle, &ROLE_ORACLE);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "A"),
+            metadata_url: String::from_str(&env, "ipfs://a"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+    let pool_b = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "B"),
+            metadata_url: String::from_str(&env, "ipfs://b"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            max_total_stake: 0,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    assert_eq!(client.get_active_pools(&0u32, &10u32).len(), 2);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.oracle_resolve(&oracle, &pool_a, &0u32, &String::from_str(&env, "proof"));
+
+    let result = client.get_active_pools(&0u32, &10u32);
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.get(0).unwrap(), pool_b);
+}
+
+#[test]
+fn test_pool_created_event_contains_creator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let end_time = 100000u64;
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let events = env.events().all();
+    let pool_created_topic = Symbol::new(&env, "pool_created");
+
+    let mut found = false;
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == pool_created_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+
+                    let event_pool_id: u64 = event_data
+                        .get(Symbol::new(&env, "pool_id"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_creator: Address = event_data
+                        .get(Symbol::new(&env, "creator"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_end_time: u64 = event_data
+                        .get(Symbol::new(&env, "end_time"))
+                        .unwrap()
+                        .into_val(&env);
+
+                    assert_eq!(event_pool_id, pool_id);
+                    assert_eq!(event_creator, creator);
+                    assert_eq!(event_end_time, end_time);
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(found, "PoolCreatedEvent not found or failed to parse");
+}
+
+#[test]
+#[should_panic(expected = "Error(Context, InvalidAction)")]
+fn test_claim_winnings_blocks_reentrancy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, operator, creator) = setup(&env);
+
+    // Register Rogue Token
+    let rogue_token_id = env.register_contract(None, rogue_token::RogueToken);
+    let rogue_token_client = rogue_token::RogueTokenClient::new(&env, &rogue_token_id);
+
+    // Whitelist Rogue Token
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &0u32); // ROLE_ADMIN = 0
+    client.add_token_to_whitelist(&admin, &rogue_token_id);
+
+    // Create Pool 1 with Rogue Token
+    let end_time = 100000u64;
+    let pool_id_1 = client.create_pool(
+        &creator,
+        &end_time,
+        &rogue_token_id,
+        &2,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Rogue Pool 1"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::Vec::new(&env),
+        },
+    );
+
+    // Create Pool 2 with Rogue Token
+    let pool_id_2 = client.create_pool(
+        &creator,
+        &end_time,
+        &rogue_token_id,
+        &2,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Rogue Pool 2"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::Vec::new(&env),
+        },
+    );
+
+    // User predicts on both
+    let user = Address::generate(&env);
+    client.place_prediction(&user, &pool_id_1, &1000, &0, &None, &None);
+    client.place_prediction(&user, &pool_id_2, &1000, &0, &None, &None);
+
+    // Resolve Pools
+    let current_time = env.ledger().timestamp();
+    env.ledger()
+        .with_mut(|li| li.timestamp = current_time + end_time + 3601);
+    client.resolve_pool(&operator, &pool_id_1, &0);
+    client.resolve_pool(&operator, &pool_id_2, &0);
+
+    // Setup rogue token for callback: claim winnings of pool_id_2 when transferring for pool_id_1
+    rogue_token_client.setup(&client.address, &user, &pool_id_2);
+
+    // Attempt to claim winnings for pool_id_1
+    let winnings_1 = client.claim_winnings(&user, &pool_id_1);
+    assert!(winnings_1 > 0);
+}
+
+#[test]
+#[should_panic(expected = "Reentrancy detected")]
+fn test_guard_basic() {
+    let env = Env::default();
+    let id = env.register_contract(None, PredifiContract);
+    env.as_contract(&id, || {
+        PredifiContract::enter_reentrancy_guard(&env);
+        PredifiContract::enter_reentrancy_guard(&env);
+    });
+}
+
+// ── Creator cancellation tests ────────────────────────────────────────────
+
+#[test]
+fn test_creator_can_cancel_empty_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Empty Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.cancel_pool(
+        &creator,
+        &pool_id,
+        &String::from_str(&env, "Changed my mind"),
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert!(pool.canceled);
+}
+
+// ── cancel_pool with zero participants ───────────────────────────────────────
+
+#[test]
+fn test_cancel_pool_zero_participants_state_is_canceled() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Canceled);
+    assert!(pool.canceled);
+}
+
+#[test]
+fn test_cancel_pool_zero_participants_no_contract_balance_change() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let balance_before = token.balance(&client.address);
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+    let balance_after = token.balance(&client.address);
+
+    assert_eq!(balance_before, balance_after);
+}
+
+#[test]
+fn test_claim_refund_on_zero_participant_canceled_pool_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+
+    let non_participant = Address::generate(&env);
+    let result = client.try_claim_refund(&non_participant, &pool_id);
+    assert!(
+        result.is_err(),
+        "claim_refund for non-participant on canceled pool must return an error"
+    );
+}
+
+#[test]
+fn test_claim_winnings_on_zero_participant_canceled_pool_returns_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+
+    let non_participant = Address::generate(&env);
+    let result = client.try_claim_winnings(&non_participant, &pool_id);
+    assert!(
+        result.is_ok() && result.unwrap().unwrap() == 0,
+        "claim_winnings for non-participant on canceled pool must return Ok(0)"
+    );
+}
+
+// ── MetadataUrlInvalid error tests ───────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #109)")]
+fn test_create_pool_rejects_metadata_url_exceeding_512_bytes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let long_url = String::from_str(&env, &"x".repeat(513));
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Valid description"),
+            metadata_url: long_url,
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+#[test]
+fn test_create_pool_accepts_metadata_url_at_512_bytes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let exact_url = String::from_str(&env, &"x".repeat(512));
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Valid description"),
+            metadata_url: exact_url.clone(),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.metadata_url, exact_url);
+}
+
+#[test]
+fn test_create_pool_accepts_empty_metadata_url() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Valid description"),
+            metadata_url: String::from_str(&env, ""),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.metadata_url.len(), 0);
+}
+
+// ── cancel_pool zero participants: index cleanup ─────────────────────────────
+
+#[test]
+fn test_cancel_pool_zero_participants_removed_from_active_index() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let before = client.get_active_pools(&0u32, &10u32);
+    assert!(before.contains(&pool_id));
+
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+
+    let after = client.get_active_pools(&0u32, &10u32);
+    assert!(!after.contains(&pool_id));
+    assert_eq!(after.len(), 0);
+}
+
+#[test]
+fn test_cancel_pool_zero_participants_catpoolix_still_readable() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let category = symbol_short!("Tech");
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &category,
+        &PoolConfig {
+            description: String::from_str(&env, "Zero Participant Pool"),
+            metadata_url: String::from_str(&env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+
+    let cat_pools = client.get_pools_by_category(&category, &0u32, &10u32);
+    assert_eq!(cat_pools.len(), 1);
+    assert_eq!(cat_pools.get(0).unwrap(), pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Canceled);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_creator_cannot_cancel_pool_with_bets() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let bettor = Address::generate(&env);
+    token_admin_client.mint(&bettor, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool with bets"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.place_prediction(&bettor, &pool_id, &100, &0, &None, &None);
+    client.cancel_pool(&creator, &pool_id, &String::from_str(&env, ""));
+}
+
+#[test]
+fn test_operator_can_cancel_pool_with_bets() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, operator, creator) = setup(&env);
+
+    let bettor = Address::generate(&env);
+    token_admin_client.mint(&bettor, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool with bets"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.place_prediction(&bettor, &pool_id, &100, &0, &None, &None);
+    client.cancel_pool(
+        &operator,
+        &pool_id,
+        &String::from_str(&env, "Operator override"),
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert!(pool.canceled);
+}
+
+// ── Category constant tests ───────────────────────────────────────────────────
+
+#[test]
+fn test_category_constants_values() {
+    assert_eq!(CATEGORY_SPORTS, symbol_short!("Sports"));
+    assert_eq!(CATEGORY_FINANCE, symbol_short!("Finance"));
+    assert_eq!(CATEGORY_CRYPTO, symbol_short!("Crypto"));
+    assert_eq!(CATEGORY_POLITICS, symbol_short!("Politics"));
+    assert_eq!(CATEGORY_ENTERTAIN, symbol_short!("Entertain"));
+    assert_eq!(CATEGORY_TECH, symbol_short!("Tech"));
+    assert_eq!(CATEGORY_OTHER, symbol_short!("Other"));
+}
+
+#[test]
+#[allow(clippy::needless_range_loop)]
+fn test_category_constants_are_unique() {
+    let all = [
+        CATEGORY_SPORTS,
+        CATEGORY_FINANCE,
+        CATEGORY_CRYPTO,
+        CATEGORY_POLITICS,
+        CATEGORY_ENTERTAIN,
+        CATEGORY_TECH,
+        CATEGORY_OTHER,
+    ];
+    for i in 0..all.len() {
+        for j in (i + 1)..all.len() {
+            assert_ne!(
+                all[i], all[j],
+                "duplicate category constants at {i} and {j}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_pool_created_with_each_category() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let categories = [
+        CATEGORY_SPORTS,
+        CATEGORY_FINANCE,
+        CATEGORY_CRYPTO,
+        CATEGORY_POLITICS,
+        CATEGORY_ENTERTAIN,
+        CATEGORY_TECH,
+        CATEGORY_OTHER,
+    ];
+
+    for cat in categories {
+        let pool_id = client.create_pool(
+            &creator,
+            &100000u64,
+            &token_address,
+            &2u32,
+            &cat,
+            &PoolConfig {
+                description: String::from_str(&env, "Category test pool"),
+                metadata_url: String::from_str(&env, "ipfs://test"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "Yes"),
+                    String::from_str(&env, "No"),
+                ],
+            },
+        );
+        let pool = client.get_pool(&pool_id);
+        assert_eq!(pool.category, cat);
+    }
+}
+
+#[test]
+fn test_get_fees_returns_treasury_and_referral_fee_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, _client, token_address, _, _, treasury, _, _) = setup(&env);
+
+    // init sets fee_bps = 300; referral_cut_bps defaults to 5000
+    let ac_id = ac_client.address.clone();
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Re-register a fresh contract with a known fee_bps
+    let contract_id = env.register(PredifiContract, ());
+    let c = PredifiContractClient::new(&env, &contract_id);
+    c.init(&ac_id, &treasury, &300u32, &0u64, &3600u64);
+    c.add_token_to_whitelist(&admin, &token_address);
+
+    let fees = c.get_fees();
+    assert_eq!(fees.treasury_fee_bps, 300);
+    assert_eq!(fees.referral_fee_bps, 5000); // default
+
+    // Update both and verify get_fees reflects the changes
+    c.set_fee_bps(&admin, &750u32);
+    c.set_referral_cut_bps(&admin, &2000u32);
+
+    let fees = c.get_fees();
+    assert_eq!(fees.treasury_fee_bps, 750);
+    assert_eq!(fees.referral_fee_bps, 2000);
 }

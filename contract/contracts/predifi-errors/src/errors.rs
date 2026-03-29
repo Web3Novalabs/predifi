@@ -199,6 +199,54 @@ impl PrediFiError {
         }
     }
 
+    /// Returns a stable, machine-friendly label for this error variant.
+    ///
+    /// These labels are useful when explorer output only shows numeric
+    /// contract error codes and off-chain tools need a deterministic mapping.
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::NotInitialized => "INIT_NOT_INITIALIZED",
+            Self::AlreadyInitializedOrConfigNotSet => "INIT_ALREADY_INITIALIZED_OR_CONFIG_NOT_SET",
+            Self::Unauthorized => "AUTH_UNAUTHORIZED",
+            Self::InsufficientPermissions => "AUTH_INSUFFICIENT_PERMISSIONS",
+            Self::PoolNotFound => "POOL_NOT_FOUND",
+            Self::PoolAlreadyResolved => "POOL_ALREADY_RESOLVED",
+            Self::PoolNotResolved => "POOL_NOT_RESOLVED",
+            Self::PoolExpiryError => "POOL_EXPIRY_ERROR",
+            Self::InvalidPoolState => "POOL_INVALID_STATE",
+            Self::InvalidOutcome => "POOL_INVALID_OUTCOME",
+            Self::StateError => "POOL_STATE_ERROR",
+            Self::PredictionNotFound => "PREDICTION_NOT_FOUND",
+            Self::PredictionAlreadyExists => "PREDICTION_ALREADY_EXISTS",
+            Self::InvalidPredictionAmount => "PREDICTION_INVALID_AMOUNT",
+            Self::PredictionTooLate => "PREDICTION_TOO_LATE",
+            Self::InsufficientBalanceOrStakeLimit => {
+                "PREDICTION_INSUFFICIENT_BALANCE_OR_STAKE_LIMIT"
+            }
+            Self::AlreadyClaimed => "CLAIM_ALREADY_CLAIMED",
+            Self::NotAWinner => "CLAIM_NOT_A_WINNER",
+            Self::RewardError => "CLAIM_REWARD_ERROR",
+            Self::InvalidTimestamp => "TIME_INVALID_TIMESTAMP",
+            Self::TimeConstraintError => "TIME_CONSTRAINT_ERROR",
+            Self::InvalidData => "VALIDATION_INVALID_DATA",
+            Self::InvalidAddressOrToken => "VALIDATION_INVALID_ADDRESS_OR_TOKEN",
+            Self::InvalidPagination => "VALIDATION_INVALID_PAGINATION",
+            Self::InvalidFeeBps => "VALIDATION_INVALID_FEE_BPS",
+            Self::MetadataError => "VALIDATION_METADATA_ERROR",
+            Self::ArithmeticError => "MATH_ARITHMETIC_ERROR",
+            Self::FeeExceedsAmount => "MATH_FEE_EXCEEDS_AMOUNT",
+            Self::StorageError => "STORAGE_ERROR",
+            Self::ConsistencyError => "STORAGE_CONSISTENCY_ERROR",
+            Self::BalanceMismatch => "STORAGE_BALANCE_MISMATCH",
+            Self::TokenError => "TOKEN_ERROR",
+            Self::WithdrawalOrTreasuryError => "TOKEN_WITHDRAWAL_OR_TREASURY_ERROR",
+            Self::OracleError => "ORACLE_ERROR",
+            Self::ResolutionError => "ORACLE_RESOLUTION_ERROR",
+            Self::AdminError => "ADMIN_ERROR",
+            Self::RateLimitOrSuspiciousActivity => "RATE_LIMIT_OR_SUSPICIOUS_ACTIVITY",
+        }
+    }
+
     /// Returns whether this error is recoverable by the user.
     /// Non-recoverable errors typically indicate system issues or bugs.
     pub const fn is_recoverable(&self) -> bool {
@@ -221,38 +269,38 @@ impl PrediFiError {
     pub fn as_str(&self) -> &'static str {
         match self {
             // Initialization & Configuration
-            Self::NotInitialized => "Contract not initialized",
+            Self::NotInitialized => "Contract is not initialized. Call init before this operation.",
             Self::AlreadyInitializedOrConfigNotSet => {
-                "Contract already initialized or treasury/access control not set"
+                "Contract already initialized or required config (treasury/access control) is missing"
             }
 
             // Authorization & Access Control
-            Self::Unauthorized => "Unauthorized access",
-            Self::InsufficientPermissions => "Role not found or insufficient permissions",
+            Self::Unauthorized => "Caller is not authorized to perform this action",
+            Self::InsufficientPermissions => "Caller role is missing or does not grant required permission",
 
             // Pool State
-            Self::PoolNotFound => "Pool not found",
-            Self::PoolAlreadyResolved => "Pool already resolved",
-            Self::PoolNotResolved => "Pool not resolved",
+            Self::PoolNotFound => "Pool ID does not exist",
+            Self::PoolAlreadyResolved => "Pool is already resolved",
+            Self::PoolNotResolved => "Pool is not resolved yet",
             Self::PoolExpiryError => "Pool expiry state is invalid for this operation",
             Self::InvalidPoolState => "Invalid pool state",
             Self::InvalidOutcome => "Invalid outcome or outcome index out of bounds",
             Self::StateError => "State inconsistency or invalid options count detected",
 
             // Prediction & Betting
-            Self::PredictionNotFound => "Prediction not found",
-            Self::PredictionAlreadyExists => "Prediction already exists",
+            Self::PredictionNotFound => "No prediction found for this user and pool",
+            Self::PredictionAlreadyExists => "User already placed a prediction in this pool",
             Self::InvalidPredictionAmount => {
                 "Invalid prediction amount (zero, negative, or invalid)"
             }
-            Self::PredictionTooLate => "Cannot predict after pool end time",
+            Self::PredictionTooLate => "Prediction window has closed for this pool",
             Self::InsufficientBalanceOrStakeLimit => {
-                "Insufficient balance or stake below minimum/exceeds maximum"
+                "Insufficient balance, below min stake, or above max stake limit"
             }
 
             // Claiming & Rewards
-            Self::AlreadyClaimed => "Already claimed",
-            Self::NotAWinner => "User did not win",
+            Self::AlreadyClaimed => "Winnings already claimed for this pool",
+            Self::NotAWinner => "User is not in a winning outcome for this pool",
             Self::RewardError => {
                 "Reward calculation failed, winning stake is zero, or payout exceeds pool"
             }
@@ -262,38 +310,36 @@ impl PrediFiError {
             Self::TimeConstraintError => "End time or resolution time constraints are not met",
 
             // Data & Validation
-            Self::InvalidData => "Invalid data",
-            Self::InvalidAddressOrToken => "Invalid address or token",
+            Self::InvalidData => "Input data failed validation",
+            Self::InvalidAddressOrToken => "Provided address or token contract is invalid",
             Self::InvalidPagination => "Invalid pagination offset or limit",
             Self::InvalidFeeBps => "Invalid fee basis points (max 10000)",
             Self::MetadataError => "Metadata, label invalid/too long, or duplicate labels detected",
 
             // Arithmetic & Calculation
-            Self::ArithmeticError => "Arithmetic overflow, underflow, or division by zero",
+            Self::ArithmeticError => "Arithmetic overflow, underflow, or division-by-zero occurred",
             Self::FeeExceedsAmount => "Calculated fee exceeds total amount",
 
             // Storage & State
-            Self::StorageError => "Storage key not found or storage corrupted",
+            Self::StorageError => "Required storage key missing or storage is corrupted",
             Self::ConsistencyError => "Pool stake or index inconsistency detected",
-            Self::BalanceMismatch => "Contract balance mismatch",
+            Self::BalanceMismatch => "Contract token balance does not match internal accounting",
 
             // Token & Transfer
-            Self::TokenError => "Token transfer, approval, or contract call failed",
+            Self::TokenError => "Token transfer/approval or token contract call failed",
             Self::WithdrawalOrTreasuryError => "Withdrawal or treasury transfer failed",
 
             // Oracle & Resolution
-            Self::OracleError => "Oracle not set, invalid response, or stale data",
+            Self::OracleError => "Oracle is not configured, returned invalid data, or data is stale",
             Self::ResolutionError => {
-                "Resolution error, duplicate attempt, data mismatch, or unauthorized resolver"
+                "Pool resolution failed due to duplicate attempt, mismatch, or unauthorized resolver"
             }
 
             // Emergency & Admin
-            Self::AdminError => "Contract pause, emergency, version mismatch, or upgrade error",
+            Self::AdminError => "Administrative operation failed (pause/emergency/version/upgrade)",
 
             // Rate Limiting & Spam Prevention
-            Self::RateLimitOrSuspiciousActivity => {
-                "Rate limit exceeded, cooldown not elapsed, or suspicious activity"
-            }
+            Self::RateLimitOrSuspiciousActivity => "Rate limit exceeded, cooldown active, or suspicious activity detected",
         }
     }
 }
@@ -301,5 +347,42 @@ impl PrediFiError {
 impl core::fmt::Display for PrediFiError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", self.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PrediFiError;
+
+    #[test]
+    fn error_helpers_return_expected_metadata() {
+        let error = PrediFiError::Unauthorized;
+
+        assert_eq!(error.code(), 10);
+        assert_eq!(error.category(), "authorization");
+        assert!(error.is_recoverable());
+        assert_eq!(
+            error.as_str(),
+            "Caller is not authorized to perform this action"
+        );
+    }
+
+    #[test]
+    fn system_errors_are_marked_non_recoverable() {
+        let error = PrediFiError::StorageError;
+
+        assert_eq!(error.category(), "storage");
+        assert!(!error.is_recoverable());
+    }
+
+    #[test]
+    fn labels_and_messages_are_descriptive() {
+        let error = PrediFiError::Unauthorized;
+
+        assert_eq!(error.label(), "AUTH_UNAUTHORIZED");
+        assert!(
+            error.as_str().contains("authorized"),
+            "message should help explain access failure"
+        );
     }
 }

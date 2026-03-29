@@ -12,7 +12,7 @@
 //! 4. **Resolve Pool**: Once the market ends, call `resolve_pool_from_price` to automatically
 //!    determine the winning outcome based on the latest valid price data.
 
-use crate::PredifiError;
+use crate::{DataKey, PredifiError};
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
 /// Price feed data structure for external oracle integration.
@@ -101,20 +101,14 @@ pub struct OracleConfig {
 
 /// Storage keys for price feed data.
 ///
-/// This enum defines all storage keys used by the price feed system.
-#[derive(Clone)]
-#[contracttype]
-pub enum PriceFeedDataKey {
-    /// Oracle configuration: OracleConfig -> OracleConfig
-    OracleConfig,
-    /// Registered price feeds: PriceFeed(feed_pair) -> PriceFeed
-    PriceFeed(Symbol),
-    /// Price conditions for pools: PriceCondition(pool_id) -> PriceCondition
-    PriceCondition(u64),
-    /// Last update timestamp for each feed: LastUpdate(feed_pair) -> u64
-    LastUpdate(Symbol),
-}
-
+/// Deprecated: use `DataKey` from `lib.rs` directly. This type alias is kept
+/// for documentation purposes only and will be removed in a future version.
+///
+/// All price-feed storage now uses the canonical `DataKey` variants:
+/// - `DataKey::OracleConfig` — oracle configuration
+/// - `DataKey::PriceFeed(feed_pair)` — price feed data
+/// - `DataKey::PriceCondition(pool_id)` — per-pool price conditions
+///
 /// Price feed adapter for external oracle integration
 #[allow(dead_code)]
 pub struct PriceFeedAdapter;
@@ -143,7 +137,7 @@ impl PriceFeedAdapter {
 
         env.storage()
             .persistent()
-            .set(&PriceFeedDataKey::OracleConfig, &config);
+            .set(&DataKey::OracleConfig, &config);
 
         Ok(())
     }
@@ -152,7 +146,7 @@ impl PriceFeedAdapter {
     pub fn get_oracle_config(env: &Env) -> OracleConfig {
         env.storage()
             .persistent()
-            .get(&PriceFeedDataKey::OracleConfig)
+            .get(&DataKey::OracleConfig)
             .expect("Oracle config not initialized")
     }
 
@@ -192,11 +186,10 @@ impl PriceFeedAdapter {
         // Store price feed data
         env.storage()
             .persistent()
-            .set(&PriceFeedDataKey::PriceFeed(feed_pair.clone()), &feed);
+            .set(&DataKey::PriceFeed(feed_pair.clone()), &feed);
 
-        env.storage()
-            .persistent()
-            .set(&PriceFeedDataKey::LastUpdate(feed_pair), &timestamp);
+        // Note: last-update timestamp is embedded in PriceFeed.timestamp;
+        // no separate LastUpdate key is needed.
 
         Ok(())
     }
@@ -206,7 +199,7 @@ impl PriceFeedAdapter {
         let feed: Option<PriceFeed> = env
             .storage()
             .persistent()
-            .get(&PriceFeedDataKey::PriceFeed(feed_pair.clone()));
+            .get(&DataKey::PriceFeed(feed_pair.clone()));
 
         feed
     }
@@ -243,7 +236,7 @@ impl PriceFeedAdapter {
     ) -> Result<(), PredifiError> {
         env.storage()
             .persistent()
-            .set(&PriceFeedDataKey::PriceCondition(pool_id), &condition);
+            .set(&DataKey::PriceCondition(pool_id), &condition);
 
         Ok(())
     }
@@ -252,7 +245,7 @@ impl PriceFeedAdapter {
     pub fn get_price_condition(env: &Env, pool_id: u64) -> Option<PriceCondition> {
         env.storage()
             .persistent()
-            .get(&PriceFeedDataKey::PriceCondition(pool_id))
+            .get(&DataKey::PriceCondition(pool_id))
     }
 
     /// Evaluate price condition against current price data
@@ -357,3 +350,5 @@ impl PriceFeedAdapter {
 
 #[cfg(test)]
 mod tests {}
+// #[cfg(test)]
+// mod tests;
