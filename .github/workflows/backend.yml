@@ -7,6 +7,7 @@ on:
       - contract
     paths:
       - "contract/**"
+      - "backend/**"
       - ".github/workflows/backend.yml"
   pull_request:
     branches:
@@ -14,6 +15,7 @@ on:
       - contract
     paths:
       - "contract/**"
+      - "backend/**"
       - ".github/workflows/backend.yml"
   workflow_dispatch:
 
@@ -26,8 +28,8 @@ env:
   WASM_SIZE_THRESHOLD_KB: 200
 
 jobs:
-  backend-checks:
-    name: Backend Checks
+  contract-checks:
+    name: Contract Checks (WASM)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -90,3 +92,44 @@ jobs:
           path: contract/target/wasm32-unknown-unknown/release/predifi_contract.wasm
           if-no-files-found: ignore
           retention-days: 90
+
+  backend-checks:
+    name: Backend Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint with clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build backend
+        run: cargo build --release
+
+      - name: Run unit tests
+        run: cargo test

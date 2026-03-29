@@ -8,16 +8,19 @@ name = "predifi-backend"
 path = "src/main.rs"
 
 [dependencies]
-axum       = "0.7"
-tokio      = { version = "1", features = ["full"] }
-tower      = "0.4"
-http       = "1"
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower = "0.4"
+http = "1"
 serde_json = "1"
-dotenvy    = "0.15"
-tracing    = "0.1"
+dotenvy = "0.15"
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-sqlx       = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+] }
 
 [dev-dependencies]
 http-body-util = "0.1"
-tower          = { version = "0.4", features = ["util"] }
+tower = { version = "0.4", features = ["util"] }

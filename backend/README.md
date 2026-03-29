@@ -17,10 +17,10 @@ and duration fields:
 
 ## Prerequisites
 
-| Tool | Version | Install |
-| :--- | :--- | :--- |
-| Rust + Cargo | stable | `curl https://sh.rustup.rs -sSf \| sh` |
-| (optional) cargo-watch | any | `cargo install cargo-watch` |
+| Tool                   | Version | Install                                |
+| :--------------------- | :------ | :------------------------------------- |
+| Rust + Cargo           | stable  | `curl https://sh.rustup.rs -sSf \| sh` |
+| (optional) cargo-watch | any     | `cargo install cargo-watch`            |
 
 Verify your installation:
 
@@ -73,15 +73,15 @@ cargo watch -x run
 The backend loads `.env` automatically at startup (via `dotenvy`) and then
 reads environment variables into a typed `Config` struct.
 
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `APP_HOST` | `0.0.0.0` | Host interface to bind |
-| `APP_PORT` | `3000` | HTTP port |
-| `RUST_LOG` | `info` | Tracing filter level |
-| `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/predifi` | PostgreSQL DSN |
-| `DB_MAX_CONNECTIONS` | `10` | SQLx pool max connections |
-| `DB_MIN_CONNECTIONS` | `1` | SQLx pool min connections |
-| `DB_ACQUIRE_TIMEOUT_SECS` | `30` | Pool acquire timeout (seconds) |
+| Variable                  | Default                                               | Description                    |
+| :------------------------ | :---------------------------------------------------- | :----------------------------- |
+| `APP_HOST`                | `0.0.0.0`                                             | Host interface to bind         |
+| `APP_PORT`                | `3000`                                                | HTTP port                      |
+| `RUST_LOG`                | `info`                                                | Tracing filter level           |
+| `DATABASE_URL`            | `postgres://postgres:postgres@localhost:5432/predifi` | PostgreSQL DSN                 |
+| `DB_MAX_CONNECTIONS`      | `10`                                                  | SQLx pool max connections      |
+| `DB_MIN_CONNECTIONS`      | `1`                                                   | SQLx pool min connections      |
+| `DB_ACQUIRE_TIMEOUT_SECS` | `30`                                                  | Pool acquire timeout (seconds) |
 
 If an environment variable has an invalid value (for example, a non-numeric
 port), startup fails with a clear configuration error.
@@ -184,9 +184,9 @@ LoggingLayer      <- records status + elapsed time, prints the log line
 HTTP response
 ```
 
-| Type | Role |
-| :--- | :--- |
-| `LoggingLayer` | Factory - wraps any service with `LoggingService` |
+| Type                | Role                                                       |
+| :------------------ | :--------------------------------------------------------- |
+| `LoggingLayer`      | Factory - wraps any service with `LoggingService`          |
 | `LoggingService<S>` | Intercepts each request/response pair and emits a log line |
 
 Attach it to a router with:
