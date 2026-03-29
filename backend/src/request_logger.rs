@@ -59,8 +59,9 @@ use std::{
 
 use axum::http::{Request, Response};
 use tower::{Layer, Service};
+use tracing::{error, info};
 
-// Layer 
+// Layer
 
 /// A Tower [`Layer`] that wraps every service with [`LoggingService`].
 ///
@@ -79,7 +80,7 @@ impl<S> Layer<S> for LoggingLayer {
     }
 }
 
-// Service 
+// Service
 
 /// The actual middleware service produced by [`LoggingLayer`].
 ///
@@ -144,15 +145,22 @@ where
             match &result {
                 Ok(response) => {
                     let status = response.status();
-                    println!(
-                        "[REQ] {method} {path} → {status} ({elapsed_ms}ms)"
+                    info!(
+                        method = %method,
+                        path = %path,
+                        status = %status,
+                        elapsed_ms = elapsed_ms,
+                        "request complete"
                     );
                 }
                 Err(_) => {
                     // The inner service returned an error before producing a
                     // response (e.g. a panic or an infrastructure failure).
-                    println!(
-                        "[REQ] {method} {path} → ERROR ({elapsed_ms}ms)"
+                    error!(
+                        method = %method,
+                        path = %path,
+                        elapsed_ms = elapsed_ms,
+                        "request failed"
                     );
                 }
             }
