@@ -1063,6 +1063,42 @@ fn test_oracle_resolve_utf8_emoji_proof() {
 }
 
 #[test]
+fn test_events_module_publish_and_log() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(PredifiContract, ());
+    let admin = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        PauseEvent {
+            admin: admin.clone(),
+        }
+        .publish(&env);
+    });
+
+    let events = env.events().all();
+    let pause_topic = Symbol::new(&env, "pause");
+
+    let mut found = false;
+    for event in events.iter() {
+        if let Some(topic_val) = event.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == pause_topic {
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(
+        found,
+        "PauseEvent should have been emitted via events module"
+    );
+}
+
+#[test]
 fn test_admin_can_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
