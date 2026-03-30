@@ -791,6 +791,22 @@ pub struct TokenWhitelistRemovedEvent {
     pub token: Address,
 }
 
+#[contractevent(topics = ["added_to_whitelist"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddedToWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["removed_from_whitelist"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemovedFromWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub timestamp: u64,
+}
+
 #[contractevent(topics = ["treasury_withdrawn"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreasuryWithdrawnEvent {
@@ -2787,10 +2803,16 @@ impl PredifiContract {
 
         assert!(pool.private, "Pool is not private");
 
-        let whitelist_key = DataKey::Whitelist(pool_id, user);
+        let whitelist_key = DataKey::Whitelist(pool_id, user.clone());
         env.storage().persistent().set(&whitelist_key, &true);
         Self::extend_persistent(&env, &whitelist_key);
 
+        AddedToWhitelistEvent {
+            pool_id,
+            user,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -2818,9 +2840,15 @@ impl PredifiContract {
 
         assert!(pool.private, "Pool is not private");
 
-        let whitelist_key = DataKey::Whitelist(pool_id, user);
+        let whitelist_key = DataKey::Whitelist(pool_id, user.clone());
         env.storage().persistent().remove(&whitelist_key);
 
+        RemovedFromWhitelistEvent {
+            pool_id,
+            user,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -2842,7 +2870,7 @@ impl PredifiContract {
             return true;
         }
 
-        let whitelist_key = DataKey::Whitelist(pool_id, user);
+        let whitelist_key = DataKey::Whitelist(pool_id, user.clone());
         let is_whitelisted = env
             .storage()
             .persistent()
