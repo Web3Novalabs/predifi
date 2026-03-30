@@ -177,6 +177,7 @@ fn test_increase_max_total_stake_auth_only_happens_at_entry_point() {
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 100i128,
+            min_total_stake: 1,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -2069,6 +2070,7 @@ fn test_add_to_whitelist_is_idempotent_for_already_whitelisted_user() {
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 0,
+            min_total_stake: 1,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: true,
@@ -3418,6 +3420,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 0i128,
+            min_total_stake: 1,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -3442,6 +3445,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 0i128,
+            min_total_stake: 1,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,
@@ -6317,6 +6321,7 @@ fn test_create_pool_with_max_total_stake() {
             min_stake: 100,
             max_stake: 0,
             max_total_stake: 500_000,
+            min_total_stake: 1,
             initial_liquidity: 0,
             required_resolutions: 1,
             private: false,
@@ -6495,7 +6500,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //             min_stake: 1i128,
 //             max_stake: 0i128,
 //             max_total_stake: 0,
-            min_total_stake: 1,
+// min_total_stake: 1,
 //             initial_liquidity: 0i128,
 //             required_resolutions: 1u32,
 //             private: false,
@@ -6515,7 +6520,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //             min_stake: 1i128,
 //             max_stake: 0i128,
 //             max_total_stake: 0,
-            min_total_stake: 1,
+// min_total_stake: 1,
 //             initial_liquidity: 0i128,
 //             required_resolutions: 1u32,
 //             private: false,
@@ -6535,7 +6540,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //             min_stake: 1i128,
 //             max_stake: 0i128,
 //             max_total_stake: 0,
-            min_total_stake: 1,
+// min_total_stake: 1,
 //             initial_liquidity: 0i128,
 //             required_resolutions: 1u32,
 //             private: false,
@@ -6555,7 +6560,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //             min_stake: 1i128,
 //             max_stake: 0i128,
 //             max_total_stake: 0,
-            min_total_stake: 1,
+// min_total_stake: 1,
 //             initial_liquidity: 0i128,
 //             required_resolutions: 1u32,
 //             private: false,
@@ -6825,7 +6830,7 @@ fn test_get_active_pools_pagination() {
                 min_stake: 1i128,
                 max_stake: 0i128,
                 max_total_stake: 0,
-            min_total_stake: 1,
+                min_total_stake: 1,
                 initial_liquidity: 0i128,
                 required_resolutions: 1u32,
                 private: false,
@@ -6884,7 +6889,7 @@ fn test_get_active_pools_pagination() {
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
 //             required_resolutions: 1u32, private: false, whitelist_key: None,
 //             max_total_stake: 0,
-            min_total_stake: 1,
+// min_total_stake: 1,
 //         },
 //     );
 //     let pool_b = client.create_pool(
@@ -6895,7 +6900,7 @@ fn test_get_active_pools_pagination() {
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
 //             required_resolutions: 1u32, private: false, whitelist_key: None,
 //             max_total_stake: 0,
-            min_total_stake: 1,
+// min_total_stake: 1,
 //         },
 //     );
 //     let pool_c = client.create_pool(
@@ -6906,7 +6911,7 @@ fn test_get_active_pools_pagination() {
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
 //             required_resolutions: 1u32, private: false, whitelist_key: None,
 //             max_total_stake: 0,
-            min_total_stake: 1,
+// min_total_stake: 1,
 //         },
 //     );
 
@@ -7869,7 +7874,7 @@ fn test_pool_created_with_each_category() {
                 min_stake: 1i128,
                 max_stake: 0i128,
                 max_total_stake: 0,
-            min_total_stake: 1,
+                min_total_stake: 1,
                 initial_liquidity: 0i128,
                 required_resolutions: 1u32,
                 private: false,
@@ -7928,7 +7933,7 @@ fn test_create_pool_rejects_zero_min_total_stake() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1000);
 
-    let (_, client, creator, _, token_admin_client, token_address, _, _) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
     token_admin_client.mint(&creator, &1_000_000i128);
 
     client.create_pool(
@@ -7965,7 +7970,7 @@ fn test_create_pool_accepts_positive_min_total_stake() {
     env.mock_all_auths();
     env.ledger().set_timestamp(1000);
 
-    let (_, client, creator, _, token_admin_client, token_address, _, _) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
     token_admin_client.mint(&creator, &1_000_000i128);
 
     let pool_id = client.create_pool(
