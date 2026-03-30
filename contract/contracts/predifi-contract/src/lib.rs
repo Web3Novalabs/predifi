@@ -268,6 +268,8 @@ pub struct Pool {
     pub min_stake: i128,
     /// Maximum stake amount per prediction (0 = no limit).
     pub max_stake: i128,
+    /// Minimum total stake required for the pool (must be > 0).
+    pub min_total_stake: i128,
     /// Maximum total stake amount across the entire pool (0 = no limit).
     pub max_total_stake: i128,
     /// Initial liquidity provided by the pool creator (house money).
@@ -301,6 +303,9 @@ pub struct PoolConfig {
     pub min_stake: i128,
     /// Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
     pub max_stake: i128,
+    /// Minimum total stake required for the pool to be valid (must be > 0).
+    /// This ensures the pool has meaningful participation before resolution.
+    pub min_total_stake: i128,
     /// Maximum total stake allowed for the pool (0 = no limit, must be >= 0).
     pub max_total_stake: i128,
     /// Optional initial liquidity to provide from creator (must be >= 0).
@@ -602,6 +607,7 @@ pub struct PoolCreatedEvent {
     pub initial_liquidity: i128,
     pub category: Symbol,
     pub required_resolutions: u32,
+    pub min_total_stake: i128,
     pub max_total_stake: i128,
     pub outcome_descriptions: Vec<String>,
 }
@@ -1654,6 +1660,11 @@ impl PredifiContract {
             config.max_stake == 0 || config.max_stake >= config.min_stake,
             "max_stake must be zero (unlimited) or >= min_stake"
         );
+        // Validate: min_total_stake must be strictly positive (> 0)
+        assert!(
+            config.min_total_stake > 0,
+            "min_total_stake must be greater than zero"
+        );
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
         if !config.outcome_descriptions.is_empty() {
@@ -1683,6 +1694,7 @@ impl PredifiContract {
             options_count,
             min_stake: config.min_stake,
             max_stake: config.max_stake,
+            min_total_stake: config.min_total_stake,
             max_total_stake: config.max_total_stake,
             initial_liquidity: config.initial_liquidity,
             creator: creator.clone(),
@@ -1754,6 +1766,7 @@ impl PredifiContract {
             initial_liquidity: config.initial_liquidity,
             category,
             required_resolutions: config.required_resolutions,
+            min_total_stake: config.min_total_stake,
             max_total_stake: config.max_total_stake,
             outcome_descriptions: config.outcome_descriptions,
         }
