@@ -78,6 +78,7 @@ pub struct PoolCreatedEvent {
     pub category: Symbol,
     pub required_resolutions: u32,
     pub max_total_stake: i128,
+    pub min_total_stake: i128,
     pub outcome_descriptions: Vec<String>,
 }
 
