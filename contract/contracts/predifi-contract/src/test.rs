@@ -2019,6 +2019,77 @@ fn test_is_whitelisted_returns_false_for_public_pool_without_entry() {
 }
 
 #[test]
+fn test_add_to_whitelist_is_idempotent_for_already_whitelisted_user() {
+    // Issue #411: Verify that adding a user to a private pool's whitelist twice
+    // doesn't cause errors or double-logging. The operation should be idempotent.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_a = Address::generate(&env);
+
+    // Step 1: Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Private pool for idempotency test"),
+            metadata_url: String::from_str(&env, "ipfs://idempotency-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Verify User A is not whitelisted initially
+    assert!(!client.is_whitelisted(&pool_id, &user_a));
+
+    // Step 2: Call add_to_whitelist for User A (first time)
+    // This should succeed without panicking
+    client.add_to_whitelist(&creator, &pool_id, &user_a);
+    assert!(
+        client.is_whitelisted(&pool_id, &user_a),
+        "User A should be whitelisted after first call"
+    );
+
+    // Step 3: Call add_to_whitelist for User A again (second time)
+    // This should succeed without error (idempotent behavior)
+    // If this were to fail, the test would panic
+    client.add_to_whitelist(&creator, &pool_id, &user_a);
+    assert!(
+        client.is_whitelisted(&pool_id, &user_a),
+        "User A should still be whitelisted after second call"
+    );
+
+    // Step 4: Verify the user can still be removed normally
+    client.remove_from_whitelist(&creator, &pool_id, &user_a);
+    assert!(
+        !client.is_whitelisted(&pool_id, &user_a),
+        "User A should no longer be whitelisted after removal"
+    );
+
+    // Step 5: Verify re-adding after removal works
+    client.add_to_whitelist(&creator, &pool_id, &user_a);
+    assert!(
+        client.is_whitelisted(&pool_id, &user_a),
+        "User A should be whitelisted again"
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #91)")]
 fn test_place_prediction_fails_for_non_whitelisted_token() {
     let env = Env::default();
