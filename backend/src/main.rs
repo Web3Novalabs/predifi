@@ -1,0 +1,92 @@
+//! # predifi-backend
+//!
+//! A minimal Axum HTTP server that demonstrates the request-logging middleware
+//! and a versioned API router layout.
+//!
+//! Run with:
+//! ```bash
+//! cargo run
+//! ```
+//! Then in another terminal:
+//! ```bash
+//! curl http://localhost:3000/
+//! curl http://localhost:3000/health
+//! curl http://localhost:3000/api/v1
+//! curl http://localhost:3000/api/v1/health
+//! curl http://localhost:3000/missing
+//! ```
+
+pub mod config;
+pub mod db;
+pub mod request_logger;
+pub mod routes;
+
+use axum::{routing::get, Json, Router};
+use config::Config;
+use request_logger::LoggingLayer;
+use routes::v1;
+use serde_json::json;
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
+
+/// Root handler that points callers at the versioned API namespace.
+async fn root() -> Json<serde_json::Value> {
+    Json(json!({
+        "message": "Welcome to the PrediFi backend",
+        "api": "/api/v1"
+    }))
+}
+
+/// Build the Axum router with the logging middleware attached.
+///
+/// Keeping router construction in its own function makes it easy to reuse
+/// in tests without binding to a real TCP port.
+pub fn build_router() -> Router {
+    Router::new()
+        .route("/", get(root))
+        .route("/health", get(v1::health))
+        .nest("/api", routes::router())
+        .layer(LoggingLayer)
+}
+
+#[tokio::main]
+async fn main() {
+    dotenvy::dotenv().ok();
+
+    let config = Config::from_env().unwrap_or_else(|error| {
+        eprintln!("failed to load configuration: {error}");
+        std::process::exit(1);
+    });
+
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new(config.log_level.clone()))
+        .with_target(false)
+        .compact()
+        .init();
+
+    let _pool = db::create_pool(&config).unwrap_or_else(|error| {
+        error!(error = %error, "failed to initialize PostgreSQL pool");
+        std::process::exit(1);
+    });
+
+    let app = build_router();
+
+    let bind_addr = config.bind_address();
+
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
+        .await
+        .unwrap_or_else(|error| {
+            error!(address = %bind_addr, error = %error, "failed to bind TCP listener");
+            std::process::exit(1);
+        });
+
+    info!(address = %bind_addr, "backend server listening");
+
+    if let Err(error) = axum::serve(listener, app).await {
+        error!(error = %error, "server error");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests;

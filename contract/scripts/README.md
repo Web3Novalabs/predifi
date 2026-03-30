@@ -5,6 +5,7 @@ This directory contains scripts to automate the deployment and initialization of
 ## Files
 
 - `deploy.sh`: Main deployment script that handles build, optimization, deployment, and initialization.
+- `query_pool_status.sh`: Query a specific `pool_id` and print `get_pool` plus `get_pool_stats` output.
 - `deployed_contracts_<network>.json`: (Generated) Stores the contract IDs and parameters for a specific network.
 
 ## Prerequisites
@@ -30,6 +31,18 @@ To deploy to Testnet using an account named `default`:
 
 ```bash
 ./deploy.sh testnet default
+```
+
+### 🔎 Query Pool Status
+
+```bash
+./query_pool_status.sh testnet <PREDIFI_CONTRACT_ID> <POOL_ID> [source]
+```
+
+Example:
+
+```bash
+./query_pool_status.sh testnet CD... 7 default
 ```
 
 ### 🛠️ Customizing Parameters
