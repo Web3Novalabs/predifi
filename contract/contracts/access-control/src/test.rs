@@ -476,7 +476,6 @@ fn test_revoke_all_roles_clears_all_five_roles() {
     assert!(!client.has_role(&user, &Role::User));
 }
 
-
 /// Revoking a role that was never assigned returns `InsufficientPermissions`.
 #[test]
 fn test_revoke_unassigned_role_returns_error() {
@@ -512,4 +511,3 @@ fn test_transfer_role_from_address_without_role_returns_error() {
     let result = client.try_transfer_role(&admin, &from, &to, &Role::Oracle);
     assert_eq!(result, Err(Ok(PrediFiError::InsufficientPermissions)));
 }
-

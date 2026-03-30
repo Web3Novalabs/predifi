@@ -2690,7 +2690,9 @@ fn test_resolve_pool_logs_reason_when_resolution_delay_not_met() {
 
     env.ledger().with_mut(|li| li.timestamp = end_time + 10);
 
-    let result = PredifiContract::resolve_pool(env.clone(), operator.clone(), pool_id, 1u32);
+    let result = env.as_contract(&contract_id, || {
+        PredifiContract::resolve_pool(env.clone(), operator.clone(), pool_id, 1u32)
+    });
     assert_eq!(result, Err(PredifiError::ResolutionDelayNotMet));
 
     let logs = env.logs().all();

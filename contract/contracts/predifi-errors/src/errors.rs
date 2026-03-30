@@ -123,11 +123,13 @@ pub enum PrediFiError {
     /// Metadata, label, or duplicate labels error.
     MetadataError = 94,
 
-    // -- Arithmetic & Calculation (110-111) ------------------------------------
+    // -- Arithmetic & Calculation (110-112) ------------------------------------
     /// An arithmetic overflow, underflow, or division by zero occurred.
     ArithmeticError = 110,
     /// The calculated fee exceeds the total amount.
     FeeExceedsAmount = 111,
+    /// An input amount is invalid (e.g., would cause overflow in arithmetic).
+    InvalidAmount = 112,
 
     // -- Storage & State (120-122) ---------------------------------------------
     /// The storage key was not found or storage is corrupted.
@@ -190,7 +192,7 @@ impl PrediFiError {
             | Self::InvalidPagination
             | Self::InvalidFeeBps
             | Self::MetadataError => "validation",
-            Self::ArithmeticError | Self::FeeExceedsAmount => "arithmetic",
+            Self::ArithmeticError | Self::FeeExceedsAmount | Self::InvalidAmount => "arithmetic",
             Self::StorageError | Self::ConsistencyError | Self::BalanceMismatch => "storage",
             Self::TokenError | Self::WithdrawalOrTreasuryError => "token",
             Self::OracleError | Self::ResolutionError => "oracle",
@@ -235,6 +237,7 @@ impl PrediFiError {
             Self::MetadataError => "VALIDATION_METADATA_ERROR",
             Self::ArithmeticError => "MATH_ARITHMETIC_ERROR",
             Self::FeeExceedsAmount => "MATH_FEE_EXCEEDS_AMOUNT",
+            Self::InvalidAmount => "MATH_INVALID_AMOUNT",
             Self::StorageError => "STORAGE_ERROR",
             Self::ConsistencyError => "STORAGE_CONSISTENCY_ERROR",
             Self::BalanceMismatch => "STORAGE_BALANCE_MISMATCH",
@@ -319,6 +322,7 @@ impl PrediFiError {
             // Arithmetic & Calculation
             Self::ArithmeticError => "Arithmetic overflow, underflow, or division-by-zero occurred",
             Self::FeeExceedsAmount => "Calculated fee exceeds total amount",
+            Self::InvalidAmount => "Input amount is invalid or would cause arithmetic overflow",
 
             // Storage & State
             Self::StorageError => "Required storage key missing or storage is corrupted",
