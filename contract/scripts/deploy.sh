@@ -36,6 +36,16 @@ echo "🚀 Using CLI: $CLI"
 echo "🌐 Network: $NETWORK"
 echo "👤 Source Account: $SOURCE"
 
+# Detect wasm-opt (required for Step 2 optimization pass)
+if ! command -v wasm-opt &> /dev/null; then
+    echo "❌ Error: 'wasm-opt' not found in PATH."
+    echo "Install it via your system package manager:"
+    echo "  Debian/Ubuntu : sudo apt-get install -y binaryen"
+    echo "  macOS (Homebrew): brew install binaryen"
+    echo "  Cargo         : cargo install wasm-opt"
+    exit 1
+fi
+
 # --- Configuration ---
 
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -64,22 +74,30 @@ if [ ! -f "$AC_WASM" ] || [ ! -f "$PD_WASM" ]; then
     exit 1
 fi
 
-# 3. Optimize Contracts
-echo "--- ✨ Step 2: Optimizing Contracts ---"
+# 3. wasm-opt -O3 (first-pass: general perf + size optimizations)
+echo "--- ⚡ Step 2: Running wasm-opt -O3 ---"
+# wasm-opt buffers the full output before writing, so in-place use is safe.
+# This pass runs before stellar contract optimize, which applies a second
+# Soroban-specific pass (-Oz) to produce the final .optimized.wasm binaries.
+wasm-opt -O3 --strip-debug -o "$AC_WASM" "$AC_WASM"
+wasm-opt -O3 --strip-debug -o "$PD_WASM" "$PD_WASM"
+
+# 4. Optimize Contracts (second pass via stellar CLI)
+echo "--- ✨ Step 3: Optimizing Contracts (stellar contract optimize) ---"
 $CLI contract optimize --wasm "$AC_WASM"
 $CLI contract optimize --wasm "$PD_WASM"
 
 AC_WASM_OPT="$WASM_DIR/access_control.optimized.wasm"
 PD_WASM_OPT="$WASM_DIR/predifi_contract.optimized.wasm"
 
-# 4. Get Admin Address
+# 5. Get Admin Address
 ADMIN_ADDRESS=$($CLI keys address "$SOURCE")
 echo "🔑 Admin/Deployer Address: $ADMIN_ADDRESS"
 
 TREASURY_ADDRESS=${TREASURY_ADDRESS:-$ADMIN_ADDRESS}
 
-# 5. Deploy & Initialize AccessControl
-echo "--- 🛡️ Step 3: Deploying AccessControl ---"
+# 6. Deploy & Initialize AccessControl
+echo "--- 🛡️ Step 4: Deploying AccessControl ---"
 AC_ID=$($CLI contract deploy \
     --wasm "$AC_WASM_OPT" \
     --source "$SOURCE" \
@@ -96,8 +114,8 @@ $CLI contract invoke \
     init \
     --admin "$ADMIN_ADDRESS"
 
-# 6. Deploy & Initialize PredifiContract
-echo "--- ⚖️ Step 4: Deploying PredifiContract ---"
+# 7. Deploy & Initialize PredifiContract
+echo "--- ⚖️ Step 5: Deploying PredifiContract ---"
 PD_ID=$($CLI contract deploy \
     --wasm "$PD_WASM_OPT" \
     --source "$SOURCE" \
@@ -120,8 +138,8 @@ $CLI contract invoke \
     --treasury "$TREASURY_ADDRESS" \
     --fee_bps "$FEE_BPS"
 
-# 7. Store Deployment IDs
-echo "--- 💾 Step 5: Saving Deployment Info ---"
+# 8. Store Deployment IDs
+echo "--- 💾 Step 6: Saving Deployment Info ---"
 cat <<EOF > "$OUTPUT_FILE"
 {
   "network": "$NETWORK",
