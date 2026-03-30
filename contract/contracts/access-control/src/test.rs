@@ -511,3 +511,158 @@ fn test_transfer_role_from_address_without_role_returns_error() {
     let result = client.try_transfer_role(&admin, &from, &to, &Role::Oracle);
     assert_eq!(result, Err(Ok(PrediFiError::InsufficientPermissions)));
 }
+
+// ─── get_operator_count tests ─────────────────────────────────────────────────
+
+/// get_operator_count returns 0 when no operators have been assigned.
+#[test]
+fn test_get_operator_count_initially_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.init(&admin);
+
+    assert_eq!(client.get_operator_count(), 0);
+}
+
+/// Assigning the Operator role increments the count.
+#[test]
+fn test_get_operator_count_increments_on_assign() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+    let op3 = Address::generate(&env);
+    client.init(&admin);
+
+    assert_eq!(client.get_operator_count(), 0);
+
+    client.assign_role(&admin, &op1, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 1);
+
+    client.assign_role(&admin, &op2, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 2);
+
+    client.assign_role(&admin, &op3, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 3);
+}
+
+/// Assigning a non-Operator role does not affect the operator count.
+#[test]
+fn test_get_operator_count_unaffected_by_other_roles() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.init(&admin);
+
+    client.assign_role(&admin, &user, &Role::Oracle);
+    client.assign_role(&admin, &user, &Role::Moderator);
+    client.assign_role(&admin, &user, &Role::User);
+
+    assert_eq!(client.get_operator_count(), 0);
+}
+
+/// Revoking the Operator role decrements the count.
+#[test]
+fn test_get_operator_count_decrements_on_revoke() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+    client.init(&admin);
+
+    client.assign_role(&admin, &op1, &Role::Operator);
+    client.assign_role(&admin, &op2, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 2);
+
+    client.revoke_role(&admin, &op1, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 1);
+
+    client.revoke_role(&admin, &op2, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 0);
+}
+
+/// revoke_all_roles decrements operator count when the user held the Operator role.
+#[test]
+fn test_get_operator_count_decrements_on_revoke_all() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let op = Address::generate(&env);
+    client.init(&admin);
+
+    client.assign_role(&admin, &op, &Role::Operator);
+    client.assign_role(&admin, &op, &Role::Oracle);
+    assert_eq!(client.get_operator_count(), 1);
+
+    client.revoke_all_roles(&admin, &op);
+    assert_eq!(client.get_operator_count(), 0);
+}
+
+/// Assigning the Operator role to the same address twice does not double-count.
+#[test]
+fn test_get_operator_count_no_double_count_on_reassign() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let op = Address::generate(&env);
+    client.init(&admin);
+
+    client.assign_role(&admin, &op, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 1);
+
+    // Assigning again to the same address should not increment
+    client.assign_role(&admin, &op, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 1);
+}
+
+/// transfer_role moves the Operator role without changing the count.
+#[test]
+fn test_get_operator_count_stable_on_transfer_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let op_from = Address::generate(&env);
+    let op_to = Address::generate(&env);
+    client.init(&admin);
+
+    client.assign_role(&admin, &op_from, &Role::Operator);
+    assert_eq!(client.get_operator_count(), 1);
+
+    client.transfer_role(&admin, &op_from, &op_to, &Role::Operator);
+    // Count should remain 1: one operator removed, one added
+    assert_eq!(client.get_operator_count(), 1);
+    assert!(!client.has_role(&op_from, &Role::Operator));
+    assert!(client.has_role(&op_to, &Role::Operator));
+}

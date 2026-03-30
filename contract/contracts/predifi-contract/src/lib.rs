@@ -180,6 +180,8 @@ pub enum PredifiError {
     MetadataUrlInvalid = 109,
     /// An arithmetic overflow, underflow, or division by zero occurred.
     ArithmeticError = 110,
+    /// required_resolutions exceeds the number of active operators; pool can never be resolved.
+    RequiredResolutionsExceedOperators = 200,
 }
 
 /// Represents the current state of a prediction market.
@@ -1304,6 +1306,26 @@ impl PredifiContract {
             config.required_resolutions >= 1,
             "required_resolutions must be at least 1"
         );
+
+        // Validate: required_resolutions must not exceed the number of active operators.
+        // If required_resolutions > operator_count, the pool can never reach the resolution
+        // threshold and will be permanently stuck in the Active state.
+        // WARNING: This is a hard check — pool creation will fail if there are not enough
+        // operators registered in the access_control contract to satisfy required_resolutions.
+        {
+            let cfg = Self::get_config(&env);
+            let operator_count: u32 = env.invoke_contract(
+                &cfg.access_control,
+                &Symbol::new(&env, "get_operator_count"),
+                soroban_sdk::vec![&env],
+            );
+            if config.required_resolutions > operator_count {
+                soroban_sdk::panic_with_error!(
+                    &env,
+                    PredifiError::RequiredResolutionsExceedOperators
+                );
+            }
+        }
 
         // Note: Token address validation is deferred to when the token is actually used.
         // This is the standard pattern in Soroban - invalid tokens will fail when
