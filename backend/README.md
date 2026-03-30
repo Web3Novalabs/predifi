@@ -53,6 +53,9 @@ The server listens on `http://localhost:3000`.
 Verify it is running:
 
 ```bash
+curl http://localhost:3000/           # 200 — welcome message
+curl http://localhost:3000/health     # 200 — {"status":"ok","service":"predifi-backend","version":"0.1.0"}
+curl http://localhost:3000/missing    # 404 — unknown route
 curl http://localhost:3000/               # 200 - welcome message
 curl http://localhost:3000/health         # 200 - {"status":"ok","version":"v1"}
 curl http://localhost:3000/api/v1         # 200 - version discovery

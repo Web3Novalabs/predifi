@@ -8124,6 +8124,38 @@ fn test_get_fees_returns_treasury_and_referral_fee_bps() {
     assert_eq!(fees.referral_fee_bps, 2000);
 }
 
+#[test]
+fn test_whitelist_events_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, token_address, _, _, _, _, _) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    // Create a private pool
+    let creator = Address::generate(&env);
+    let user = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 7200),
+        &token_address,
+        &2u32,
+        &symbol_short!("Other"),
+        &PoolConfig {
+            description: String::from_str(&env, "Will it rain?"),
+            metadata_url: String::from_str(&env, ""),
+            min_stake: 1_000_000i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
 /// Test that create_pool rejects a min_total_stake of zero.
 ///
 /// Per issue #507: `min_total_stake` must be strictly positive (> 0).
@@ -8198,6 +8230,16 @@ fn test_create_pool_accepts_positive_min_total_stake() {
                 String::from_str(&env, "No"),
             ],
         },
+);
+
+    // Add user to whitelist — event should be emitted
+    client.add_to_whitelist(&creator, &pool_id, &user);
+    assert!(client.is_whitelisted(&pool_id, &user));
+
+    // Remove user from whitelist — event should be emitted
+    client.remove_from_whitelist(&creator, &pool_id, &user);
+    assert!(!client.is_whitelisted(&pool_id, &user));
+}
     );
 
     let pool = client.get_pool(&pool_id);
