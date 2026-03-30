@@ -36,6 +36,16 @@ echo "🚀 Using CLI: $CLI"
 echo "🌐 Network: $NETWORK"
 echo "👤 Source Account: $SOURCE"
 
+# Detect wasm-opt (required for Step 2 optimization pass)
+if ! command -v wasm-opt &> /dev/null; then
+    echo "❌ Error: 'wasm-opt' not found in PATH."
+    echo "Install it via your system package manager:"
+    echo "  Debian/Ubuntu : sudo apt-get install -y binaryen"
+    echo "  macOS (Homebrew): brew install binaryen"
+    echo "  Cargo         : cargo install wasm-opt"
+    exit 1
+fi
+
 # --- Configuration ---
 
 SCRIPTS_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -70,7 +80,7 @@ AC_WASM_FINAL="$WASM_DIR/access_control.optimized.wasm"
 PD_WASM_FINAL="$WASM_DIR/predifi_contract.optimized.wasm"
 
 
-# 4. Get Admin Address
+# 5. Get Admin Address
 ADMIN_ADDRESS=$($CLI keys address "$SOURCE")
 echo "🔑 Admin/Deployer Address: $ADMIN_ADDRESS"
 
@@ -120,8 +130,8 @@ $CLI contract invoke \
     --treasury "$TREASURY_ADDRESS" \
     --fee_bps "$FEE_BPS"
 
-# 7. Store Deployment IDs
-echo "--- 💾 Step 5: Saving Deployment Info ---"
+# 8. Store Deployment IDs
+echo "--- 💾 Step 6: Saving Deployment Info ---"
 cat <<EOF > "$OUTPUT_FILE"
 {
   "network": "$NETWORK",
