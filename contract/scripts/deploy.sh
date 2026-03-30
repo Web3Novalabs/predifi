@@ -63,32 +63,22 @@ echo "--- 📦 Step 1: Building Contracts ---"
 cd "$PROJECT_ROOT"
 cargo build --target wasm32-unknown-unknown --release
 
-# 2. Identify WASM files
-# Rust converts dashes to underscores in filenames
-AC_WASM="$WASM_DIR/access_control.wasm"
-PD_WASM="$WASM_DIR/predifi_contract.wasm"
+# 2. Run explicit wasm-opt -O3 for smaller deployment footprints (Soroban/Rust best practice)
+echo "--- ⚡ Step 2: wasm-opt -O3 Optimization ---"
+wasm-opt -O3 -o "${AC_WASM}.opt.wasm" "$AC_WASM" || { echo "❌ wasm-opt failed for access_control"; exit 1; }
+wasm-opt -O3 -o "${PD_WASM}.opt.wasm" "$PD_WASM" || { echo "❌ wasm-opt failed for predifi_contract"; exit 1; }
 
-if [ ! -f "$AC_WASM" ] || [ ! -f "$PD_WASM" ]; then
-    echo "❌ Error: WASM files not found in $WASM_DIR"
-    ls -l "$WASM_DIR"/*.wasm
-    exit 1
-fi
+AC_WASM_OPT="${AC_WASM}.opt.wasm"
+PD_WASM_OPT="${PD_WASM}.opt.wasm"
 
-# 3. wasm-opt -O3 (first-pass: general perf + size optimizations)
-echo "--- ⚡ Step 2: Running wasm-opt -O3 ---"
-# wasm-opt buffers the full output before writing, so in-place use is safe.
-# This pass runs before stellar contract optimize, which applies a second
-# Soroban-specific pass (-Oz) to produce the final .optimized.wasm binaries.
-wasm-opt -O3 --strip-debug -o "$AC_WASM" "$AC_WASM"
-wasm-opt -O3 --strip-debug -o "$PD_WASM" "$PD_WASM"
+# 3. Additional Stellar CLI optimization (combines well with -O3)
+echo "--- ✨ Step 3: Stellar CLI Optimization ---"
+$CLI contract optimize --wasm "$AC_WASM_OPT"
+$CLI contract optimize --wasm "$PD_WASM_OPT"
 
-# 4. Optimize Contracts (second pass via stellar CLI)
-echo "--- ✨ Step 3: Optimizing Contracts (stellar contract optimize) ---"
-$CLI contract optimize --wasm "$AC_WASM"
-$CLI contract optimize --wasm "$PD_WASM"
+AC_WASM_FINAL="$WASM_DIR/access_control.optimized.wasm"
+PD_WASM_FINAL="$WASM_DIR/predifi_contract.optimized.wasm"
 
-AC_WASM_OPT="$WASM_DIR/access_control.optimized.wasm"
-PD_WASM_OPT="$WASM_DIR/predifi_contract.optimized.wasm"
 
 # 5. Get Admin Address
 ADMIN_ADDRESS=$($CLI keys address "$SOURCE")
@@ -96,12 +86,13 @@ echo "🔑 Admin/Deployer Address: $ADMIN_ADDRESS"
 
 TREASURY_ADDRESS=${TREASURY_ADDRESS:-$ADMIN_ADDRESS}
 
-# 6. Deploy & Initialize AccessControl
+# 5. Deploy & Initialize AccessControl
 echo "--- 🛡️ Step 4: Deploying AccessControl ---"
 AC_ID=$($CLI contract deploy \
-    --wasm "$AC_WASM_OPT" \
+    --wasm "$AC_WASM_FINAL" \
     --source "$SOURCE" \
     --network "$NETWORK")
+
 
 echo "✅ AccessControl ID: $AC_ID"
 
@@ -114,12 +105,13 @@ $CLI contract invoke \
     init \
     --admin "$ADMIN_ADDRESS"
 
-# 7. Deploy & Initialize PredifiContract
+# 6. Deploy & Initialize PredifiContract
 echo "--- ⚖️ Step 5: Deploying PredifiContract ---"
 PD_ID=$($CLI contract deploy \
-    --wasm "$PD_WASM_OPT" \
+    --wasm "$PD_WASM_FINAL" \
     --source "$SOURCE" \
     --network "$NETWORK")
+
 
 echo "✅ PredifiContract ID: $PD_ID"
 
