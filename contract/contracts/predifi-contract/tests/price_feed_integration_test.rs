@@ -71,6 +71,7 @@ fn test_price_based_pool_mock_resolution() {
             min_stake: 100,
             max_stake: 0,
             max_total_stake: 0,
+            min_total_stake: 1,
             initial_liquidity: 0,
             required_resolutions: 1,
             private: false,

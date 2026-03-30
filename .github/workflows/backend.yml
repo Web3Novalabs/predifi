@@ -47,6 +47,9 @@ jobs:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
 
+      - name: Install wasm-opt (binaryen)
+        run: sudo apt-get install -y binaryen
+
       - name: Cache Cargo dependencies
         uses: actions/cache@v4
         with:
@@ -67,6 +70,25 @@ jobs:
       - name: Build contract
         run: cargo build --workspace --target wasm32-unknown-unknown --release
 
+      - name: Run wasm-opt -O3
+        run: |
+          WASM_DIR="target/wasm32-unknown-unknown/release"
+          echo "| Contract | Raw (bytes) | After wasm-opt -O3 (bytes) | Reduction |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for CONTRACT in predifi_contract access_control; do
+            RAW="${WASM_DIR}/${CONTRACT}.wasm"
+            OPT="${WASM_DIR}/${CONTRACT}.wasm-opt.wasm"
+            [[ -f "$RAW" ]] || continue
+            RAW_BYTES=$(wc -c < "$RAW")
+            wasm-opt -O3 --strip-debug -o "$OPT" "$RAW"
+            OPT_BYTES=$(wc -c < "$OPT")
+            REDUCTION=$(( RAW_BYTES - OPT_BYTES ))
+            echo "| ${CONTRACT} | ${RAW_BYTES} | ${OPT_BYTES} | -${REDUCTION} bytes |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Test wasm-opt integration
+        run: bash scripts/tests/test_wasm_opt.sh
+
       - name: Run unit tests
         run: cargo test --workspace
 
@@ -84,12 +106,16 @@ jobs:
             echo "Threshold: ${WASM_SIZE_THRESHOLD_KB} KB" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload WASM artifact
+      - name: Upload WASM artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: predifi-contract-wasm-${{ github.sha }}
-          path: contract/target/wasm32-unknown-unknown/release/predifi_contract.wasm
+          name: predifi-wasm-${{ github.sha }}
+          path: |
+            contract/target/wasm32-unknown-unknown/release/predifi_contract.wasm
+            contract/target/wasm32-unknown-unknown/release/predifi_contract.wasm-opt.wasm
+            contract/target/wasm32-unknown-unknown/release/access_control.wasm
+            contract/target/wasm32-unknown-unknown/release/access_control.wasm-opt.wasm
           if-no-files-found: ignore
           retention-days: 90
 
