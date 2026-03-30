@@ -1,6 +1,7 @@
 //! # predifi-backend
 //!
-//! A minimal Axum HTTP server that demonstrates the [`logging`] middleware.
+//! A minimal Axum HTTP server that demonstrates the request-logging middleware
+//! and a versioned API router layout.
 //!
 //! Run with:
 //! ```bash
@@ -10,20 +11,23 @@
 //! ```bash
 //! curl http://localhost:3000/
 //! curl http://localhost:3000/health
-//! curl http://localhost:3000/missing   # produces a 404
-//! ```
-//! You should see log lines like:
-//! ```text
-//! [REQ] GET / → 200 OK (0ms)
-//! [REQ] GET /health → 200 OK (0ms)
-//! [REQ] GET /missing → 404 Not Found (0ms)
+//! curl http://localhost:3000/api/v1
+//! curl http://localhost:3000/api/v1/health
+//! curl http://localhost:3000/missing
 //! ```
 
+pub mod config;
+pub mod db;
 pub mod request_logger;
+pub mod routes;
 
 use axum::{routing::get, Json, Router};
+use config::Config;
 use request_logger::LoggingLayer;
+use routes::v1;
 use serde_json::json;
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
 /// Health-check handler.
 ///
@@ -40,8 +44,12 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 /// Root handler — returns a welcome message.
+/// Root handler that points callers at the versioned API namespace.
 async fn root() -> Json<serde_json::Value> {
-    Json(json!({ "message": "Welcome to the request-logger demo" }))
+    Json(json!({
+        "message": "Welcome to the PrediFi backend",
+        "api": "/api/v1"
+    }))
 }
 
 /// Build the Axum router with the logging middleware attached.
@@ -51,27 +59,49 @@ async fn root() -> Json<serde_json::Value> {
 pub fn build_router() -> Router {
     Router::new()
         .route("/", get(root))
-        .route("/health", get(health))
-        // `.layer()` wraps every route in this router with the middleware.
-        // Layers are applied from bottom to top, so LoggingLayer is the
-        // outermost wrapper — it sees every request first and every
-        // response last.
+        .route("/health", get(v1::health))
+        .nest("/api", routes::router())
         .layer(LoggingLayer)
 }
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().ok();
+
+    let config = Config::from_env().unwrap_or_else(|error| {
+        eprintln!("failed to load configuration: {error}");
+        std::process::exit(1);
+    });
+
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new(config.log_level.clone()))
+        .with_target(false)
+        .compact()
+        .init();
+
+    let _pool = db::create_pool(&config).unwrap_or_else(|error| {
+        error!(error = %error, "failed to initialize PostgreSQL pool");
+        std::process::exit(1);
+    });
+
     let app = build_router();
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
-        .await
-        .expect("failed to bind to port 3000");
+    let bind_addr = config.bind_address();
 
-    println!("Listening on http://0.0.0.0:3000");
-
-    axum::serve(listener, app)
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
-        .expect("server error");
+        .unwrap_or_else(|error| {
+            error!(address = %bind_addr, error = %error, "failed to bind TCP listener");
+            std::process::exit(1);
+        });
+
+    info!(address = %bind_addr, "backend server listening");
+
+    if let Err(error) = axum::serve(listener, app).await {
+        error!(error = %error, "server error");
+        std::process::exit(1);
+    }
 }
 
+#[cfg(test)]
 mod tests;

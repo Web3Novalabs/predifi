@@ -87,9 +87,7 @@ impl SafeMath {
         }
 
         // Calculate: (amount * bps) / MAX_BPS
-        let numerator = amount
-            .checked_mul(bps)
-            .ok_or(PrediFiError::ArithmeticError)?;
+        let numerator = amount.checked_mul(bps).ok_or(PrediFiError::InvalidAmount)?;
 
         Self::divide_with_rounding(numerator, MAX_BPS, rounding)
     }
@@ -133,7 +131,7 @@ impl SafeMath {
         // Calculate: (numerator * amount) / denominator
         let product = numerator
             .checked_mul(amount)
-            .ok_or(PrediFiError::ArithmeticError)?;
+            .ok_or(PrediFiError::InvalidAmount)?;
 
         Self::divide_with_rounding(product, denominator, rounding)
     }
@@ -158,10 +156,10 @@ impl SafeMath {
 
         let quotient = numerator
             .checked_div(denominator)
-            .ok_or(PrediFiError::ArithmeticError)?;
+            .ok_or(PrediFiError::InvalidAmount)?;
         let remainder = numerator
             .checked_rem(denominator)
-            .ok_or(PrediFiError::ArithmeticError)?;
+            .ok_or(PrediFiError::InvalidAmount)?;
 
         match rounding {
             RoundingMode::ProtocolFavor => {
@@ -172,9 +170,9 @@ impl SafeMath {
                 // Round to nearest (half up)
                 let half = denominator
                     .checked_div(2)
-                    .ok_or(PrediFiError::ArithmeticError)?;
+                    .ok_or(PrediFiError::InvalidAmount)?;
                 if remainder >= half {
-                    quotient.checked_add(1).ok_or(PrediFiError::ArithmeticError)
+                    quotient.checked_add(1).ok_or(PrediFiError::InvalidAmount)
                 } else {
                     Ok(quotient)
                 }
@@ -182,7 +180,7 @@ impl SafeMath {
             RoundingMode::UserFavor => {
                 // Round up (ceiling) if there's any remainder
                 if remainder > 0 {
-                    quotient.checked_add(1).ok_or(PrediFiError::ArithmeticError)
+                    quotient.checked_add(1).ok_or(PrediFiError::InvalidAmount)
                 } else {
                     Ok(quotient)
                 }
@@ -244,8 +242,11 @@ impl SafeMath {
             }
         }
 
-        // Verify we didn't over-distribute
-        let total_distributed: i128 = results.iter().sum();
+        // Verify we didn't over-distribute (also protecting against sum overflow)
+        let total_distributed = results.iter().try_fold(0i128, |acc, &value| {
+            acc.checked_add(value).ok_or(PrediFiError::InvalidAmount)
+        })?;
+
         if total_distributed > pool_balance {
             return Err(PrediFiError::RewardError);
         }
@@ -283,7 +284,7 @@ impl SafeMath {
         }
         let product = user_stake
             .checked_mul(payout_pool)
-            .ok_or(PrediFiError::ArithmeticError)?;
+            .ok_or(PrediFiError::InvalidAmount)?;
         product
             .checked_div(winning_stake)
             .ok_or(PrediFiError::ArithmeticError)
@@ -301,7 +302,7 @@ impl SafeMath {
 
     /// Safely multiply two amounts with overflow check
     pub fn safe_mul(a: i128, b: i128) -> Result<i128, PrediFiError> {
-        a.checked_mul(b).ok_or(PrediFiError::ArithmeticError)
+        a.checked_mul(b).ok_or(PrediFiError::InvalidAmount)
     }
 }
 
@@ -383,6 +384,17 @@ mod tests {
         assert_eq!(
             SafeMath::percentage(1000, -100, RoundingMode::Neutral),
             Err(PrediFiError::InvalidFeeBps)
+        );
+    }
+
+    #[test]
+    fn test_percentage_overflow_invalid_amount() {
+        // This amount is chosen so amount * bps would overflow i128
+        let amount = (i128::MAX / MAX_BPS) + 1;
+
+        assert_eq!(
+            SafeMath::percentage(amount, MAX_BPS, RoundingMode::Neutral),
+            Err(PrediFiError::InvalidAmount)
         );
     }
 
@@ -593,7 +605,7 @@ mod tests {
         assert_eq!(SafeMath::safe_mul(10, 20).unwrap(), 200);
         assert_eq!(
             SafeMath::safe_mul(i128::MAX, 2),
-            Err(PrediFiError::ArithmeticError)
+            Err(PrediFiError::InvalidAmount)
         );
     }
 
