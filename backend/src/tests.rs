@@ -280,4 +280,56 @@ async fn middleware_handles_multiple_requests_sequentially() {
             "body should contain the service name, got: {body}"
         );
     }
+
+    /// CORS headers must be present when a request comes from an allowed origin.
+    #[tokio::test]
+    async fn cors_allows_allowed_origin() {
+        use axum::http::{header, Method};
+
+        let response = build_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::GET)
+                    .uri("/health")
+                    .header(header::ORIGIN, "http://localhost:5173")
+                    .body(axum::body::Body::empty())
+                    .expect("failed to build request"),
+            )
+            .await
+            .expect("request failed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let allow_origin = response
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok());
+
+        assert_eq!(
+            allow_origin,
+            Some("http://localhost:5173"),
+            "CORS header should reflect the allowed origin"
+        );
+    }
+
+    /// Preflight OPTIONS request must return 200 for allowed origins.
+    #[tokio::test]
+    async fn cors_handles_preflight_request() {
+        use axum::http::{header, Method};
+
+        let response = build_router()
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/health")
+                    .header(header::ORIGIN, "http://localhost:5173")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .body(axum::body::Body::empty())
+                    .expect("failed to build request"),
+            )
+            .await
+            .expect("request failed");
+
+        assert_eq!(response.status(), StatusCode::OK);
+    }
 }

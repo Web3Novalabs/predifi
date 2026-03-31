@@ -1,5 +1,6 @@
 //! # predifi-backend
 //!
+//! A minimal Axum HTTP server with CORS and request-logging middleware.
 //! A minimal Axum HTTP server that demonstrates the request-logging middleware
 //! and a versioned API router layout.
 //!
@@ -22,10 +23,64 @@ pub mod request_logger;
 pub mod routes;
 
 use axum::{routing::get, Json, Router};
+use http::HeaderValue;
 use config::Config;
 use request_logger::LoggingLayer;
 use routes::v1;
 use serde_json::json;
+use tower_http::cors::{AllowOrigin, CorsLayer};
+
+/// Allowed frontend origins for CORS.
+///
+/// Add any additional frontend URLs here.
+/// In production, replace with your actual deployed frontend URL.
+const ALLOWED_ORIGINS: &[&str] = &[
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://predifi.app",
+];
+
+/// Build the CORS middleware layer.
+///
+/// Only requests from the origins listed in `ALLOWED_ORIGINS` are permitted.
+/// All other origins will be rejected by the browser.
+pub fn build_cors() -> CorsLayer {
+    let origins: Vec<HeaderValue> = ALLOWED_ORIGINS
+        .iter()
+        .filter_map(|origin| origin.parse().ok())
+        .collect();
+
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            http::Method::GET,
+            http::Method::POST,
+            http::Method::PUT,
+            http::Method::DELETE,
+            http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            http::header::CONTENT_TYPE,
+            http::header::AUTHORIZATION,
+            http::header::ACCEPT,
+        ])
+}
+
+/// Health-check handler.
+///
+/// Returns HTTP 200 with basic system info:
+/// - `status`: always `"ok"` when the server is running
+/// - `service`: name of the service
+/// - `version`: current package version from Cargo.toml
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({
+        "status": "ok",
+        "service": "predifi-backend",
+        "version": env!("CARGO_PKG_VERSION")
+    }))
+}
+
+/// Root handler — returns a welcome message.
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -52,13 +107,15 @@ async fn root() -> Json<serde_json::Value> {
     }))
 }
 
-/// Build the Axum router with the logging middleware attached.
+/// Build the Axum router with CORS and logging middleware attached.
 ///
 /// Keeping router construction in its own function makes it easy to reuse
 /// in tests without binding to a real TCP port.
 pub fn build_router() -> Router {
     Router::new()
         .route("/", get(root))
+        .route("/health", get(health))
+        .layer(build_cors())
         .route("/health", get(v1::health))
         .nest("/api", routes::router())
         .layer(LoggingLayer)
