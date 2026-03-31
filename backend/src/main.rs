@@ -84,6 +84,21 @@ async fn health() -> Json<serde_json::Value> {
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+/// Health-check handler.
+///
+/// Returns HTTP 200 with basic system info:
+/// - `status`: always `"ok"` when the server is running
+/// - `service`: name of the service
+/// - `version`: current package version from Cargo.toml
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({
+        "status": "ok",
+        "service": "predifi-backend",
+        "version": env!("CARGO_PKG_VERSION")
+    }))
+}
+
+/// Root handler — returns a welcome message.
 /// Root handler that points callers at the versioned API namespace.
 async fn root() -> Json<serde_json::Value> {
     Json(json!({

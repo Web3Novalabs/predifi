@@ -180,6 +180,8 @@ pub enum PredifiError {
     MetadataUrlInvalid = 109,
     /// An arithmetic overflow, underflow, or division by zero occurred.
     ArithmeticError = 110,
+    /// required_resolutions exceeds the number of active operators; pool can never be resolved.
+    RequiredResolutionsExceedOperators = 200,
 }
 
 /// Represents the current state of a prediction market.
@@ -1659,6 +1661,26 @@ impl PredifiContract {
             "required_resolutions must be at least 1"
         );
 
+        // Validate: required_resolutions must not exceed the number of active operators.
+        // If required_resolutions > operator_count, the pool can never reach the resolution
+        // threshold and will be permanently stuck in the Active state.
+        // WARNING: This is a hard check — pool creation will fail if there are not enough
+        // operators registered in the access_control contract to satisfy required_resolutions.
+        {
+            let cfg = Self::get_config(&env);
+            let operator_count: u32 = env.invoke_contract(
+                &cfg.access_control,
+                &Symbol::new(&env, "get_operator_count"),
+                soroban_sdk::vec![&env],
+            );
+            if config.required_resolutions > operator_count {
+                soroban_sdk::panic_with_error!(
+                    &env,
+                    PredifiError::RequiredResolutionsExceedOperators
+                );
+            }
+        }
+
         // Note: Token address validation is deferred to when the token is actually used.
         // This is the standard pattern in Soroban - invalid tokens will fail when
         // transfers are attempted during place_prediction.
@@ -2738,6 +2760,34 @@ impl PredifiContract {
             .expect("Pool not found");
         Self::extend_persistent(&env, &pool_key);
         pool
+    }
+
+    /// Returns the configuration fields of a pool as a `PoolConfig` struct.
+    ///
+    /// This is a lightweight alternative to `get_pool` when only the
+    /// configuration parameters are needed (description, stake limits, etc.)
+    /// without fetching the full runtime state (total_stake, outcome, etc.).
+    ///
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    pub fn get_pool_config(env: Env, pool_id: u64) -> PoolConfig {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+        PoolConfig {
+            description: pool.description,
+            metadata_url: pool.metadata_url,
+            min_stake: pool.min_stake,
+            max_stake: pool.max_stake,
+            initial_liquidity: pool.initial_liquidity,
+            required_resolutions: pool.required_resolutions,
+            private: pool.private,
+            whitelist_key: pool.whitelist_key,
+        }
     }
 
     pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {

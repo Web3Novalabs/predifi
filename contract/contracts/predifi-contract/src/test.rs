@@ -22,13 +22,45 @@ pub(crate) mod dummy_access_control {
     #[contractimpl]
     impl DummyAccessControl {
         pub fn grant_role(env: Env, user: Address, role: u32) {
+            let already_has_key = (Symbol::new(&env, "role"), user.clone(), role);
+            let already_has: bool = env
+                .storage()
+                .instance()
+                .get(&already_has_key)
+                .unwrap_or(false);
+
+            env.storage().instance().set(&already_has_key, &true);
+
+            // Track operator count
+            if role == 1 && !already_has {
+                let count_key = Symbol::new(&env, "op_count");
+                let count: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+                env.storage().instance().set(&count_key, &(count + 1));
+            }
+        }
+
+        pub fn revoke_role(env: Env, user: Address, role: u32) {
             let key = (Symbol::new(&env, "role"), user, role);
-            env.storage().instance().set(&key, &true);
+            let had_role: bool = env.storage().instance().get(&key).unwrap_or(false);
+            env.storage().instance().set(&key, &false);
+
+            if role == 1 && had_role {
+                let count_key = Symbol::new(&env, "op_count");
+                let count: u32 = env.storage().instance().get(&count_key).unwrap_or(0);
+                if count > 0 {
+                    env.storage().instance().set(&count_key, &(count - 1));
+                }
+            }
         }
 
         pub fn has_role(env: Env, user: Address, role: u32) -> bool {
             let key = (Symbol::new(&env, "role"), user, role);
             env.storage().instance().get(&key).unwrap_or(false)
+        }
+
+        pub fn get_operator_count(env: Env) -> u32 {
+            let count_key = Symbol::new(&env, "op_count");
+            env.storage().instance().get(&count_key).unwrap_or(0)
         }
     }
 }
@@ -6316,6 +6348,137 @@ fn test_bump_ttl_after_claim_winnings() {
     });
 }
 
+// ── get_pool_config tests ─────────────────────────────────────────────────────
+
+#[test]
+fn test_get_pool_config_matches_creation_params() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let description = String::from_str(&env, "Will BTC hit 100k?");
+    let metadata_url = String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
+    let min_stake = 10i128;
+    let max_stake = 500i128;
+    let initial_liquidity = 0i128;
+    let required_resolutions = 2u32;
+
+    let config = PoolConfig {
+        description: description.clone(),
+        metadata_url: metadata_url.clone(),
+        min_stake,
+        max_stake,
+        initial_liquidity,
+        required_resolutions,
+        private: false,
+        whitelist_key: None,
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &config,
+    );
+
+    let returned = client.get_pool_config(&pool_id);
+
+    assert_eq!(returned.description, description);
+    assert_eq!(returned.metadata_url, metadata_url);
+    assert_eq!(returned.min_stake, min_stake);
+    assert_eq!(returned.max_stake, max_stake);
+    assert_eq!(returned.initial_liquidity, initial_liquidity);
+    assert_eq!(returned.required_resolutions, required_resolutions);
+    assert!(!returned.private);
+    assert_eq!(returned.whitelist_key, None);
+}
+
+#[test]
+fn test_get_pool_config_private_pool_with_whitelist_key() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let whitelist_key = symbol_short!("secret");
+    let config = PoolConfig {
+        description: String::from_str(&env, "Private pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: true,
+        whitelist_key: Some(whitelist_key.clone()),
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &config,
+    );
+
+    let returned = client.get_pool_config(&pool_id);
+
+    assert!(returned.private);
+    assert_eq!(returned.whitelist_key, Some(whitelist_key));
+}
+
+#[test]
+fn test_get_pool_config_with_initial_liquidity() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    token_admin_client.mint(&creator, &1000);
+
+    let initial_liquidity = 200i128;
+    let config = PoolConfig {
+        description: String::from_str(&env, "Liquidity pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 5i128,
+        max_stake: 100i128,
+        initial_liquidity,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &config,
+    );
+
+    let returned = client.get_pool_config(&pool_id);
+
+    assert_eq!(returned.initial_liquidity, initial_liquidity);
+    assert_eq!(returned.min_stake, 5i128);
+    assert_eq!(returned.max_stake, 100i128);
+}
+
+#[test]
+fn test_get_pool_config_multiple_pools_independent() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_a = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
 // Version tracking tests
 // ============================================================================
 
@@ -6737,6 +6900,7 @@ fn test_get_active_pools_excludes_canceled_pool() {
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
+            max_stake: 50i128,
             max_stake: 0i128,
             max_total_stake: 0,
             min_total_stake: 1,

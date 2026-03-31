@@ -158,6 +158,10 @@ pub enum PrediFiError {
     // -- Rate Limiting & Spam Prevention (190) ---------------------------------
     /// Rate limit exceeded, cooldown not elapsed, or suspicious activity.
     RateLimitOrSuspiciousActivity = 190,
+
+    // -- Pool Configuration (200) ----------------------------------------------
+    /// required_resolutions exceeds the number of active operators; pool can never be resolved.
+    RequiredResolutionsExceedOperators = 200,
 }
 
 impl PrediFiError {
@@ -198,6 +202,7 @@ impl PrediFiError {
             Self::OracleError | Self::ResolutionError => "oracle",
             Self::AdminError => "admin",
             Self::RateLimitOrSuspiciousActivity => "rate_limiting",
+            Self::RequiredResolutionsExceedOperators => "pool_configuration",
         }
     }
 
@@ -267,8 +272,6 @@ impl PrediFiError {
             _ => true,
         }
     }
-
-    /// Returns a human-readable description of the error.
     pub fn as_str(&self) -> &'static str {
         match self {
             // Initialization & Configuration
