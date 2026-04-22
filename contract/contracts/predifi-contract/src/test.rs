@@ -6499,6 +6499,16 @@ fn test_version_returns_zero_before_init() {
     assert_eq!(client.get_version(), 0u32);
 }
 
+#[test]
+fn test_version_string_returns_semantic_version() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, _creator) =
+        setup(&env);
+    let version_string = client.get_version_string();
+    assert_eq!(version_string, Symbol::new(&env, "0.0.0"));
+}
+
 // ============================================================================
 // max_total_stake validation tests
 // ============================================================================

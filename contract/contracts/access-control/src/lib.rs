@@ -224,9 +224,7 @@ impl AccessControl {
         let role_key = DataKey::Role(user.clone(), role.clone());
         let is_new = !env.storage().persistent().has(&role_key);
 
-        env.storage()
-            .persistent()
-            .set(&role_key, &());
+        env.storage().persistent().set(&role_key, &());
 
         if matches!(role, Role::Operator) && is_new {
             let count: u32 = env
@@ -339,7 +337,11 @@ impl AccessControl {
                 .unwrap_or(0);
             // `from` lost the role; `to` gains it only if they didn't already have it
             // Net change: -1 (from) + (1 if to_is_new else 0)
-            let new_count = if to_is_new { count } else { count.saturating_sub(1) };
+            let new_count = if to_is_new {
+                count
+            } else {
+                count.saturating_sub(1)
+            };
             env.storage()
                 .instance()
                 .set(&DataKey::OperatorCount, &new_count);

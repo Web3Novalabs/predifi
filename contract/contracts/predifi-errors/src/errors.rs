@@ -252,6 +252,9 @@ impl PrediFiError {
             Self::ResolutionError => "ORACLE_RESOLUTION_ERROR",
             Self::AdminError => "ADMIN_ERROR",
             Self::RateLimitOrSuspiciousActivity => "RATE_LIMIT_OR_SUSPICIOUS_ACTIVITY",
+            Self::RequiredResolutionsExceedOperators => {
+                "POOL_REQUIRED_RESOLUTIONS_EXCEED_OPERATORS"
+            }
         }
     }
 
@@ -347,6 +350,9 @@ impl PrediFiError {
 
             // Rate Limiting & Spam Prevention
             Self::RateLimitOrSuspiciousActivity => "Rate limit exceeded, cooldown active, or suspicious activity detected",
+
+            // Pool Configuration
+            Self::RequiredResolutionsExceedOperators => "Required resolutions exceeds the number of active operators; pool can never be resolved",
         }
     }
 }
