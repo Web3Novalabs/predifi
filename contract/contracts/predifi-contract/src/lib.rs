@@ -19,8 +19,8 @@ mod test_utils;
 // mod storage_test;
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, log, symbol_short, token, Address, BytesN,
-    Env, IntoVal, String, Symbol, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, log, symbol_short, token,
+    Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
 pub use price_feed_simple::PriceFeedAdapter;
@@ -1333,6 +1333,23 @@ impl PredifiContract {
             .instance()
             .get(&DataKey::Version)
             .unwrap_or(0u32)
+    }
+
+    /// Return the contract version as a semantic version string.
+    ///
+    /// This getter provides the human-readable version number in the format "X.Y.Z"
+    /// (e.g., "0.0.0"). The version string matches the version specified in Cargo.toml.
+    ///
+    /// # Returns
+    /// A `Symbol` containing the current contract version string.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let version = contract.get_version_string(&env);
+    /// assert_eq!(version, Symbol::new(&env, "0.0.0"));
+    /// ```
+    pub fn get_version_string(env: Env) -> Symbol {
+        Symbol::new(&env, "0.0.0")
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
