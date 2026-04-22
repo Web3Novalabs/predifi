@@ -214,7 +214,7 @@ fn test_increase_max_total_stake_auth_only_happens_at_entry_point() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -259,7 +259,7 @@ fn test_resolve_pool_auth_only_happens_at_entry_point() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -308,7 +308,7 @@ fn test_oracle_resolve_auth_only_happens_at_entry_point() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -362,7 +362,7 @@ fn test_claim_winnings() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -438,7 +438,7 @@ fn test_claim_winnings_zero_share() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -518,7 +518,7 @@ fn test_referral_fee_distribution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -578,7 +578,7 @@ fn test_double_claim() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -627,7 +627,7 @@ fn test_claim_unresolved() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -672,7 +672,7 @@ fn test_multiple_pools_independent() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -700,7 +700,7 @@ fn test_multiple_pools_independent() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -748,7 +748,7 @@ fn test_invalid_category_fallback() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -812,7 +812,7 @@ fn test_unauthorized_resolve_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -866,7 +866,7 @@ fn test_oracle_can_resolve() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -929,7 +929,7 @@ fn test_unauthorized_oracle_resolve() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -989,7 +989,7 @@ fn test_oracle_resolve_long_proof() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1070,7 +1070,7 @@ fn test_oracle_resolve_utf8_emoji_proof() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1376,7 +1376,7 @@ fn test_paused_blocks_create_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1496,7 +1496,7 @@ fn test_unpause_restores_functionality() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1539,7 +1539,7 @@ fn test_get_user_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1567,7 +1567,7 @@ fn test_get_user_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1595,7 +1595,7 @@ fn test_get_user_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1631,7 +1631,23 @@ fn test_multi_oracle_resolution() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, _, _, _treasury, _, creator) = setup(&env);
+    // Custom setup without operators for oracle-only resolution testing
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token_address);
 
     let oracle1 = Address::generate(&env);
     let oracle2 = Address::generate(&env);
@@ -1655,10 +1671,10 @@ fn test_multi_oracle_resolution() {
             max_total_stake: 0,
             min_total_stake: 1,
             initial_liquidity: 0i128,
-            required_resolutions: 2u32,
+            required_resolutions: 2u32, // Changed from 1 to 2 to test multi-oracle voting
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1733,7 +1749,7 @@ fn test_admin_can_cancel_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1788,7 +1804,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1829,7 +1845,7 @@ fn test_non_admin_non_creator_cannot_cancel() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -1881,7 +1897,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2059,7 +2075,7 @@ fn test_is_whitelisted_tracks_explicit_private_pool_membership() {
             required_resolutions: 1u32,
             private: true,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2103,7 +2119,7 @@ fn test_is_whitelisted_returns_false_for_public_pool_without_entry() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2143,7 +2159,7 @@ fn test_add_to_whitelist_is_idempotent_for_already_whitelisted_user() {
             required_resolutions: 1u32,
             private: true,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2232,7 +2248,7 @@ fn test_place_prediction_fails_for_non_whitelisted_token() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2286,7 +2302,7 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2348,7 +2364,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2413,7 +2429,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2473,7 +2489,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2538,7 +2554,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2602,7 +2618,7 @@ fn test_cancel_pool_refunds_predictions() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2649,7 +2665,7 @@ fn test_cannot_cancel_resolved_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2706,7 +2722,7 @@ fn test_cannot_resolve_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2748,7 +2764,7 @@ fn test_cannot_predict_on_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2802,7 +2818,7 @@ fn test_resolve_pool_before_delay() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2860,7 +2876,7 @@ fn test_resolve_pool_logs_reason_when_resolution_delay_not_met() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2923,7 +2939,7 @@ fn test_resolve_pool_after_delay() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -2974,7 +2990,7 @@ fn test_mark_pool_ready() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3025,7 +3041,7 @@ fn test_stake_below_minimum_rejected() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3067,7 +3083,7 @@ fn test_stake_above_maximum_rejected() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3110,7 +3126,7 @@ fn test_stake_at_boundaries_accepted() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3152,7 +3168,7 @@ fn test_set_stake_limits_by_operator() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3193,7 +3209,7 @@ fn test_set_stake_limits_unauthorized() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3231,7 +3247,7 @@ fn test_set_stake_limits_zero_min_stake_returns_error() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3268,7 +3284,7 @@ fn test_set_stake_limits_max_below_min_returns_error() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3307,7 +3323,7 @@ fn test_get_pools_by_category() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3331,7 +3347,7 @@ fn test_get_pools_by_category() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3355,7 +3371,7 @@ fn test_get_pools_by_category() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3495,7 +3511,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3520,7 +3536,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3654,7 +3670,7 @@ fn test_get_pool_stats() {
             min_total_stake: 1,
             initial_liquidity: 0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
+            outcome_descriptions: soroban_sdk::vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3737,7 +3753,7 @@ fn test_pool_end_time_on_leap_day() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3782,7 +3798,7 @@ fn test_pool_end_time_at_leap_day_already_past() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3822,7 +3838,7 @@ fn test_pool_end_time_spans_leap_day_resolution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -3881,7 +3897,7 @@ fn test_maximum_single_stake_roundtrip() {
             initial_liquidity: // max_stake == max_amount is valid
         0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
+            outcome_descriptions: soroban_sdk::vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3929,7 +3945,7 @@ fn test_large_stake_winnings_split_correctly() {
             initial_liquidity: // no max_stake limit
         0i128,
             required_resolutions: 1u32, private: false, whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
+            outcome_descriptions: soroban_sdk::vec![&env, String::from_str(&env, "Outcome 0"), String::from_str(&env, "Outcome 1")],
         },
     );
 
@@ -3995,7 +4011,7 @@ fn test_double_resolution_attempt() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4036,7 +4052,7 @@ fn test_many_users_rapid_claim_after_resolution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4111,7 +4127,7 @@ fn test_resolution_then_new_pool_state_isolation() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4144,7 +4160,7 @@ fn test_resolution_then_new_pool_state_isolation() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4192,7 +4208,7 @@ fn test_create_pool_rejects_zero_min_stake() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4227,7 +4243,7 @@ fn test_create_pool_rejects_single_option() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "Outcome 0")],
+            outcome_descriptions: soroban_sdk::vec![&env, String::from_str(&env, "Outcome 0")],
         },
     );
 }
@@ -4258,7 +4274,7 @@ fn test_create_pool_rejects_excess_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4392,7 +4408,7 @@ fn test_create_pool_accepts_maximum_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4531,7 +4547,7 @@ fn test_place_prediction_rejects_out_of_bounds_outcome() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4573,7 +4589,7 @@ fn test_place_prediction_rejects_outcome_equal_to_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4617,7 +4633,7 @@ fn test_place_prediction_all_valid_outcomes() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4676,7 +4692,7 @@ fn test_stakes_length_consistency_with_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4749,7 +4765,7 @@ fn test_outcome_bounds_with_maximum_options_count() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4898,7 +4914,7 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4935,7 +4951,7 @@ fn test_create_pool_rejects_zero_duration() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -4971,7 +4987,7 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5009,7 +5025,7 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5043,7 +5059,7 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5083,7 +5099,7 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5126,7 +5142,7 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5192,7 +5208,7 @@ fn test_unauthorized_admin_op_does_not_mutate_state() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5228,7 +5244,7 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5277,7 +5293,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5302,7 +5318,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5327,7 +5343,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5352,7 +5368,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5377,7 +5393,7 @@ fn test_state_consistency_across_many_pools() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5475,7 +5491,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5500,7 +5516,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5565,7 +5581,7 @@ fn test_all_bettors_on_winning_side() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5622,7 +5638,7 @@ fn test_no_bettor_on_winning_side() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5824,7 +5840,7 @@ fn test_is_pool_active_returns_true_for_active_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5860,7 +5876,7 @@ fn create_test_pool(
     token_address: &Address,
     end_time: u64,
 ) -> u64 {
-    let pool_id = client.create_pool(
+    client.create_pool(
         creator,
         &end_time,
         token_address,
@@ -5880,15 +5896,13 @@ fn create_test_pool(
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(env, "Outcome 0"),
                 String::from_str(env, "Outcome 1"),
             ],
         },
-    );
-
-    pool_id
+    )
 }
 
 /// is_pool_active returns false (via behavior) after pool is resolved —
@@ -5918,7 +5932,7 @@ fn test_is_pool_active_false_after_resolve() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -5961,7 +5975,7 @@ fn test_is_pool_active_false_after_cancel() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -6006,7 +6020,7 @@ fn test_is_pool_active_blocks_resolve_on_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -6048,7 +6062,7 @@ fn test_is_pool_active_blocks_double_cancel() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -6088,7 +6102,7 @@ fn test_is_pool_active_blocks_increase_max_stake_on_resolved_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -6130,7 +6144,7 @@ fn test_is_pool_active_full_lifecycle() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -6358,21 +6372,31 @@ fn test_get_pool_config_matches_creation_params() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
     let description = String::from_str(&env, "Will BTC hit 100k?");
-    let metadata_url = String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
+    let metadata_url = String::from_str(
+        &env,
+        "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+    );
     let min_stake = 10i128;
     let max_stake = 500i128;
     let initial_liquidity = 0i128;
-    let required_resolutions = 2u32;
+    let required_resolutions = 1u32;
 
     let config = PoolConfig {
         description: description.clone(),
         metadata_url: metadata_url.clone(),
         min_stake,
         max_stake,
+        min_total_stake: 10i128,
+        max_total_stake: 0i128,
         initial_liquidity,
         required_resolutions,
         private: false,
         whitelist_key: None,
+        outcome_descriptions: soroban_sdk::vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ],
     };
 
     let pool_id = client.create_pool(
@@ -6409,10 +6433,17 @@ fn test_get_pool_config_private_pool_with_whitelist_key() {
         metadata_url: String::from_str(&env, "ipfs://test"),
         min_stake: 1i128,
         max_stake: 0i128,
+        min_total_stake: 1i128,
+        max_total_stake: 0i128,
         initial_liquidity: 0i128,
         required_resolutions: 1u32,
         private: true,
         whitelist_key: Some(whitelist_key.clone()),
+        outcome_descriptions: soroban_sdk::vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ],
     };
 
     let pool_id = client.create_pool(
@@ -6444,10 +6475,17 @@ fn test_get_pool_config_with_initial_liquidity() {
         metadata_url: String::from_str(&env, "ipfs://test"),
         min_stake: 5i128,
         max_stake: 100i128,
+        min_total_stake: 5i128,
+        max_total_stake: 0i128,
         initial_liquidity,
         required_resolutions: 1u32,
         private: false,
         whitelist_key: None,
+        outcome_descriptions: soroban_sdk::vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ],
     };
 
     let pool_id = client.create_pool(
@@ -6471,7 +6509,10 @@ fn test_get_pool_config_multiple_pools_independent() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    // Mint tokens for initial liquidity
+    token_admin_client.mint(&creator, &1000i128);
 
     let pool_a = client.create_pool(
         &creator,
@@ -6479,6 +6520,70 @@ fn test_get_pool_config_multiple_pools_independent() {
         &token_address,
         &2u32,
         &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool A"),
+            metadata_url: String::from_str(&env, ""),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            min_total_stake: 1i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let pool_b = client.create_pool(
+        &creator,
+        &200000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            description: String::from_str(&env, "Pool B"),
+            metadata_url: String::from_str(&env, ""),
+            min_stake: 10i128,
+            max_stake: 100i128,
+            min_total_stake: 10i128,
+            max_total_stake: 1000i128,
+            initial_liquidity: 50i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: Some(Symbol::new(&env, "secret")),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Option 1"),
+                String::from_str(&env, "Option 2"),
+                String::from_str(&env, "Option 3"),
+            ],
+        },
+    );
+
+    let config_a = client.get_pool_config(&pool_a);
+    let config_b = client.get_pool_config(&pool_b);
+
+    // Verify pool A config
+    assert_eq!(config_a.min_stake, 1i128);
+    assert_eq!(config_a.max_stake, 0i128);
+    assert_eq!(config_a.initial_liquidity, 0i128);
+    assert_eq!(config_a.required_resolutions, 1u32);
+    assert!(!config_a.private);
+
+    // Verify pool B config
+    assert_eq!(config_b.min_stake, 10i128);
+    assert_eq!(config_b.max_stake, 100i128);
+    assert_eq!(config_b.initial_liquidity, 50i128);
+    assert_eq!(config_b.required_resolutions, 1u32);
+    assert!(config_b.private);
+}
+
+// ============================================================================
 // Version tracking tests
 // ============================================================================
 
@@ -6506,7 +6611,7 @@ fn test_version_string_returns_semantic_version() {
     let (_ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, _creator) =
         setup(&env);
     let version_string = client.get_version_string();
-    assert_eq!(version_string, Symbol::new(&env, "0.0.0"));
+    assert_eq!(version_string, Symbol::new(&env, "0_0_0"));
 }
 
 // ============================================================================
@@ -6537,7 +6642,7 @@ fn test_create_pool_with_max_total_stake() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -6573,7 +6678,7 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -6626,7 +6731,7 @@ fn test_get_active_pools_contains_new_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -6815,7 +6920,7 @@ fn test_outcome_descriptions_length_mismatch_panics() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -6849,7 +6954,7 @@ fn test_get_active_pools_excludes_resolved_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -6874,7 +6979,7 @@ fn test_get_active_pools_excludes_resolved_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -6910,7 +7015,6 @@ fn test_get_active_pools_excludes_canceled_pool() {
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
-            max_stake: 50i128,
             max_stake: 0i128,
             max_total_stake: 0,
             min_total_stake: 1,
@@ -6918,7 +7022,7 @@ fn test_get_active_pools_excludes_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -6943,7 +7047,7 @@ fn test_get_active_pools_excludes_canceled_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7011,7 +7115,7 @@ fn test_create_pool_respects_configurable_min_duration() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7047,7 +7151,7 @@ fn test_get_active_pools_pagination() {
                 required_resolutions: 1u32,
                 private: false,
                 whitelist_key: None,
-                outcome_descriptions: vec![
+                outcome_descriptions: soroban_sdk::vec![
                     &env,
                     String::from_str(&env, "Yes"),
                     String::from_str(&env, "No"),
@@ -7084,8 +7188,8 @@ fn test_get_active_pools_pagination() {
     assert_eq!(zero_limit.len(), 0);
 }
 
-/// Swap-and-pop correctness: removing the first pool when three exist.
-/// The third pool must fill the vacated slot; the second is untouched.
+// Swap-and-pop correctness: removing the first pool when three exist.
+// The third pool must fill the vacated slot; the second is untouched.
 // #[test]
 // fn test_get_active_pools_swap_pop_removes_first() {
 //     let env = Env::default();
@@ -7165,7 +7269,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
             whitelist_key: None,
             max_total_stake: 0,
             min_total_stake: 1,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7189,7 +7293,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
             whitelist_key: None,
             max_total_stake: 0,
             min_total_stake: 1,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7213,7 +7317,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
             whitelist_key: None,
             max_total_stake: 0,
             min_total_stake: 1,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7256,7 +7360,7 @@ fn test_get_active_pools_empty_after_all_resolved() {
             whitelist_key: None,
             max_total_stake: 0,
             min_total_stake: 1,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7280,7 +7384,7 @@ fn test_get_active_pools_empty_after_all_resolved() {
             whitelist_key: None,
             max_total_stake: 0,
             min_total_stake: 1,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7324,7 +7428,7 @@ fn test_get_active_pools_excludes_oracle_resolved_pool() {
             whitelist_key: None,
             max_total_stake: 0,
             min_total_stake: 1,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7348,7 +7452,7 @@ fn test_get_active_pools_excludes_oracle_resolved_pool() {
             whitelist_key: None,
             max_total_stake: 0,
             min_total_stake: 1,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7391,7 +7495,7 @@ fn test_pool_created_event_contains_creator() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
@@ -7553,7 +7657,7 @@ fn test_creator_can_cancel_empty_pool() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7597,7 +7701,7 @@ fn test_cancel_pool_zero_participants_state_is_canceled() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7636,7 +7740,7 @@ fn test_cancel_pool_zero_participants_no_contract_balance_change() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7675,7 +7779,7 @@ fn test_claim_refund_on_zero_participant_canceled_pool_returns_error() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7717,7 +7821,7 @@ fn test_claim_winnings_on_zero_participant_canceled_pool_returns_zero() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7764,7 +7868,7 @@ fn test_create_pool_rejects_metadata_url_exceeding_512_bytes() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7799,7 +7903,7 @@ fn test_create_pool_accepts_metadata_url_at_512_bytes() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7835,7 +7939,7 @@ fn test_create_pool_accepts_empty_metadata_url() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7873,7 +7977,7 @@ fn test_cancel_pool_zero_participants_removed_from_active_index() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7882,12 +7986,12 @@ fn test_cancel_pool_zero_participants_removed_from_active_index() {
     );
 
     let before = client.get_active_pools(&0u32, &10u32);
-    assert!(before.contains(&pool_id));
+    assert!(before.contains(pool_id));
 
     client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
 
     let after = client.get_active_pools(&0u32, &10u32);
-    assert!(!after.contains(&pool_id));
+    assert!(!after.contains(pool_id));
     assert_eq!(after.len(), 0);
 }
 
@@ -7917,7 +8021,7 @@ fn test_cancel_pool_zero_participants_catpoolix_still_readable() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -7963,7 +8067,7 @@ fn test_creator_cannot_cancel_pool_with_bets() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -8002,7 +8106,7 @@ fn test_operator_can_cancel_pool_with_bets() {
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Yes"),
                 String::from_str(&env, "No"),
@@ -8091,7 +8195,7 @@ fn test_pool_created_with_each_category() {
                 required_resolutions: 1u32,
                 private: false,
                 whitelist_key: None,
-                outcome_descriptions: vec![
+                outcome_descriptions: soroban_sdk::vec![
                     &env,
                     String::from_str(&env, "Yes"),
                     String::from_str(&env, "No"),
@@ -8160,12 +8264,29 @@ fn test_whitelist_events_emitted() {
             metadata_url: String::from_str(&env, ""),
             min_stake: 1_000_000i128,
             max_stake: 0i128,
+            min_total_stake: 1_000_000i128,
             max_total_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: true,
             whitelist_key: None,
-            outcome_descriptions: vec![
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Add user to whitelist — event should be emitted
+    client.add_to_whitelist(&creator, &pool_id, &user);
+    assert!(client.is_whitelisted(&pool_id, &user));
+
+    // Remove user from whitelist — event should be emitted
+    client.remove_from_whitelist(&creator, &pool_id, &user);
+    assert!(!client.is_whitelisted(&pool_id, &user));
+}
+
 /// Test that create_pool rejects a min_total_stake of zero.
 ///
 /// Per issue #507: `min_total_stake` must be strictly positive (> 0).
@@ -8240,16 +8361,6 @@ fn test_create_pool_accepts_positive_min_total_stake() {
                 String::from_str(&env, "No"),
             ],
         },
-);
-
-    // Add user to whitelist — event should be emitted
-    client.add_to_whitelist(&creator, &pool_id, &user);
-    assert!(client.is_whitelisted(&pool_id, &user));
-
-    // Remove user from whitelist — event should be emitted
-    client.remove_from_whitelist(&creator, &pool_id, &user);
-    assert!(!client.is_whitelisted(&pool_id, &user));
-}
     );
 
     let pool = client.get_pool(&pool_id);

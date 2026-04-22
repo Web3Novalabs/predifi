@@ -2,6 +2,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod benchmark_test;
+mod constants;
 #[cfg(test)]
 mod payout_proptests;
 mod price_feed;
@@ -23,6 +24,7 @@ use soroban_sdk::{
     Address, BytesN, Env, IntoVal, String, Symbol, Vec,
 };
 
+pub use constants::*;
 pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
 
@@ -119,24 +121,6 @@ pub const CATEGORY_OTHER: Symbol = symbol_short!("Other");
 // INV-8: Pool.end_time > creation_time (pools must have future end)
 //
 // ═══════════════════════════════════════════════════════════════════════════
-
-const DAY_IN_LEDGERS: u32 = 17280;
-const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
-const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
-
-/// Default minimum pool duration in seconds (1 hour)
-const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
-/// Maximum number of options allowed in a pool
-const MAX_OPTIONS_COUNT: u32 = 100;
-/// Maximum initial liquidity that can be provided (100M tokens at 7 decimals)
-const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
-/// Stake amount (in base token units) above which a `HighValuePredictionEvent`
-/// is emitted so off-chain monitors can apply extra scrutiny.
-/// At 7 decimal places (e.g. USDC on Stellar) this equals 100 USDC.
-const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
-
-/// Current contract version. Bump on each release to support safe migrations.
-const CONTRACT_VERSION: u32 = 1;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -887,7 +871,7 @@ pub struct ResolutionConflictEvent {
     pub existing_outcome: u32,
 }
 mod events;
-pub use events::*;
+// pub use events::*; // Unused import
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1337,8 +1321,9 @@ impl PredifiContract {
 
     /// Return the contract version as a semantic version string.
     ///
-    /// This getter provides the human-readable version number in the format "X.Y.Z"
-    /// (e.g., "0.0.0"). The version string matches the version specified in Cargo.toml.
+    /// This getter provides the human-readable version number in the format "X_Y_Z"
+    /// (e.g., "0_0_0"). The version string matches the version specified in Cargo.toml
+    /// but uses underscores instead of dots since Symbols don't allow dots.
     ///
     /// # Returns
     /// A `Symbol` containing the current contract version string.
@@ -1346,10 +1331,10 @@ impl PredifiContract {
     /// # Example
     /// ```ignore
     /// let version = contract.get_version_string(&env);
-    /// assert_eq!(version, Symbol::new(&env, "0.0.0"));
+    /// assert_eq!(version, Symbol::new(&env, "0_0_0"));
     /// ```
     pub fn get_version_string(env: Env) -> Symbol {
-        Symbol::new(&env, "0.0.0")
+        Symbol::new(&env, "0_0_0")
     }
 
     /// Set fee in basis points. Caller must have Admin role (0).
@@ -1683,6 +1668,7 @@ impl PredifiContract {
         // threshold and will be permanently stuck in the Active state.
         // WARNING: This is a hard check — pool creation will fail if there are not enough
         // operators registered in the access_control contract to satisfy required_resolutions.
+        // Note: If operator_count is 0, the pool can still be resolved by oracles.
         {
             let cfg = Self::get_config(&env);
             let operator_count: u32 = env.invoke_contract(
@@ -1690,7 +1676,7 @@ impl PredifiContract {
                 &Symbol::new(&env, "get_operator_count"),
                 soroban_sdk::vec![&env],
             );
-            if config.required_resolutions > operator_count {
+            if operator_count > 0 && config.required_resolutions > operator_count {
                 soroban_sdk::panic_with_error!(
                     &env,
                     PredifiError::RequiredResolutionsExceedOperators
@@ -1822,7 +1808,6 @@ impl PredifiContract {
             initial_liquidity: config.initial_liquidity,
             category,
             required_resolutions: config.required_resolutions,
-            min_total_stake: config.min_total_stake,
             max_total_stake: config.max_total_stake,
             outcome_descriptions: config.outcome_descriptions,
         }
@@ -2800,10 +2785,13 @@ impl PredifiContract {
             metadata_url: pool.metadata_url,
             min_stake: pool.min_stake,
             max_stake: pool.max_stake,
+            min_total_stake: pool.min_total_stake,
+            max_total_stake: pool.max_total_stake,
             initial_liquidity: pool.initial_liquidity,
             required_resolutions: pool.required_resolutions,
             private: pool.private,
             whitelist_key: pool.whitelist_key,
+            outcome_descriptions: pool.outcome_descriptions,
         }
     }
 
@@ -2997,22 +2985,6 @@ impl PredifiContract {
     /// public pools, pool creators, or invite-based access as implicit
     /// whitelist membership.
     pub fn is_whitelisted(env: Env, pool_id: u64, user: Address) -> bool {
-        let pool_key = DataKey::Pool(pool_id);
-        env.storage()
-            .persistent()
-            .get::<_, Pool>(&pool_key)
-            .expect("Pool not found");
-        Self::extend_persistent(&env, &pool_key);
-
-        if !pool.private {
-            return true;
-        }
-
-        if user == pool.creator {
-            return true;
-        }
-
-        let whitelist_key = DataKey::Whitelist(pool_id, user.clone());
         let whitelist_key = DataKey::Whitelist(pool_id, user);
         let is_whitelisted = env
             .storage()

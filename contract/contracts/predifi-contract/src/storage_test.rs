@@ -46,7 +46,7 @@ mod tests {
         }
     }
 
-    fn setup(env: &Env) -> (PredifiContractClient, Address, Address) {
+    fn setup(env: &Env) -> (PredifiContractClient<'_>, Address, Address) {
         env.mock_all_auths();
         let ac = env.register(dummy_ac::DummyAC, ());
         let ac_client = dummy_ac::DummyACClient::new(env, &ac);

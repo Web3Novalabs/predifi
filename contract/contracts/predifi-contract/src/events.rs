@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use soroban_sdk::{contractevent, Address, BytesN, String, Symbol, Vec};
 
 // ── Events ───────────────────────────────────────────────────────────────────
