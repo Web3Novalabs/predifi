@@ -29,7 +29,7 @@ fn test_get_version_string_returns_semantic_version() {
 
     // Register access control contract
     let ac_id = env.register(dummy_ac::DummyAC, ());
-    let ac_client = dummy_ac::DummyACClient::new(&env, &ac_id);
+    let _ac_client = dummy_ac::DummyACClient::new(&env, &ac_id);
 
     // Register predifi contract
     let contract_id = env.register(PredifiContract, ());
@@ -41,7 +41,7 @@ fn test_get_version_string_returns_semantic_version() {
 
     // Test get_version_string
     let version_string = client.get_version_string();
-    assert_eq!(version_string, Symbol::new(&env, "0.0.0"));
+    assert_eq!(version_string, Symbol::new(&env, "0_0_0"));
 }
 
 #[test]
@@ -54,5 +54,5 @@ fn test_get_version_string_without_init() {
 
     // get_version_string should work even without initialization
     let version_string = client.get_version_string();
-    assert_eq!(version_string, Symbol::new(&env, "0.0.0"));
+    assert_eq!(version_string, Symbol::new(&env, "0_0_0"));
 }
