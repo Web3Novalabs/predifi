@@ -158,6 +158,8 @@ pub enum PredifiError {
     StakeBelowMinimum = 107,
     /// Stake amount exceeds the pool maximum.
     StakeAboveMaximum = 108,
+    /// Stake amount is below the global protocol minimum.
+    InsufficientStake = 45,
     /// The fee basis points exceed the maximum allowed value (10000).
     InvalidFeeBps = 93,
     /// Metadata URL exceeds maximum length (512 bytes).
@@ -349,6 +351,8 @@ pub struct Config {
     pub resolution_delay: u64,
     /// Minimum pool duration in seconds.
     pub min_pool_duration: u64,
+    /// Global minimum stake amount. Predictions below this are rejected.
+    pub min_stake: i128,
 }
 
 /// Fee percentages returned by [`PredifiContract::get_fees`].
@@ -572,6 +576,13 @@ pub struct ResolutionDelayUpdateEvent {
 pub struct MinPoolDurationUpdateEvent {
     pub admin: Address,
     pub duration: u64,
+}
+
+#[contractevent(topics = ["min_stake_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinStakeUpdateEvent {
+    pub admin: Address,
+    pub min_stake: i128,
 }
 
 #[contractevent(topics = ["pool_ready"])]
@@ -1249,6 +1260,7 @@ impl PredifiContract {
                 access_control: access_control.clone(),
                 resolution_delay,
                 min_pool_duration,
+                min_stake: DEFAULT_GLOBAL_MIN_STAKE,
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -1398,6 +1410,33 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         MinPoolDurationUpdateEvent { admin, duration }.publish(&env);
+        Ok(())
+    }
+
+    /// Set the global minimum stake amount. Caller must have Admin role (0).
+    ///
+    /// Predictions with an amount below this threshold will be rejected with
+    /// `PredifiError::InsufficientStake`. This prevents spam from micro-predictions.
+    ///
+    /// # Arguments
+    /// * `admin`  - Address with Admin role (0).
+    /// * `amount` - New minimum stake in base token units. Must be > 0.
+    pub fn set_min_stake(env: Env, admin: Address, amount: i128) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_min_stake")?;
+        assert!(amount > 0, "min_stake must be greater than zero");
+
+        let mut config = Self::get_config(&env);
+        config.min_stake = amount;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        MinStakeUpdateEvent {
+            admin,
+            min_stake: amount,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -2195,6 +2234,12 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
+
+        // Validate: amount must meet the global protocol minimum stake
+        let global_min_stake = Self::get_config(&env).min_stake;
+        if amount < global_min_stake {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InsufficientStake);
+        }
 
         // Validate referrer if provided: cannot be self or contract
         if let Some(ref r) = referrer {

@@ -27,6 +27,10 @@ pub const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 /// Pools must be active for at least this duration before they can end.
 pub const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
 
+/// Default global minimum stake amount (1 unit in base token units).
+/// Predictions below this threshold are rejected to prevent spam.
+pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
+
 /// Maximum number of options/outcomes allowed in a single pool.
 /// This limit prevents excessive gas costs and ensures reasonable pool complexity.
 pub const MAX_OPTIONS_COUNT: u32 = 100;
