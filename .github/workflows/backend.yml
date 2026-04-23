@@ -85,7 +85,7 @@ jobs:
             OPT="${WASM_DIR}/${CONTRACT}.wasm-opt.wasm"
             [[ -f "$RAW" ]] || continue
             RAW_BYTES=$(wc -c < "$RAW")
-            wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-extension -o "$OPT" "$RAW"
+            wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-ext -o "$OPT" "$RAW"
             OPT_BYTES=$(wc -c < "$OPT")
             REDUCTION=$(( RAW_BYTES - OPT_BYTES ))
             echo "| ${CONTRACT} | ${RAW_BYTES} | ${OPT_BYTES} | -${REDUCTION} bytes |" >> "$GITHUB_STEP_SUMMARY"
