@@ -1,21 +1,6 @@
 //! # predifi-backend
 //!
 //! A minimal Axum HTTP server with CORS and request-logging middleware.
-//! A minimal Axum HTTP server that demonstrates the request-logging middleware
-//! and a versioned API router layout.
-//!
-//! Run with:
-//! ```bash
-//! cargo run
-//! ```
-//! Then in another terminal:
-//! ```bash
-//! curl http://localhost:3000/
-//! curl http://localhost:3000/health
-//! curl http://localhost:3000/api/v1
-//! curl http://localhost:3000/api/v1/health
-//! curl http://localhost:3000/missing
-//! ```
 
 pub mod config;
 pub mod db;
@@ -23,17 +8,15 @@ pub mod request_logger;
 pub mod routes;
 
 use axum::{routing::get, Json, Router};
-use http::HeaderValue;
 use config::Config;
+use http::HeaderValue;
 use request_logger::LoggingLayer;
-use routes::v1;
 use serde_json::json;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use tracing::{error, info};
+use tracing_subscriber::EnvFilter;
 
 /// Allowed frontend origins for CORS.
-///
-/// Add any additional frontend URLs here.
-/// In production, replace with your actual deployed frontend URL.
 const ALLOWED_ORIGINS: &[&str] = &[
     "http://localhost:3000",
     "http://localhost:5173",
@@ -41,9 +24,6 @@ const ALLOWED_ORIGINS: &[&str] = &[
 ];
 
 /// Build the CORS middleware layer.
-///
-/// Only requests from the origins listed in `ALLOWED_ORIGINS` are permitted.
-/// All other origins will be rejected by the browser.
 pub fn build_cors() -> CorsLayer {
     let origins: Vec<HeaderValue> = ALLOWED_ORIGINS
         .iter()
@@ -67,11 +47,6 @@ pub fn build_cors() -> CorsLayer {
 }
 
 /// Health-check handler.
-///
-/// Returns HTTP 200 with basic system info:
-/// - `status`: always `"ok"` when the server is running
-/// - `service`: name of the service
-/// - `version`: current package version from Cargo.toml
 async fn health() -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
@@ -81,25 +56,6 @@ async fn health() -> Json<serde_json::Value> {
 }
 
 /// Root handler — returns a welcome message.
-use tracing::{error, info};
-use tracing_subscriber::EnvFilter;
-
-/// Health-check handler.
-///
-/// Returns HTTP 200 with basic system info:
-/// - `status`: always `"ok"` when the server is running
-/// - `service`: name of the service
-/// - `version`: current package version from Cargo.toml
-async fn health() -> Json<serde_json::Value> {
-    Json(json!({
-        "status": "ok",
-        "service": "predifi-backend",
-        "version": env!("CARGO_PKG_VERSION")
-    }))
-}
-
-/// Root handler — returns a welcome message.
-/// Root handler that points callers at the versioned API namespace.
 async fn root() -> Json<serde_json::Value> {
     Json(json!({
         "message": "Welcome to the PrediFi backend",
@@ -108,16 +64,12 @@ async fn root() -> Json<serde_json::Value> {
 }
 
 /// Build the Axum router with CORS and logging middleware attached.
-///
-/// Keeping router construction in its own function makes it easy to reuse
-/// in tests without binding to a real TCP port.
 pub fn build_router() -> Router {
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
-        .layer(build_cors())
-        .route("/health", get(v1::health))
         .nest("/api", routes::router())
+        .layer(build_cors())
         .layer(LoggingLayer)
 }
 
