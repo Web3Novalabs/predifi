@@ -8366,3 +8366,182 @@ fn test_create_pool_accepts_positive_min_total_stake() {
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.min_total_stake, 100i128);
 }
+
+// ── update_pool_description tests ────────────────────────────────────────────
+
+/// Creator can update the description before any prediction is placed.
+#[test]
+fn test_update_pool_description_by_creator_before_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Will BTC hit 100k?"),
+            metadata_url: String::from_str(&env, "ipfs://desc-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let new_desc = String::from_str(&env, "Will BTC hit 100k by March 1st?");
+    client.update_pool_description(&creator, &pool_id, &new_desc);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.description, new_desc);
+}
+#[test]
+fn test_update_pool_description_by_admin_before_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Original description"),
+            metadata_url: String::from_str(&env, "ipfs://admin-desc-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let new_desc = String::from_str(&env, "Admin-corrected description");
+    client.update_pool_description(&admin, &pool_id, &new_desc);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.description, new_desc);
+}
+
+/// Description update is rejected once a prediction has been placed (pool "started").
+#[test]
+fn test_update_pool_description_locked_after_prediction() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Original description"),
+            metadata_url: String::from_str(&env, "ipfs://locked-desc-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Place a prediction — this "starts" the pool
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+
+    // Description update must now be rejected
+    let result = client.try_update_pool_description(
+        &creator,
+        &pool_id,
+        &String::from_str(&env, "Attempted change after start"),
+    );
+    assert_eq!(result, Err(Ok(PredifiError::InvalidPoolState)));
+
+    // Description must remain unchanged
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.description,
+        String::from_str(&env, "Original description")
+    );
+}
+
+/// Non-creator, non-admin caller is rejected.
+#[test]
+fn test_update_pool_description_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let stranger = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Original description"),
+            metadata_url: String::from_str(&env, "ipfs://unauth-desc-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let result = client.try_update_pool_description(
+        &stranger,
+        &pool_id,
+        &String::from_str(&env, "Unauthorized change"),
+    );
+    assert_eq!(result, Err(Ok(PredifiError::Unauthorized)));
+}

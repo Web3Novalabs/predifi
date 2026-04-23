@@ -640,6 +640,14 @@ pub struct StakeLimitsUpdatedEvent {
     pub max_stake: i128,
 }
 
+#[contractevent(topics = ["pool_description_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolDescriptionUpdatedEvent {
+    pub pool_id: u64,
+    pub caller: Address,
+    pub new_description: String,
+}
+
 #[contractevent(topics = ["prediction_placed"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PredictionPlacedEvent {
@@ -1882,6 +1890,83 @@ impl PredifiContract {
         pool.max_total_stake = new_max_total_stake;
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
+
+        Ok(())
+    }
+
+    /// Update the description of a pool before any participant has joined.
+    ///
+    /// Allows the pool creator or a protocol admin to correct a typo or clarify
+    /// ambiguous wording. Once the first prediction is placed the description is
+    /// locked to prevent fraud.
+    ///
+    /// # Arguments
+    /// * `caller`   - Pool creator **or** an address with Admin role (0).
+    /// * `pool_id`  - The pool to update.
+    /// * `new_desc` - Replacement description (max 256 bytes, must be non-empty).
+    ///
+    /// # Errors
+    /// * `Unauthorized`     – caller is neither the creator nor an admin.
+    /// * `InvalidPoolState` – pool is not `Active`, has ended, or already has participants.
+    /// * `InvalidAmount`    – description is empty or exceeds 256 bytes.
+    pub fn update_pool_description(
+        env: Env,
+        caller: Address,
+        pool_id: u64,
+        new_desc: String,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        caller.require_auth();
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        // Only the creator or a protocol admin may update the description.
+        let is_creator = pool.creator == caller;
+        let is_admin = Self::require_admin_role(&env, &caller, "update_pool_description").is_ok();
+        if !is_creator && !is_admin {
+            return Err(PredifiError::Unauthorized);
+        }
+
+        // Pool must still be active (not resolved or canceled).
+        if !Self::is_pool_active(&pool) {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Pool must not have ended.
+        if env.ledger().timestamp() >= pool.end_time {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Lock the description once any participant has joined — equivalent to
+        // "pool has started" in this contract's model (no separate start_time).
+        // We read the PartCnt key which is the authoritative participant counter.
+        let pc_key = DataKey::PartCnt(pool_id);
+        let participants: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
+        if participants > 0 {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Validate the new description: non-empty and within the 256-byte limit.
+        if new_desc.is_empty() || new_desc.len() > 256 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        pool.description = new_desc.clone();
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        PoolDescriptionUpdatedEvent {
+            pool_id,
+            caller,
+            new_description: new_desc,
+        }
+        .publish(&env);
 
         Ok(())
     }
