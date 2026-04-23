@@ -218,7 +218,7 @@ pub struct CreatePoolParams {
 /// Represents a prediction pool with all its configuration and state.
 ///
 /// A pool is the core data structure that represents a prediction market.
-/// It contains all information about the market, including its lifecycle, 
+/// It contains all information about the market, including its lifecycle,
 /// financial configuration, participant constraints, and resolution status.
 ///
 /// # Invariants
@@ -386,15 +386,15 @@ pub struct FeeInfo {
 pub struct FeeTier {
     /// The `total_stake` threshold at or above which this tier's `fee_bps` becomes applicable.
     pub stake_threshold: i128,
-    /// The protocol fee in basis points (1 bp = 0.01%) for this tier. 
+    /// The protocol fee in basis points (1 bp = 0.01%) for this tier.
     /// Must be between 0 and 10,000 (inclusive).
     pub fee_bps: u32,
 }
 
 /// Detailed information about a user's prediction in a specific pool.
 ///
-/// This struct is a convenient "read-only" view that combines user-specific prediction 
-/// data with current pool state. It is primarily used for frontend displays and 
+/// This struct is a convenient "read-only" view that combines user-specific prediction
+/// data with current pool state. It is primarily used for frontend displays and
 /// calculating potential or final winnings.
 #[contracttype]
 #[derive(Clone)]
@@ -523,7 +523,7 @@ pub enum DataKey {
 
 /// Represents a user's individual stake in a prediction market.
 ///
-/// This is the core structure for tracking participation. It is stored as part of the 
+/// This is the core structure for tracking participation. It is stored as part of the
 /// ledger state for each user-pool pair, mapping a specific outcome to a staked amount.
 #[contracttype]
 #[derive(Clone)]

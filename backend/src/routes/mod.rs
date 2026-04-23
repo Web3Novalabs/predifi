@@ -1,5 +1,5 @@
-use axum::Router;
 use crate::config::Config;
+use axum::Router;
 
 pub mod v1;
 
