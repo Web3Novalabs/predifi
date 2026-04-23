@@ -70,7 +70,7 @@ echo "▶  2. Rejects non-WASM input"
 INVALID="${TMP_DIR}/invalid.wasm"
 printf 'this is not wasm' > "${INVALID}"
 EXIT_CODE=0
-wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-extension -o "${TMP_DIR}/invalid_out.wasm" "${INVALID}" 2>/dev/null || EXIT_CODE=$?
+wasm-opt -O3 --strip-debug -o "${TMP_DIR}/invalid_out.wasm" "${INVALID}" 2>/dev/null || EXIT_CODE=$?
 if [[ "${EXIT_CODE}" -ne 0 ]]; then
   pass "exits non-zero on invalid WASM input"
 else
@@ -84,7 +84,7 @@ MINIMAL="${TMP_DIR}/minimal.wasm"
 OUT3="${TMP_DIR}/minimal_out.wasm"
 make_minimal_wasm "${MINIMAL}"
 EXIT_CODE=0
-wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-extension -o "${OUT3}" "${MINIMAL}" 2>/dev/null || EXIT_CODE=$?
+wasm-opt -O3 --strip-debug -o "${OUT3}" "${MINIMAL}" 2>/dev/null || EXIT_CODE=$?
 if [[ "${EXIT_CODE}" -eq 0 ]]; then
   pass "exits 0 on valid minimal WASM input"
 else
@@ -117,7 +117,7 @@ echo "▶  5. -o output path is respected"
 MINIMAL2="${TMP_DIR}/minimal2.wasm"
 EXPLICIT_OUT="${TMP_DIR}/explicit_output.wasm"
 make_minimal_wasm "${MINIMAL2}"
-wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-extension -o "${EXPLICIT_OUT}" "${MINIMAL2}" 2>/dev/null
+wasm-opt -O3 --strip-debug -o "${EXPLICIT_OUT}" "${MINIMAL2}" 2>/dev/null
 if [[ -f "${EXPLICIT_OUT}" ]]; then
   pass "output file created at the path given to -o"
 else
@@ -136,7 +136,7 @@ MINIMAL3="${TMP_DIR}/minimal3.wasm"
 OUT6="${TMP_DIR}/minimal3_stripped.wasm"
 make_minimal_wasm "${MINIMAL3}"
 EXIT_CODE=0
-wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-extension -o "${OUT6}" "${MINIMAL3}" 2>/dev/null || EXIT_CODE=$?
+wasm-opt -O3 --strip-debug -o "${OUT6}" "${MINIMAL3}" 2>/dev/null || EXIT_CODE=$?
 if [[ "${EXIT_CODE}" -eq 0 ]]; then
   pass "--strip-debug accepted without error"
 else
@@ -155,7 +155,7 @@ else
   cp "${REAL_WASM}" "${COPY}"
   RAW_BYTES=$(wc -c < "${COPY}")
   EXIT_CODE=0
-  wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-extension -o "${OPT_OUT}" "${COPY}" 2>/dev/null || EXIT_CODE=$?
+  wasm-opt -O3 --strip-debug -o "${OPT_OUT}" "${COPY}" 2>/dev/null || EXIT_CODE=$?
   if [[ "${EXIT_CODE}" -ne 0 ]]; then
     fail "wasm-opt exited ${EXIT_CODE} on real predifi_contract.wasm"
   else
