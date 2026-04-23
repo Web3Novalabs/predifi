@@ -272,6 +272,8 @@ pub struct Pool {
     /// Human-readable labels for each outcome (length must equal options_count).
     pub outcome_descriptions: Vec<String>,
     pub fee_bps: u32,
+    /// Number of unique addresses that have placed at least one prediction in this pool.
+    pub participants_count: u32,
 }
 
 /// Configuration parameters for creating a prediction pool.
@@ -1745,6 +1747,7 @@ impl PredifiContract {
             whitelist_key: config.whitelist_key.clone(),
             outcome_descriptions: config.outcome_descriptions.clone(),
             fee_bps: 0, // Will be set at resolution
+            participants_count: 0,
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -2317,6 +2320,10 @@ impl PredifiContract {
             let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
             env.storage().persistent().set(&pc_key, &(pc + 1));
             Self::extend_persistent(&env, &pc_key);
+
+            // Mirror the count on the Pool struct so get_pool_participants_count
+            // can read it with a single storage fetch.
+            pool.participants_count = pool.participants_count.saturating_add(1);
 
             let count_key = DataKey::UsrPrdCnt(user.clone());
             let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
@@ -2995,6 +3002,27 @@ impl PredifiContract {
             Self::extend_persistent(&env, &whitelist_key);
         }
         is_whitelisted
+    }
+
+    /// Return the number of unique participants in a pool.
+    ///
+    /// A participant is any address that has placed at least one prediction.
+    /// Subsequent top-ups by the same address do not increase the count.
+    ///
+    /// # Arguments
+    /// * `pool_id` - The unique identifier of the pool.
+    ///
+    /// # Returns
+    /// The number of unique participants as a `u32`.
+    pub fn get_pool_participants_count(env: Env, pool_id: u64) -> u32 {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+        pool.participants_count
     }
 
     /// Get comprehensive stats for a pool.

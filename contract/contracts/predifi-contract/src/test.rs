@@ -8366,3 +8366,112 @@ fn test_create_pool_accepts_positive_min_total_stake() {
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.min_total_stake, 100i128);
 }
+
+// ── get_pool_participants_count tests ─────────────────────────────────────────
+
+/// Starts at 0, increments once per unique participant, not per top-up.
+#[test]
+fn test_get_pool_participants_count_unique_only() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    let user_c = Address::generate(&env);
+    token_admin_client.mint(&user_a, &1_000_000i128);
+    token_admin_client.mint(&user_b, &1_000_000i128);
+    token_admin_client.mint(&user_c, &1_000_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Participants count test"),
+            metadata_url: String::from_str(&env, "ipfs://participants-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Fresh pool: 0 participants
+    assert_eq!(client.get_pool_participants_count(&pool_id), 0);
+
+    // user_a joins → count = 1
+    client.place_prediction(&user_a, &pool_id, &100i128, &0u32, &None, &None);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
+
+    // user_a tops up (same outcome) → count stays 1
+    client.place_prediction(&user_a, &pool_id, &50i128, &0u32, &None, &None);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
+
+    // user_b joins → count = 2
+    client.place_prediction(&user_b, &pool_id, &200i128, &1u32, &None, &None);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 2);
+
+    // user_c joins → count = 3
+    client.place_prediction(&user_c, &pool_id, &150i128, &0u32, &None, &None);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 3);
+}
+
+/// participants_count on the Pool struct matches get_pool_participants_count.
+#[test]
+fn test_pool_struct_participants_count_matches_getter() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Struct sync test"),
+            metadata_url: String::from_str(&env, "ipfs://struct-sync"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.participants_count, 1);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
+    assert_eq!(
+        pool.participants_count,
+        client.get_pool_participants_count(&pool_id)
+    );
+}
