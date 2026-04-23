@@ -175,7 +175,7 @@ async fn middleware_handles_multiple_requests_sequentially() {
 /// CORS headers must be present when a request comes from an allowed origin.
 #[tokio::test]
 async fn cors_allows_allowed_origin() {
-    let response = build_router(Config::default_for_test())
+    let response = build_router()
         .oneshot(
             Request::builder()
                 .method(Method::GET)

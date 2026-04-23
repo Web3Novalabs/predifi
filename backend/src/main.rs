@@ -64,11 +64,11 @@ async fn root() -> Json<serde_json::Value> {
 }
 
 /// Build the Axum router with CORS and logging middleware attached.
-pub fn build_router(config: Config) -> Router {
+pub fn build_router() -> Router {
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
-        .nest("/api", routes::router(config.clone()))
+        .nest("/api", routes::router())
         .layer(build_cors())
         .layer(LoggingLayer)
 }
