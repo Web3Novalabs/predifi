@@ -8482,6 +8482,79 @@ fn test_whitelist_events_emitted() {
     assert!(!client.is_whitelisted(&pool_id, &user));
 }
 
+/// Test get_supported_tokens returns empty list when no tokens are whitelisted
+#[test]
+fn test_get_supported_tokens_empty() {
+    let (_env, client, _admin, _treasury) = setup_whitelist_env();
+    
+    let supported_tokens = client.get_supported_tokens();
+    assert_eq!(supported_tokens.len(), 0);
+}
+
+/// Test get_supported_tokens returns list of whitelisted tokens
+#[test]
+fn test_get_supported_tokens_multiple() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let token_c = Address::generate(&env);
+    
+    // Add tokens to whitelist
+    client.add_token_to_whitelist(&admin, &token_a);
+    client.add_token_to_whitelist(&admin, &token_b);
+    client.add_token_to_whitelist(&admin, &token_c);
+    
+    let supported_tokens = client.get_supported_tokens();
+    assert_eq!(supported_tokens.len(), 3);
+    assert!(supported_tokens.contains(&token_a));
+    assert!(supported_tokens.contains(&token_b));
+    assert!(supported_tokens.contains(&token_c));
+}
+
+/// Test get_supported_tokens updates correctly when tokens are removed
+#[test]
+fn test_get_supported_tokens_after_removal() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let token_c = Address::generate(&env);
+    
+    // Add tokens to whitelist
+    client.add_token_to_whitelist(&admin, &token_a);
+    client.add_token_to_whitelist(&admin, &token_b);
+    client.add_token_to_whitelist(&admin, &token_c);
+    
+    let supported_tokens = client.get_supported_tokens();
+    assert_eq!(supported_tokens.len(), 3);
+    
+    // Remove one token
+    client.remove_token_from_whitelist(&admin, &token_b);
+    
+    let supported_tokens = client.get_supported_tokens();
+    assert_eq!(supported_tokens.len(), 2);
+    assert!(supported_tokens.contains(&token_a));
+    assert!(supported_tokens.contains(&token_c));
+    assert!(!supported_tokens.contains(&token_b));
+}
+
+/// Test get_supported_tokens handles duplicate additions gracefully
+#[test]
+fn test_get_supported_tokens_duplicate_additions() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    
+    let token = Address::generate(&env);
+    
+    // Add the same token twice
+    client.add_token_to_whitelist(&admin, &token);
+    client.add_token_to_whitelist(&admin, &token);
+    
+    let supported_tokens = client.get_supported_tokens();
+    assert_eq!(supported_tokens.len(), 1);
+    assert!(supported_tokens.contains(&token));
+}
+
 /// Test that create_pool rejects a min_total_stake of zero.
 ///
 /// Per issue #507: `min_total_stake` must be strictly positive (> 0).

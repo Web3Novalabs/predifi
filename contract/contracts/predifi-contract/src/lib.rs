@@ -485,6 +485,10 @@ pub enum DataKey {
     ///
     /// Present (with value `true`) when the token is allowed for betting.
     TokenWl(Address),
+    /// Whitelisted tokens list: `TokenWhitelist` -> `Vec<Address>`
+    ///
+    /// Maintains an ordered list of all whitelisted token addresses for efficient enumeration.
+    TokenWhitelist,
 
     // ── Categories ───────────────────────────────────────────────────────────
     /// Category pool count: `CatPoolCt(category)` -> `u32`
@@ -1539,6 +1543,21 @@ impl PredifiContract {
         env.storage().persistent().set(&key, &true);
         Self::extend_persistent(&env, &key);
 
+        // Add to the whitelist list if not already present
+        let whitelist_key = DataKey::TokenWhitelist;
+        let mut whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&whitelist_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        
+        // Only add if not already in the list
+        if !whitelist.contains(&token) {
+            whitelist.push_back(token.clone());
+            env.storage().persistent().set(&whitelist_key, &whitelist);
+            Self::extend_persistent(&env, &whitelist_key);
+        }
+
         TokenWhitelistAddedEvent {
             admin: admin.clone(),
             token: token.clone(),
@@ -1559,12 +1578,50 @@ impl PredifiContract {
         let key = DataKey::TokenWl(token.clone());
         env.storage().persistent().remove(&key);
 
+        // Remove from the whitelist list
+        let whitelist_key = DataKey::TokenWhitelist;
+        let mut whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&whitelist_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        
+        // Remove the token from the list if present
+        let new_whitelist = Vec::new(&env);
+        let mut new_whitelist = new_whitelist;
+        for t in whitelist.iter() {
+            if t.clone() != token {
+                new_whitelist.push_back(t);
+            }
+        }
+        whitelist = new_whitelist;
+        
+        env.storage().persistent().set(&whitelist_key, &whitelist);
+        Self::extend_persistent(&env, &whitelist_key);
+
         TokenWhitelistRemovedEvent {
             admin: admin.clone(),
             token: token.clone(),
         }
         .publish(&env);
         Ok(())
+    }
+
+    /// Get the list of all supported (whitelisted) tokens.
+    /// Returns a Vec of token addresses that are allowed for betting.
+    pub fn get_supported_tokens(env: Env) -> Vec<Address> {
+        let whitelist_key = DataKey::TokenWhitelist;
+        let whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&whitelist_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        
+        if env.storage().persistent().has(&whitelist_key) {
+            Self::extend_persistent(&env, &whitelist_key);
+        }
+        
+        whitelist
     }
 
     /// Upgrade the contract Wasm code. Only callable by Admin (role 0).
