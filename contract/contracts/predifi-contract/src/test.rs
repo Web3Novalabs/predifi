@@ -8468,3 +8468,111 @@ fn test_create_pool_accepts_positive_min_total_stake() {
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.min_total_stake, 100i128);
 }
+
+// ── set_min_stake / InsufficientStake tests ──────────────────────────────────
+
+/// A prediction of 0.1 (amount=1 in 1-decimal units) must fail when the
+/// global minimum is 1.0 (amount=10 in 1-decimal units).
+/// Concretely: set min_stake=10, attempt place_prediction with amount=1.
+#[test]
+#[should_panic(expected = "Error(Contract, #45)")]
+fn test_place_prediction_below_global_min_stake_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000_000i128);
+
+    // Set global min_stake to 10 (represents 1.0 at 1 decimal place)
+    client.set_min_stake(&admin, &10i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Min stake test pool"),
+            metadata_url: String::from_str(&env, "ipfs://min-stake-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // amount=1 is below global min_stake=10 → must panic with InsufficientStake (#45)
+    client.place_prediction(&user, &pool_id, &1i128, &0u32, &None, &None);
+}
+
+/// A prediction at or above the global min_stake must succeed.
+#[test]
+fn test_place_prediction_at_global_min_stake_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000_000i128);
+
+    // Set global min_stake to 10
+    client.set_min_stake(&admin, &10i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Min stake pass test pool"),
+            metadata_url: String::from_str(&env, "ipfs://min-stake-pass"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // amount=10 equals global min_stake=10 → must succeed (no panic)
+    client.place_prediction(&user, &pool_id, &10i128, &0u32, &None, &None);
+}
+
+/// set_min_stake must be rejected for non-admin callers.
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_set_min_stake_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let non_admin = Address::generate(&env);
+
+    client.set_min_stake(&non_admin, &10i128);
+}
