@@ -23,15 +23,8 @@ mod tests {
 
     #[tokio::test]
     async fn creates_pool_from_valid_config() {
-        let config = Config {
-            host: String::from("0.0.0.0"),
-            port: 3000,
-            database_url: String::from("postgres://postgres:postgres@localhost:5432/predifi"),
-            db_max_connections: 5,
-            db_min_connections: 1,
-            db_acquire_timeout_secs: 5,
-            log_level: String::from("info"),
-        };
+        let mut config = Config::default_for_test();
+        config.database_url = String::from("postgres://postgres:postgres@localhost:5432/predifi");
 
         let pool = create_pool(&config).expect("pool should initialize in lazy mode");
         assert!(!pool.is_closed(), "new pool should start open");

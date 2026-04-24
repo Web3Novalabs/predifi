@@ -7,6 +7,8 @@ const DEFAULT_DB_MAX_CONNECTIONS: u32 = 10;
 const DEFAULT_DB_MIN_CONNECTIONS: u32 = 1;
 const DEFAULT_DB_ACQUIRE_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_LOG_LEVEL: &str = "info";
+const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
+const DEFAULT_REFERRAL_FEE_BPS: u32 = 5000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -17,6 +19,8 @@ pub struct Config {
     pub db_min_connections: u32,
     pub db_acquire_timeout_secs: u64,
     pub log_level: String,
+    pub treasury_fee_bps: u32,
+    pub referral_fee_bps: u32,
 }
 
 impl Config {
@@ -38,6 +42,8 @@ impl Config {
             DEFAULT_DB_ACQUIRE_TIMEOUT_SECS,
         )?;
         let log_level = get_string(vars, "RUST_LOG", DEFAULT_LOG_LEVEL);
+        let treasury_fee_bps = get_u32(vars, "TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
+        let referral_fee_bps = get_u32(vars, "REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
 
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
@@ -57,11 +63,28 @@ impl Config {
             db_min_connections,
             db_acquire_timeout_secs,
             log_level,
+            treasury_fee_bps,
+            referral_fee_bps,
         })
     }
 
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
+    }
+
+    #[cfg(test)]
+    pub fn default_for_test() -> Self {
+        Self {
+            host: String::from("127.0.0.1"),
+            port: 0,
+            database_url: String::from("postgres://localhost/test"),
+            db_max_connections: 1,
+            db_min_connections: 1,
+            db_acquire_timeout_secs: 1,
+            log_level: String::from("debug"),
+            treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
+            referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
+        }
     }
 }
 
@@ -164,6 +187,8 @@ mod tests {
             DEFAULT_DB_ACQUIRE_TIMEOUT_SECS
         );
         assert_eq!(config.log_level, DEFAULT_LOG_LEVEL);
+        assert_eq!(config.treasury_fee_bps, DEFAULT_TREASURY_FEE_BPS);
+        assert_eq!(config.referral_fee_bps, DEFAULT_REFERRAL_FEE_BPS);
     }
 
     #[test]

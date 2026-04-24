@@ -93,7 +93,7 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let app = build_router();
+    let app = build_router(config.clone());
 
     let bind_addr = config.bind_address();
 

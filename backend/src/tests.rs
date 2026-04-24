@@ -24,10 +24,12 @@ async fn body_string(body: axum::body::Body) -> String {
     String::from_utf8(bytes.to_vec()).expect("body is not valid utf-8")
 }
 
-/// GET / must return HTTP 200.
+use crate::config::Config;
+
+/// GET /must return HTTP 200.
 #[tokio::test]
 async fn root_returns_200() {
-    let response = build_router()
+    let response = build_router(Config::default_for_test())
         .oneshot(get("/"))
         .await
         .expect("request failed");
@@ -38,7 +40,7 @@ async fn root_returns_200() {
 /// GET /health must return HTTP 200 with `{"status":"ok"}` in the body.
 #[tokio::test]
 async fn health_returns_200_with_ok_body() {
-    let response = build_router()
+    let response = build_router(Config::default_for_test())
         .oneshot(get("/health"))
         .await
         .expect("request failed");
@@ -55,7 +57,7 @@ async fn health_returns_200_with_ok_body() {
 /// GET /api/v1/health must return HTTP 200 from the nested v1 router.
 #[tokio::test]
 async fn api_v1_health_returns_200_with_versioned_body() {
-    let response = build_router()
+    let response = build_router(Config::default_for_test())
         .oneshot(get("/api/v1/health"))
         .await
         .expect("request failed");
@@ -72,7 +74,7 @@ async fn api_v1_health_returns_200_with_versioned_body() {
 /// GET /api/v1 must return HTTP 200 from the version discovery route.
 #[tokio::test]
 async fn api_v1_index_returns_200() {
-    let response = build_router()
+    let response = build_router(Config::default_for_test())
         .oneshot(get("/api/v1"))
         .await
         .expect("request failed");
@@ -80,10 +82,35 @@ async fn api_v1_index_returns_200() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+/// GET /api/v1/fees returns the current fee configuration.
+#[tokio::test]
+async fn api_v1_fees_returns_config_values() {
+    let mut config = Config::default_for_test();
+    config.treasury_fee_bps = 400;
+    config.referral_fee_bps = 6000;
+
+    let response = build_router(config)
+        .oneshot(get("/api/v1/fees"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"treasury_fee_bps\":400"),
+        "body should contain treasury_fee_bps, got: {body}"
+    );
+    assert!(
+        body.contains("\"referral_fee_bps\":6000"),
+        "body should contain referral_fee_bps, got: {body}"
+    );
+}
+
 /// GET /nonexistent must return HTTP 404 (Axum's built-in fallback).
 #[tokio::test]
 async fn unknown_route_returns_404() {
-    let response = build_router()
+    let response = build_router(Config::default_for_test())
         .oneshot(get("/nonexistent"))
         .await
         .expect("request failed");
@@ -94,7 +121,7 @@ async fn unknown_route_returns_404() {
 /// Verify the middleware does not alter the status code of a 200 response.
 #[tokio::test]
 async fn middleware_does_not_alter_200_status() {
-    let response = build_router()
+    let response = build_router(Config::default_for_test())
         .oneshot(get("/health"))
         .await
         .expect("request failed");
@@ -109,7 +136,7 @@ async fn middleware_does_not_alter_200_status() {
 /// Verify the middleware does not alter the status code of a 404 response.
 #[tokio::test]
 async fn middleware_does_not_alter_404_status() {
-    let response = build_router()
+    let response = build_router(Config::default_for_test())
         .oneshot(get("/no-such-path"))
         .await
         .expect("request failed");
@@ -132,7 +159,7 @@ async fn middleware_handles_multiple_requests_sequentially() {
     ];
 
     for (path, expected_status) in paths_and_expected {
-        let response = build_router()
+        let response = build_router(Config::default_for_test())
             .oneshot(get(path))
             .await
             .expect("request failed");
@@ -177,7 +204,7 @@ async fn cors_allows_allowed_origin() {
 /// Preflight OPTIONS request must return 200 for allowed origins.
 #[tokio::test]
 async fn cors_handles_preflight_request() {
-    let response = build_router()
+    let response = build_router(Config::default_for_test())
         .oneshot(
             Request::builder()
                 .method(Method::OPTIONS)
