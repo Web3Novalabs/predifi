@@ -160,6 +160,8 @@ pub enum PredifiError {
     StakeAboveMaximum = 108,
     /// Stake amount is below the global protocol minimum.
     InsufficientStake = 45,
+    /// User has exceeded the maximum number of predictions allowed per pool.
+    MaxPredictionsExceeded = 111,
     /// The fee basis points exceed the maximum allowed value (10000).
     InvalidFeeBps = 93,
     /// Metadata URL exceeds maximum length (512 bytes).
@@ -352,6 +354,7 @@ pub struct PoolStats {
 ///
 /// # Invariants
 /// - `fee_bps` must be <= 10,000 (100%) (INV-6)
+/// - `max_predictions_per_user` must be >= 0 (0 = no limit)
 #[contracttype]
 #[derive(Clone)]
 pub struct Config {
@@ -369,6 +372,9 @@ pub struct Config {
     pub min_pool_duration: u64,
     /// Global minimum stake amount. Predictions below this are rejected.
     pub min_stake: i128,
+    /// Maximum number of predictions a user can place per pool.
+    /// A value of 0 means no limit.
+    pub max_predictions_per_user: u32,
 }
 
 /// Fee percentages returned by [`PredifiContract::get_fees`].
@@ -550,6 +556,7 @@ pub struct InitEvent {
     pub fee_bps: u32,
     pub resolution_delay: u64,
     pub min_pool_duration: u64,
+    pub max_predictions_per_user: u32,
 }
 
 #[contractevent(topics = ["pause"])]
@@ -569,6 +576,13 @@ pub struct UnpauseEvent {
 pub struct FeeUpdateEvent {
     pub admin: Address,
     pub fee_bps: u32,
+}
+
+#[contractevent(topics = ["max_predictions_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaxPredictionsUpdateEvent {
+    pub admin: Address,
+    pub limit: u32,
 }
 
 #[contractevent(topics = ["fee_tiers_update"])]
@@ -1280,6 +1294,7 @@ impl PredifiContract {
         fee_bps: u32,
         resolution_delay: u64,
         min_pool_duration: u64,
+        max_predictions_per_user: u32,
     ) {
         if !env.storage().instance().has(&DataKey::Config) {
             let config = Config {
@@ -1289,6 +1304,7 @@ impl PredifiContract {
                 resolution_delay,
                 min_pool_duration,
                 min_stake: DEFAULT_GLOBAL_MIN_STAKE,
+                max_predictions_per_user,
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -1303,6 +1319,7 @@ impl PredifiContract {
                 fee_bps,
                 resolution_delay,
                 min_pool_duration,
+                max_predictions_per_user,
             }
             .publish(&env);
         }
@@ -1405,6 +1422,26 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         TreasuryUpdateEvent { admin, treasury }.publish(&env);
+        Ok(())
+    }
+
+    /// Set maximum predictions per user. Caller must have Admin role (0).
+    /// PRE: admin has role 0
+    /// POST: Config.max_predictions_per_user >= 0 (0 = no limit)
+    pub fn set_max_predictions_per_user(
+        env: Env,
+        admin: Address,
+        limit: u32,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_max_predictions_per_user")?;
+        let mut config = Self::get_config(&env);
+        config.max_predictions_per_user = limit;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        MaxPredictionsUpdateEvent { admin, limit }.publish(&env);
         Ok(())
     }
 
@@ -2422,6 +2459,32 @@ impl PredifiContract {
                 Self::exit_reentrancy_guard(&env);
                 soroban_sdk::panic_with_error!(&env, PredifiError::MaxTotalStakeExceeded);
             }
+        }
+
+        // Enforce maximum predictions per user limit (across all pools)
+        let config = Self::get_config(&env);
+        if config.max_predictions_per_user > 0 {
+            let pred_key = DataKey::Pred(user.clone(), pool_id);
+            let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
+
+            // If user already has a prediction on this pool, allow increasing stake (same prediction)
+            // If this is a new prediction for this pool, check if user has reached the limit
+            if existing_pred.is_none() {
+                // Count current number of pools this user has predictions in
+                let user_prediction_count_key = DataKey::UsrPrdCnt(user.clone());
+                let current_count: u32 = env
+                    .storage()
+                    .persistent()
+                    .get(&user_prediction_count_key)
+                    .unwrap_or(0);
+
+                if current_count >= config.max_predictions_per_user {
+                    Self::exit_reentrancy_guard(&env);
+                    soroban_sdk::panic_with_error!(&env, PredifiError::MaxPredictionsExceeded);
+                }
+            }
+            // Note: If user already has a prediction on this pool, we allow increasing the stake
+            // as it's the same prediction, not a new pool participation
         }
 
         let pred_key = DataKey::Pred(user.clone(), pool_id);

@@ -67,7 +67,7 @@ mod tests {
         let cid = env.register(PredifiContract, ());
         let client = PredifiContractClient::new(env, &cid);
         let treasury = Address::generate(env);
-        client.init(&ac, &treasury, &0u32, &0u64, &3600u64);
+        client.init(&ac, &treasury, &0u32, &0u64, &3600u64, &0u32);
         (client, cid, admin)
     }
 
@@ -93,8 +93,9 @@ mod tests {
         ac_client.grant_role(&operator, &1u32);
 
         let token_admin = Address::generate(env);
-        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
-        let token_admin_client = token::StellarAssetClient::new(env, &token_contract);
+        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+        let token_address = token_contract.address();
+        let token_admin_client = token::StellarAssetClient::new(env, &token_address);
         // Mint enough for pool creation liquidity checks
         let funder = Address::generate(env);
         token_admin_client.mint(&funder, &1_000_000);
@@ -102,10 +103,10 @@ mod tests {
         let cid = env.register(PredifiContract, ());
         let client = PredifiContractClient::new(env, &cid);
         let treasury = Address::generate(env);
-        client.init(&ac, &treasury, &0u32, &0u64, &3600u64);
-        client.add_token_to_whitelist(&admin, &token_contract);
+        client.init(&ac, &treasury, &0u32, &0u64, &3600u64, &0u32);
+        client.add_token_to_whitelist(&admin, &token_address);
 
-        (client, token_contract, admin, operator)
+        (client, token_address, admin, operator)
     }
 
     // ── DataKey variant distinctness ─────────────────────────────────────────
