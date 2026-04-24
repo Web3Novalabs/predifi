@@ -472,6 +472,108 @@ fn test_claim_winnings_zero_share() {
     assert_eq!(token.balance(&user_a), 900 + 99); // Initial 1000 - 100 + 99 = 999
 }
 
+/// Test claim_winnings with zero total winnings due to high protocol fee
+/// This test verifies the scenario described in issue #407 where the protocol fee
+/// is large enough that after deduction, the payout pool for a very small winning
+/// stake results in 0 winnings for some users.
+#[test]
+fn test_claim_winnings_zero_total_winnings_high_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token = token::Client::new(&env, &token_contract);
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let token_address = token_contract;
+    let treasury = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    
+    // Initialize with very high protocol fee (90% = 9000 bps)
+    client.init(&ac_id, &treasury, &9000u32, &0u64, &3600u64);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let large_winner = Address::generate(&env);
+    let small_winner = Address::generate(&env);
+    let loser = Address::generate(&env);
+
+    token_admin_client.mint(&large_winner, &10000);
+    token_admin_client.mint(&small_winner, &1000);
+    token_admin_client.mint(&loser, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            description: String::from_str(&env, "High Fee Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Large winner stakes 1000 on Outcome 1 (winner)
+    client.place_prediction(&large_winner, &pool_id, &1000, &1, &None, &None);
+    // Small winner stakes only 1 on Outcome 1 (winner) - very small share
+    client.place_prediction(&small_winner, &pool_id, &1, &1, &None, &None);
+    // Loser stakes 100 on Outcome 0 (loser)
+    client.place_prediction(&loser, &pool_id, &100, &0, &None, &None);
+
+    // Total Stake: 1101
+    // Winning Stake (Outcome 1): 1001
+    // Protocol Fee: 90% of 1101 = 990 (ProtocolFavor/floor rounding)
+    // Payout Pool: 1101 - 990 = 111
+    // Large winner's expected winnings: (1000 * 111) / 1001 = 110 (integer division)
+    // Small winner's expected winnings: (1 * 111) / 1001 = 0 (integer division - zero winnings!)
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // Claim winnings for small winner - should return 0 without crashing
+    let winnings_small = client.claim_winnings(&small_winner, &pool_id);
+    
+    assert_eq!(winnings_small, 0);
+    assert_eq!(token.balance(&small_winner), 999); // Initial 1000 - 1 stake + 0 winnings
+
+    // Large winner should get most of the payout pool
+    let winnings_large = client.claim_winnings(&large_winner, &pool_id);
+    assert_eq!(winnings_large, 110);
+    assert_eq!(token.balance(&large_winner), 9000 + 110); // Initial 10000 - 1000 + 110
+
+    // Loser gets nothing
+    let winnings_loser = client.claim_winnings(&loser, &pool_id);
+    assert_eq!(winnings_loser, 0);
+    assert_eq!(token.balance(&loser), 900); // Initial 1000 - 100 stake + 0 winnings
+
+    // Verify contract holds the protocol fee (may have rounding differences)
+    let contract_balance = token.balance(&contract_id);
+    assert!(contract_balance >= 990 && contract_balance <= 991, "Contract balance should be around protocol fee, got {}", contract_balance);
+}
+
+
 /// Referral: referred user places with referrer; on claim, referrer receives a cut of the protocol fee.
 #[test]
 fn test_referral_fee_distribution() {
