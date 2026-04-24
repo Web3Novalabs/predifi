@@ -37,7 +37,7 @@ fn test_get_version_string_returns_semantic_version() {
 
     // Initialize contract
     let treasury = Address::generate(&env);
-    client.init(&ac_id, &treasury, &500u32, &3600u64, &3600u64);
+    client.init(&ac_id, &treasury, &500u32, &3600u64, &3600u64, &0u32);
 
     // Test get_version_string
     let version_string = client.get_version_string();

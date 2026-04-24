@@ -66,7 +66,7 @@ fn test_price_based_pool_mock_resolution() {
     let client = PredifiContractClient::new(&env, &contract_id);
 
     // Initializing the contract
-    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     // Setup Token and Whitelist Category/Token
     let token_address = Address::generate(&env);
