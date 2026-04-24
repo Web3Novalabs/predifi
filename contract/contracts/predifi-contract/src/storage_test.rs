@@ -14,7 +14,7 @@
 mod tests {
     use crate::{
         price_feed_simple::{PriceFeedAdapter, SimpleOracleConfig, SimplePriceFeed},
-        DataKey, PredifiContract, PredifiContractClient,
+        DataKey, PoolConfig, PredifiContract, PredifiContractClient,
     };
     use soroban_sdk::{
         symbol_short,
@@ -33,15 +33,26 @@ mod tests {
         #[contractimpl]
         impl DummyAC {
             pub fn grant_role(env: Env, user: Address, role: u32) {
-                env.storage()
-                    .instance()
-                    .set(&(Symbol::new(&env, "role"), user, role), &true);
+                let key = (Symbol::new(&env, "role"), user.clone(), role);
+                let had: bool = env.storage().instance().get(&key).unwrap_or(false);
+                env.storage().instance().set(&key, &true);
+                if role == 1 && !had {
+                    let ck = Symbol::new(&env, "op_count");
+                    let c: u32 = env.storage().instance().get(&ck).unwrap_or(0);
+                    env.storage().instance().set(&ck, &(c + 1));
+                }
             }
             pub fn has_role(env: Env, user: Address, role: u32) -> bool {
                 env.storage()
                     .instance()
                     .get(&(Symbol::new(&env, "role"), user, role))
                     .unwrap_or(false)
+            }
+            pub fn get_operator_count(env: Env) -> u32 {
+                env.storage()
+                    .instance()
+                    .get(&Symbol::new(&env, "op_count"))
+                    .unwrap_or(0)
             }
         }
     }
@@ -58,6 +69,43 @@ mod tests {
         let treasury = Address::generate(env);
         client.init(&ac, &treasury, &0u32, &0u64, &3600u64);
         (client, cid, admin)
+    }
+
+    /// Extended setup that also provisions a whitelisted token and an operator,
+    /// needed for tests that call `create_pool` / `resolve_pool`.
+    fn setup_with_token(
+        env: &Env,
+    ) -> (
+        PredifiContractClient<'_>,
+        Address, // token address
+        Address, // admin
+        Address, // operator
+    ) {
+        use soroban_sdk::token;
+        env.mock_all_auths();
+
+        let ac = env.register(dummy_ac::DummyAC, ());
+        let ac_client = dummy_ac::DummyACClient::new(env, &ac);
+
+        let admin = Address::generate(env);
+        let operator = Address::generate(env);
+        ac_client.grant_role(&admin, &0u32);
+        ac_client.grant_role(&operator, &1u32);
+
+        let token_admin = Address::generate(env);
+        let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+        let token_admin_client = token::StellarAssetClient::new(env, &token_contract);
+        // Mint enough for pool creation liquidity checks
+        let funder = Address::generate(env);
+        token_admin_client.mint(&funder, &1_000_000);
+
+        let cid = env.register(PredifiContract, ());
+        let client = PredifiContractClient::new(env, &cid);
+        let treasury = Address::generate(env);
+        client.init(&ac, &treasury, &0u32, &0u64, &3600u64);
+        client.add_token_to_whitelist(&admin, &token_contract);
+
+        (client, token_contract, admin, operator)
     }
 
     // ── DataKey variant distinctness ─────────────────────────────────────────
@@ -461,5 +509,77 @@ mod tests {
                 "Fresh feed must be valid"
             );
         });
+    }
+
+    // ── get_active_pools_count ────────────────────────────────────────────────
+
+    /// Create 3 pools, resolve 1, verify get_active_pools_count returns 2.
+    #[test]
+    fn test_get_active_pools_count_after_resolve() {
+        use soroban_sdk::{symbol_short, String};
+
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, token, _admin, operator) = setup_with_token(&env);
+
+        let creator = Address::generate(&env);
+
+        let make_pool = |end_time: u64| {
+            client.create_pool(
+                &creator,
+                &end_time,
+                &token,
+                &2u32,
+                &symbol_short!("Tech"),
+                &PoolConfig {
+                    description: String::from_str(&env, "Test pool"),
+                    metadata_url: String::from_str(&env, "ipfs://test"),
+                    min_stake: 1i128,
+                    max_stake: 0i128,
+                    max_total_stake: 0i128,
+                    min_total_stake: 1i128,
+                    initial_liquidity: 0i128,
+                    required_resolutions: 1u32,
+                    private: false,
+                    whitelist_key: None,
+                    outcome_descriptions: soroban_sdk::vec![
+                        &env,
+                        String::from_str(&env, "Yes"),
+                        String::from_str(&env, "No"),
+                    ],
+                },
+            )
+        };
+
+        // Create 3 pools with end times far enough in the future
+        let pool_a = make_pool(100_000);
+        let pool_b = make_pool(100_001);
+        let _pool_c = make_pool(100_002);
+
+        assert_eq!(
+            client.get_active_pools_count(),
+            3,
+            "Expected 3 active pools after creation"
+        );
+
+        // Advance time past pool_a's end_time and resolve it
+        env.ledger().with_mut(|l| l.timestamp = 100_001);
+        client.resolve_pool(&operator, &pool_a, &1u32);
+
+        assert_eq!(
+            client.get_active_pools_count(),
+            2,
+            "Expected 2 active pools after resolving 1"
+        );
+
+        // Resolve pool_b as well to confirm counter decrements correctly
+        env.ledger().with_mut(|l| l.timestamp = 100_002);
+        client.resolve_pool(&operator, &pool_b, &0u32);
+
+        assert_eq!(
+            client.get_active_pools_count(),
+            1,
+            "Expected 1 active pool after resolving 2"
+        );
     }
 }

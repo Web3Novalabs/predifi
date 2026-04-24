@@ -158,6 +158,8 @@ pub enum PredifiError {
     StakeBelowMinimum = 107,
     /// Stake amount exceeds the pool maximum.
     StakeAboveMaximum = 108,
+    /// Stake amount is below the global protocol minimum.
+    InsufficientStake = 45,
     /// The fee basis points exceed the maximum allowed value (10000).
     InvalidFeeBps = 93,
     /// Metadata URL exceeds maximum length (512 bytes).
@@ -218,59 +220,71 @@ pub struct CreatePoolParams {
 /// Represents a prediction pool with all its configuration and state.
 ///
 /// A pool is the core data structure that represents a prediction market.
-/// It contains all information about the market, stakes, and resolution.
+/// It contains all information about the market, including its lifecycle,
+/// financial configuration, participant constraints, and resolution status.
 ///
 /// # Invariants
-/// - `end_time` must be in the future when created (INV-8)
-/// - `state` can only transition from `Active` to `Resolved` or `Canceled` (INV-2)
-/// - `total_stake` equals the sum of all outcome stakes (INV-1)
+/// - `end_time` must be in the future when the pool is created (INV-8).
+/// - `state` can only transition from `Active` to either `Resolved` or `Canceled` (INV-2).
+/// - `total_stake` must always equal the sum of all individual outcome stakes (INV-1).
 /// - For resolved pools: total winnings ≤ `total_stake` (INV-5)
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
-    /// Unix timestamp after which no more predictions are accepted.
+    /// Unix timestamp after which no more predictions (stakes) are accepted.
+    /// This defines the end of the "betting window".
     pub end_time: u64,
-    /// Whether the pool has been resolved (deprecated, use `state` instead).
+    /// Whether the pool has been resolved.
+    /// @deprecated Use `state == MarketState::Resolved` instead.
     pub resolved: bool,
-    /// Whether the pool has been canceled (deprecated, use `state` instead).
+    /// Whether the pool has been canceled.
+    /// @deprecated Use `state == MarketState::Canceled` instead.
     pub canceled: bool,
-    /// Current state of the market (Active, Resolved, or Canceled).
+    /// Current operational state of the market.
+    /// Possible values: `Active` (betting open), `Resolved` (result final), `Canceled` (refunds available).
     pub state: MarketState,
-    /// The winning outcome index (0-based) after resolution. 0 if not yet resolved.
+    /// The winning outcome index (0-based) after resolution.
+    /// Only meaningful if `state` is `Resolved`. Default is 0.
     pub outcome: u32,
-    /// The Stellar token contract address used for staking.
+    /// The contract address of the Stellar token (e.g., USDC) used for all stakes and payouts.
     pub token: Address,
-    /// Total amount of tokens staked across all outcomes, including initial liquidity.
+    /// Total amount of tokens currently staked in the pool.
+    /// Includes user stakes, initial house liquidity, and any subsequent liquidity injections.
     pub total_stake: i128,
-    /// Market category for this pool (e.g., Sports, Finance, Crypto).
+    /// Market category for organizational purposes (e.g., Sports, Finance, Crypto).
     pub category: Symbol,
-    /// A short human-readable description of the event being predicted.
+    /// A short, human-readable title or question for the prediction market (max 256 bytes).
     pub description: String,
-    /// A URL (e.g. IPFS CIDv1) pointing to extended metadata for this pool.
+    /// A URL (e.g., IPFS URI) pointing to extended metadata, rules, or rich media for the pool.
     pub metadata_url: String,
-    /// Number of options/outcomes for this pool (must be <= MAX_OPTIONS_COUNT).
+    /// Number of distinct outcomes participants can bet on (must be >= 2).
     pub options_count: u32,
-    /// Minimum stake amount per prediction (must be > 0).
+    /// Minimum amount a user must stake in a single prediction (must be > 0).
     pub min_stake: i128,
-    /// Maximum stake amount per prediction (0 = no limit).
+    /// Maximum amount a user can stake in a single prediction (0 indicates no limit).
     pub max_stake: i128,
-    /// Minimum total stake required for the pool (must be > 0).
+    /// Minimum `total_stake` required for the pool to be considered valid for resolution.
+    /// If this is not met by `end_time`, the pool may be eligible for cancellation.
     pub min_total_stake: i128,
-    /// Maximum total stake amount across the entire pool (0 = no limit).
+    /// Hard cap on the `total_stake` the pool can accept (0 indicates no limit).
     pub max_total_stake: i128,
-    /// Initial liquidity provided by the pool creator (house money).
-    /// This is part of total_stake but excluded from fee calculations.
+    /// Seed liquidity provided by the pool creator at initialization ("house money").
+    /// This amount is part of `total_stake` but is typically excluded from protocol fee calculations.
     pub initial_liquidity: i128,
-    /// Address of the pool creator.
+    /// Address of the account that created the pool and provided initial liquidity.
     pub creator: Address,
-    /// Number of authorized oracle resolutions required to finalize the pool.
+    /// Number of independent oracle/operator resolutions required before the pool is finalized.
+    /// This provides a decentralized consensus mechanism for result verification.
     pub required_resolutions: u32,
-    /// Whether the pool is private (invite-only).
+    /// If true, only whitelisted addresses can participate in this pool.
     pub private: bool,
-    /// Optional symbol used as an invite key for private pools.
+    /// A unique symbol or secret used as an invite key for accessing private pools.
     pub whitelist_key: Option<Symbol>,
-    /// Human-readable labels for each outcome (length must equal options_count).
+    /// Human-readable labels for each possible outcome (e.g., ["Yes", "No"]).
+    /// The length of this vector must exactly match `options_count`.
     pub outcome_descriptions: Vec<String>,
+    /// The specific protocol fee in basis points (1 bp = 0.01%) applied to this pool at resolution.
+    /// This value is typically determined by the dynamic fee tier system.
     pub fee_bps: u32,
     /// Number of unique addresses that have placed at least one prediction in this pool.
     pub participants_count: u32,
@@ -278,32 +292,34 @@ pub struct Pool {
 
 /// Configuration parameters for creating a prediction pool.
 ///
-/// This struct is passed to `create_pool` to define the pool's properties.
-/// It separates configuration from runtime state (which is managed in `Pool`).
+/// This struct is passed to `create_pool` to define the pool's immutable (or near-immutable)
+/// blueprint. It separates creation-time parameters from the runtime state managed in `Pool`.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolConfig {
-    /// Short human-readable description of the event (max 256 bytes).
+    /// A short, human-readable title or question for the prediction market (max 256 bytes).
     pub description: String,
-    /// URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
+    /// A URL (e.g., IPFS URI) pointing to extended metadata, rules, or rich media (max 512 bytes).
     pub metadata_url: String,
-    /// Minimum stake amount per prediction (must be > 0).
+    /// Minimum amount a user must stake in a single prediction (must be > 0).
     pub min_stake: i128,
-    /// Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
+    /// Maximum amount a user can stake in a single prediction (0 indicates no limit).
+    /// If non-zero, it must be greater than or equal to `min_stake`.
     pub max_stake: i128,
-    /// Minimum total stake required for the pool to be valid (must be > 0).
-    /// This ensures the pool has meaningful participation before resolution.
+    /// Minimum `total_stake` required for the pool to be considered valid for resolution.
+    /// This ensures the pool has meaningful participation before a result is finalized.
     pub min_total_stake: i128,
-    /// Maximum total stake allowed for the pool (0 = no limit, must be >= 0).
+    /// Hard cap on the `total_stake` the pool can accept (0 indicates no limit).
     pub max_total_stake: i128,
-    /// Optional initial liquidity to provide from creator (must be >= 0).
-    /// This is "house money" that participates in the pool but is excluded from fee calculations.
+    /// Seed liquidity provided by the pool creator at initialization ("house money").
+    /// This amount participates in the pool but is typically excluded from fee calculations.
     pub initial_liquidity: i128,
-    /// Number of authorized oracle resolutions required to finalize the pool (must be >= 1).
+    /// Number of independent oracle/operator resolutions required before the pool is finalized.
+    /// Multi-resolution provides a safety layer against single-oracle failure or manipulation.
     pub required_resolutions: u32,
-    /// Whether the pool is private (invite-only). If true, users must be whitelisted.
+    /// If true, only whitelisted addresses can participate in this pool.
     pub private: bool,
-    /// Optional symbol used as an invite key for private pools.
+    /// A unique symbol or secret used as an invite key for accessing private pools.
     pub whitelist_key: Option<Symbol>,
     /// Human-readable labels for each outcome (length must equal options_count).
     pub outcome_descriptions: Vec<String>,
@@ -351,6 +367,8 @@ pub struct Config {
     pub resolution_delay: u64,
     /// Minimum pool duration in seconds.
     pub min_pool_duration: u64,
+    /// Global minimum stake amount. Predictions below this are rejected.
+    pub min_stake: i128,
 }
 
 /// Fee percentages returned by [`PredifiContract::get_fees`].
@@ -364,37 +382,41 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
-/// Represents a single tier in the dynamic fee system.
+/// Represents a fee tier within the protocol's dynamic fee system.
 ///
+/// Fee tiers allow the protocol to adjust fees based on the pool's total volume (stake).
 /// Tiers are applied based on the total stake (volume) of the pool at resolution time.
 /// Higher volumes typically result in lower fee percentages to encourage participation.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeTier {
-    /// The total stake threshold at or above which this tier applies.
+    /// The `total_stake` threshold at or above which this tier's `fee_bps` becomes applicable.
     pub stake_threshold: i128,
-    /// The fee in basis points to apply for this tier (0-10,000).
+    /// The protocol fee in basis points (1 bp = 0.01%) for this tier.
+    /// Must be between 0 and 10,000 (inclusive).
     pub fee_bps: u32,
 }
 
 /// Detailed information about a user's prediction in a specific pool.
 ///
-/// This struct is used to display user prediction history and calculate winnings.
-/// It combines user-specific data with pool state for convenient access.
+/// This struct is a convenient "read-only" view that combines user-specific prediction
+/// data with current pool state. It is primarily used for frontend displays and
+/// calculating potential or final winnings.
 #[contracttype]
 #[derive(Clone)]
 pub struct UserPredictionDetail {
-    /// Unique identifier of the pool.
+    /// Unique identifier (ID) of the prediction pool.
     pub pool_id: u64,
-    /// Amount of tokens staked by the user on their chosen outcome.
+    /// Total amount of tokens the user has staked on their chosen outcome.
     pub amount: i128,
-    /// The outcome index (0-based) that the user predicted.
+    /// The outcome index (0-based) that the user predicted would win.
     pub user_outcome: u32,
-    /// Unix timestamp when the pool ends.
+    /// Unix timestamp when the pool's betting window ends.
     pub pool_end_time: u64,
-    /// Current state of the pool (Active, Resolved, or Canceled).
+    /// Current operational state of the pool (Active, Resolved, or Canceled).
     pub pool_state: MarketState,
-    /// The winning outcome index (0-based) if the pool is resolved, 0 otherwise.
+    /// The winning outcome index (0-based) if the pool is `Resolved`.
+    /// Only meaningful when `pool_state` is `MarketState::Resolved`.
     pub pool_outcome: u32,
 }
 
@@ -505,16 +527,16 @@ pub enum DataKey {
     OracleConfig,
 }
 
-/// Represents a user's prediction in a pool.
+/// Represents a user's individual stake in a prediction market.
 ///
-/// This is a lightweight structure stored for each user-pool combination,
-/// tracking their stake and chosen outcome.
+/// This is the core structure for tracking participation. It is stored as part of the
+/// ledger state for each user-pool pair, mapping a specific outcome to a staked amount.
 #[contracttype]
 #[derive(Clone)]
 pub struct Prediction {
-    /// Amount of tokens staked by the user on their chosen outcome.
+    /// Total amount of tokens staked by the user on this outcome.
     pub amount: i128,
-    /// The outcome index (0-based) that the user predicted.
+    /// The chosen outcome index (0-based). This corresponds to the index in `Pool.outcome_descriptions`.
     pub outcome: u32,
 }
 
@@ -574,6 +596,13 @@ pub struct ResolutionDelayUpdateEvent {
 pub struct MinPoolDurationUpdateEvent {
     pub admin: Address,
     pub duration: u64,
+}
+
+#[contractevent(topics = ["min_stake_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinStakeUpdateEvent {
+    pub admin: Address,
+    pub min_stake: i128,
 }
 
 #[contractevent(topics = ["pool_ready"])]
@@ -1251,6 +1280,7 @@ impl PredifiContract {
                 access_control: access_control.clone(),
                 resolution_delay,
                 min_pool_duration,
+                min_stake: DEFAULT_GLOBAL_MIN_STAKE,
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -1400,6 +1430,33 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         MinPoolDurationUpdateEvent { admin, duration }.publish(&env);
+        Ok(())
+    }
+
+    /// Set the global minimum stake amount. Caller must have Admin role (0).
+    ///
+    /// Predictions with an amount below this threshold will be rejected with
+    /// `PredifiError::InsufficientStake`. This prevents spam from micro-predictions.
+    ///
+    /// # Arguments
+    /// * `admin`  - Address with Admin role (0).
+    /// * `amount` - New minimum stake in base token units. Must be > 0.
+    pub fn set_min_stake(env: Env, admin: Address, amount: i128) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_min_stake")?;
+        assert!(amount > 0, "min_stake must be greater than zero");
+
+        let mut config = Self::get_config(&env);
+        config.min_stake = amount;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        MinStakeUpdateEvent {
+            admin,
+            min_stake: amount,
+        }
+        .publish(&env);
         Ok(())
     }
 
@@ -2199,6 +2256,12 @@ impl PredifiContract {
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 
+        // Validate: amount must meet the global protocol minimum stake
+        let global_min_stake = Self::get_config(&env).min_stake;
+        if amount < global_min_stake {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InsufficientStake);
+        }
+
         // Validate referrer if provided: cannot be self or contract
         if let Some(ref r) = referrer {
             assert!(r != &user, "referrer cannot be self");
@@ -2911,6 +2974,19 @@ impl PredifiContract {
         }
 
         results
+    }
+
+    /// Return the total number of currently active (open) pools.
+    ///
+    /// This is an O(1) read of the `ActivePoolCtr` instance-storage counter
+    /// that is maintained by `add_to_active_index` / `remove_from_active_index`.
+    /// Frontends can use this to display "Showing N of M active pools" without
+    /// fetching every page.
+    pub fn get_active_pools_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ActivePoolCtr)
+            .unwrap_or(0)
     }
 
     /// Add a user to a private pool's whitelist. Only callable by pool creator.

@@ -59,6 +59,13 @@ pub struct MinPoolDurationUpdateEvent {
     pub duration: u64,
 }
 
+#[contractevent(topics = ["min_stake_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinStakeUpdateEvent {
+    pub admin: Address,
+    pub min_stake: i128,
+}
+
 #[contractevent(topics = ["pool_ready"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolReadyForResolutionEvent {
