@@ -7860,6 +7860,84 @@ fn test_cancel_pool_zero_participants_no_contract_balance_change() {
     assert_eq!(balance_before, balance_after);
 }
 
+/// Test that any user can cancel a pool that is overdue (past end_time + CANCELATION_DELAY)
+#[test]
+fn test_any_user_can_cancel_overdue_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _operator, creator) = setup(&env);
+
+    // Set current time and create a pool
+    let current_time = 10000u64;
+    env.ledger().with_mut(|li| li.timestamp = current_time);
+    
+    let end_time = current_time + 3600u64; // Pool ends 1 hour from now
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Overdue Pool"),
+            metadata_url: String::from_str(&env, "ipfs://overdue"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Place some predictions to lock funds
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    token_admin_client.mint(&user2, &1000);
+
+    client.place_prediction(&user1, &pool_id, &100, &0, &None, &None);
+    client.place_prediction(&user2, &pool_id, &200, &1, &None, &None);
+
+    // Advance time to just before the pool becomes overdue (end_time + CANCELATION_DELAY - 1)
+    let just_before_overdue = end_time + CANCELATION_DELAY - 1;
+    env.ledger().with_mut(|li| li.timestamp = just_before_overdue);
+
+    // Regular user should NOT be able to cancel yet (not overdue)
+    let random_user = Address::generate(&env);
+    let result = client.try_cancel_pool(&random_user, &pool_id, &String::from_str(&env, "Not overdue yet"));
+    assert!(result.is_err(), "Regular user should not be able to cancel before overdue period");
+
+    // Advance time to make the pool overdue (8 days after end_time)
+    let overdue_time = end_time + CANCELATION_DELAY + 86400; // 8 days = 7 days + 1 day
+    env.ledger().with_mut(|li| li.timestamp = overdue_time);
+
+    // Now any user should be able to cancel the overdue pool
+    client.cancel_pool(&random_user, &pool_id, &String::from_str(&env, "Pool is overdue"));
+
+    // Verify pool is canceled
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Canceled);
+    assert!(pool.canceled);
+
+    // Users should be able to claim refunds
+    let refund1 = client.claim_refund(&user1, &pool_id);
+    assert_eq!(refund1, 100);
+    assert_eq!(token_admin_client.balance(&user1), 1000); // Initial 1000 - 100 stake + 100 refund
+
+    let refund2 = client.claim_refund(&user2, &pool_id);
+    assert_eq!(refund2, 200);
+    assert_eq!(token_admin_client.balance(&user2), 1000); // Initial 1000 - 200 stake + 200 refund
+}
+
 #[test]
 fn test_claim_refund_on_zero_participant_canceled_pool_returns_error() {
     let env = Env::default();

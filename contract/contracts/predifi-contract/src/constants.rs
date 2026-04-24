@@ -27,6 +27,10 @@ pub const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 /// Pools must be active for at least this duration before they can end.
 pub const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
 
+/// Cancellation delay in seconds for overdue pools (7 days).
+/// After this period past the pool's end_time, any user can cancel the pool.
+pub const CANCELATION_DELAY: u64 = 604800;
+
 /// Default global minimum stake amount (1 unit in base token units).
 /// Predictions below this threshold are rejected to prevent spam.
 pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;

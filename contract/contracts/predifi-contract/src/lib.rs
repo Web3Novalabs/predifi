@@ -2323,12 +2323,21 @@ impl PredifiContract {
             || Self::require_role(&env, &operator, 1).is_ok();
 
         if !is_privileged {
-            // Allow creator to cancel only if no bets have been placed beyond initial liquidity
-            if operator != pool.creator {
-                return Err(PredifiError::Unauthorized);
-            }
-            if pool.total_stake > pool.initial_liquidity {
-                return Err(PredifiError::Unauthorized);
+            // Check if pool is overdue (past end_time + CANCELATION_DELAY)
+            let current_time = env.ledger().timestamp();
+            let overdue_threshold = pool.end_time + CANCELATION_DELAY;
+            
+            if current_time > overdue_threshold {
+                // Allow any user to cancel overdue pools
+                // This is a failsafe to unlock funds when resolution is delayed
+            } else {
+                // Allow creator to cancel only if no bets have been placed beyond initial liquidity
+                if operator != pool.creator {
+                    return Err(PredifiError::Unauthorized);
+                }
+                if pool.total_stake > pool.initial_liquidity {
+                    return Err(PredifiError::Unauthorized);
+                }
             }
         }
 
