@@ -43,7 +43,8 @@
 //    - `revoke_role`: Remove a specific role from a user
 //    - `transfer_role`: Move a role from one user to another
 //    - `revoke_all_roles`: Remove all roles from a user
-//    - `transfer_admin`: Transfer admin authority to a new address
+//    - `propose_new_admin` + `accept_admin_role`: Two-step admin transfer
+//    - `transfer_admin`: Legacy one-step admin transfer
 // 4. Any contract can check if a user has a role by calling `has_role(user, role)`.
 // 5. The `has_any_role` function allows checking if a user has any of a set of roles.
 //
@@ -51,7 +52,7 @@
 // ───────────────────────
 // - Only the admin can assign or revoke roles
 // - All admin operations require authentication (`require_auth`)
-// - Admin transfer is irreversible - the old admin loses all privileges
+// - Admin transfer supports a two-step propose/accept flow for safety
 // - Role checks are performed via storage lookups in persistent storage
 //
 // ═══════════════════════════════════════════════════════════════════════════
@@ -123,6 +124,13 @@ pub struct AdminTransferredEvent {
     pub new_admin: Address,
 }
 
+#[contractevent(topics = ["admin_transfer_proposed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferProposedEvent {
+    pub admin: Address,
+    pub proposed_admin: Address,
+}
+
 #[contractevent(topics = ["all_roles_revoked"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AllRolesRevokedEvent {
@@ -173,6 +181,8 @@ pub enum PoolCategory {
 pub enum DataKey {
     /// Admin address: Admin -> Address
     Admin,
+    /// Proposed admin address awaiting acceptance: ProposedAdmin -> Address
+    ProposedAdmin,
     /// Role assignment: Role(user_address, role) -> ()
     Role(Address, Role),
     /// Pool data: Pool(pool_id) -> Pool
@@ -205,6 +215,10 @@ impl AccessControl {
             .instance()
             .get(&DataKey::Admin)
             .expect("NotInitialized")
+    }
+
+    pub fn get_proposed_admin(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::ProposedAdmin)
     }
 
     pub fn assign_role(
@@ -369,17 +383,55 @@ impl AccessControl {
             return Err(PrediFiError::Unauthorized);
         }
 
-        env.storage().instance().set(&DataKey::Admin, &new_admin);
-
-        env.storage()
-            .persistent()
-            .remove(&DataKey::Role(current_admin, Role::Admin));
-        env.storage()
-            .persistent()
-            .set(&DataKey::Role(new_admin.clone(), Role::Admin), &());
+        Self::apply_admin_transfer(&env, current_admin.clone(), new_admin.clone());
 
         AdminTransferredEvent {
-            admin: admin_caller,
+            admin: current_admin,
+            new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    pub fn propose_new_admin(
+        env: Env,
+        current_admin: Address,
+        new_admin: Address,
+    ) -> Result<(), PrediFiError> {
+        current_admin.require_auth();
+
+        let stored_admin = Self::get_admin(env.clone());
+        if current_admin != stored_admin {
+            return Err(PrediFiError::Unauthorized);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposedAdmin, &new_admin);
+
+        AdminTransferProposedEvent {
+            admin: current_admin,
+            proposed_admin: new_admin,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    pub fn accept_admin_role(env: Env, new_admin: Address) -> Result<(), PrediFiError> {
+        new_admin.require_auth();
+
+        let proposed_admin: Option<Address> = env.storage().instance().get(&DataKey::ProposedAdmin);
+        if proposed_admin != Some(new_admin.clone()) {
+            return Err(PrediFiError::Unauthorized);
+        }
+
+        let current_admin = Self::get_admin(env.clone());
+        Self::apply_admin_transfer(&env, current_admin.clone(), new_admin.clone());
+
+        AdminTransferredEvent {
+            admin: current_admin,
             new_admin,
         }
         .publish(&env);
@@ -467,6 +519,18 @@ impl AccessControl {
             .instance()
             .get(&DataKey::OperatorCount)
             .unwrap_or(0)
+    }
+
+    fn apply_admin_transfer(env: &Env, current_admin: Address, new_admin: Address) {
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        env.storage().instance().remove(&DataKey::ProposedAdmin);
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Role(current_admin, Role::Admin));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Role(new_admin.clone(), Role::Admin), &());
     }
 }
 
