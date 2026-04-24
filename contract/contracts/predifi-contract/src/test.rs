@@ -7871,7 +7871,7 @@ fn test_any_user_can_cancel_overdue_pool() {
     // Set current time and create a pool
     let current_time = 10000u64;
     env.ledger().with_mut(|li| li.timestamp = current_time);
-    
+
     let end_time = current_time + 3600u64; // Pool ends 1 hour from now
     let pool_id = client.create_pool(
         &creator,
@@ -7909,19 +7909,31 @@ fn test_any_user_can_cancel_overdue_pool() {
 
     // Advance time to just before the pool becomes overdue (end_time + CANCELATION_DELAY - 1)
     let just_before_overdue = end_time + CANCELATION_DELAY - 1;
-    env.ledger().with_mut(|li| li.timestamp = just_before_overdue);
+    env.ledger()
+        .with_mut(|li| li.timestamp = just_before_overdue);
 
     // Regular user should NOT be able to cancel yet (not overdue)
     let random_user = Address::generate(&env);
-    let result = client.try_cancel_pool(&random_user, &pool_id, &String::from_str(&env, "Not overdue yet"));
-    assert!(result.is_err(), "Regular user should not be able to cancel before overdue period");
+    let result = client.try_cancel_pool(
+        &random_user,
+        &pool_id,
+        &String::from_str(&env, "Not overdue yet"),
+    );
+    assert!(
+        result.is_err(),
+        "Regular user should not be able to cancel before overdue period"
+    );
 
     // Advance time to make the pool overdue (8 days after end_time)
     let overdue_time = end_time + CANCELATION_DELAY + 86400; // 8 days = 7 days + 1 day
     env.ledger().with_mut(|li| li.timestamp = overdue_time);
 
     // Now any user should be able to cancel the overdue pool
-    client.cancel_pool(&random_user, &pool_id, &String::from_str(&env, "Pool is overdue"));
+    client.cancel_pool(
+        &random_user,
+        &pool_id,
+        &String::from_str(&env, "Pool is overdue"),
+    );
 
     // Verify pool is canceled
     let pool = client.get_pool(&pool_id);
