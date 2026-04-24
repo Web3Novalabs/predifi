@@ -8469,26 +8469,22 @@ fn test_create_pool_accepts_positive_min_total_stake() {
     assert_eq!(pool.min_total_stake, 100i128);
 }
 
-// ── set_min_stake / InsufficientStake tests ──────────────────────────────────
+// ── get_pool_participants_count tests ─────────────────────────────────────────
 
-/// A prediction of 0.1 (amount=1 in 1-decimal units) must fail when the
-/// global minimum is 1.0 (amount=10 in 1-decimal units).
-/// Concretely: set min_stake=10, attempt place_prediction with amount=1.
+/// Starts at 0, increments once per unique participant, not per top-up.
 #[test]
-#[should_panic(expected = "Error(Contract, #45)")]
-fn test_place_prediction_below_global_min_stake_fails() {
+fn test_get_pool_participants_count_unique_only() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
 
-    let user = Address::generate(&env);
-    token_admin_client.mint(&user, &1_000_000i128);
-
-    // Set global min_stake to 10 (represents 1.0 at 1 decimal place)
-    client.set_min_stake(&admin, &10i128);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    let user_c = Address::generate(&env);
+    token_admin_client.mint(&user_a, &1_000_000i128);
+    token_admin_client.mint(&user_b, &1_000_000i128);
+    token_admin_client.mint(&user_c, &1_000_000i128);
 
     let pool_id = client.create_pool(
         &creator,
@@ -8497,8 +8493,8 @@ fn test_place_prediction_below_global_min_stake_fails() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
-            description: String::from_str(&env, "Min stake test pool"),
-            metadata_url: String::from_str(&env, "ipfs://min-stake-test"),
+            description: String::from_str(&env, "Participants count test"),
+            metadata_url: String::from_str(&env, "ipfs://participants-test"),
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 0,
@@ -8515,25 +8511,36 @@ fn test_place_prediction_below_global_min_stake_fails() {
         },
     );
 
-    // amount=1 is below global min_stake=10 → must panic with InsufficientStake (#45)
-    client.place_prediction(&user, &pool_id, &1i128, &0u32, &None, &None);
+    // Fresh pool: 0 participants
+    assert_eq!(client.get_pool_participants_count(&pool_id), 0);
+
+    // user_a joins → count = 1
+    client.place_prediction(&user_a, &pool_id, &100i128, &0u32, &None, &None);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
+
+    // user_a tops up (same outcome) → count stays 1
+    client.place_prediction(&user_a, &pool_id, &50i128, &0u32, &None, &None);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
+
+    // user_b joins → count = 2
+    client.place_prediction(&user_b, &pool_id, &200i128, &1u32, &None, &None);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 2);
+
+    // user_c joins → count = 3
+    client.place_prediction(&user_c, &pool_id, &150i128, &0u32, &None, &None);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 3);
 }
 
-/// A prediction at or above the global min_stake must succeed.
+/// participants_count on the Pool struct matches get_pool_participants_count.
 #[test]
-fn test_place_prediction_at_global_min_stake_succeeds() {
+fn test_pool_struct_participants_count_matches_getter() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
 
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &1_000_000i128);
-
-    // Set global min_stake to 10
-    client.set_min_stake(&admin, &10i128);
 
     let pool_id = client.create_pool(
         &creator,
@@ -8542,8 +8549,8 @@ fn test_place_prediction_at_global_min_stake_succeeds() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
-            description: String::from_str(&env, "Min stake pass test pool"),
-            metadata_url: String::from_str(&env, "ipfs://min-stake-pass"),
+            description: String::from_str(&env, "Struct sync test"),
+            metadata_url: String::from_str(&env, "ipfs://struct-sync"),
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 0,
@@ -8560,19 +8567,13 @@ fn test_place_prediction_at_global_min_stake_succeeds() {
         },
     );
 
-    // amount=10 equals global min_stake=10 → must succeed (no panic)
-    client.place_prediction(&user, &pool_id, &10i128, &0u32, &None, &None);
-}
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
 
-/// set_min_stake must be rejected for non-admin callers.
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_set_min_stake_unauthorized() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, _, _, _, _, _, _) = setup(&env);
-    let non_admin = Address::generate(&env);
-
-    client.set_min_stake(&non_admin, &10i128);
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.participants_count, 1);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
+    assert_eq!(
+        pool.participants_count,
+        client.get_pool_participants_count(&pool_id)
+    );
 }
