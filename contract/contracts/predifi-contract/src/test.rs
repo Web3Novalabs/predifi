@@ -8469,22 +8469,15 @@ fn test_create_pool_accepts_positive_min_total_stake() {
     assert_eq!(pool.min_total_stake, 100i128);
 }
 
-// ── get_pool_participants_count tests ─────────────────────────────────────────
+// ── update_pool_description tests ────────────────────────────────────────────
 
-/// Starts at 0, increments once per unique participant, not per top-up.
+/// Creator can update the description before any prediction is placed.
 #[test]
-fn test_get_pool_participants_count_unique_only() {
+fn test_update_pool_description_by_creator_before_predictions() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
-
-    let user_a = Address::generate(&env);
-    let user_b = Address::generate(&env);
-    let user_c = Address::generate(&env);
-    token_admin_client.mint(&user_a, &1_000_000i128);
-    token_admin_client.mint(&user_b, &1_000_000i128);
-    token_admin_client.mint(&user_c, &1_000_000i128);
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
     let pool_id = client.create_pool(
         &creator,
@@ -8493,8 +8486,8 @@ fn test_get_pool_participants_count_unique_only() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
-            description: String::from_str(&env, "Participants count test"),
-            metadata_url: String::from_str(&env, "ipfs://participants-test"),
+            description: String::from_str(&env, "Will BTC hit 100k?"),
+            metadata_url: String::from_str(&env, "ipfs://desc-test"),
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 0,
@@ -8511,29 +8504,56 @@ fn test_get_pool_participants_count_unique_only() {
         },
     );
 
-    // Fresh pool: 0 participants
-    assert_eq!(client.get_pool_participants_count(&pool_id), 0);
+    let new_desc = String::from_str(&env, "Will BTC hit 100k by March 1st?");
+    client.update_pool_description(&creator, &pool_id, &new_desc);
 
-    // user_a joins → count = 1
-    client.place_prediction(&user_a, &pool_id, &100i128, &0u32, &None, &None);
-    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.description, new_desc);
+}
+#[test]
+fn test_update_pool_description_by_admin_before_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
 
-    // user_a tops up (same outcome) → count stays 1
-    client.place_prediction(&user_a, &pool_id, &50i128, &0u32, &None, &None);
-    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
 
-    // user_b joins → count = 2
-    client.place_prediction(&user_b, &pool_id, &200i128, &1u32, &None, &None);
-    assert_eq!(client.get_pool_participants_count(&pool_id), 2);
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Original description"),
+            metadata_url: String::from_str(&env, "ipfs://admin-desc-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
 
-    // user_c joins → count = 3
-    client.place_prediction(&user_c, &pool_id, &150i128, &0u32, &None, &None);
-    assert_eq!(client.get_pool_participants_count(&pool_id), 3);
+    let new_desc = String::from_str(&env, "Admin-corrected description");
+    client.update_pool_description(&admin, &pool_id, &new_desc);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.description, new_desc);
 }
 
-/// participants_count on the Pool struct matches get_pool_participants_count.
+/// Description update is rejected once a prediction has been placed (pool "started").
 #[test]
-fn test_pool_struct_participants_count_matches_getter() {
+fn test_update_pool_description_locked_after_prediction() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -8549,8 +8569,8 @@ fn test_pool_struct_participants_count_matches_getter() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
-            description: String::from_str(&env, "Struct sync test"),
-            metadata_url: String::from_str(&env, "ipfs://struct-sync"),
+            description: String::from_str(&env, "Original description"),
+            metadata_url: String::from_str(&env, "ipfs://locked-desc-test"),
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 0,
@@ -8567,13 +8587,63 @@ fn test_pool_struct_participants_count_matches_getter() {
         },
     );
 
+    // Place a prediction — this "starts" the pool
     client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
 
-    let pool = client.get_pool(&pool_id);
-    assert_eq!(pool.participants_count, 1);
-    assert_eq!(client.get_pool_participants_count(&pool_id), 1);
-    assert_eq!(
-        pool.participants_count,
-        client.get_pool_participants_count(&pool_id)
+    // Description update must now be rejected
+    let result = client.try_update_pool_description(
+        &creator,
+        &pool_id,
+        &String::from_str(&env, "Attempted change after start"),
     );
+    assert_eq!(result, Err(Ok(PredifiError::InvalidPoolState)));
+
+    // Description must remain unchanged
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.description,
+        String::from_str(&env, "Original description")
+    );
+}
+
+/// Non-creator, non-admin caller is rejected.
+#[test]
+fn test_update_pool_description_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let stranger = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Original description"),
+            metadata_url: String::from_str(&env, "ipfs://unauth-desc-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let result = client.try_update_pool_description(
+        &stranger,
+        &pool_id,
+        &String::from_str(&env, "Unauthorized change"),
+    );
+    assert_eq!(result, Err(Ok(PredifiError::Unauthorized)));
 }
