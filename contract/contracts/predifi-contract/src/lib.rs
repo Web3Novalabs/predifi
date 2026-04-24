@@ -2924,6 +2924,19 @@ impl PredifiContract {
         results
     }
 
+    /// Return the total number of currently active (open) pools.
+    ///
+    /// This is an O(1) read of the `ActivePoolCtr` instance-storage counter
+    /// that is maintained by `add_to_active_index` / `remove_from_active_index`.
+    /// Frontends can use this to display "Showing N of M active pools" without
+    /// fetching every page.
+    pub fn get_active_pools_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ActivePoolCtr)
+            .unwrap_or(0)
+    }
+
     /// Add a user to a private pool's whitelist. Only callable by pool creator.
     pub fn add_to_whitelist(
         env: Env,
