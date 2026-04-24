@@ -31,6 +31,11 @@ pub(crate) mod dummy_access_control {
 
             env.storage().instance().set(&already_has_key, &true);
 
+            if role == 0 {
+                let admin_key = Symbol::new(&env, "admin");
+                env.storage().instance().set(&admin_key, &user);
+            }
+
             // Track operator count
             if role == 1 && !already_has {
                 let count_key = Symbol::new(&env, "op_count");
@@ -61,6 +66,14 @@ pub(crate) mod dummy_access_control {
         pub fn get_operator_count(env: Env) -> u32 {
             let count_key = Symbol::new(&env, "op_count");
             env.storage().instance().get(&count_key).unwrap_or(0)
+        }
+
+        pub fn get_admin(env: Env) -> Address {
+            let admin_key = Symbol::new(&env, "admin");
+            env.storage()
+                .instance()
+                .get(&admin_key)
+                .expect("admin not set in dummy access control")
         }
     }
 }
@@ -8431,6 +8444,76 @@ fn test_get_fees_returns_treasury_and_referral_fee_bps() {
     let fees = c.get_fees();
     assert_eq!(fees.treasury_fee_bps, 750);
     assert_eq!(fees.referral_fee_bps, 2000);
+}
+
+#[test]
+fn test_get_contract_info_returns_config_and_stats() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let pool_config = PoolConfig {
+        description: String::from_str(&env, "Pool"),
+        metadata_url: String::from_str(&env, "ipfs://pool"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 0i128,
+        min_total_stake: 1i128,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: soroban_sdk::vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ],
+    };
+
+    client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &CATEGORY_TECH,
+        &pool_config,
+    );
+    client.create_pool(
+        &creator,
+        &100500u64,
+        &token_address,
+        &2u32,
+        &CATEGORY_SPORTS,
+        &pool_config,
+    );
+
+    client.set_fee_bps(&admin, &250u32);
+    client.set_treasury(&admin, &treasury);
+    client.set_resolution_delay(&admin, &60u64);
+    client.set_min_pool_duration(&admin, &7200u64);
+    client.set_min_stake(&admin, &5i128);
+    client.set_max_predictions_per_user(&admin, &3u32);
+    client.set_referral_cut_bps(&admin, &2000u32);
+    client.pause(&admin);
+
+    let info = client.get_contract_info();
+    assert_eq!(info.version, 1u32);
+    assert_eq!(info.current_admin, admin);
+    assert!(info.is_paused);
+    assert_eq!(info.total_pools, 2u64);
+    assert_eq!(info.fee_bps, 250u32);
+    assert_eq!(info.referral_cut_bps, 2000u32);
+    assert_eq!(info.treasury, treasury);
+    assert_eq!(info.access_control, ac_client.address);
+    assert_eq!(info.resolution_delay, 60u64);
+    assert_eq!(info.min_pool_duration, 7200u64);
+    assert_eq!(info.min_stake, 5i128);
+    assert_eq!(info.max_predictions_per_user, 3u32);
 }
 
 #[test]
