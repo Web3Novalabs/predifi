@@ -1550,7 +1550,7 @@ impl PredifiContract {
             .persistent()
             .get(&whitelist_key)
             .unwrap_or_else(|| Vec::new(&env));
-        
+
         // Only add if not already in the list
         if !whitelist.contains(&token) {
             whitelist.push_back(token.clone());
@@ -1585,7 +1585,7 @@ impl PredifiContract {
             .persistent()
             .get(&whitelist_key)
             .unwrap_or_else(|| Vec::new(&env));
-        
+
         // Remove the token from the list if present
         let new_whitelist = Vec::new(&env);
         let mut new_whitelist = new_whitelist;
@@ -1595,7 +1595,7 @@ impl PredifiContract {
             }
         }
         whitelist = new_whitelist;
-        
+
         env.storage().persistent().set(&whitelist_key, &whitelist);
         Self::extend_persistent(&env, &whitelist_key);
 
@@ -1616,11 +1616,11 @@ impl PredifiContract {
             .persistent()
             .get(&whitelist_key)
             .unwrap_or_else(|| Vec::new(&env));
-        
+
         if env.storage().persistent().has(&whitelist_key) {
             Self::extend_persistent(&env, &whitelist_key);
         }
-        
+
         whitelist
     }
 

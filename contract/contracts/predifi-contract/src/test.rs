@@ -8486,7 +8486,7 @@ fn test_whitelist_events_emitted() {
 #[test]
 fn test_get_supported_tokens_empty() {
     let (_env, client, _admin, _treasury) = setup_whitelist_env();
-    
+
     let supported_tokens = client.get_supported_tokens();
     assert_eq!(supported_tokens.len(), 0);
 }
@@ -8495,16 +8495,16 @@ fn test_get_supported_tokens_empty() {
 #[test]
 fn test_get_supported_tokens_multiple() {
     let (env, client, admin, _treasury) = setup_whitelist_env();
-    
+
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
     let token_c = Address::generate(&env);
-    
+
     // Add tokens to whitelist
     client.add_token_to_whitelist(&admin, &token_a);
     client.add_token_to_whitelist(&admin, &token_b);
     client.add_token_to_whitelist(&admin, &token_c);
-    
+
     let supported_tokens = client.get_supported_tokens();
     assert_eq!(supported_tokens.len(), 3);
     assert!(supported_tokens.contains(&token_a));
@@ -8516,22 +8516,22 @@ fn test_get_supported_tokens_multiple() {
 #[test]
 fn test_get_supported_tokens_after_removal() {
     let (env, client, admin, _treasury) = setup_whitelist_env();
-    
+
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
     let token_c = Address::generate(&env);
-    
+
     // Add tokens to whitelist
     client.add_token_to_whitelist(&admin, &token_a);
     client.add_token_to_whitelist(&admin, &token_b);
     client.add_token_to_whitelist(&admin, &token_c);
-    
+
     let supported_tokens = client.get_supported_tokens();
     assert_eq!(supported_tokens.len(), 3);
-    
+
     // Remove one token
     client.remove_token_from_whitelist(&admin, &token_b);
-    
+
     let supported_tokens = client.get_supported_tokens();
     assert_eq!(supported_tokens.len(), 2);
     assert!(supported_tokens.contains(&token_a));
@@ -8543,13 +8543,13 @@ fn test_get_supported_tokens_after_removal() {
 #[test]
 fn test_get_supported_tokens_duplicate_additions() {
     let (env, client, admin, _treasury) = setup_whitelist_env();
-    
+
     let token = Address::generate(&env);
-    
+
     // Add the same token twice
     client.add_token_to_whitelist(&admin, &token);
     client.add_token_to_whitelist(&admin, &token);
-    
+
     let supported_tokens = client.get_supported_tokens();
     assert_eq!(supported_tokens.len(), 1);
     assert!(supported_tokens.contains(&token));
