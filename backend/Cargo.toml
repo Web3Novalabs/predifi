@@ -23,7 +23,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio-rustls",
     "postgres",
+    "chrono",
 ] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
