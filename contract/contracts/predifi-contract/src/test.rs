@@ -9251,3 +9251,72 @@ fn test_update_pool_description_unauthorized() {
     );
     assert_eq!(result, Err(Ok(PredifiError::Unauthorized)));
 }
+
+#[test]
+fn test_batch_claim_winnings_three_pools() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let user = Address::generate(&env);
+    // Mint enough for 3 stakes of 100 each
+    token_admin_client.mint(&user, &300);
+
+    // Helper closure to create a pool and return its id
+    let make_pool = |desc: &str| -> u64 {
+        client.create_pool(
+            &creator,
+            &100_000u64,
+            &token_address,
+            &2u32,
+            &symbol_short!("Sports"),
+            &PoolConfig {
+                description: String::from_str(&env, desc),
+                metadata_url: String::from_str(&env, "ipfs://test"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0,
+                min_total_stake: 1,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Yes"),
+                    String::from_str(&env, "No"),
+                ],
+            },
+        )
+    };
+
+    let pool_a = make_pool("Pool A");
+    let pool_b = make_pool("Pool B");
+    let pool_c = make_pool("Pool C");
+
+    // User stakes outcome 0 in all three pools
+    client.place_prediction(&user, &pool_a, &100, &0, &None, &None);
+    client.place_prediction(&user, &pool_b, &100, &0, &None, &None);
+    client.place_prediction(&user, &pool_c, &100, &0, &None, &None);
+
+    // Advance time past end_time and resolve all pools with outcome 0 (user wins)
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_a, &0u32);
+    client.resolve_pool(&operator, &pool_b, &0u32);
+    client.resolve_pool(&operator, &pool_c, &0u32);
+
+    let pool_ids = soroban_sdk::vec![&env, pool_a, pool_b, pool_c];
+    let results = client.batch_claim_winnings(&user, &pool_ids);
+
+    // User was the sole staker on each pool so they get the full stake back
+    assert_eq!(results.get(pool_a).unwrap(), 100);
+    assert_eq!(results.get(pool_b).unwrap(), 100);
+    assert_eq!(results.get(pool_c).unwrap(), 100);
+
+    // Contract should be empty after all claims
+    assert_eq!(token.balance(&contract_addr), 0);
+    // User should have their original 300 back
+    assert_eq!(token.balance(&user), 300);
+}
