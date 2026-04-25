@@ -221,6 +221,8 @@ pub struct CreatePoolParams {
     pub initial_liquidity: i128,
     /// Market category for classification (e.g., Sports, Finance, Crypto).
     pub category: Symbol,
+    /// Delay in seconds after `end_time` before this pool can be resolved.
+    pub delay: u64,
     /// Whether the pool is private (invite-only).
     pub private: bool,
     /// Optional symbol used as an invite key for private pools.
@@ -277,6 +279,8 @@ pub struct Pool {
     pub creator: Address,
     /// Number of authorized oracle resolutions required to finalize the pool.
     pub required_resolutions: u32,
+    /// Delay in seconds after `end_time` before this pool can be resolved.
+    pub delay: u64,
     /// Whether the pool is private (invite-only).
     pub private: bool,
     /// Optional symbol used as an invite key for private pools.
@@ -308,6 +312,9 @@ pub struct PoolConfig {
     pub initial_liquidity: i128,
     /// Number of authorized oracle resolutions required to finalize the pool (must be >= 1).
     pub required_resolutions: u32,
+    /// Delay in seconds after `end_time` before this pool can be resolved.
+    /// A value of `0` inherits the current global `resolution_delay`.
+    pub delay: u64,
     /// Whether the pool is private (invite-only). If true, users must be whitelisted.
     pub private: bool,
     /// Optional symbol used as an invite key for private pools.
@@ -1596,12 +1603,23 @@ impl PredifiContract {
         // Validate: end_time must be in the future
         assert!(end_time > current_time, "end_time must be in the future");
 
-        let min_pool_duration = env
+        let protocol_config = env
             .storage()
             .instance()
             .get::<DataKey, Config>(&DataKey::Config)
-            .map(|c| c.min_pool_duration)
-            .unwrap_or(DEFAULT_MIN_POOL_DURATION);
+            .unwrap_or_else(|| Config {
+                fee_bps: 0,
+                treasury: env.current_contract_address(),
+                access_control: env.current_contract_address(),
+                resolution_delay: 0,
+                min_pool_duration: DEFAULT_MIN_POOL_DURATION,
+            });
+        let min_pool_duration = protocol_config.min_pool_duration;
+        let pool_delay = if config.delay == 0 {
+            protocol_config.resolution_delay
+        } else {
+            config.delay
+        };
 
         // Validate: minimum pool duration
         assert!(
@@ -1687,6 +1705,7 @@ impl PredifiContract {
             initial_liquidity: config.initial_liquidity,
             creator: creator.clone(),
             required_resolutions: config.required_resolutions,
+            delay: pool_delay,
             private: config.private,
             whitelist_key: config.whitelist_key.clone(),
             outcome_descriptions: config.outcome_descriptions.clone(),
@@ -1863,9 +1882,8 @@ impl PredifiContract {
         }
 
         let current_time = env.ledger().timestamp();
-        let config = Self::get_config(&env);
 
-        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+        if current_time < pool.end_time.saturating_add(pool.delay) {
             return Err(PredifiError::ResolutionDelayNotMet);
         }
 
@@ -1982,10 +2000,9 @@ impl PredifiContract {
             return Err(PredifiError::InvalidPoolState);
         }
 
-        let config = Self::get_config(&env);
         let current_time = env.ledger().timestamp();
 
-        if current_time >= pool.end_time.saturating_add(config.resolution_delay) {
+        if current_time >= pool.end_time.saturating_add(pool.delay) {
             PoolReadyForResolutionEvent {
                 pool_id,
                 timestamp: current_time,
@@ -2999,9 +3016,8 @@ impl PredifiContract {
         }
 
         let current_time = env.ledger().timestamp();
-        let config = Self::get_config(&env);
 
-        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+        if current_time < pool.end_time.saturating_add(pool.delay) {
             return Err(PredifiError::ResolutionDelayNotMet);
         }
 
@@ -3109,9 +3125,8 @@ impl OracleCallback for PredifiContract {
         }
 
         let current_time = env.ledger().timestamp();
-        let config = Self::get_config(&env);
 
-        if current_time < pool.end_time.saturating_add(config.resolution_delay) {
+        if current_time < pool.end_time.saturating_add(pool.delay) {
             return Err(PredifiError::ResolutionDelayNotMet);
         }
 

@@ -99,6 +99,7 @@ fn test_full_market_lifecycle() {
             max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![
@@ -186,6 +187,7 @@ fn test_multi_user_betting_and_balance_verification() {
             max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![
@@ -268,6 +270,7 @@ fn test_market_resolution_multiple_winners() {
             max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![

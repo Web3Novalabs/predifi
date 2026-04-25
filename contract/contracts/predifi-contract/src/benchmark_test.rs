@@ -85,6 +85,7 @@ mod benchmark_tests {
                 max_total_stake: 0,
                 initial_liquidity: 0,
                 required_resolutions: 1,
+                delay: 0u64,
                 private: false,
                 whitelist_key: None,
                 outcome_descriptions,

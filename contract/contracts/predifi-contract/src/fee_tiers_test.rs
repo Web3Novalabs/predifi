@@ -65,6 +65,7 @@ fn test_dynamic_fee_tiers_application() {
             max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![
@@ -98,6 +99,7 @@ fn test_dynamic_fee_tiers_application() {
             max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![
@@ -141,6 +143,7 @@ fn test_dynamic_fee_tiers_application() {
             max_total_stake: 0,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![

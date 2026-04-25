@@ -101,6 +101,7 @@ fn test_high_volume_predictions_single_pool() {
             max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![
@@ -150,6 +151,7 @@ fn test_bulk_claim_winnings() {
             max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![
@@ -204,6 +206,7 @@ fn test_sequential_pool_creation_stress() {
                 max_total_stake: 0,
                 initial_liquidity: 0,
                 required_resolutions: 1u32,
+                delay: 0u64,
                 private: false,
                 whitelist_key: None,
                 outcome_descriptions: vec![
@@ -239,6 +242,7 @@ fn test_max_outcomes_high_volume() {
             max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![
@@ -294,6 +298,7 @@ fn test_prediction_throughput_measurement() {
             max_total_stake: 0,
             initial_liquidity: 0,
             required_resolutions: 1u32,
+            delay: 0u64,
             private: false,
             whitelist_key: None,
             outcome_descriptions: vec![
@@ -343,6 +348,7 @@ fn test_resolution_under_load() {
                 max_total_stake: 0,
                 initial_liquidity: 0,
                 required_resolutions: 1u32,
+                delay: 0u64,
                 private: false,
                 whitelist_key: None,
                 outcome_descriptions: vec![
