@@ -73,6 +73,16 @@ pub fn build_router(config: Config) -> Router {
         .layer(LoggingLayer)
 }
 
+/// Build the Axum router with a live database pool wired in.
+pub fn build_router_with_db(config: Config, db: sqlx::PgPool) -> Router {
+    Router::new()
+        .route("/", get(root))
+        .route("/health", get(health))
+        .nest("/api", routes::router_with_db(config, db))
+        .layer(build_cors())
+        .layer(LoggingLayer)
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -88,12 +98,12 @@ async fn main() {
         .compact()
         .init();
 
-    let _pool = db::create_pool(&config).unwrap_or_else(|error| {
+    let pool = db::create_pool(&config).unwrap_or_else(|error| {
         error!(error = %error, "failed to initialize PostgreSQL pool");
         std::process::exit(1);
     });
 
-    let app = build_router(config.clone());
+    let app = build_router_with_db(config.clone(), pool);
 
     let bind_addr = config.bind_address();
 

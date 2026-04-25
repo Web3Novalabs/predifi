@@ -355,6 +355,7 @@ pub struct PoolStats {
 /// # Invariants
 /// - `fee_bps` must be <= 10,000 (100%) (INV-6)
 /// - `max_predictions_per_user` must be >= 0 (0 = no limit)
+/// - `referral_bps` must be <= 10,000 (100%)
 #[contracttype]
 #[derive(Clone)]
 pub struct Config {
@@ -375,6 +376,10 @@ pub struct Config {
     /// Maximum number of predictions a user can place per pool.
     /// A value of 0 means no limit.
     pub max_predictions_per_user: u32,
+    /// Referral reward rate in basis points (1 bp = 0.01%). Valid range: 0-10,000.
+    /// Represents the share of the protocol fee paid to referrers.
+    /// Default: 500 (5%). Can be raised to 1000 (10%) for referral seasons.
+    pub referral_bps: u32,
 }
 
 /// Fee percentages returned by [`PredifiContract::get_fees`].
@@ -1211,7 +1216,19 @@ impl PredifiContract {
     }
 
     /// Referral cut in basis points (e.g. 5000 = 50% of referrer's fee share to referrer). Default 5000.
+    ///
+    /// Prefers `Config.referral_bps` (set via `set_referral_rate`) when non-zero,
+    /// then falls back to the legacy `ReferralCutBps` storage key, then to 5000.
     fn read_referral_cut_bps(env: &Env) -> u32 {
+        // Prefer the value stored in Config (set via set_referral_rate).
+        let config_bps: Option<Config> = env.storage().instance().get(&DataKey::Config);
+        if let Some(cfg) = config_bps {
+            if cfg.referral_bps > 0 {
+                Self::extend_instance(env);
+                return cfg.referral_bps;
+            }
+        }
+        // Fall back to legacy standalone key.
         let bps = env
             .storage()
             .instance()
@@ -1350,6 +1367,7 @@ impl PredifiContract {
                 min_pool_duration,
                 min_stake: DEFAULT_GLOBAL_MIN_STAKE,
                 max_predictions_per_user,
+                referral_bps: 500, // default 5%
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -1567,6 +1585,28 @@ impl PredifiContract {
         env.storage()
             .instance()
             .set(&DataKey::ReferralCutBps, &referral_cut_bps);
+        Self::extend_instance(&env);
+        Ok(())
+    }
+
+    /// Set the referral reward rate in basis points stored in the Config struct.
+    ///
+    /// This allows admins to run "referral seasons" (e.g. raise from 500 bps / 5%
+    /// to 1000 bps / 10%) without any code changes.  The value is persisted in the
+    /// `Config` instance-storage entry so it is picked up automatically by fee
+    /// calculation logic.
+    ///
+    /// Caller must hold the Admin role. `bps` must be ≤ 10_000.
+    pub fn set_referral_rate(env: Env, admin: Address, bps: u32) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_referral_rate")?;
+        if bps > 10_000 {
+            return Err(PredifiError::InvalidFeeBps);
+        }
+        let mut config = Self::get_config(&env);
+        config.referral_bps = bps;
+        env.storage().instance().set(&DataKey::Config, &config);
         Self::extend_instance(&env);
         Ok(())
     }
