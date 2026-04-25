@@ -4,7 +4,10 @@
 
 pub mod config;
 pub mod db;
+pub mod price_cache;
+pub mod referrals;
 pub mod request_logger;
+pub mod response;
 pub mod routes;
 
 use axum::{routing::get, Json, Router};
@@ -64,11 +67,25 @@ async fn root() -> Json<serde_json::Value> {
 }
 
 /// Build the Axum router with CORS and logging middleware attached.
-pub fn build_router(config: Config) -> Router {
+pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
-        .nest("/api", routes::router(config))
+        .nest("/api", routes::router(config, cache, None))
+        .layer(build_cors())
+        .layer(LoggingLayer)
+}
+
+/// Build the Axum router with a live database pool.
+pub fn build_router_with_db(
+    config: Config,
+    cache: price_cache::PriceCache,
+    pool: sqlx::PgPool,
+) -> Router {
+    Router::new()
+        .route("/", get(root))
+        .route("/health", get(health))
+        .nest("/api", routes::router(config, cache, Some(pool)))
         .layer(build_cors())
         .layer(LoggingLayer)
 }
@@ -88,12 +105,15 @@ async fn main() {
         .compact()
         .init();
 
-    let _pool = db::create_pool(&config).unwrap_or_else(|error| {
+    let pool = db::create_pool(&config).unwrap_or_else(|error| {
         error!(error = %error, "failed to initialize PostgreSQL pool");
         std::process::exit(1);
     });
 
-    let app = build_router(config.clone());
+    let cache = price_cache::PriceCache::new();
+    price_cache::spawn_fetcher(cache.clone());
+
+    let app = build_router_with_db(config.clone(), cache, pool);
 
     let bind_addr = config.bind_address();
 

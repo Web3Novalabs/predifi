@@ -1,12 +1,10 @@
 use crate::config::Config;
+use crate::price_cache::PriceCache;
 use axum::Router;
 
 pub mod v1;
 
 /// Build the API router tree.
-///
-/// Versioned sub-routers make it easier to grow the API without restructuring
-/// the top-level application router.
-pub fn router(config: Config) -> Router {
-    Router::new().nest("/v1", v1::router(config))
+pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> Router {
+    Router::new().nest("/v1", v1::router(config, cache, pool))
 }

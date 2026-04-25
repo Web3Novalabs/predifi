@@ -2896,6 +2896,35 @@ impl PredifiContract {
         result
     }
 
+    /// Claim winnings from multiple pools in a single transaction.
+    ///
+    /// Iterates over `pool_ids`, calls the single-pool claim logic for each,
+    /// and returns a `Map<u64, i128>` showing how much was claimed per pool.
+    /// Pools that yield 0 (loser, already claimed, no prediction) are still
+    /// included in the map with value 0 so callers can distinguish "processed"
+    /// from "not attempted".
+    ///
+    /// # Arguments
+    /// * `user`     - Address claiming winnings (must provide auth once)
+    /// * `pool_ids` - List of pool IDs to claim from
+    ///
+    /// # Returns
+    /// `Map<u64, i128>` — claimed amount per pool (0 for non-winners / already claimed)
+    pub fn batch_claim_winnings(
+        env: Env,
+        user: Address,
+        pool_ids: Vec<u64>,
+    ) -> soroban_sdk::Map<u64, i128> {
+        user.require_auth();
+        let mut results: soroban_sdk::Map<u64, i128> = soroban_sdk::Map::new(&env);
+        for pool_id in pool_ids.iter() {
+            let amount = Self::claim_winnings(env.clone(), user.clone(), pool_id)
+                .unwrap_or(0);
+            results.set(pool_id, amount);
+        }
+        results
+    }
+
     /// Claim a refund from a canceled pool. Returns the refunded amount.
     /// Only available for canceled pools. User receives their full original stake.
     ///
