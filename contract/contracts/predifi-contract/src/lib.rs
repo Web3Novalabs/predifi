@@ -388,6 +388,39 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
+/// Aggregated contract metadata for frontend consumption.
+///
+/// This read model allows clients to fetch protocol configuration and core stats
+/// in one call instead of performing multiple separate getters.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractInfo {
+    /// Contract version tracked in instance storage.
+    pub version: u32,
+    /// Admin address from the access-control contract.
+    pub current_admin: Address,
+    /// Whether the contract is currently paused.
+    pub is_paused: bool,
+    /// Total number of pools created so far.
+    pub total_pools: u64,
+    /// Protocol fee in basis points (1 bp = 0.01%).
+    pub fee_bps: u32,
+    /// Referral fee cut in basis points.
+    pub referral_cut_bps: u32,
+    /// Treasury address that receives protocol fees.
+    pub treasury: Address,
+    /// Access-control contract address.
+    pub access_control: Address,
+    /// Global resolution delay in seconds.
+    pub resolution_delay: u64,
+    /// Minimum pool duration in seconds.
+    pub min_pool_duration: u64,
+    /// Global minimum stake.
+    pub min_stake: i128,
+    /// Maximum predictions allowed per user per pool.
+    pub max_predictions_per_user: u32,
+}
+
 /// Represents a fee tier within the protocol's dynamic fee system.
 ///
 /// Fee tiers allow the protocol to adjust fees based on the pool's total volume (stake).
@@ -1100,6 +1133,14 @@ impl PredifiContract {
         )
     }
 
+    fn get_access_control_admin(env: &Env, contract: &Address) -> Address {
+        env.invoke_contract(
+            contract,
+            &Symbol::new(env, "get_admin"),
+            soroban_sdk::vec![env],
+        )
+    }
+
     fn require_role(env: &Env, user: &Address, role: u32) -> Result<(), PredifiError> {
         let config = Self::get_config(env);
         if !Self::has_role(env, &config.access_control, user, role) {
@@ -1671,6 +1712,35 @@ impl PredifiContract {
         FeeInfo {
             treasury_fee_bps: Self::get_config(&env).fee_bps,
             referral_fee_bps: Self::read_referral_cut_bps(&env),
+        }
+    }
+
+    /// Return an aggregated metadata view of contract config and protocol state.
+    pub fn get_contract_info(env: Env) -> ContractInfo {
+        let config = Self::get_config(&env);
+        let current_admin = Self::get_access_control_admin(&env, &config.access_control);
+
+        ContractInfo {
+            version: env
+                .storage()
+                .instance()
+                .get(&DataKey::Version)
+                .unwrap_or(0u32),
+            current_admin,
+            is_paused: Self::is_paused(&env),
+            total_pools: env
+                .storage()
+                .instance()
+                .get(&DataKey::PoolIdCtr)
+                .unwrap_or(0u64),
+            fee_bps: config.fee_bps,
+            referral_cut_bps: Self::read_referral_cut_bps(&env),
+            treasury: config.treasury,
+            access_control: config.access_control,
+            resolution_delay: config.resolution_delay,
+            min_pool_duration: config.min_pool_duration,
+            min_stake: config.min_stake,
+            max_predictions_per_user: config.max_predictions_per_user,
         }
     }
 
