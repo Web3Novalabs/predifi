@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod request_logger;
 pub mod routes;
+pub mod worker;
 
 use axum::{routing::get, Json, Router};
 use config::Config;
