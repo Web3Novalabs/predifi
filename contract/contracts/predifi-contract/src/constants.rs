@@ -50,7 +50,7 @@ pub const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
-/// At 7 decimal places (e.g., USDC on Stellar), this equals 100 USDC.
+/// At 7 decimal places (e.g., USDC on Stellar), this equals 0.1 USDC.
 pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -116,12 +116,9 @@ mod tests {
     }
 
     #[test]
-    fn test_high_value_threshold_equals_100_usdc() {
-        // At 7 decimals, 1_000_000 = 0.1 USDC, so 1_000_000 should be 100 USDC
-        // Actually, at 7 decimals: 1 USDC = 10_000_000, so 100 USDC = 1_000_000_000
-        // The comment in the constant says it equals 100 USDC, but the value is 1_000_000
-        // This means at 7 decimals, 1_000_000 = 0.1 USDC
-        // Let's verify the constant is as documented
+    fn test_high_value_threshold_equals_0_1_usdc() {
+        // At 7 decimals, 1 USDC = 10_000_000 base units.
+        // Therefore 1_000_000 base units equals 0.1 USDC.
         assert_eq!(HIGH_VALUE_THRESHOLD, 1_000_000);
     }
 }
