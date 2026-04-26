@@ -236,12 +236,6 @@ pub struct Pool {
     /// Unix timestamp after which no more predictions (stakes) are accepted.
     /// This defines the end of the "betting window".
     pub end_time: u64,
-    /// Whether the pool has been resolved.
-    /// @deprecated Use `state == MarketState::Resolved` instead.
-    pub resolved: bool,
-    /// Whether the pool has been canceled.
-    /// @deprecated Use `state == MarketState::Canceled` instead.
-    pub canceled: bool,
     /// Current operational state of the market.
     /// Possible values: `Active` (betting open), `Resolved` (result final), `Canceled` (refunds available).
     pub state: MarketState,
@@ -565,6 +559,8 @@ pub enum DataKey {
     PriceCondition(u64),
     /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
     PriceFeed(Symbol),
+    /// Tracked list of all registered feed pairs for cleanup: PriceFeedList -> Vec<Symbol>
+    PriceFeedList,
     FeeTiers,
     /// Oracle configuration for price feed validation
     OracleConfig,
@@ -1036,7 +1032,7 @@ impl PredifiContract {
     /// POST: returns true only when all three conditions hold simultaneously
     #[allow(dead_code)]
     fn is_pool_active(pool: &Pool) -> bool {
-        !pool.resolved && !pool.canceled && pool.state == MarketState::Active
+        pool.state == MarketState::Active
     }
 
     /// Pure: Initialize outcome stakes vector with zeros
@@ -1686,11 +1682,16 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Placeholder for post-upgrade migration logic.
+    /// Post-upgrade migration logic.
+    ///
+    /// v2 migration: the deprecated `resolved` and `canceled` boolean fields have been
+    /// removed from the `Pool` struct. All state is now represented exclusively by the
+    /// `state: MarketState` field. Existing pools stored with the old schema are
+    /// automatically handled by Soroban's XDR codec — the removed fields are simply
+    /// ignored on read, so no explicit data rewrite is required.
     pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "migrate_state")?;
-        // Initial implementation has no state migration needed.
         Ok(())
     }
 
@@ -1955,8 +1956,6 @@ impl PredifiContract {
         // Initialize pool data structure
         let pool = Pool {
             end_time,
-            resolved: false,
-            canceled: false,
             state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
@@ -2088,7 +2087,7 @@ impl PredifiContract {
         }
 
         // Pool must still be active and not ended
-        // if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+        // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
         if !Self::is_pool_active(&pool) {
@@ -2216,26 +2215,7 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        if pool.resolved {
-            log!(
-                &env,
-                "resolve_pool rejected: pool already resolved",
-                pool_id,
-                operator.clone(),
-                outcome
-            );
-        }
-        assert!(!pool.resolved, "Pool already resolved");
-        if pool.canceled {
-            log!(
-                &env,
-                "resolve_pool rejected: pool is canceled",
-                pool_id,
-                operator.clone(),
-                outcome
-            );
-        }
-        assert!(!pool.canceled, "Cannot resolve a canceled pool");
+
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
@@ -2246,9 +2226,7 @@ impl PredifiContract {
                 pool_id,
                 operator.clone(),
                 outcome,
-                pool.end_time,
-                pool.resolved,
-                pool.canceled
+                pool.end_time
             );
             return Err(PredifiError::InvalidPoolState);
         }
@@ -2351,7 +2329,6 @@ impl PredifiContract {
         // Check if the required threshold has been met
         if new_outcome_votes >= pool.required_resolutions {
             pool.state = MarketState::Resolved;
-            pool.resolved = true;
             pool.outcome = outcome;
             pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
@@ -2469,7 +2446,7 @@ impl PredifiContract {
         }
 
         // Ensure resolved pools cannot be canceled
-        if pool.resolved {
+        if pool.state == MarketState::Resolved {
             return Err(PredifiError::PoolNotResolved);
         }
 
@@ -2478,7 +2455,6 @@ impl PredifiContract {
         }
 
         pool.state = MarketState::Canceled;
-        pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
         Self::remove_from_active_index(&env, pool_id);
@@ -2538,8 +2514,6 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        assert!(!pool.resolved, "Pool already resolved");
-        assert!(!pool.canceled, "Cannot place prediction on canceled pool");
         // assert!(pool.state == MarketState::Active, "Pool is not active");
         if !Self::is_pool_active(&pool) {
             panic!("Pool is not active");
@@ -3472,12 +3446,67 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         oracle.require_auth();
 
-        let feed_key = DataKey::PriceFeed(feed_pair);
+        let feed_key = DataKey::PriceFeed(feed_pair.clone());
         env.storage()
             .persistent()
             .set(&feed_key, &(price, confidence, timestamp, expires_at));
         Self::extend_persistent(&env, &feed_key);
+
+        // Track feed pair for cleanup
+        let mut list: Vec<Symbol> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceFeedList)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !list.contains(feed_pair.clone()) {
+            list.push_back(feed_pair);
+            env.storage()
+                .persistent()
+                .set(&DataKey::PriceFeedList, &list);
+        }
+
         Ok(())
+    }
+
+    /// Remove all expired price feeds from storage. Permissionless.
+    ///
+    /// Returns the number of feeds removed.
+    pub fn cleanup_expired_feeds(env: Env) -> u32 {
+        let current_time = env.ledger().timestamp();
+
+        let list: Vec<Symbol> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceFeedList)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut remaining: Vec<Symbol> = Vec::new(&env);
+        let mut removed: u32 = 0;
+
+        for i in 0..list.len() {
+            let pair = list.get(i).unwrap();
+            let expired = env
+                .storage()
+                .persistent()
+                .get::<DataKey, (i128, i128, u64, u64)>(&DataKey::PriceFeed(pair.clone()))
+                .map(|(_, _, _, expires_at)| expires_at < current_time)
+                .unwrap_or(true);
+
+            if expired {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::PriceFeed(pair));
+                removed += 1;
+            } else {
+                remaining.push_back(pair);
+            }
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PriceFeedList, &remaining);
+
+        removed
     }
 
     /// Automatically resolve a pool based on its configured price condition.
@@ -3525,7 +3554,7 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        if pool.resolved || pool.canceled {
+        if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -3538,7 +3567,6 @@ impl PredifiContract {
 
         // Apply resolution
         pool.state = MarketState::Resolved;
-        pool.resolved = true;
         pool.outcome = outcome;
         pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
@@ -3630,8 +3658,6 @@ impl OracleCallback for PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        assert!(!pool.resolved, "Pool already resolved");
-        assert!(!pool.canceled, "Cannot resolve a canceled pool");
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
@@ -3720,7 +3746,6 @@ impl OracleCallback for PredifiContract {
         // Check if the required threshold has been met
         if new_outcome_votes >= pool.required_resolutions {
             pool.state = MarketState::Resolved;
-            pool.resolved = true;
             pool.outcome = outcome;
             pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 

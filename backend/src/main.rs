@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod request_logger;
 pub mod routes;
+pub mod worker;
 
 use axum::{routing::get, Json, Router};
 use config::Config;
@@ -92,6 +93,8 @@ async fn main() {
         error!(error = %error, "failed to initialize PostgreSQL pool");
         std::process::exit(1);
     });
+
+    worker::stellar_listener::spawn(config.stellar_rpc_url.clone(), _pool.clone());
 
     let app = build_router(config.clone());
 

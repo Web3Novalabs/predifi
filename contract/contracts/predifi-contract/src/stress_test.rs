@@ -1,4 +1,4 @@
-use crate::{PoolConfig, PredifiContract, PredifiContractClient};
+use crate::{MarketState, PoolConfig, PredifiContract, PredifiContractClient};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
@@ -390,6 +390,6 @@ fn test_resolution_under_load() {
     for pid in pool_ids {
         client.resolve_pool(&admin, &pid, &0);
         let pool = client.get_pool(&pid);
-        assert!(pool.resolved);
+        assert_eq!(pool.state, MarketState::Resolved);
     }
 }
