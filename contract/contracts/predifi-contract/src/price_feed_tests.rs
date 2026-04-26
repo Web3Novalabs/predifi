@@ -468,7 +468,7 @@ mod tests {
         // 8. Verify the result
         let pool = PredifiContract::get_pool(env.clone(), pool_id).unwrap();
         assert_eq!(pool.state, MarketState::Resolved);
-        assert!(pool.resolved);
+        assert_eq!(pool.state, MarketState::Resolved);
         assert_eq!(pool.outcome, 1); // Condition Met
     }
 }

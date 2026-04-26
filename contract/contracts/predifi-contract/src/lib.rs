@@ -236,12 +236,6 @@ pub struct Pool {
     /// Unix timestamp after which no more predictions (stakes) are accepted.
     /// This defines the end of the "betting window".
     pub end_time: u64,
-    /// Whether the pool has been resolved.
-    /// @deprecated Use `state == MarketState::Resolved` instead.
-    pub resolved: bool,
-    /// Whether the pool has been canceled.
-    /// @deprecated Use `state == MarketState::Canceled` instead.
-    pub canceled: bool,
     /// Current operational state of the market.
     /// Possible values: `Active` (betting open), `Resolved` (result final), `Canceled` (refunds available).
     pub state: MarketState,
@@ -355,6 +349,7 @@ pub struct PoolStats {
 /// # Invariants
 /// - `fee_bps` must be <= 10,000 (100%) (INV-6)
 /// - `max_predictions_per_user` must be >= 0 (0 = no limit)
+/// - `referral_bps` must be <= 10,000 (100%)
 #[contracttype]
 #[derive(Clone)]
 pub struct Config {
@@ -375,6 +370,10 @@ pub struct Config {
     /// Maximum number of predictions a user can place per pool.
     /// A value of 0 means no limit.
     pub max_predictions_per_user: u32,
+    /// Referral reward rate in basis points (1 bp = 0.01%). Valid range: 0-10,000.
+    /// Represents the share of the protocol fee paid to referrers.
+    /// Default: 500 (5%). Can be raised to 1000 (10%) for referral seasons.
+    pub referral_bps: u32,
 }
 
 /// Fee percentages returned by [`PredifiContract::get_fees`].
@@ -565,6 +564,8 @@ pub enum DataKey {
     PriceCondition(u64),
     /// Latest price feed data: PriceFeed(feed_pair) -> (price, confidence, timestamp, expires_at)
     PriceFeed(Symbol),
+    /// Tracked list of all registered feed pairs for cleanup: PriceFeedList -> Vec<Symbol>
+    PriceFeedList,
     FeeTiers,
     /// Oracle configuration for price feed validation
     OracleConfig,
@@ -1036,7 +1037,7 @@ impl PredifiContract {
     /// POST: returns true only when all three conditions hold simultaneously
     #[allow(dead_code)]
     fn is_pool_active(pool: &Pool) -> bool {
-        !pool.resolved && !pool.canceled && pool.state == MarketState::Active
+        pool.state == MarketState::Active
     }
 
     /// Pure: Initialize outcome stakes vector with zeros
@@ -1211,7 +1212,19 @@ impl PredifiContract {
     }
 
     /// Referral cut in basis points (e.g. 5000 = 50% of referrer's fee share to referrer). Default 5000.
+    ///
+    /// Prefers `Config.referral_bps` (set via `set_referral_rate`) when non-zero,
+    /// then falls back to the legacy `ReferralCutBps` storage key, then to 5000.
     fn read_referral_cut_bps(env: &Env) -> u32 {
+        // Prefer the value stored in Config (set via set_referral_rate).
+        let config_bps: Option<Config> = env.storage().instance().get(&DataKey::Config);
+        if let Some(cfg) = config_bps {
+            if cfg.referral_bps > 0 {
+                Self::extend_instance(env);
+                return cfg.referral_bps;
+            }
+        }
+        // Fall back to legacy standalone key.
         let bps = env
             .storage()
             .instance()
@@ -1350,6 +1363,7 @@ impl PredifiContract {
                 min_pool_duration,
                 min_stake: DEFAULT_GLOBAL_MIN_STAKE,
                 max_predictions_per_user,
+                referral_bps: 500, // default 5%
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -1571,6 +1585,28 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Set the referral reward rate in basis points stored in the Config struct.
+    ///
+    /// This allows admins to run "referral seasons" (e.g. raise from 500 bps / 5%
+    /// to 1000 bps / 10%) without any code changes.  The value is persisted in the
+    /// `Config` instance-storage entry so it is picked up automatically by fee
+    /// calculation logic.
+    ///
+    /// Caller must hold the Admin role. `bps` must be ≤ 10_000.
+    pub fn set_referral_rate(env: Env, admin: Address, bps: u32) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_referral_rate")?;
+        if bps > 10_000 {
+            return Err(PredifiError::InvalidFeeBps);
+        }
+        let mut config = Self::get_config(&env);
+        config.referral_bps = bps;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+        Ok(())
+    }
+
     /// Add a token to the allowed betting whitelist. Caller must have Admin role (0).
     pub fn add_token_to_whitelist(
         env: Env,
@@ -1686,11 +1722,16 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Placeholder for post-upgrade migration logic.
+    /// Post-upgrade migration logic.
+    ///
+    /// v2 migration: the deprecated `resolved` and `canceled` boolean fields have been
+    /// removed from the `Pool` struct. All state is now represented exclusively by the
+    /// `state: MarketState` field. Existing pools stored with the old schema are
+    /// automatically handled by Soroban's XDR codec — the removed fields are simply
+    /// ignored on read, so no explicit data rewrite is required.
     pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "migrate_state")?;
-        // Initial implementation has no state migration needed.
         Ok(())
     }
 
@@ -1955,8 +1996,6 @@ impl PredifiContract {
         // Initialize pool data structure
         let pool = Pool {
             end_time,
-            resolved: false,
-            canceled: false,
             state: MarketState::Active,
             outcome: 0,
             token: token.clone(),
@@ -2088,7 +2127,7 @@ impl PredifiContract {
         }
 
         // Pool must still be active and not ended
-        // if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+        // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
         if !Self::is_pool_active(&pool) {
@@ -2216,26 +2255,7 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        if pool.resolved {
-            log!(
-                &env,
-                "resolve_pool rejected: pool already resolved",
-                pool_id,
-                operator.clone(),
-                outcome
-            );
-        }
-        assert!(!pool.resolved, "Pool already resolved");
-        if pool.canceled {
-            log!(
-                &env,
-                "resolve_pool rejected: pool is canceled",
-                pool_id,
-                operator.clone(),
-                outcome
-            );
-        }
-        assert!(!pool.canceled, "Cannot resolve a canceled pool");
+
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
@@ -2246,9 +2266,7 @@ impl PredifiContract {
                 pool_id,
                 operator.clone(),
                 outcome,
-                pool.end_time,
-                pool.resolved,
-                pool.canceled
+                pool.end_time
             );
             return Err(PredifiError::InvalidPoolState);
         }
@@ -2351,7 +2369,6 @@ impl PredifiContract {
         // Check if the required threshold has been met
         if new_outcome_votes >= pool.required_resolutions {
             pool.state = MarketState::Resolved;
-            pool.resolved = true;
             pool.outcome = outcome;
             pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
@@ -2469,7 +2486,7 @@ impl PredifiContract {
         }
 
         // Ensure resolved pools cannot be canceled
-        if pool.resolved {
+        if pool.state == MarketState::Resolved {
             return Err(PredifiError::PoolNotResolved);
         }
 
@@ -2478,7 +2495,6 @@ impl PredifiContract {
         }
 
         pool.state = MarketState::Canceled;
-        pool.canceled = true;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
         Self::remove_from_active_index(&env, pool_id);
@@ -2538,8 +2554,6 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        assert!(!pool.resolved, "Pool already resolved");
-        assert!(!pool.canceled, "Cannot place prediction on canceled pool");
         // assert!(pool.state == MarketState::Active, "Pool is not active");
         if !Self::is_pool_active(&pool) {
             panic!("Pool is not active");
@@ -3501,12 +3515,67 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         oracle.require_auth();
 
-        let feed_key = DataKey::PriceFeed(feed_pair);
+        let feed_key = DataKey::PriceFeed(feed_pair.clone());
         env.storage()
             .persistent()
             .set(&feed_key, &(price, confidence, timestamp, expires_at));
         Self::extend_persistent(&env, &feed_key);
+
+        // Track feed pair for cleanup
+        let mut list: Vec<Symbol> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceFeedList)
+            .unwrap_or_else(|| Vec::new(&env));
+        if !list.contains(feed_pair.clone()) {
+            list.push_back(feed_pair);
+            env.storage()
+                .persistent()
+                .set(&DataKey::PriceFeedList, &list);
+        }
+
         Ok(())
+    }
+
+    /// Remove all expired price feeds from storage. Permissionless.
+    ///
+    /// Returns the number of feeds removed.
+    pub fn cleanup_expired_feeds(env: Env) -> u32 {
+        let current_time = env.ledger().timestamp();
+
+        let list: Vec<Symbol> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceFeedList)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut remaining: Vec<Symbol> = Vec::new(&env);
+        let mut removed: u32 = 0;
+
+        for i in 0..list.len() {
+            let pair = list.get(i).unwrap();
+            let expired = env
+                .storage()
+                .persistent()
+                .get::<DataKey, (i128, i128, u64, u64)>(&DataKey::PriceFeed(pair.clone()))
+                .map(|(_, _, _, expires_at)| expires_at < current_time)
+                .unwrap_or(true);
+
+            if expired {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::PriceFeed(pair));
+                removed += 1;
+            } else {
+                remaining.push_back(pair);
+            }
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PriceFeedList, &remaining);
+
+        removed
     }
 
     /// Automatically resolve a pool based on its configured price condition.
@@ -3554,7 +3623,7 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        if pool.resolved || pool.canceled {
+        if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -3567,7 +3636,6 @@ impl PredifiContract {
 
         // Apply resolution
         pool.state = MarketState::Resolved;
-        pool.resolved = true;
         pool.outcome = outcome;
         pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 
@@ -3659,8 +3727,6 @@ impl OracleCallback for PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-        assert!(!pool.resolved, "Pool already resolved");
-        assert!(!pool.canceled, "Cannot resolve a canceled pool");
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
@@ -3749,7 +3815,6 @@ impl OracleCallback for PredifiContract {
         // Check if the required threshold has been met
         if new_outcome_votes >= pool.required_resolutions {
             pool.state = MarketState::Resolved;
-            pool.resolved = true;
             pool.outcome = outcome;
             pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
 

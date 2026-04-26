@@ -9,6 +9,7 @@ pub mod referrals;
 pub mod request_logger;
 pub mod response;
 pub mod routes;
+pub mod worker;
 
 use axum::{routing::get, Json, Router};
 use config::Config;
@@ -86,6 +87,16 @@ pub fn build_router_with_db(
         .route("/", get(root))
         .route("/health", get(health))
         .nest("/api", routes::router(config, cache, Some(pool)))
+        .layer(build_cors())
+        .layer(LoggingLayer)
+}
+
+/// Build the Axum router with a live database pool wired in.
+pub fn build_router_with_db(config: Config, db: sqlx::PgPool) -> Router {
+    Router::new()
+        .route("/", get(root))
+        .route("/health", get(health))
+        .nest("/api", routes::router_with_db(config, db))
         .layer(build_cors())
         .layer(LoggingLayer)
 }

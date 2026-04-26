@@ -5967,8 +5967,7 @@ fn test_is_pool_active_returns_true_for_active_pool() {
     );
 
     let pool = client.get_pool(&pool_id);
-    assert!(!pool.resolved);
-    assert!(!pool.canceled);
+    assert_eq!(pool.state, MarketState::Active);
     assert_eq!(pool.state, MarketState::Active);
 }
 
@@ -6272,7 +6271,7 @@ fn test_is_pool_active_full_lifecycle() {
 
     // Phase 1: pool is active — predictions accepted.
     let pool = client.get_pool(&pool_id);
-    assert!(!pool.resolved && !pool.canceled && pool.state == MarketState::Active);
+    assert_eq!(pool.state, MarketState::Active);
 
     let user_win = Address::generate(&env);
     let user_lose = Address::generate(&env);
@@ -6288,7 +6287,7 @@ fn test_is_pool_active_full_lifecycle() {
     client.resolve_pool(&operator, &pool_id, &0u32);
 
     let pool = client.get_pool(&pool_id);
-    assert!(pool.resolved);
+    assert_eq!(pool.state, MarketState::Resolved);
     assert_eq!(pool.state, MarketState::Resolved);
 
     // Phase 3: claims work correctly post-resolution.
@@ -7790,7 +7789,7 @@ fn test_creator_can_cancel_empty_pool() {
     );
 
     let pool = client.get_pool(&pool_id);
-    assert!(pool.canceled);
+    assert_eq!(pool.state, MarketState::Canceled);
 }
 
 // ── cancel_pool with zero participants ───────────────────────────────────────
@@ -7831,7 +7830,7 @@ fn test_cancel_pool_zero_participants_state_is_canceled() {
 
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.state, MarketState::Canceled);
-    assert!(pool.canceled);
+    assert_eq!(pool.state, MarketState::Canceled);
 }
 
 #[test]
@@ -7951,7 +7950,7 @@ fn test_any_user_can_cancel_overdue_pool() {
     // Verify pool is canceled
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.state, MarketState::Canceled);
-    assert!(pool.canceled);
+    assert_eq!(pool.state, MarketState::Canceled);
 
     // Users should be able to claim refunds
     let refund1 = client.claim_refund(&user1, &pool_id);
@@ -8330,7 +8329,7 @@ fn test_operator_can_cancel_pool_with_bets() {
     );
 
     let pool = client.get_pool(&pool_id);
-    assert!(pool.canceled);
+    assert_eq!(pool.state, MarketState::Canceled);
 }
 
 // ── Category constant tests ───────────────────────────────────────────────────
