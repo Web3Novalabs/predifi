@@ -35,6 +35,10 @@ pub const CANCELATION_DELAY: u64 = 604800;
 /// Predictions below this threshold are rejected to prevent spam.
 pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
 
+/// Default cooldown in seconds between consecutive place_prediction calls by the same user.
+/// Defaults to disabled so existing deployments can opt in explicitly via admin config.
+pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 0;
+
 /// Maximum number of options/outcomes allowed in a single pool.
 /// This limit prevents excessive gas costs and ensures reasonable pool complexity.
 pub const MAX_OPTIONS_COUNT: u32 = 100;
@@ -101,6 +105,11 @@ mod tests {
     #[test]
     fn test_high_value_threshold_is_positive() {
         assert!(HIGH_VALUE_THRESHOLD > 0);
+    }
+
+    #[test]
+    fn test_prediction_cooldown_is_non_negative() {
+        assert_eq!(DEFAULT_PREDICTION_COOLDOWN_SECONDS, 0);
     }
 
     #[test]

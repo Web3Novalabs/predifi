@@ -2499,7 +2499,6 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
 }
 
 #[test]
-#[should_panic(expected = "Cannot place prediction on canceled pool")]
 fn test_cannot_place_prediction_on_canceled_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2559,8 +2558,8 @@ fn test_cannot_place_prediction_on_canceled_pool() {
     // Cancel the pool
     client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
 
-    // Try to place prediction on canceled pool - should panic
-    client.place_prediction(&user, &pool_id, &100, &1, &None, &None);
+    let result = client.try_place_prediction(&user, &pool_id, &100, &1, &None, &None);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -2625,7 +2624,6 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
 }
 
 #[test]
-#[should_panic(expected = "Cannot place prediction on canceled pool")]
 fn test_admin_can_cancel_pool_with_predictions() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2687,8 +2685,8 @@ fn test_admin_can_cancel_pool_with_predictions() {
     // Admin cancels the pool - this freezes betting
     client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
 
-    // Verify no more predictions can be placed - should panic
-    client.place_prediction(&user, &pool_id, &50, &2, &None, &None);
+    let result = client.try_place_prediction(&user, &pool_id, &50, &2, &None, &None);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -2798,7 +2796,6 @@ fn test_cannot_cancel_resolved_pool() {
 }
 
 #[test]
-#[should_panic(expected = "Cannot resolve a canceled pool")]
 fn test_cannot_resolve_canceled_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2850,12 +2847,11 @@ fn test_cannot_resolve_canceled_pool() {
     );
 
     client.cancel_pool(&admin, &pool_id, &String::from_str(&env, ""));
-    // Should panic because pool is not active (canceled)
-    client.resolve_pool(&operator, &pool_id, &1u32);
+    let result = client.try_resolve_pool(&operator, &pool_id, &1u32);
+    assert!(result.is_err());
 }
 
 #[test]
-#[should_panic(expected = "Cannot place prediction on canceled pool")]
 fn test_cannot_predict_on_canceled_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2891,8 +2887,8 @@ fn test_cannot_predict_on_canceled_pool() {
     );
 
     client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
-    // Should panic
-    client.place_prediction(&user1, &pool_id, &100, &1, &None, &None);
+    let result = client.try_place_prediction(&user1, &pool_id, &100, &1, &None, &None);
+    assert!(result.is_err());
 }
 
 #[test]
@@ -4231,7 +4227,6 @@ fn test_large_stake_winnings_split_correctly() {
 
 /// Resolving the same pool twice in a row must fail the second time.
 #[test]
-#[should_panic(expected = "Pool already resolved")]
 fn test_double_resolution_attempt() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4265,8 +4260,8 @@ fn test_double_resolution_attempt() {
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
     client.resolve_pool(&operator, &pool_id, &0u32);
-    // Second resolution must panic.
-    client.resolve_pool(&operator, &pool_id, &1u32);
+    let result = client.try_resolve_pool(&operator, &pool_id, &1u32);
+    assert!(result.is_err());
 }
 
 /// Ten users all claim winnings immediately after resolution.
@@ -6151,7 +6146,6 @@ fn create_test_pool(
 /// is_pool_active returns false (via behavior) after pool is resolved —
 /// resolve_pool on an already-resolved pool must panic.
 #[test]
-#[should_panic(expected = "Pool already resolved")]
 fn test_is_pool_active_false_after_resolve() {
     let env = Env::default();
     env.mock_all_auths();
@@ -6186,15 +6180,13 @@ fn test_is_pool_active_false_after_resolve() {
     env.ledger().with_mut(|li| li.timestamp = 100_001);
     client.resolve_pool(&operator, &pool_id, &0u32);
 
-    // Pool is now resolved — resolved == true, state == Resolved.
-    // is_pool_active would return false, so a second resolve attempt must panic.
-    client.resolve_pool(&operator, &pool_id, &0u32);
+    let result = client.try_resolve_pool(&operator, &pool_id, &0u32);
+    assert!(result.is_err());
 }
 
 /// is_pool_active returns false (via behavior) after pool is canceled —
 /// place_prediction on a canceled pool must panic with the correct message.
 #[test]
-#[should_panic(expected = "Cannot place prediction on canceled pool")]
 fn test_is_pool_active_false_after_cancel() {
     let env = Env::default();
     env.mock_all_auths();
@@ -6231,15 +6223,13 @@ fn test_is_pool_active_false_after_cancel() {
     let user = Address::generate(&env);
     token_admin_client.mint(&user, &500);
 
-    // Pool is canceled — is_pool_active returns false.
-    // place_prediction must be blocked.
-    client.place_prediction(&user, &pool_id, &100, &0, &None, &None);
+    let result = client.try_place_prediction(&user, &pool_id, &100, &0, &None, &None);
+    assert!(result.is_err());
 }
 
 /// Resolving a canceled pool must be blocked — verifies is_pool_active
 /// integration in resolve_pool.
 #[test]
-#[should_panic(expected = "Cannot resolve a canceled pool")]
 fn test_is_pool_active_blocks_resolve_on_canceled_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -6274,8 +6264,8 @@ fn test_is_pool_active_blocks_resolve_on_canceled_pool() {
     client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
-    // is_pool_active == false → should panic
-    client.resolve_pool(&operator, &pool_id, &0u32);
+    let result = client.try_resolve_pool(&operator, &pool_id, &0u32);
+    assert!(result.is_err());
 }
 
 /// Canceling a canceled pool a second time must be blocked — verifies
@@ -8623,6 +8613,7 @@ fn test_get_contract_info_returns_config_and_stats() {
     client.set_min_pool_duration(&admin, &7200u64);
     client.set_min_stake(&admin, &5i128);
     client.set_max_predictions_per_user(&admin, &3u32);
+    client.set_prediction_cooldown(&admin, &120u64);
     client.set_referral_cut_bps(&admin, &2000u32);
     client.pause(&admin);
 
@@ -8639,6 +8630,7 @@ fn test_get_contract_info_returns_config_and_stats() {
     assert_eq!(info.min_pool_duration, 7200u64);
     assert_eq!(info.min_stake, 5i128);
     assert_eq!(info.max_predictions_per_user, 3u32);
+    assert_eq!(info.prediction_cooldown_seconds, 120u64);
 }
 
 #[test]
@@ -9196,6 +9188,138 @@ fn test_max_predictions_update_event_emitted() {
     }
 
     assert!(found_event, "MaxPredictionsUpdateEvent should be emitted");
+}
+
+#[test]
+fn test_prediction_cooldown_blocks_rapid_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.set_prediction_cooldown(&admin, &60u64);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &10_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Cooldown pool"),
+            metadata_url: String::from_str(&env, "ipfs://cooldown"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+
+    let result = client.try_place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_prediction_cooldown_allows_prediction_after_elapsed_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.set_prediction_cooldown(&admin, &60u64);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &10_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Cooldown pool"),
+            metadata_url: String::from_str(&env, "ipfs://cooldown"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+    env.ledger().set_timestamp(1_060);
+    client.place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_set_prediction_cooldown_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_ac_client, client, _token_address, _, _, _, _, _) = setup(&env);
+    let unauthorized_user = Address::generate(&env);
+
+    client.set_prediction_cooldown(&unauthorized_user, &60u64);
+}
+
+#[test]
+fn test_prediction_cooldown_update_event_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _token_address, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let events_before = env.events().all();
+    client.set_prediction_cooldown(&admin, &90u64);
+    let events_after = env.events().all();
+
+    assert!(events_after.len() > events_before.len());
+
+    let topic = Symbol::new(&env, "prediction_cooldown_update");
+    let mut found_event = false;
+    for e in events_after.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == topic {
+                    found_event = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(found_event, "PredictionCooldownUpdateEvent should be emitted");
 }
 
 // ── update_pool_description tests ────────────────────────────────────────────

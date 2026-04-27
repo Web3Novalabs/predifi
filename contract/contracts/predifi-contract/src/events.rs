@@ -349,3 +349,10 @@ pub struct ResolutionConflictEvent {
 }
 
 #[contractevent(topics = ["EmergencyWithdraw"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmergencyWithdrawEvent {
+    pub admin: Address,
+    pub token: Address,
+    pub destination: Address,
+    pub amount: i128,
+}

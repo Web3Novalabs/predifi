@@ -172,6 +172,8 @@ pub enum PredifiError {
     ArithmeticError = 110,
     /// required_resolutions exceeds the number of active operators; pool can never be resolved.
     RequiredResolutionsExceedOperators = 200,
+    /// Rate limit exceeded, cooldown active, or suspicious activity detected.
+    RateLimitOrSuspiciousActivity = 190,
 }
 
 /// Represents the current state of a prediction market.
@@ -372,6 +374,8 @@ pub struct Config {
     /// Maximum number of predictions a user can place per pool.
     /// A value of 0 means no limit.
     pub max_predictions_per_user: u32,
+    /// Minimum cooldown in seconds between consecutive predictions from the same address.
+    pub prediction_cooldown_seconds: u64,
     /// Referral reward rate in basis points (1 bp = 0.01%). Valid range: 0-10,000.
     /// Represents the share of the protocol fee paid to referrers.
     /// Default: 500 (5%). Can be raised to 1000 (10%) for referral seasons.
@@ -420,6 +424,8 @@ pub struct ContractInfo {
     pub min_stake: i128,
     /// Maximum predictions allowed per user per pool.
     pub max_predictions_per_user: u32,
+    /// Minimum cooldown in seconds between consecutive predictions from the same address.
+    pub prediction_cooldown_seconds: u64,
 }
 
 /// Represents a fee tier within the protocol's dynamic fee system.
@@ -501,6 +507,8 @@ pub enum DataKey {
     UsrPrdCnt(Address),
     /// User prediction index: `UsrPrdIdx(user, index)` -> `UserPredictionDetail`
     UsrPrdIdx(Address, u32),
+    /// Last successful prediction timestamp for a user: `LastPredictionTime(user)` -> `u64`
+    LastPredictionTime(Address),
 
     // ── Protocol configuration ───────────────────────────────────────────────
     /// Global protocol configuration: `Config` -> `Config`
@@ -623,6 +631,13 @@ pub struct FeeUpdateEvent {
 pub struct MaxPredictionsUpdateEvent {
     pub admin: Address,
     pub limit: u32,
+}
+
+#[contractevent(topics = ["prediction_cooldown_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionCooldownUpdateEvent {
+    pub admin: Address,
+    pub cooldown_seconds: u64,
 }
 
 #[contractevent(topics = ["fee_tiers_update"])]
@@ -1373,7 +1388,8 @@ impl PredifiContract {
                 min_pool_duration,
                 min_stake: DEFAULT_GLOBAL_MIN_STAKE,
                 max_predictions_per_user,
-                referral_bps: 500, // default 5%
+                prediction_cooldown_seconds: DEFAULT_PREDICTION_COOLDOWN_SECONDS,
+                referral_bps: 5000, // default 50%
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -1514,6 +1530,29 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Set the cooldown in seconds between consecutive predictions from the same address.
+    pub fn set_prediction_cooldown(
+        env: Env,
+        admin: Address,
+        cooldown_seconds: u64,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_prediction_cooldown")?;
+
+        let mut config = Self::get_config(&env);
+        config.prediction_cooldown_seconds = cooldown_seconds;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        PredictionCooldownUpdateEvent {
+            admin,
+            cooldown_seconds,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
     /// Set resolution delay in seconds. Caller must have Admin role (0).
     pub fn set_resolution_delay(env: Env, admin: Address, delay: u64) -> Result<(), PredifiError> {
         Self::require_not_paused(&env);
@@ -1588,6 +1627,9 @@ impl PredifiContract {
             referral_cut_bps <= 10_000,
             "referral_cut_bps must be at most 10000"
         );
+        let mut config = Self::get_config(&env);
+        config.referral_bps = referral_cut_bps;
+        env.storage().instance().set(&DataKey::Config, &config);
         env.storage()
             .instance()
             .set(&DataKey::ReferralCutBps, &referral_cut_bps);
@@ -1766,6 +1808,11 @@ impl PredifiContract {
         }
     }
 
+    /// Returns the current cooldown in seconds between consecutive predictions from the same address.
+    pub fn get_prediction_cooldown(env: Env) -> u64 {
+        Self::get_config(&env).prediction_cooldown_seconds
+    }
+
     /// Return an aggregated metadata view of contract config and protocol state.
     pub fn get_contract_info(env: Env) -> ContractInfo {
         let config = Self::get_config(&env);
@@ -1792,6 +1839,7 @@ impl PredifiContract {
             min_pool_duration: config.min_pool_duration,
             min_stake: config.min_stake,
             max_predictions_per_user: config.max_predictions_per_user,
+            prediction_cooldown_seconds: config.prediction_cooldown_seconds,
         }
     }
 
@@ -2623,6 +2671,22 @@ impl PredifiContract {
 
         // Enforce maximum predictions per user limit (across all pools)
         let config = Self::get_config(&env);
+        if config.prediction_cooldown_seconds > 0 {
+            let last_prediction_key = DataKey::LastPredictionTime(user.clone());
+            if let Some(last_prediction_time) = env.storage().persistent().get::<_, u64>(&last_prediction_key)
+            {
+                Self::extend_persistent(&env, &last_prediction_key);
+                let now = env.ledger().timestamp();
+                if now.saturating_sub(last_prediction_time) < config.prediction_cooldown_seconds {
+                    Self::exit_reentrancy_guard(&env);
+                    soroban_sdk::panic_with_error!(
+                        &env,
+                        PredifiError::RateLimitOrSuspiciousActivity
+                    );
+                }
+            }
+        }
+
         if config.max_predictions_per_user > 0 {
             let pred_key = DataKey::Pred(user.clone(), pool_id);
             let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
@@ -2712,6 +2776,12 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
 
+        let last_prediction_key = DataKey::LastPredictionTime(user.clone());
+        env.storage()
+            .persistent()
+            .set(&last_prediction_key, &env.ledger().timestamp());
+        Self::extend_persistent(&env, &last_prediction_key);
+
         // Update outcome stake (INV-1) - using optimized batch storage
         let _stakes =
             Self::update_outcome_stake(&env, pool_id, outcome, amount, pool.options_count);
@@ -2759,14 +2829,8 @@ impl PredifiContract {
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
     /// PRE: pool.state ≠ Active
     /// POST: HasClaimed(user, pool) = true (INV-3), payout ≤ pool.total_stake (INV-4)
-    #[allow(clippy::needless_borrows_for_generic_args)]
-    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
-        Self::require_not_paused(&env);
-        user.require_auth();
-
-        // 🛡️ RE-ENTRANCY GUARD: Protect against recursive withdrawal attempts
-        // during value transfer to external addresses/contracts (INV-3).
-        Self::enter_reentrancy_guard(&env);
+    fn claim_winnings_internal(env: &Env, user: &Address, pool_id: u64) -> Result<i128, PredifiError> {
+        Self::enter_reentrancy_guard(env);
 
         let result: Result<i128, PredifiError> = (|| {
             let pool_key = DataKey::Pool(pool_id);
@@ -2775,7 +2839,7 @@ impl PredifiContract {
                 .persistent()
                 .get(&pool_key)
                 .expect("Pool not found");
-            Self::extend_persistent(&env, &pool_key);
+            Self::extend_persistent(env, &pool_key);
 
             if pool.state == MarketState::Active {
                 return Err(PredifiError::PoolNotResolved);
@@ -2783,49 +2847,40 @@ impl PredifiContract {
 
             let claimed_key = DataKey::Claimed(user.clone(), pool_id);
             if env.storage().persistent().has(&claimed_key) {
-                // 🔴 HIGH ALERT: repeated claim attempt on an already-claimed pool.
                 SuspiciousDoubleClaimEvent {
                     user: user.clone(),
                     pool_id,
                     timestamp: env.ledger().timestamp(),
                 }
-                .publish(&env);
+                .publish(env);
                 return Err(PredifiError::AlreadyClaimed);
             }
-
-            // --- CHECKS ---
 
             let pred_key = DataKey::Pred(user.clone(), pool_id);
             let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
 
             if env.storage().persistent().has(&pred_key) {
-                Self::extend_persistent(&env, &pred_key);
+                Self::extend_persistent(env, &pred_key);
             }
 
             let prediction = match prediction {
                 Some(p) => p,
-                None => {
-                    return Ok(0);
-                }
+                None => return Ok(0),
             };
 
-            // --- EFFECTS ---
-
-            // Mark as claimed immediately to prevent re-entrancy (INV-3)
             env.storage().persistent().set(&claimed_key, &true);
-            Self::bump_ttl(&env, &claimed_key);
+            Self::bump_ttl(env, &claimed_key);
 
             if pool.state == MarketState::Canceled {
-                // --- INTERACTIONS (Refund) ---
-                let token_client = token::Client::new(&env, &pool.token);
-                token_client.transfer(&env.current_contract_address(), &user, &prediction.amount);
+                let token_client = token::Client::new(env, &pool.token);
+                token_client.transfer(&env.current_contract_address(), user, &prediction.amount);
 
                 WinningsClaimedEvent {
                     pool_id,
                     user: user.clone(),
                     amount: prediction.amount,
                 }
-                .publish(&env);
+                .publish(env);
 
                 return Ok(prediction.amount);
             }
@@ -2834,20 +2889,16 @@ impl PredifiContract {
                 return Ok(0);
             }
 
-            // Get winning stake using optimized batch storage
-            // Get winning stake efficiently using single outcome getter
             let winning_stake = Self::get_outcome_stake(env.clone(), pool_id, pool.outcome);
 
             if winning_stake == 0 {
                 return Ok(0);
             }
 
-            // Protocol fee: deducted from pool before distribution
-            // Use pool-specific fee (calculated at resolution) if available, else fallback to global
             let fee_bps_i = if pool.fee_bps > 0 || pool.state == MarketState::Resolved {
                 pool.fee_bps as i128
             } else {
-                let config = Self::get_config(&env);
+                let config = Self::get_config(env);
                 config.fee_bps as i128
             };
             let protocol_fee_total =
@@ -2858,20 +2909,16 @@ impl PredifiContract {
                 .checked_sub(protocol_fee_total)
                 .ok_or(PredifiError::InvalidAmount)?;
 
-            // Winnings = user's share of the payout pool (after fee)
             let winnings = SafeMath::calculate_share(prediction.amount, winning_stake, payout_pool)
                 .map_err(|_| PredifiError::InvalidAmount)?;
 
-            // Verify invariant: winnings ≤ total_stake (INV-4)
             assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
 
-            // --- INTERACTIONS ---
-            let token_client = token::Client::new(&env, &pool.token);
+            let token_client = token::Client::new(env, &pool.token);
 
-            // Referral: portion of protocol fee attributable to this user goes to referrer
             let referrer_key = DataKey::Referrer(user.clone(), pool_id);
             if let Some(referrer) = env.storage().persistent().get::<_, Address>(&referrer_key) {
-                Self::extend_persistent(&env, &referrer_key);
+                Self::extend_persistent(env, &referrer_key);
                 if protocol_fee_total > 0 && pool.total_stake > 0 {
                     let protocol_fee_share = SafeMath::proportion(
                         prediction.amount,
@@ -2880,7 +2927,7 @@ impl PredifiContract {
                         RoundingMode::Neutral,
                     )
                     .map_err(|_| PredifiError::InvalidAmount)?;
-                    let referral_cut_bps = Self::read_referral_cut_bps(&env) as i128;
+                    let referral_cut_bps = Self::read_referral_cut_bps(env) as i128;
                     let referral_amount = SafeMath::percentage(
                         protocol_fee_share,
                         referral_cut_bps,
@@ -2899,25 +2946,32 @@ impl PredifiContract {
                             referred_user: user.clone(),
                             amount: referral_amount,
                         }
-                        .publish(&env);
+                        .publish(env);
                     }
                 }
             }
 
-            token_client.transfer(&env.current_contract_address(), &user, &winnings);
+            token_client.transfer(&env.current_contract_address(), user, &winnings);
 
             WinningsClaimedEvent {
                 pool_id,
                 user: user.clone(),
                 amount: winnings,
             }
-            .publish(&env);
+            .publish(env);
 
             Ok(winnings)
         })();
 
-        Self::exit_reentrancy_guard(&env);
+        Self::exit_reentrancy_guard(env);
         result
+    }
+
+    #[allow(clippy::needless_borrows_for_generic_args)]
+    pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
+        Self::require_not_paused(&env);
+        user.require_auth();
+        Self::claim_winnings_internal(&env, &user, pool_id)
     }
 
     /// Claim winnings from multiple pools in a single transaction.
@@ -2942,8 +2996,7 @@ impl PredifiContract {
         user.require_auth();
         let mut results: soroban_sdk::Map<u64, i128> = soroban_sdk::Map::new(&env);
         for pool_id in pool_ids.iter() {
-            let amount = Self::claim_winnings(env.clone(), user.clone(), pool_id)
-                .unwrap_or(0);
+            let amount = Self::claim_winnings_internal(&env, &user, pool_id).unwrap_or(0);
             results.set(pool_id, amount);
         }
         results
@@ -3858,7 +3911,10 @@ impl OracleCallback for PredifiContract {
 
         Ok(())
     }
+}
 
+#[contractimpl]
+impl PredifiContract {
     /// Emergency escape hatch: transfers any token balance held by this contract
     /// to a destination address. Restricted to the admin role.
     ///
