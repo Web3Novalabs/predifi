@@ -16,6 +16,7 @@ tower = "0.4"
 http = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
 tower-http = { version = "0.6.8", features = ["cors"] }
 dotenvy = "0.15"
 tracing = "0.1"
@@ -24,11 +25,14 @@ sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio-rustls",
     "postgres",
     "chrono",
+    "macros",
+    "derive",
 ] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 # OpenAPI / Swagger documentation (#563)
 utoipa = { version = "4", features = ["axum_extras", "chrono"] }
 utoipa-swagger-ui = { version = "7", features = ["axum"] }
+tower_governor = { version = "0.5.0", features = ["axum"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
