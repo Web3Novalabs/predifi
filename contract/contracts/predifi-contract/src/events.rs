@@ -347,3 +347,5 @@ pub struct ResolutionConflictEvent {
     pub outcome: u32,
     pub existing_outcome: u32,
 }
+
+#[contractevent(topics = ["EmergencyWithdraw"])]

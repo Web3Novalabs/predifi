@@ -9319,3 +9319,67 @@ fn test_batch_claim_winnings_three_pools() {
     // User should have their original 300 back
     assert_eq!(token.balance(&user), 300);
 }
+
+// ── emergency_withdraw tests ─────────────────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_emergency_withdraw_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let not_admin = Address::generate(&env);
+    let destination = Address::generate(&env);
+
+    client.emergency_withdraw(&not_admin, &token_address, &destination, &100i128);
+}
+
+#[test]
+fn test_emergency_withdraw_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let destination = Address::generate(&env);
+    let rescue_amount: i128 = 500;
+
+    // Fund the contract directly
+    token_admin_client.mint(&client.address, &rescue_amount);
+    assert_eq!(token.balance(&client.address), rescue_amount);
+
+    client.emergency_withdraw(&admin, &token_address, &destination, &rescue_amount);
+
+    assert_eq!(token.balance(&client.address), 0);
+    assert_eq!(token.balance(&destination), rescue_amount);
+}
+
+#[test]
+fn test_emergency_withdraw_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let destination = Address::generate(&env);
+    let rescue_amount: i128 = 250;
+
+    token_admin_client.mint(&client.address, &rescue_amount);
+
+    client.emergency_withdraw(&admin, &token_address, &destination, &rescue_amount);
+
+    let events = env.events().all();
+    let expected_topic = Symbol::new(&env, "emergency_withdraw");
+    let found = events.iter().any(|e| {
+        e.1.get(0)
+            .and_then(|v| Symbol::try_from_val(&env, &v).ok())
+            .map(|s| s == expected_topic)
+            .unwrap_or(false)
+    });
+    assert!(found, "EmergencyWithdrawEvent not found in event log");
+}

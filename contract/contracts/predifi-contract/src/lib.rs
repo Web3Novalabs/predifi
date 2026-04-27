@@ -898,6 +898,14 @@ pub struct TreasuryWithdrawnEvent {
     pub recipient: Address,
     pub timestamp: u64,
 }
+#[contractevent(topics = ["emergency_withdraw"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmergencyWithdrawEvent {
+    pub admin: Address,
+    pub token: Address,
+    pub destination: Address,
+    pub amount: i128,
+}
 #[contractevent(topics = ["refund_claimed"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefundClaimedEvent {
@@ -3845,6 +3853,35 @@ impl OracleCallback for PredifiContract {
             }
             .publish(&env);
         }
+
+        Ok(())
+    }
+
+    /// Emergency escape hatch: transfers any token balance held by this contract
+    /// to a destination address. Restricted to the admin role.
+    ///
+    /// Intended for use when the protocol or oracle has failed and funds must be
+    /// rescued. Emits an `EmergencyWithdraw` event for on-chain auditability.
+    pub fn emergency_withdraw(
+        env: Env,
+        admin: Address,
+        token: Address,
+        destination: Address,
+        amount: i128,
+    ) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
+
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &destination, &amount);
+
+        EmergencyWithdrawEvent {
+            admin,
+            token,
+            destination,
+            amount,
+        }
+        .publish(&env);
 
         Ok(())
     }
