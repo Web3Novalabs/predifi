@@ -79,6 +79,11 @@ pub enum Role {
     /// Operator can manage pools, update configurations, and perform operational tasks.
     Operator = 1,
     /// Moderator can handle disputes and moderate content.
+    ///
+    /// **Reserved for future use (#595).** This role is defined for planned
+    /// dispute-resolution functionality but is not currently enforced by any
+    /// function in `predifi-contract`. Assigning this role has no effect on
+    /// protocol behaviour until dispute handling is implemented.
     Moderator = 2,
     /// Oracle can resolve pools based on external data and price feeds.
     Oracle = 3,

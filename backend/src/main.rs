@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod db;
+pub mod openapi;
 pub mod price_cache;
 pub mod referrals;
 pub mod request_logger;
@@ -97,6 +98,8 @@ pub fn build_router_with_db(config: Config, db: sqlx::PgPool) -> Router {
         .route("/", get(root))
         .route("/health", get(health))
         .nest("/api", routes::router_with_db(config, db))
+        // Swagger UI served at /swagger-ui/ (#563)
+        .merge(openapi::swagger_router())
         .layer(build_cors())
         .layer(LoggingLayer)
 }

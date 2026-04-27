@@ -60,6 +60,8 @@ pub use safe_math::{RoundingMode, SafeMath};
 //
 // Note: roles 2 (Moderator) and 4 (User) are defined in the access-control
 // contract but are not currently enforced by predifi-contract.
+// Role 2 (Moderator) is RESERVED FOR FUTURE USE — it is intended for dispute
+// resolution functionality. See issue #595 for the implementation plan.
 //
 // HOW ROLES ARE ASSIGNED
 // ──────────────────────

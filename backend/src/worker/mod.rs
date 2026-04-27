@@ -5,3 +5,5 @@
 //! resume after a restart, and logs every batch of events found.
 
 pub mod stellar_listener;
+/// Full contract-DB state synchronisation task (#562).
+pub mod sync;

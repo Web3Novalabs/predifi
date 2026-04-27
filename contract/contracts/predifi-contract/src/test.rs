@@ -3414,6 +3414,132 @@ fn test_set_stake_limits_max_below_min_returns_error() {
     assert_eq!(result, Err(Ok(PredifiError::StakeAboveMaximum)));
 }
 
+// ── #594: min_stake / max_stake boundary validation ───────────────────────────
+
+/// Regression: min_stake equal to max_stake is valid (exactly one allowed stake
+/// amount). The contract must accept this without error.
+#[test]
+fn test_set_stake_limits_min_equals_max_is_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Equal Stakes Test"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // min == max: a fixed stake amount — must succeed
+    let result = client.try_set_stake_limits(&operator, &pool_id, &100i128, &100i128);
+    assert!(result.is_ok(), "min_stake == max_stake should be valid");
+}
+
+/// Regression: min_stake strictly greater than max_stake must be rejected with
+/// StakeAboveMaximum so the pool is never put in an un-stakeable state (#594).
+#[test]
+fn test_set_stake_limits_min_greater_than_max_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Min Greater Than Max Test"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // min > max: would brick the pool — must be rejected
+    let result = client.try_set_stake_limits(&operator, &pool_id, &500i128, &100i128);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::StakeAboveMaximum)),
+        "min_stake > max_stake must return StakeAboveMaximum"
+    );
+}
+
+/// max_stake == 0 means no upper limit. Setting it alongside any valid min_stake
+/// must always succeed.
+#[test]
+fn test_set_stake_limits_max_zero_means_unlimited() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, _) = setup(&env);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Unlimited Max Test"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // max_stake = 0 (unlimited) with any positive min_stake must succeed
+    let result = client.try_set_stake_limits(&operator, &pool_id, &1000i128, &0i128);
+    assert!(result.is_ok(), "max_stake == 0 (unlimited) must be valid with any positive min_stake");
+}
+
 #[test]
 fn test_get_pools_by_category() {
     let env = Env::default();

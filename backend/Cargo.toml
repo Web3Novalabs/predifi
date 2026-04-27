@@ -26,6 +26,9 @@ sqlx = { version = "0.8", default-features = false, features = [
     "chrono",
 ] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# OpenAPI / Swagger documentation (#563)
+utoipa = { version = "4", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "7", features = ["axum"] }
 
 [dev-dependencies]
 http-body-util = "0.1"
