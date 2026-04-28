@@ -188,12 +188,8 @@ fn test_fee_tier_treasury_intake() {
     // ── Manual setup so we can control fee_bps in init ───────────────────────
     use crate::test::ROLE_OPERATOR;
 
-    let ac_id = env.register(
-        crate::test::dummy_access_control::DummyAccessControl,
-        (),
-    );
-    let ac_client =
-        crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let ac_id = env.register(crate::test::dummy_access_control::DummyAccessControl, ());
+    let ac_client = crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
     let contract_id = env.register(crate::PredifiContract, ());
     let client = crate::PredifiContractClient::new(&env, &contract_id);
 
@@ -210,7 +206,14 @@ fn test_fee_tier_treasury_intake() {
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
     // Init with 3% fallback fee
-    client.init(&ac_id, &Address::generate(&env), &300u32, &0u64, &3600u64, &0u32);
+    client.init(
+        &ac_id,
+        &Address::generate(&env),
+        &300u32,
+        &0u64,
+        &3600u64,
+        &0u32,
+    );
     client.add_token_to_whitelist(&admin, &token_contract);
 
     // Fee tiers (small numbers for easy math)
@@ -219,8 +222,14 @@ fn test_fee_tier_treasury_intake() {
     let tiers = Vec::from_array(
         &env,
         [
-            FeeTier { stake_threshold: 1_000, fee_bps: 100 },
-            FeeTier { stake_threshold: 5_000, fee_bps: 50 },
+            FeeTier {
+                stake_threshold: 1_000,
+                fee_bps: 100,
+            },
+            FeeTier {
+                stake_threshold: 5_000,
+                fee_bps: 50,
+            },
         ],
     );
     client.set_fee_tiers(&admin, &tiers);
@@ -305,8 +314,14 @@ fn test_set_fee_tiers_unsorted_thresholds() {
     let tiers = Vec::from_array(
         &env,
         [
-            FeeTier { stake_threshold: 5_000_000, fee_bps: 50 },
-            FeeTier { stake_threshold: 1_000_000, fee_bps: 100 }, // out of order
+            FeeTier {
+                stake_threshold: 5_000_000,
+                fee_bps: 50,
+            },
+            FeeTier {
+                stake_threshold: 1_000_000,
+                fee_bps: 100,
+            }, // out of order
         ],
     );
 
@@ -329,8 +344,14 @@ fn test_set_fee_tiers_duplicate_thresholds() {
     let tiers = Vec::from_array(
         &env,
         [
-            FeeTier { stake_threshold: 1_000_000, fee_bps: 100 },
-            FeeTier { stake_threshold: 1_000_000, fee_bps: 50 }, // duplicate threshold
+            FeeTier {
+                stake_threshold: 1_000_000,
+                fee_bps: 100,
+            },
+            FeeTier {
+                stake_threshold: 1_000_000,
+                fee_bps: 50,
+            }, // duplicate threshold
         ],
     );
 
@@ -358,16 +379,8 @@ fn test_fee_tiers_full_lifecycle() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (
-        ac_client,
-        client,
-        token_address,
-        token,
-        token_admin_client,
-        treasury,
-        operator,
-        creator,
-    ) = crate::test::setup(&env);
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        crate::test::setup(&env);
 
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
@@ -416,7 +429,11 @@ fn test_fee_tiers_full_lifecycle() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "A"), String::from_str(&env, "B")],
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "A"),
+                String::from_str(&env, "B"),
+            ],
         },
     );
 
@@ -452,7 +469,11 @@ fn test_fee_tiers_full_lifecycle() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "A"), String::from_str(&env, "B")],
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "A"),
+                String::from_str(&env, "B"),
+            ],
         },
     );
 
@@ -488,7 +509,11 @@ fn test_fee_tiers_full_lifecycle() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: vec![&env, String::from_str(&env, "A"), String::from_str(&env, "B")],
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "A"),
+                String::from_str(&env, "B"),
+            ],
         },
     );
 

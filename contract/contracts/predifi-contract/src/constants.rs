@@ -35,9 +35,6 @@ pub const CANCELATION_DELAY: u64 = 604800;
 /// Predictions below this threshold are rejected to prevent spam.
 pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
 
-/// Minimum amount that can be withdrawn from treasury or protocol balances.
-pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1;
-
 /// Default cooldown in seconds between consecutive place_prediction calls by the same user.
 /// Defaults to disabled so existing deployments can opt in explicitly via admin config.
 pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 0;
