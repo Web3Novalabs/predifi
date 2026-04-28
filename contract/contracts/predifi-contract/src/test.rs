@@ -3907,7 +3907,6 @@ fn test_admin_can_withdraw_treasury() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #10)")]
 fn test_non_admin_cannot_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -3918,12 +3917,11 @@ fn test_non_admin_cannot_withdraw_treasury() {
 
     token_admin_client.mint(&contract_addr, &5000);
 
-    // Non-admin tries to withdraw - should panic
-    client.withdraw_treasury(&non_admin, &token_address, &3000, &treasury);
+    let result = client.try_withdraw_treasury(&non_admin, &token_address, &3000, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::Unauthorized)));
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #42)")]
 fn test_withdraw_treasury_rejects_zero_amount() {
     let env = Env::default();
     env.mock_all_auths();
@@ -3936,12 +3934,11 @@ fn test_withdraw_treasury_rejects_zero_amount() {
 
     token_admin_client.mint(&contract_addr, &5000);
 
-    // Try to withdraw zero amount - should panic
-    client.withdraw_treasury(&admin, &token_address, &0, &treasury);
+    let result = client.try_withdraw_treasury(&admin, &token_address, &0, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::InvalidAmount)));
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #44)")]
 fn test_withdraw_treasury_rejects_insufficient_balance() {
     let env = Env::default();
     env.mock_all_auths();
@@ -3954,8 +3951,8 @@ fn test_withdraw_treasury_rejects_insufficient_balance() {
 
     token_admin_client.mint(&contract_addr, &1000);
 
-    // Try to withdraw more than balance - should panic
-    client.withdraw_treasury(&admin, &token_address, &5000, &treasury);
+    let result = client.try_withdraw_treasury(&admin, &token_address, &5000, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::InsufficientBalance)));
 }
 
 #[test]

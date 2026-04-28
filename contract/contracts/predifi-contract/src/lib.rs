@@ -2070,17 +2070,17 @@ impl PredifiContract {
         // Verify admin role
         Self::require_admin_role(&env, &admin, "withdraw_treasury")?;
 
-        // Validate amount meets minimum threshold
-        if amount < MIN_WITHDRAWAL_AMOUNT {
+        // Reject zero or negative withdrawals before touching token state.
+        if amount <= 0 || amount < MIN_WITHDRAWAL_AMOUNT {
             return Err(PredifiError::InvalidAmount);
         }
 
-        // Get token client and check balance
+        // Get token client and check the contract's available balance first.
         let token_client = token::Client::new(&env, &token);
-        let contract_balance = token_client.balance(&env.current_contract_address());
+        let available_balance = token_client.balance(&env.current_contract_address());
 
         // Verify sufficient balance
-        if contract_balance < amount {
+        if available_balance < amount {
             return Err(PredifiError::InsufficientBalance);
         }
 
