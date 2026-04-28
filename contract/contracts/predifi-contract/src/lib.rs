@@ -1496,7 +1496,7 @@ impl PredifiContract {
         Self::is_paused(&env)
     }
 
-    /// Return the contract version stored during initialization.
+    /// Return the contract version stored in instance storage.
     /// Returns 0 if the contract was deployed before version tracking was added.
     pub fn get_version(env: Env) -> u32 {
         env.storage()
@@ -1884,6 +1884,11 @@ impl PredifiContract {
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
 
+        env.storage()
+            .instance()
+            .set(&DataKey::Version, &CONTRACT_VERSION);
+        Self::extend_instance(&env);
+
         UpgradeEvent {
             admin: admin.clone(),
             new_wasm_hash,
@@ -1933,7 +1938,7 @@ impl PredifiContract {
     }
 
     /// Returns true if the pool has a properly resolved outcome (not the sentinel value).
-    pub fn is_pool_resolved(&pool: &Pool) -> bool {
+    fn is_pool_resolved(pool: &Pool) -> bool {
         pool.outcome != UNRESOLVED_OUTCOME
     }
 
@@ -4175,38 +4180,6 @@ impl OracleCallback for PredifiContract {
             }
             .publish(&env);
         }
-
-        Ok(())
-    }
-}
-
-#[contractimpl]
-impl PredifiContract {
-    /// Emergency escape hatch: transfers any token balance held by this contract
-    /// to a destination address. Restricted to the admin role.
-    ///
-    /// Intended for use when the protocol or oracle has failed and funds must be
-    /// rescued. Emits an `EmergencyWithdraw` event for on-chain auditability.
-    pub fn emergency_withdraw(
-        env: Env,
-        admin: Address,
-        token: Address,
-        destination: Address,
-        amount: i128,
-    ) -> Result<(), PredifiError> {
-        admin.require_auth();
-        Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
-
-        let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&env.current_contract_address(), &destination, &amount);
-
-        EmergencyWithdrawEvent {
-            admin,
-            token,
-            destination,
-            amount,
-        }
-        .publish(&env);
 
         Ok(())
     }

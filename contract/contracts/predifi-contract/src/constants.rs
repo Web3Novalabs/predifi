@@ -35,6 +35,9 @@ pub const CANCELATION_DELAY: u64 = 604800;
 /// Predictions below this threshold are rejected to prevent spam.
 pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
 
+/// Minimum amount that can be withdrawn from treasury or protocol balances.
+pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1;
+
 /// Default cooldown in seconds between consecutive place_prediction calls by the same user.
 /// Defaults to disabled so existing deployments can opt in explicitly via admin config.
 pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 0;
@@ -66,7 +69,7 @@ pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Current contract version. Bump on each release to support safe migrations.
-/// This is stored in contract instance storage during initialization.
+/// This is stored in contract instance storage during initialization and upgrades.
 pub const CONTRACT_VERSION: u32 = 1;
 
 #[cfg(test)]

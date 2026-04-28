@@ -7069,7 +7069,7 @@ fn test_version_is_set_after_init() {
     env.mock_all_auths();
     let (_ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, _creator) =
         setup(&env);
-    assert_eq!(client.get_version(), 1u32);
+    assert_eq!(client.get_version(), CONTRACT_VERSION);
 }
 
 #[test]
@@ -7078,6 +7078,20 @@ fn test_version_returns_zero_before_init() {
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(&env, &contract_id);
     assert_eq!(client.get_version(), 0u32);
+}
+
+#[test]
+fn test_get_version_reads_state_stored_version() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, _creator) =
+        setup(&env);
+
+    env.as_contract(&client.address, || {
+        env.storage().instance().set(&DataKey::Version, &42u32);
+    });
+
+    assert_eq!(client.get_version(), 42u32);
 }
 
 #[test]

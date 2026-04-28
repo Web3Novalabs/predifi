@@ -348,4 +348,3 @@ pub struct ResolutionConflictEvent {
     pub existing_outcome: u32,
 }
 
-
