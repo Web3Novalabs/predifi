@@ -10517,3 +10517,144 @@ fn test_create_pool_accepts_end_time_at_max_duration() {
     );
     let _ = pool_id;
 }
+
+// ── flag_disputed_pool tests ─────────────────────────────────────────────────
+
+const ROLE_MODERATOR: u32 = 2;
+
+#[test]
+fn test_flag_disputed_pool_moderator_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+    let moderator = Address::generate(&env);
+    ac_client.grant_role(&moderator, &ROLE_MODERATOR);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Dispute test pool"),
+            metadata_url: String::from_str(&env, "ipfs://dispute"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.flag_disputed_pool(
+        &moderator,
+        &pool_id,
+        &String::from_str(&env, "Suspicious activity"),
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Disputed);
+}
+
+#[test]
+#[should_panic]
+fn test_flag_disputed_pool_unauthorized_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let non_moderator = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Dispute test pool"),
+            metadata_url: String::from_str(&env, "ipfs://dispute"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Should panic: caller has no Moderator role
+    client.flag_disputed_pool(
+        &non_moderator,
+        &pool_id,
+        &String::from_str(&env, "Attempt"),
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_flag_disputed_pool_already_resolved_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+    let moderator = Address::generate(&env);
+    ac_client.grant_role(&moderator, &ROLE_MODERATOR);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Resolved pool"),
+            metadata_url: String::from_str(&env, "ipfs://resolved"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.place_prediction(&user, &pool_id, &100, &0u32, &None, &None);
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Should panic: pool is already Resolved, not Active
+    client.flag_disputed_pool(
+        &moderator,
+        &pool_id,
+        &String::from_str(&env, "Too late"),
+    );
+}
