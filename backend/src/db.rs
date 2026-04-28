@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{postgres::PgPoolOptions, PgPool, FromRow};
+use chrono::{DateTime, Utc};
 
 use crate::config::Config;
 
@@ -68,8 +69,8 @@ pub struct PoolRow {
     pub name: String,
     pub category: String,
     pub total_stake: i64,
-    pub end_time: chrono::DateTime<chrono::Utc>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub end_time: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Fetch active pools with optional category filter and sort order.

@@ -33,7 +33,7 @@ pub struct PoolSyncResult {
 async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64> {
     // Build the Soroban RPC request — we call `get_pool_outcome_stakes(pool_id)`.
     // The response is a map of outcome_index → stake_amount; we sum the values.
-    let rpc_url = format!("{}/", config.soroban_rpc_url);
+    let rpc_url = format!("{}/", config.stellar_rpc_url);
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,

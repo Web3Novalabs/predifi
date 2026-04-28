@@ -579,6 +579,10 @@ pub enum DataKey {
     FeeTiers,
     /// Oracle configuration for price feed validation
     OracleConfig,
+    /// Oracle whitelist entry: OracleWl(oracle_address) -> bool
+    OracleWl(Address),
+    /// Whitelisted oracle list: OracleWhitelist -> Vec<Address>
+    OracleWhitelist,
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -890,6 +894,20 @@ pub struct TokenWhitelistRemovedEvent {
     pub token: Address,
 }
 
+#[contractevent(topics = ["oracle_whitelist_added"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleWhitelistAddedEvent {
+    pub admin: Address,
+    pub oracle: Address,
+}
+
+#[contractevent(topics = ["oracle_whitelist_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleWhitelistRemovedEvent {
+    pub admin: Address,
+    pub oracle: Address,
+}
+
 #[contractevent(topics = ["added_to_whitelist"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AddedToWhitelistEvent {
@@ -986,6 +1004,16 @@ pub struct ResolutionConflictEvent {
     pub outcome: u32,
     pub existing_outcome: u32,
 }
+
+#[contractevent(topics = ["resolution_vote_cast"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionVoteCastEvent {
+    pub pool_id: u64,
+    pub voter: Address,
+    pub outcome: u32,
+    pub vote_count: u32,
+    pub required_resolutions: u32,
+}
 mod events;
 // pub use events::*; // Unused import
 
@@ -1012,10 +1040,11 @@ impl PredifiContract {
     // ====== Pure Helper Functions (side-effect free, verifiable) ======
 
     /// Validate that a category symbol is in the allowed list, falling back to CATEGORY_OTHER if not.
-    /// Canonical categories are defined as constants at the top of the file.
-    /// Any non-matching category is normalized to CATEGORY_OTHER to ensure compatibility
-    /// with off-chain analytics while allowing specialized categories in metadata if needed.
-    fn validate_category(env: &Env, category: &Symbol) -> Symbol {
+    /// Validate category symbol against allowed list.
+    /// Returns the category if valid, otherwise returns InvalidData error.
+    /// PRE: category is a valid Symbol
+    /// POST: returns Ok(category) if category is in the allowed list, else Err(InvalidData)
+    fn validate_category(env: &Env, category: &Symbol) -> Result<Symbol, PredifiError> {
         let mut allowed = Vec::new(env);
         allowed.push_back(CATEGORY_SPORTS);
         allowed.push_back(CATEGORY_FINANCE);
@@ -1028,11 +1057,11 @@ impl PredifiContract {
         for i in 0..allowed.len() {
             if let Some(allowed_cat) = allowed.get(i) {
                 if &allowed_cat == category {
-                    return category.clone();
+                    return Ok(category.clone());
                 }
             }
         }
-        CATEGORY_OTHER
+        Err(PredifiError::InvalidData)
     }
 
     /// Pure: Check if pool state transition is valid
@@ -1291,6 +1320,16 @@ impl PredifiContract {
     fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
         let key = DataKey::TokenWl(token.clone());
         let whitelisted = env.storage().persistent().has(&key);
+        if whitelisted {
+            Self::extend_persistent(env, &key);
+        }
+        whitelisted
+    }
+
+    /// Returns true if the oracle address is explicitly whitelisted for price updates.
+    fn is_oracle_whitelisted(env: &Env, oracle: &Address) -> bool {
+        let key = DataKey::OracleWl(oracle.clone());
+        let whitelisted: bool = env.storage().persistent().get(&key).unwrap_or(false);
         if whitelisted {
             Self::extend_persistent(env, &key);
         }
@@ -1736,6 +1775,81 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Add an oracle address to the trusted oracle whitelist. Caller must have Admin role (0).
+    pub fn add_oracle(
+        env: Env,
+        admin: Address,
+        oracle_address: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "add_oracle")?;
+
+        let key = DataKey::OracleWl(oracle_address.clone());
+        env.storage().persistent().set(&key, &true);
+        Self::extend_persistent(&env, &key);
+
+        let list_key = DataKey::OracleWhitelist;
+        let mut whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&list_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if !whitelist.contains(&oracle_address) {
+            whitelist.push_back(oracle_address.clone());
+            env.storage().persistent().set(&list_key, &whitelist);
+            Self::extend_persistent(&env, &list_key);
+        }
+
+        OracleWhitelistAddedEvent {
+            admin,
+            oracle: oracle_address,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Remove an oracle address from the trusted oracle whitelist. Caller must have Admin role (0).
+    pub fn remove_oracle(
+        env: Env,
+        admin: Address,
+        oracle_address: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "remove_oracle")?;
+
+        let key = DataKey::OracleWl(oracle_address.clone());
+        env.storage().persistent().remove(&key);
+
+        let list_key = DataKey::OracleWhitelist;
+        let whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&list_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut new_whitelist = Vec::new(&env);
+        for oracle in whitelist.iter() {
+            if oracle.clone() != oracle_address {
+                new_whitelist.push_back(oracle);
+            }
+        }
+
+        env.storage().persistent().set(&list_key, &new_whitelist);
+        Self::extend_persistent(&env, &list_key);
+
+        OracleWhitelistRemovedEvent {
+            admin,
+            oracle: oracle_address,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Get the list of all supported (whitelisted) tokens.
     /// Returns a Vec of token addresses that are allowed for betting.
     pub fn get_supported_tokens(env: Env) -> Vec<Address> {
@@ -1868,7 +1982,7 @@ impl PredifiContract {
     /// # Security
     /// - Requires Admin role (0)
     /// - Emits TreasuryWithdrawnEvent for audit trail
-    /// - Validates amount > 0
+    /// - Validates amount >= MIN_WITHDRAWAL_AMOUNT
     /// - Checks contract has sufficient balance
     pub fn withdraw_treasury(
         env: Env,
@@ -1883,8 +1997,8 @@ impl PredifiContract {
         // Verify admin role
         Self::require_admin_role(&env, &admin, "withdraw_treasury")?;
 
-        // Validate amount
-        if amount <= 0 {
+        // Validate amount meets minimum threshold
+        if amount < MIN_WITHDRAWAL_AMOUNT {
             return Err(PredifiError::InvalidAmount);
         }
 
@@ -1892,6 +2006,7 @@ impl PredifiContract {
         let token_client = token::Client::new(&env, &token);
         let contract_balance = token_client.balance(&env.current_contract_address());
 
+        // Verify sufficient balance
         if contract_balance < amount {
             return Err(PredifiError::InsufficientBalance);
         }
@@ -1940,8 +2055,11 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         creator.require_auth();
 
-        // Validate: category must be in the allowed list, else fallback to CATEGORY_OTHER
-        let normalized_category = Self::validate_category(&env, &category);
+        // Validate: category must be in the allowed list, return error if invalid
+        let normalized_category = match Self::validate_category(&env, &category) {
+            Ok(cat) => cat,
+            Err(e) => soroban_sdk::panic_with_error!(&env, e),
+        };
 
         // Validate: token must be on the allowed betting whitelist
         if !Self::is_token_whitelisted(&env, &token) {
@@ -2355,7 +2473,7 @@ impl PredifiContract {
                 outcome,
                 pool.options_count
             );
-            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+            return Err(PredifiError::InvalidOutcome);
         }
 
         // --- Multi-resolution Voting Logic ---
@@ -2402,6 +2520,16 @@ impl PredifiContract {
             .persistent()
             .set(&outcome_votes_key, &new_outcome_votes);
         Self::extend_persistent(&env, &outcome_votes_key);
+
+        // Emit a ResolutionVoteCastEvent for observability
+        ResolutionVoteCastEvent {
+            pool_id,
+            voter: operator.clone(),
+            outcome,
+            vote_count: new_outcome_votes,
+            required_resolutions: pool.required_resolutions,
+        }
+        .publish(&env);
 
         // Detect conflicts
         if new_total_votes > new_outcome_votes {
@@ -2511,6 +2639,9 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         operator.require_auth();
 
+        // Protect state-modifying external interactions from reentrancy
+        Self::enter_reentrancy_guard(&env);
+
         let pool_key = DataKey::Pool(pool_id);
         let mut pool: Pool = env
             .storage()
@@ -2534,9 +2665,11 @@ impl PredifiContract {
             } else {
                 // Allow creator to cancel only if no bets have been placed beyond initial liquidity
                 if operator != pool.creator {
+                    Self::exit_reentrancy_guard(&env);
                     return Err(PredifiError::Unauthorized);
                 }
                 if pool.total_stake > pool.initial_liquidity {
+                    Self::exit_reentrancy_guard(&env);
                     return Err(PredifiError::Unauthorized);
                 }
             }
@@ -2544,10 +2677,12 @@ impl PredifiContract {
 
         // Ensure resolved pools cannot be canceled
         if pool.state == MarketState::Resolved {
+            Self::exit_reentrancy_guard(&env);
             return Err(PredifiError::PoolNotResolved);
         }
 
         if !Self::is_pool_active(&pool) {
+            Self::exit_reentrancy_guard(&env);
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -2563,6 +2698,8 @@ impl PredifiContract {
             operator,
         }
         .publish(&env);
+
+        Self::exit_reentrancy_guard(&env);
 
         Ok(())
     }
@@ -3584,6 +3721,10 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         oracle.require_auth();
 
+        if !Self::is_oracle_whitelisted(&env, &oracle) {
+            return Err(PredifiError::Unauthorized);
+        }
+
         let feed_key = DataKey::PriceFeed(feed_pair.clone());
         env.storage()
             .persistent()
@@ -3771,6 +3912,35 @@ impl PredifiContract {
         }
         applied_fee
     }
+
+    /// Emergency escape hatch: transfers any token balance held by this contract
+    /// to a destination address. Restricted to the admin role.
+    ///
+    /// Intended for use when the protocol or oracle has failed and funds must be
+    /// rescued. Emits an `EmergencyWithdraw` event for on-chain auditability.
+    pub fn emergency_withdraw(
+        env: Env,
+        admin: Address,
+        token: Address,
+        destination: Address,
+        amount: i128,
+    ) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
+
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &destination, &amount);
+
+        EmergencyWithdrawEvent {
+            admin,
+            token,
+            destination,
+            amount,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
 }
 
 #[contractimpl]
@@ -3876,6 +4046,16 @@ impl OracleCallback for PredifiContract {
             oracle: oracle.clone(),
             outcome,
             proof,
+        }
+        .publish(&env);
+
+        // Emit vote-cast event for oracle votes as well
+        ResolutionVoteCastEvent {
+            pool_id,
+            voter: oracle.clone(),
+            outcome,
+            vote_count: new_outcome_votes,
+            required_resolutions: pool.required_resolutions,
         }
         .publish(&env);
 
