@@ -2675,12 +2675,8 @@ impl PredifiContract {
             }
         }
 
-        // Ensure resolved pools cannot be canceled
-        if pool.state == MarketState::Resolved {
-            Self::exit_reentrancy_guard(&env);
-            return Err(PredifiError::PoolNotResolved);
-        }
-
+        // Ensure only Active pools can be canceled
+        // This prevents canceling pools that are already Resolved or Canceled
         if !Self::is_pool_active(&pool) {
             Self::exit_reentrancy_guard(&env);
             return Err(PredifiError::InvalidPoolState);
