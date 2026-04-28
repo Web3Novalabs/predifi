@@ -112,6 +112,10 @@ pub const MAX_RESOLUTION_DELAY: u64 = 2_592_000;
 /// Miscellaneous predictions that don't fit other categories
 pub const CATEGORY_OTHER: Symbol = symbol_short!("Other");
 
+/// Minimum amount (in token base units / stroops) that may be withdrawn
+/// via `withdraw_treasury`. Prevents dust withdrawals.
+pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // PROTOCOL INVARIANTS (for formal verification)
 // ═══════════════════════════════════════════════════════════════════════════
@@ -253,7 +257,7 @@ pub struct Pool {
     /// Possible values: `Active` (betting open), `Resolved` (result final), `Canceled` (refunds available).
     pub state: MarketState,
     /// The winning outcome index (0-based) after resolution.
-    /// Only meaningful if `state` is `Resolved`. 
+    /// Only meaningful if `state` is `Resolved`.
     /// Uses UNRESOLVED_OUTCOME (u32::MAX) as sentinel for "not yet resolved".
     pub outcome: u32,
     /// The contract address of the Stellar token (e.g., USDC) used for all stakes and payouts.
@@ -472,7 +476,10 @@ pub struct UserPredictionDetail {
     /// Current operational state of the pool (Active, Resolved, or Canceled).
     pub pool_state: MarketState,
     /// The winning outcome index (0-based) if the pool is `Resolved`.
-    /// Only meaningful when `pool_state` is `MarketState::Resolved`.
+    /// Set to `UNRESOLVED_OUTCOME` (`u32::MAX`) when the pool has not yet been resolved.
+    /// Callers must check `pool_state == MarketState::Resolved` (or compare against
+    /// `UNRESOLVED_OUTCOME`) before interpreting this value; outcome index `0` is a
+    /// valid winning outcome and must not be confused with the unresolved sentinel.
     pub pool_outcome: u32,
 }
 
@@ -1050,11 +1057,10 @@ pub struct PredifiContract;
 impl PredifiContract {
     // ====== Pure Helper Functions (side-effect free, verifiable) ======
 
-    /// Validate that a category symbol is in the allowed list, falling back to CATEGORY_OTHER if not.
-    /// Validate category symbol against allowed list.
-    /// Returns the category if valid, otherwise returns InvalidData error.
+    /// Validate that a category symbol is in the allowed list.
+    /// Returns the category if valid, otherwise falls back to CATEGORY_OTHER.
     /// PRE: category is a valid Symbol
-    /// POST: returns Ok(category) if category is in the allowed list, else Err(InvalidData)
+    /// POST: returns Ok(category) if category is in the allowed list, else Ok(CATEGORY_OTHER)
     fn validate_category(env: &Env, category: &Symbol) -> Result<Symbol, PredifiError> {
         let mut allowed = Vec::new(env);
         allowed.push_back(CATEGORY_SPORTS);
@@ -1072,7 +1078,18 @@ impl PredifiContract {
                 }
             }
         }
-        Err(PredifiError::InvalidData)
+        Ok(CATEGORY_OTHER)
+    }
+
+    /// Validate core protocol invariants for a pool.
+    /// Panics if any invariant is broken to prevent corrupted state from causing
+    /// index-out-of-bounds or other logic errors in downstream processing.
+    fn validate_pool_invariants(pool: &Pool) {
+        assert_eq!(
+            pool.outcome_descriptions.len(),
+            pool.options_count,
+            "outcome_descriptions length must equal options_count"
+        );
     }
 
     /// Pure: Check if pool state transition is valid
@@ -1917,6 +1934,11 @@ impl PredifiContract {
     pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "migrate_state")?;
+
+        // v2 migration: Add any state migration logic here.
+        // Use Self::validate_pool_invariants(&pool) to ensure pool data consistency
+        // during migrations.
+
         Ok(())
     }
 
@@ -2070,11 +2092,15 @@ impl PredifiContract {
             return Err(PredifiError::InsufficientBalance);
         }
 
+        Self::enter_reentrancy_guard(&env);
+
         // Transfer tokens to recipient
         token_client.transfer(&env.current_contract_address(), &recipient, &amount);
 
         // Compute remaining balance after transfer for the audit event
         let remaining_balance = token_client.balance(&env.current_contract_address());
+
+        Self::exit_reentrancy_guard(&env);
 
         // Emit audit event
         TreasuryWithdrawnEvent {
@@ -2136,7 +2162,7 @@ impl PredifiContract {
 
         // Validate: end_time must not exceed MAX_POOL_DURATION from now
         if end_time > current_time + MAX_POOL_DURATION {
-            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidTimestamp);
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
         }
 
         let min_pool_duration = env
@@ -2225,12 +2251,8 @@ impl PredifiContract {
         );
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
-        if !config.outcome_descriptions.is_empty() {
-            assert!(
-                config.outcome_descriptions.len() == options_count,
-                "outcome_descriptions length must equal options_count"
-            );
-        }
+        // outcome_descriptions validation is now handled by validate_pool_invariants
+        // called right after pool structure is initialized.
 
         let pool_id: u64 = env
             .storage()
@@ -2261,6 +2283,8 @@ impl PredifiContract {
             fee_bps: 0, // Will be set at resolution
             participants_count: 0,
         };
+
+        Self::validate_pool_invariants(&pool);
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
@@ -2431,6 +2455,7 @@ impl PredifiContract {
             .persistent()
             .get(&pool_key)
             .expect("Pool not found");
+        Self::validate_pool_invariants(&pool);
         Self::extend_persistent(&env, &pool_key);
 
         // Only the creator or a protocol admin may update the description.
@@ -2498,6 +2523,8 @@ impl PredifiContract {
             .persistent()
             .get(&pool_key)
             .expect("Pool not found");
+
+        Self::validate_pool_invariants(&pool);
 
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
@@ -2626,7 +2653,7 @@ impl PredifiContract {
                         existing_outcome: i,
                     }
                     .publish(&env);
-                    break;
+                    return Err(PredifiError::ResolutionConflict);
                 }
             }
         }
@@ -2829,6 +2856,12 @@ impl PredifiContract {
             panic!("Pool is not active");
         }
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
+
+        // Validate: token must be on the allowed betting whitelist
+        if !Self::is_token_whitelisted(&env, &pool.token) {
+            Self::exit_reentrancy_guard(&env);
+            soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
+        }
 
         // Check private pool authorization
         // Check private pool authorization
@@ -3108,7 +3141,7 @@ impl PredifiContract {
             if !Self::is_pool_resolved(&pool) {
                 return Err(PredifiError::PoolNotResolved);
             }
-            
+
             if prediction.outcome != pool.outcome {
                 return Ok(0);
             }
@@ -3352,8 +3385,8 @@ impl PredifiContract {
         if min_stake <= 0 {
             return Err(PredifiError::StakeBelowMinimum);
         }
-        if max_stake != 0 && max_stake < min_stake {
-            return Err(PredifiError::StakeAboveMaximum);
+        if max_stake > 0 && min_stake > max_stake {
+            return Err(PredifiError::InvalidAmount);
         }
 
         pool.min_stake = min_stake;
@@ -3586,11 +3619,7 @@ impl PredifiContract {
     /// is beyond the current count or `limit` is 0.
     /// # Errors
     /// Returns `PredifiError::InvalidPagination` if `offset + limit` overflows `u32`.
-    pub fn get_active_pools(
-        env: Env,
-        offset: u32,
-        limit: u32,
-    ) -> Result<Vec<u64>, PredifiError> {
+    pub fn get_active_pools(env: Env, offset: u32, limit: u32) -> Result<Vec<u64>, PredifiError> {
         // Guard against offset + limit wrapping around u32::MAX.
         let end_check = offset
             .checked_add(limit)
@@ -3948,6 +3977,8 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
+        Self::validate_pool_invariants(&pool);
+
         if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
         }
@@ -4069,7 +4100,10 @@ impl PredifiContract {
         Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
 
         let token_client = token::Client::new(&env, &token);
+
+        Self::enter_reentrancy_guard(&env);
         token_client.transfer(&env.current_contract_address(), &destination, &amount);
+        Self::exit_reentrancy_guard(&env);
 
         EmergencyWithdrawEvent {
             admin,
@@ -4181,7 +4215,7 @@ impl OracleCallback for PredifiContract {
                         existing_outcome: i,
                     }
                     .publish(&env);
-                    break;
+                    return Err(PredifiError::ResolutionConflict);
                 }
             }
         }
