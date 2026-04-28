@@ -1834,6 +1834,49 @@ fn test_get_user_predictions() {
     assert_eq!(p2.len(), 1);
 }
 
+// ── #616: get_user_predictions overflow guard ─────────────────────────────────
+
+/// Regression: offset + limit overflowing u32::MAX must return InvalidPagination
+/// for get_user_predictions (fix for GitHub issue #616).
+#[test]
+fn test_get_user_predictions_overflow_returns_invalid_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let user = Address::generate(&env);
+
+    // u32::MAX + 1 wraps to 0 in unchecked arithmetic — must be caught.
+    let result = client.try_get_user_predictions(&user, &u32::MAX, &1u32);
+    match result {
+        Err(Ok(PredifiError::InvalidPagination)) => {} // expected
+        other => panic!(
+            "expected Err(Ok(InvalidPagination)), got an unexpected variant: is_err={}",
+            other.is_err()
+        ),
+    }
+}
+
+/// Regression: offset = 1, limit = u32::MAX also overflows — must be caught.
+#[test]
+fn test_get_user_predictions_overflow_large_limit_returns_invalid_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let user = Address::generate(&env);
+
+    let result = client.try_get_user_predictions(&user, &1u32, &u32::MAX);
+    match result {
+        Err(Ok(PredifiError::InvalidPagination)) => {} // expected
+        other => panic!(
+            "expected Err(Ok(InvalidPagination)), got an unexpected variant: is_err={}",
+            other.is_err()
+        ),
+    }
+}
+
+
 #[test]
 fn test_multi_oracle_resolution() {
     let env = Env::default();
@@ -3729,7 +3772,43 @@ fn test_get_pools_by_category() {
     assert_eq!(empty.len(), 0);
 }
 
-// ================== Treasury withdrawal tests ==================
+// ── #616: Pagination overflow guard ──────────────────────────────────────────
+
+/// Regression: offset + limit overflowing u32::MAX must return InvalidPagination
+/// for get_pools_by_category (fix for GitHub issue #616).
+#[test]
+fn test_get_pools_by_category_overflow_returns_invalid_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+
+    let cat = symbol_short!("Tech");
+    // u32::MAX + 1 wraps to 0 in unchecked arithmetic — must be caught.
+    let result = client.try_get_pools_by_category(&cat, &u32::MAX, &1u32);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidPagination)),
+        "offset=u32::MAX with limit=1 must return InvalidPagination"
+    );
+}
+
+/// Regression: offset = 1, limit = u32::MAX also overflows — must be caught.
+#[test]
+fn test_get_pools_by_category_overflow_large_limit_returns_invalid_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+
+    let cat = symbol_short!("Tech");
+    let result = client.try_get_pools_by_category(&cat, &1u32, &u32::MAX);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidPagination)),
+        "offset=1 with limit=u32::MAX must return InvalidPagination"
+    );
+}
 
 #[test]
 fn test_admin_can_withdraw_treasury() {
@@ -7512,6 +7591,41 @@ fn test_get_active_pools_pagination() {
     // limit=0 always returns empty
     let zero_limit = client.get_active_pools(&0u32, &0u32);
     assert_eq!(zero_limit.len(), 0);
+}
+
+// ── #616: get_active_pools overflow guard ─────────────────────────────────────
+
+/// Regression: offset + limit overflowing u32::MAX must return InvalidPagination
+/// for get_active_pools (fix for GitHub issue #616).
+#[test]
+fn test_get_active_pools_overflow_returns_invalid_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+
+    let result = client.try_get_active_pools(&u32::MAX, &1u32);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidPagination)),
+        "offset=u32::MAX with limit=1 must return InvalidPagination"
+    );
+}
+
+/// Regression: offset = 1, limit = u32::MAX overflows — must be caught.
+#[test]
+fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+
+    let result = client.try_get_active_pools(&1u32, &u32::MAX);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidPagination)),
+        "offset=1 with limit=u32::MAX must return InvalidPagination"
+    );
 }
 
 // Swap-and-pop correctness: removing the first pool when three exist.

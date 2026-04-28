@@ -174,6 +174,8 @@ pub enum PredifiError {
     RequiredResolutionsExceedOperators = 200,
     /// Rate limit exceeded, cooldown active, or suspicious activity detected.
     RateLimitOrSuspiciousActivity = 190,
+    /// The pagination offset + limit combination overflows u32 or is otherwise invalid.
+    InvalidPagination = 92,
 }
 
 /// Represents the current state of a prediction market.
@@ -3293,12 +3295,20 @@ impl PredifiContract {
     }
 
     /// Get a paginated list of a user's predictions.
+    ///
+    /// # Errors
+    /// Returns `PredifiError::InvalidPagination` if `offset + limit` overflows `u32`.
     pub fn get_user_predictions(
         env: Env,
         user: Address,
         offset: u32,
         limit: u32,
-    ) -> Vec<UserPredictionDetail> {
+    ) -> Result<Vec<UserPredictionDetail>, PredifiError> {
+        // Guard against offset + limit wrapping around u32::MAX.
+        let end_check = offset
+            .checked_add(limit)
+            .ok_or(PredifiError::InvalidPagination)?;
+
         let count_key = DataKey::UsrPrdCnt(user.clone());
         let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
         if env.storage().persistent().has(&count_key) {
@@ -3308,10 +3318,10 @@ impl PredifiContract {
         let mut results = Vec::new(&env);
 
         if offset >= count || limit == 0 {
-            return results;
+            return Ok(results);
         }
 
-        let end = core::cmp::min(offset.saturating_add(limit), count);
+        let end = core::cmp::min(end_check, count);
 
         for i in offset..end {
             let index_key = DataKey::UsrPrdIdx(user.clone(), i);
@@ -3348,7 +3358,7 @@ impl PredifiContract {
             });
         }
 
-        results
+        Ok(results)
     }
 
     /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
@@ -3435,7 +3445,20 @@ impl PredifiContract {
     }
 
     /// Get a paginated list of pool IDs by category.
-    pub fn get_pools_by_category(env: Env, category: Symbol, offset: u32, limit: u32) -> Vec<u64> {
+    ///
+    /// # Errors
+    /// Returns `PredifiError::InvalidPagination` if `offset + limit` overflows `u32`.
+    pub fn get_pools_by_category(
+        env: Env,
+        category: Symbol,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<u64>, PredifiError> {
+        // Guard against offset + limit wrapping around u32::MAX.
+        offset
+            .checked_add(limit)
+            .ok_or(PredifiError::InvalidPagination)?;
+
         let count_key = DataKey::CatPoolCt(category.clone());
         let count: u32 = if let Some(c) = env.storage().persistent().get(&count_key) {
             Self::extend_persistent(&env, &count_key);
@@ -3447,7 +3470,7 @@ impl PredifiContract {
         let mut results = Vec::new(&env);
 
         if offset >= count || limit == 0 {
-            return results;
+            return Ok(results);
         }
 
         let start_index = count.saturating_sub(offset).saturating_sub(1);
@@ -3466,7 +3489,7 @@ impl PredifiContract {
             results.push_back(pool_id);
         }
 
-        results
+        Ok(results)
     }
 
     /// Get a paginated list of all currently active pool IDs across all categories.
@@ -3482,7 +3505,18 @@ impl PredifiContract {
     /// # Returns
     /// A `Vec<u64>` of active pool IDs. Returns an empty vec if `offset`
     /// is beyond the current count or `limit` is 0.
-    pub fn get_active_pools(env: Env, offset: u32, limit: u32) -> Vec<u64> {
+    /// # Errors
+    /// Returns `PredifiError::InvalidPagination` if `offset + limit` overflows `u32`.
+    pub fn get_active_pools(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<u64>, PredifiError> {
+        // Guard against offset + limit wrapping around u32::MAX.
+        let end_check = offset
+            .checked_add(limit)
+            .ok_or(PredifiError::InvalidPagination)?;
+
         let count: u32 = env
             .storage()
             .instance()
@@ -3491,12 +3525,12 @@ impl PredifiContract {
         let mut results = Vec::new(&env);
 
         if offset >= count || limit == 0 {
-            return results;
+            return Ok(results);
         }
 
         Self::extend_instance(&env);
 
-        let end = core::cmp::min(offset.saturating_add(limit), count);
+        let end = core::cmp::min(end_check, count);
 
         for i in offset..end {
             let slot_key = DataKey::ActivePool(i);
@@ -3506,7 +3540,7 @@ impl PredifiContract {
             }
         }
 
-        results
+        Ok(results)
     }
 
     /// Return the total number of currently active (open) pools.
