@@ -1876,7 +1876,6 @@ fn test_get_user_predictions_overflow_large_limit_returns_invalid_pagination() {
     }
 }
 
-
 #[test]
 fn test_multi_oracle_resolution() {
     let env = Env::default();
@@ -2986,17 +2985,21 @@ fn test_cancel_pool_after_resolution_returns_invalid_pool_state() {
 
     // Advance time past pool end_time to allow resolution
     env.ledger().with_mut(|li| li.timestamp = 10001);
-    
+
     // Resolve the pool with outcome 0
     client.resolve_pool(&operator, &pool_id, &0u32);
-    
+
     // Verify pool is in Resolved state
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.state, MarketState::Resolved);
     assert_eq!(pool.outcome, 0u32);
-    
+
     // Attempt to cancel the resolved pool - should panic with InvalidPoolState (error #24)
-    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, "Attempting to cancel resolved pool"));
+    client.cancel_pool(
+        &operator,
+        &pool_id,
+        &String::from_str(&env, "Attempting to cancel resolved pool"),
+    );
 }
 
 #[test]

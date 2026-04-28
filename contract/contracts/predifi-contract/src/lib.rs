@@ -251,7 +251,7 @@ pub struct Pool {
     /// Possible values: `Active` (betting open), `Resolved` (result final), `Canceled` (refunds available).
     pub state: MarketState,
     /// The winning outcome index (0-based) after resolution.
-    /// Only meaningful if `state` is `Resolved`. 
+    /// Only meaningful if `state` is `Resolved`.
     /// Uses UNRESOLVED_OUTCOME (u32::MAX) as sentinel for "not yet resolved".
     pub outcome: u32,
     /// The contract address of the Stellar token (e.g., USDC) used for all stakes and payouts.
@@ -2134,7 +2134,7 @@ impl PredifiContract {
 
         // Validate: end_time must not exceed MAX_POOL_DURATION from now
         if end_time > current_time + MAX_POOL_DURATION {
-            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidTimestamp);
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
         }
 
         let min_pool_duration = env
@@ -2828,6 +2828,12 @@ impl PredifiContract {
         }
         assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
 
+        // Validate: token must be on the allowed betting whitelist
+        if !Self::is_token_whitelisted(&env, &pool.token) {
+            Self::exit_reentrancy_guard(&env);
+            soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
+        }
+
         // Check private pool authorization
         // Check private pool authorization
         if pool.private {
@@ -3106,7 +3112,7 @@ impl PredifiContract {
             if !Self::is_pool_resolved(&pool) {
                 return Err(PredifiError::PoolNotResolved);
             }
-            
+
             if prediction.outcome != pool.outcome {
                 return Ok(0);
             }
@@ -3584,11 +3590,7 @@ impl PredifiContract {
     /// is beyond the current count or `limit` is 0.
     /// # Errors
     /// Returns `PredifiError::InvalidPagination` if `offset + limit` overflows `u32`.
-    pub fn get_active_pools(
-        env: Env,
-        offset: u32,
-        limit: u32,
-    ) -> Result<Vec<u64>, PredifiError> {
+    pub fn get_active_pools(env: Env, offset: u32, limit: u32) -> Result<Vec<u64>, PredifiError> {
         // Guard against offset + limit wrapping around u32::MAX.
         let end_check = offset
             .checked_add(limit)
