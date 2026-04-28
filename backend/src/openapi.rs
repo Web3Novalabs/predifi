@@ -103,6 +103,24 @@ pub struct HealthCheckV1Response {
     pub version: String,
     /// Individual dependency statuses
     pub dependencies: DependencyStatus,
+/// Per-pool referral earnings entry.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ReferralEarningDoc {
+    pub pool_id: i64,
+    pub pool_name: String,
+    /// Total amount earned from referrals in this pool (stroops).
+    pub total_earned: i64,
+    /// Number of referred users who staked in this pool.
+    pub referral_count: i64,
+}
+
+/// Referral earnings breakdown response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ReferralEarningsResponse {
+    pub referrer: String,
+    /// Aggregate earnings across all pools (stroops).
+    pub total_earned: i64,
+    pub pools: Vec<ReferralEarningDoc>,
 }
 
 // ── OpenAPI spec definition ───────────────────────────────────────────────────
@@ -120,6 +138,7 @@ pub struct HealthCheckV1Response {
         api_get_pools,
         api_get_pool_by_id,
         api_get_user_history,
+        api_get_user_referral_earnings,
         api_health,
     ),
     components(
@@ -128,6 +147,8 @@ pub struct HealthCheckV1Response {
             PredictionDoc,
             PoolListResponse,
             PredictionHistoryResponse,
+            ReferralEarningDoc,
+            ReferralEarningsResponse,
             ErrorResponse,
             HealthCheckResponse,
             HealthCheckV1Response,
@@ -138,6 +159,8 @@ pub struct HealthCheckV1Response {
         (name = "pools", description = "Active prediction market pools"),
         (name = "predictions", description = "User prediction history"),
         (name = "health", description = "Service health endpoints with dependency monitoring"),
+        (name = "referrals", description = "Referral earnings dashboard"),
+        (name = "health", description = "Service health endpoints"),
     )
 )]
 pub struct ApiDoc;
@@ -209,6 +232,22 @@ async fn api_get_user_history() {}
     )
 )]
 async fn api_health() {}
+
+/// `GET /api/v1/users/{address}/referrals` — per-pool referral earnings for a user.
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{address}/referrals",
+    tag = "referrals",
+    params(
+        ("address" = String, Path, description = "Stellar referrer address (G...)"),
+    ),
+    responses(
+        (status = 200, description = "Referral earnings breakdown per pool", body = ReferralEarningsResponse),
+        (status = 404, description = "No referral records found", body = ErrorResponse),
+        (status = 503, description = "Database not configured", body = ErrorResponse),
+    )
+)]
+async fn api_get_user_referral_earnings() {}
 
 // ── Swagger UI router ─────────────────────────────────────────────────────────
 

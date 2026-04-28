@@ -178,8 +178,9 @@ impl PriceFeedAdapter {
             return Err(PredifiError::InvalidAmount);
         }
 
-        if timestamp > env.ledger().timestamp() || expires_at <= timestamp {
-            return Err(PredifiError::InvalidPoolState);
+        // Require timestamp to be strictly in the past (at least 1 second old)
+        if timestamp >= env.ledger().timestamp() || expires_at <= timestamp {
+            return Err(PredifiError::InvalidData);
         }
 
         let feed = PriceFeed {

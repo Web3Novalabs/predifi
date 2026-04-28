@@ -135,6 +135,40 @@ pub async fn insert_pool_from_event(
     Ok(())
 }
 
+/// A single row in the referral earnings breakdown — one entry per pool.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct ReferralEarningRow {
+    pub pool_id: i64,
+    pub pool_name: String,
+    pub total_earned: i64,
+    pub referral_count: i64,
+}
+
+/// Fetch referral earnings grouped by pool for a given referrer address.
+pub async fn get_referral_earnings(
+    pool: &PgPool,
+    address: &str,
+) -> Result<Vec<ReferralEarningRow>, sqlx::Error> {
+    sqlx::query_as!(
+        ReferralEarningRow,
+        r#"
+        SELECT
+            r.pool_id,
+            pl.name          AS pool_name,
+            SUM(r.amount)    AS "total_earned!: i64",
+            COUNT(r.id)      AS "referral_count!: i64"
+        FROM referrals r
+        JOIN pools pl ON pl.pool_id = r.pool_id
+        WHERE r.referrer = $1
+        GROUP BY r.pool_id, pl.name
+        ORDER BY total_earned DESC
+        "#,
+        address
+    )
+    .fetch_all(pool)
+    .await
+}
+
 /// Decoded data from a `pool_created` contract event.
 #[derive(Debug)]
 pub struct PoolCreatedEvent {

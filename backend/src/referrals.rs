@@ -37,6 +37,7 @@ use axum::{
 use serde::Serialize;
 use sqlx::PgPool;
 
+use crate::db::ReferralEarningRow;
 use crate::response::ApiResponse;
 
 /// Summary statistics for a single referrer address.
@@ -90,6 +91,42 @@ pub async fn get_referrals(
         }),
         Err(err) => {
             tracing::error!(error = %err, "referrals query failed");
+            ApiResponse::error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        }
+    }
+}
+
+/// Response body for `GET /api/v1/users/:address/referrals`.
+#[derive(Debug, Serialize)]
+pub struct ReferralEarningsResponse {
+    pub referrer: String,
+    pub total_earned: i64,
+    pub pools: Vec<ReferralEarningRow>,
+}
+
+/// `GET /api/v1/users/:address/referrals`
+///
+/// Returns per-pool referral earnings for the given referrer address.
+/// Responds with 404 if the address has no referral records.
+pub async fn get_user_referral_earnings(
+    Path(address): Path<String>,
+    State(pool): State<PgPool>,
+) -> (StatusCode, Json<ApiResponse<ReferralEarningsResponse>>) {
+    match crate::db::get_referral_earnings(&pool, &address).await {
+        Ok(rows) if rows.is_empty() => ApiResponse::error(
+            StatusCode::NOT_FOUND,
+            format!("no referral earnings found for {address}"),
+        ),
+        Ok(rows) => {
+            let total_earned = rows.iter().map(|r| r.total_earned).sum();
+            ApiResponse::success(ReferralEarningsResponse {
+                referrer: address,
+                total_earned,
+                pools: rows,
+            })
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "referral earnings query failed");
             ApiResponse::error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         }
     }

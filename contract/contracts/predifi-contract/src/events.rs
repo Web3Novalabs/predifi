@@ -282,6 +282,7 @@ pub struct TreasuryWithdrawnEvent {
     pub token: Address,
     pub amount: i128,
     pub recipient: Address,
+    pub remaining_balance: i128,
     pub timestamp: u64,
 }
 #[contractevent(topics = ["refund_claimed"])]
@@ -348,4 +349,19 @@ pub struct ResolutionConflictEvent {
     pub existing_outcome: u32,
 }
 
+#[contractevent(topics = ["added_to_whitelist"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddedToWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["removed_from_whitelist"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemovedFromWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub timestamp: u64,
+}
 

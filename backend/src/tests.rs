@@ -465,6 +465,11 @@ async fn health_503_response_includes_dependency_details() {
 
     let response = build_router(config, PriceCache::new())
         .oneshot(get("/health"))
+/// GET /api/v1/users/:address/referrals without a DB returns 503.
+#[tokio::test]
+async fn user_referrals_without_db_returns_503() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/api/v1/users/GABC123/referrals"))
         .await
         .expect("request failed");
 
@@ -483,5 +488,8 @@ async fn health_503_response_includes_dependency_details() {
     assert!(
         body.contains("\"rpc\""),
         "503 response should show rpc status, got: {body}"
+    assert!(
+        body.contains("database not configured"),
+        "body should mention database not configured, got: {body}"
     );
 }

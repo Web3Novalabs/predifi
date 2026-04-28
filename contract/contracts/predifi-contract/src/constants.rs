@@ -35,6 +35,9 @@ pub const CANCELATION_DELAY: u64 = 604800;
 /// Predictions below this threshold are rejected to prevent spam.
 pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
 
+/// Minimum amount that can be withdrawn from treasury or protocol balances.
+pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1;
+
 /// Default cooldown in seconds between consecutive place_prediction calls by the same user.
 /// Defaults to disabled so existing deployments can opt in explicitly via admin config.
 pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 0;
@@ -52,6 +55,10 @@ pub const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 /// This allows us to distinguish between "outcome 0 won" and "pool not resolved".
 pub const UNRESOLVED_OUTCOME: u32 = u32::MAX;
 
+/// Maximum allowed pool duration in seconds (365 days).
+/// Pools with end_time beyond current_time + MAX_POOL_DURATION are rejected.
+pub const MAX_POOL_DURATION: u64 = 31_536_000;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MONITORING & ALERT THRESHOLDS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -66,7 +73,7 @@ pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Current contract version. Bump on each release to support safe migrations.
-/// This is stored in contract instance storage during initialization.
+/// This is stored in contract instance storage during initialization and upgrades.
 pub const CONTRACT_VERSION: u32 = 1;
 
 #[cfg(test)]
