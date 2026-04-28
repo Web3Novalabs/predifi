@@ -3533,7 +3533,10 @@ fn test_set_stake_limits_max_zero_means_unlimited() {
 
     // max_stake = 0 (unlimited) with any positive min_stake must succeed
     let result = client.try_set_stake_limits(&operator, &pool_id, &1000i128, &0i128);
-    assert!(result.is_ok(), "max_stake == 0 (unlimited) must be valid with any positive min_stake");
+    assert!(
+        result.is_ok(),
+        "max_stake == 0 (unlimited) must be valid with any positive min_stake"
+    );
 }
 
 #[test]
@@ -9319,7 +9322,10 @@ fn test_prediction_cooldown_update_event_emitted() {
         }
     }
 
-    assert!(found_event, "PredictionCooldownUpdateEvent should be emitted");
+    assert!(
+        found_event,
+        "PredictionCooldownUpdateEvent should be emitted"
+    );
 }
 
 // ── update_pool_description tests ────────────────────────────────────────────

@@ -2313,7 +2313,6 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
@@ -2673,7 +2672,10 @@ impl PredifiContract {
         let config = Self::get_config(&env);
         if config.prediction_cooldown_seconds > 0 {
             let last_prediction_key = DataKey::LastPredictionTime(user.clone());
-            if let Some(last_prediction_time) = env.storage().persistent().get::<_, u64>(&last_prediction_key)
+            if let Some(last_prediction_time) = env
+                .storage()
+                .persistent()
+                .get::<_, u64>(&last_prediction_key)
             {
                 Self::extend_persistent(&env, &last_prediction_key);
                 let now = env.ledger().timestamp();
@@ -2829,7 +2831,11 @@ impl PredifiContract {
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
     /// PRE: pool.state ≠ Active
     /// POST: HasClaimed(user, pool) = true (INV-3), payout ≤ pool.total_stake (INV-4)
-    fn claim_winnings_internal(env: &Env, user: &Address, pool_id: u64) -> Result<i128, PredifiError> {
+    fn claim_winnings_internal(
+        env: &Env,
+        user: &Address,
+        pool_id: u64,
+    ) -> Result<i128, PredifiError> {
         Self::enter_reentrancy_guard(env);
 
         let result: Result<i128, PredifiError> = (|| {
@@ -3625,9 +3631,7 @@ impl PredifiContract {
                 .unwrap_or(true);
 
             if expired {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PriceFeed(pair));
+                env.storage().persistent().remove(&DataKey::PriceFeed(pair));
                 removed += 1;
             } else {
                 remaining.push_back(pair);
