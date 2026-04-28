@@ -171,6 +171,54 @@ fn test_dynamic_fee_tiers_application() {
 }
 
 #[test]
+fn test_set_fee_tiers_unsorted_thresholds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = crate::test::setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let tiers = Vec::from_array(
+        &env,
+        [
+            FeeTier { stake_threshold: 5_000_000, fee_bps: 50 },
+            FeeTier { stake_threshold: 1_000_000, fee_bps: 100 }, // out of order
+        ],
+    );
+
+    let result = client.try_set_fee_tiers(&admin, &tiers);
+    assert_eq!(
+        result.err().unwrap().unwrap(),
+        crate::PredifiError::InvalidFeeBps
+    );
+}
+
+#[test]
+fn test_set_fee_tiers_duplicate_thresholds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = crate::test::setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let tiers = Vec::from_array(
+        &env,
+        [
+            FeeTier { stake_threshold: 1_000_000, fee_bps: 100 },
+            FeeTier { stake_threshold: 1_000_000, fee_bps: 50 }, // duplicate threshold
+        ],
+    );
+
+    let result = client.try_set_fee_tiers(&admin, &tiers);
+    assert_eq!(
+        result.err().unwrap().unwrap(),
+        crate::PredifiError::InvalidFeeBps
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #10)")]
 fn test_set_fee_tiers_unauthorized() {
     let env = Env::default();
