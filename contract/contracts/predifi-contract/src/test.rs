@@ -843,13 +843,14 @@ fn test_multiple_pools_independent() {
 }
 
 #[test]
-fn test_invalid_category_fallback() {
+#[should_panic(expected = "Error(Contract, #90)")]
+fn test_invalid_category_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    let pool_id = client.create_pool(
+    client.create_pool(
         &creator,
         &100000u64,
         &token_address,
@@ -873,9 +874,6 @@ fn test_invalid_category_fallback() {
             ],
         },
     );
-
-    let pool = client.get_pool(&pool_id);
-    assert_eq!(pool.category, CATEGORY_OTHER);
 }
 
 // ── Access control tests ─────────────────────────────────────────────────────
