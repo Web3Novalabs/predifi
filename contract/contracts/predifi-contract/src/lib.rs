@@ -2368,7 +2368,6 @@ impl PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
-
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
@@ -3045,8 +3044,7 @@ impl PredifiContract {
         user.require_auth();
         let mut results: soroban_sdk::Map<u64, i128> = soroban_sdk::Map::new(&env);
         for pool_id in pool_ids.iter() {
-            let amount = Self::claim_winnings(env.clone(), user.clone(), pool_id)
-                .unwrap_or(0);
+            let amount = Self::claim_winnings(env.clone(), user.clone(), pool_id).unwrap_or(0);
             results.set(pool_id, amount);
         }
         results
@@ -3679,9 +3677,7 @@ impl PredifiContract {
                 .unwrap_or(true);
 
             if expired {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PriceFeed(pair));
+                env.storage().persistent().remove(&DataKey::PriceFeed(pair));
                 removed += 1;
             } else {
                 remaining.push_back(pair);
@@ -3820,6 +3816,35 @@ impl PredifiContract {
             }
         }
         applied_fee
+    }
+
+    /// Emergency escape hatch: transfers any token balance held by this contract
+    /// to a destination address. Restricted to the admin role.
+    ///
+    /// Intended for use when the protocol or oracle has failed and funds must be
+    /// rescued. Emits an `EmergencyWithdraw` event for on-chain auditability.
+    pub fn emergency_withdraw(
+        env: Env,
+        admin: Address,
+        token: Address,
+        destination: Address,
+        amount: i128,
+    ) -> Result<(), PredifiError> {
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
+
+        let token_client = token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &destination, &amount);
+
+        EmergencyWithdrawEvent {
+            admin,
+            token,
+            destination,
+            amount,
+        }
+        .publish(&env);
+
+        Ok(())
     }
 }
 
@@ -3962,38 +3987,6 @@ impl OracleCallback for PredifiContract {
             }
             .publish(&env);
         }
-
-        Ok(())
-    }
-}
-
-#[contractimpl]
-impl PredifiContract {
-    /// Emergency escape hatch: transfers any token balance held by this contract
-    /// to a destination address. Restricted to the admin role.
-    ///
-    /// Intended for use when the protocol or oracle has failed and funds must be
-    /// rescued. Emits an `EmergencyWithdraw` event for on-chain auditability.
-    pub fn emergency_withdraw(
-        env: Env,
-        admin: Address,
-        token: Address,
-        destination: Address,
-        amount: i128,
-    ) -> Result<(), PredifiError> {
-        admin.require_auth();
-        Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
-
-        let token_client = token::Client::new(&env, &token);
-        token_client.transfer(&env.current_contract_address(), &destination, &amount);
-
-        EmergencyWithdrawEvent {
-            admin,
-            token,
-            destination,
-            amount,
-        }
-        .publish(&env);
 
         Ok(())
     }

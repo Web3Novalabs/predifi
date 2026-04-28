@@ -41,15 +41,13 @@ pub struct StellarEvent {
 
 /// Load the last processed ledger from the database.
 async fn load_cursor(pool: &PgPool) -> Option<u64> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT value FROM app_state WHERE key = $1",
-    )
-    .bind(STATE_KEY)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .and_then(|v| v.parse().ok())
+    sqlx::query_scalar::<_, String>("SELECT value FROM app_state WHERE key = $1")
+        .bind(STATE_KEY)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
 }
 
 /// Persist the latest processed ledger to the database.
