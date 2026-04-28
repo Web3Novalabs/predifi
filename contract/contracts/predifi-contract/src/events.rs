@@ -300,6 +300,14 @@ pub struct UpgradeEvent {
     pub new_wasm_hash: BytesN<32>,
 }
 
+#[contractevent(topics = ["contract_upgraded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractUpgradedEvent {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub upgraded_by: Address,
+}
+
 #[contractevent(topics = ["oracle_init"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleInitEvent {
