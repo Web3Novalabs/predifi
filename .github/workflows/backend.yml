@@ -127,7 +127,7 @@ jobs:
   backend-checks:
     name: Backend Checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     defaults:
       run:
@@ -162,5 +162,5 @@ jobs:
       - name: Build backend
         run: cargo build --release
 
-      - name: Run unit tests
+      - name: Run tests (unit + integration)
         run: cargo test
