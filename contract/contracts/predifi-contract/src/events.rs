@@ -349,3 +349,19 @@ pub struct ResolutionConflictEvent {
     pub existing_outcome: u32,
 }
 
+#[contractevent(topics = ["added_to_whitelist"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddedToWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["removed_from_whitelist"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemovedFromWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub timestamp: u64,
+}
+
