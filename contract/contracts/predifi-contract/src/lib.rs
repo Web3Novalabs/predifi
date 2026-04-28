@@ -956,6 +956,7 @@ pub struct OracleWhitelistRemovedEvent {
 pub struct AddedToWhitelistEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub added_by: Address,
     pub timestamp: u64,
 }
 
@@ -964,6 +965,7 @@ pub struct AddedToWhitelistEvent {
 pub struct RemovedFromWhitelistEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub removed_by: Address,
     pub timestamp: u64,
 }
 
@@ -3728,6 +3730,7 @@ impl PredifiContract {
         AddedToWhitelistEvent {
             pool_id,
             user,
+            added_by: creator,
             timestamp: env.ledger().timestamp(),
         }
         .publish(&env);
@@ -3764,6 +3767,7 @@ impl PredifiContract {
         RemovedFromWhitelistEvent {
             pool_id,
             user,
+            removed_by: creator,
             timestamp: env.ledger().timestamp(),
         }
         .publish(&env);

@@ -354,6 +354,7 @@ pub struct ResolutionConflictEvent {
 pub struct AddedToWhitelistEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub added_by: Address,
     pub timestamp: u64,
 }
 
@@ -362,5 +363,6 @@ pub struct AddedToWhitelistEvent {
 pub struct RemovedFromWhitelistEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub removed_by: Address,
     pub timestamp: u64,
 }
