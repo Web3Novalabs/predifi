@@ -1067,6 +1067,96 @@ fn test_unauthorized_oracle_resolve() {
 }
 
 #[test]
+fn test_whitelisted_oracle_can_update_price_feed() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_oracle(&admin, &oracle);
+
+    let feed_pair = Symbol::new(&env, "ETHUSD");
+    let now = env.ledger().timestamp();
+    client.update_price_feed(
+        &oracle,
+        &feed_pair,
+        &3_000_000i128,
+        &100i128,
+        &now,
+        &(now + 60),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_update_price_feed_rejects_non_whitelisted_oracle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    let now = env.ledger().timestamp();
+    client.update_price_feed(
+        &oracle,
+        &Symbol::new(&env, "ETHUSD"),
+        &3_000_000i128,
+        &100i128,
+        &now,
+        &(now + 60),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_removed_oracle_cannot_update_price_feed() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_oracle(&admin, &oracle);
+    client.remove_oracle(&admin, &oracle);
+
+    let now = env.ledger().timestamp();
+    client.update_price_feed(
+        &oracle,
+        &Symbol::new(&env, "ETHUSD"),
+        &3_000_000i128,
+        &100i128,
+        &now,
+        &(now + 60),
+    );
+}
+
+#[test]
 fn test_oracle_resolve_long_proof() {
     let env = Env::default();
     env.mock_all_auths();
@@ -5319,7 +5409,6 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
 
 /// outcome index == options_count must be rejected (out-of-bounds, 0-indexed).
 #[test]
-#[should_panic]
 fn test_resolve_pool_rejects_out_of_bounds_outcome() {
     let env = Env::default();
     env.mock_all_auths();
@@ -5354,7 +5443,8 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
 
     env.ledger().with_mut(|li| li.timestamp = 100_001);
     // Outcome 3 is out-of-bounds for a 3-option pool.
-    client.resolve_pool(&operator, &pool_id, &3u32);
+    let result = client.try_resolve_pool(&operator, &pool_id, &3u32);
+    assert_eq!(result, Err(Ok(PredifiError::InvalidOutcome)));
 }
 
 // ── (Simulated) race conditions & unauthorized access attempts ────────────────

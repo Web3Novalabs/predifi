@@ -571,6 +571,10 @@ pub enum DataKey {
     FeeTiers,
     /// Oracle configuration for price feed validation
     OracleConfig,
+    /// Oracle whitelist entry: OracleWl(oracle_address) -> bool
+    OracleWl(Address),
+    /// Whitelisted oracle list: OracleWhitelist -> Vec<Address>
+    OracleWhitelist,
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -873,6 +877,20 @@ pub struct TokenWhitelistAddedEvent {
 pub struct TokenWhitelistRemovedEvent {
     pub admin: Address,
     pub token: Address,
+}
+
+#[contractevent(topics = ["oracle_whitelist_added"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleWhitelistAddedEvent {
+    pub admin: Address,
+    pub oracle: Address,
+}
+
+#[contractevent(topics = ["oracle_whitelist_removed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleWhitelistRemovedEvent {
+    pub admin: Address,
+    pub oracle: Address,
 }
 
 #[contractevent(topics = ["added_to_whitelist"])]
@@ -1276,6 +1294,16 @@ impl PredifiContract {
     fn is_token_whitelisted(env: &Env, token: &Address) -> bool {
         let key = DataKey::TokenWl(token.clone());
         let whitelisted = env.storage().persistent().has(&key);
+        if whitelisted {
+            Self::extend_persistent(env, &key);
+        }
+        whitelisted
+    }
+
+    /// Returns true if the oracle address is explicitly whitelisted for price updates.
+    fn is_oracle_whitelisted(env: &Env, oracle: &Address) -> bool {
+        let key = DataKey::OracleWl(oracle.clone());
+        let whitelisted: bool = env.storage().persistent().get(&key).unwrap_or(false);
         if whitelisted {
             Self::extend_persistent(env, &key);
         }
@@ -1691,6 +1719,81 @@ impl PredifiContract {
             token: token.clone(),
         }
         .publish(&env);
+        Ok(())
+    }
+
+    /// Add an oracle address to the trusted oracle whitelist. Caller must have Admin role (0).
+    pub fn add_oracle(
+        env: Env,
+        admin: Address,
+        oracle_address: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "add_oracle")?;
+
+        let key = DataKey::OracleWl(oracle_address.clone());
+        env.storage().persistent().set(&key, &true);
+        Self::extend_persistent(&env, &key);
+
+        let list_key = DataKey::OracleWhitelist;
+        let mut whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&list_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        if !whitelist.contains(&oracle_address) {
+            whitelist.push_back(oracle_address.clone());
+            env.storage().persistent().set(&list_key, &whitelist);
+            Self::extend_persistent(&env, &list_key);
+        }
+
+        OracleWhitelistAddedEvent {
+            admin,
+            oracle: oracle_address,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Remove an oracle address from the trusted oracle whitelist. Caller must have Admin role (0).
+    pub fn remove_oracle(
+        env: Env,
+        admin: Address,
+        oracle_address: Address,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "remove_oracle")?;
+
+        let key = DataKey::OracleWl(oracle_address.clone());
+        env.storage().persistent().remove(&key);
+
+        let list_key = DataKey::OracleWhitelist;
+        let whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&list_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut new_whitelist = Vec::new(&env);
+        for oracle in whitelist.iter() {
+            if oracle.clone() != oracle_address {
+                new_whitelist.push_back(oracle);
+            }
+        }
+
+        env.storage().persistent().set(&list_key, &new_whitelist);
+        Self::extend_persistent(&env, &list_key);
+
+        OracleWhitelistRemovedEvent {
+            admin,
+            oracle: oracle_address,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -2308,7 +2411,7 @@ impl PredifiContract {
                 outcome,
                 pool.options_count
             );
-            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+            return Err(PredifiError::InvalidOutcome);
         }
 
         // --- Multi-resolution Voting Logic ---
@@ -3525,6 +3628,10 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         oracle.require_auth();
 
+        if !Self::is_oracle_whitelisted(&env, &oracle) {
+            return Err(PredifiError::Unauthorized);
+        }
+
         let feed_key = DataKey::PriceFeed(feed_pair.clone());
         env.storage()
             .persistent()
@@ -3858,7 +3965,10 @@ impl OracleCallback for PredifiContract {
 
         Ok(())
     }
+}
 
+#[contractimpl]
+impl PredifiContract {
     /// Emergency escape hatch: transfers any token balance held by this contract
     /// to a destination address. Restricted to the admin role.
     ///
