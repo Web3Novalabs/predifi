@@ -9914,3 +9914,299 @@ fn test_emergency_withdraw_emits_event() {
     });
     assert!(found, "EmergencyWithdrawEvent not found in event log");
 }
+
+// ── Rate limiting edge case tests ────────────────────────────────────────────
+
+/// A user's very first prediction should always succeed even when a cooldown
+/// is configured, because there is no prior `LastPredictionTime` entry in storage.
+#[test]
+fn test_prediction_cooldown_first_prediction_always_allowed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    // Set a very long cooldown — should not affect a brand-new user.
+    client.set_prediction_cooldown(&admin, &3600u64);
+
+    let new_user = Address::generate(&env);
+    token_admin_client.mint(&new_user, &10_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "First prediction pool"),
+            metadata_url: String::from_str(&env, "ipfs://first-pred"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // First prediction from a fresh address must succeed regardless of cooldown.
+    client.place_prediction(&new_user, &pool_id, &100i128, &0u32, &None, &None);
+}
+
+/// Cooldown is enforced at the exact boundary: a call at `last_time + cooldown - 1`
+/// must be rejected, while a call at `last_time + cooldown` must succeed.
+#[test]
+fn test_prediction_cooldown_boundary_one_second_before_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.set_prediction_cooldown(&admin, &60u64);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &10_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Boundary pool"),
+            metadata_url: String::from_str(&env, "ipfs://boundary"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // First prediction at t=1000.
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+
+    // One second before cooldown expires (t=1059) — must be rejected.
+    env.ledger().set_timestamp(1_059);
+    let result = client.try_place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
+    assert!(
+        result.is_err(),
+        "prediction one second before cooldown expiry should be rejected"
+    );
+
+    // Exactly at cooldown boundary (t=1060) — must succeed.
+    env.ledger().set_timestamp(1_060);
+    client.place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
+}
+
+/// Each user has an independent cooldown timer. One user being rate-limited
+/// must not affect another user's ability to place a prediction.
+#[test]
+fn test_prediction_cooldown_is_per_user_independent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.set_prediction_cooldown(&admin, &60u64);
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_admin_client.mint(&user_a, &10_000i128);
+    token_admin_client.mint(&user_b, &10_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Per-user cooldown pool"),
+            metadata_url: String::from_str(&env, "ipfs://per-user"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // user_a places at t=1000 — now rate-limited.
+    client.place_prediction(&user_a, &pool_id, &100i128, &0u32, &None, &None);
+
+    // user_b has never predicted — must succeed at the same timestamp.
+    client.place_prediction(&user_b, &pool_id, &100i128, &1u32, &None, &None);
+
+    // user_a is still within cooldown — must be rejected.
+    let result = client.try_place_prediction(&user_a, &pool_id, &50i128, &0u32, &None, &None);
+    assert!(
+        result.is_err(),
+        "user_a should still be rate-limited while user_b is not"
+    );
+}
+
+/// When cooldown is set to 0 (disabled), rapid back-to-back predictions from
+/// the same address must all succeed.
+#[test]
+fn test_prediction_cooldown_disabled_allows_rapid_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    // Default setup initialises with cooldown = 0 (disabled).
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &10_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "No cooldown pool"),
+            metadata_url: String::from_str(&env, "ipfs://no-cooldown"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Three back-to-back predictions at the same timestamp — all must succeed.
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+}
+
+/// Verify that `get_prediction_cooldown` reflects the value set by
+/// `set_prediction_cooldown` and that updating it is reflected immediately.
+#[test]
+fn test_get_prediction_cooldown_reflects_set_value() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Default should be 0 (disabled).
+    assert_eq!(client.get_prediction_cooldown(), 0u64);
+
+    client.set_prediction_cooldown(&admin, &120u64);
+    assert_eq!(client.get_prediction_cooldown(), 120u64);
+
+    // Update again — getter must reflect the new value.
+    client.set_prediction_cooldown(&admin, &300u64);
+    assert_eq!(client.get_prediction_cooldown(), 300u64);
+
+    // Disable again by setting to 0.
+    client.set_prediction_cooldown(&admin, &0u64);
+    assert_eq!(client.get_prediction_cooldown(), 0u64);
+}
+
+/// After a cooldown expires and the user places a second prediction, the
+/// `LastPredictionTime` is refreshed. A third call immediately after the
+/// second must be blocked by the new timer.
+#[test]
+fn test_prediction_cooldown_resets_after_each_successful_prediction() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_000);
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.set_prediction_cooldown(&admin, &60u64);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &10_000i128);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Reset cooldown pool"),
+            metadata_url: String::from_str(&env, "ipfs://reset-cooldown"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // First prediction at t=1000.
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+
+    // Second prediction after cooldown at t=1060 — resets the timer.
+    env.ledger().set_timestamp(1_060);
+    client.place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
+
+    // Immediately after the second prediction the timer is reset to t=1060.
+    // A third call at t=1061 (only 1 second later) must be rejected.
+    env.ledger().set_timestamp(1_061);
+    let result = client.try_place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
+    assert!(
+        result.is_err(),
+        "third prediction should be blocked because cooldown was reset at t=1060"
+    );
+
+    // But at t=1120 (60 seconds after the second prediction) it must succeed.
+    env.ledger().set_timestamp(1_120);
+    client.place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
+}
