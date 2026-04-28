@@ -2570,7 +2570,7 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #22)")]
+#[should_panic(expected = "Error(Contract, #24)")]
 fn test_cannot_cancel_resolved_pool_by_operator() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2889,7 +2889,7 @@ fn test_cancel_pool_refunds_predictions() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #22)")]
+#[should_panic(expected = "Error(Contract, #24)")]
 fn test_cannot_cancel_resolved_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2926,6 +2926,77 @@ fn test_cannot_cancel_resolved_pool() {
     client.resolve_pool(&operator, &pool_id, &1u32);
     // Should panic because pool is already resolved
     client.cancel_pool(&operator, &pool_id, &String::from_str(&env, ""));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #24)")]
+fn test_cancel_pool_after_resolution_returns_invalid_pool_state() {
+    // This test verifies that cancel_pool strictly enforces the Active state requirement.
+    // Attempting to cancel a pool that has already been resolved must return InvalidPoolState.
+    // This prevents an operator from changing a resolved pool to Canceled state,
+    // which would allow users to claim refunds for a pool that was already resolved
+    // and potentially already partially claimed.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let admin = Address::generate(&env);
+    let whitelist_admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_OPERATOR);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    ac_client.grant_role(&whitelist_admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&whitelist_admin, &token_address);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "State Transition Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Advance time past pool end_time to allow resolution
+    env.ledger().with_mut(|li| li.timestamp = 10001);
+    
+    // Resolve the pool with outcome 0
+    client.resolve_pool(&operator, &pool_id, &0u32);
+    
+    // Verify pool is in Resolved state
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 0u32);
+    
+    // Attempt to cancel the resolved pool - should panic with InvalidPoolState (error #24)
+    client.cancel_pool(&operator, &pool_id, &String::from_str(&env, "Attempting to cancel resolved pool"));
 }
 
 #[test]

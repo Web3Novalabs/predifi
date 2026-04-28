@@ -176,8 +176,8 @@ pub enum PredifiError {
     RateLimitOrSuspiciousActivity = 190,
     /// The pagination offset + limit combination overflows u32 or is otherwise invalid.
     InvalidPagination = 92,
-    /// The end_time exceeds the maximum allowed pool duration.
-    InvalidTimestamp = 94,
+    /// Generic invalid input data (e.g., a zero value where a positive value is required).
+    InvalidData = 90,
 }
 
 /// Represents the current state of a prediction market.
@@ -2737,12 +2737,8 @@ impl PredifiContract {
             }
         }
 
-        // Ensure resolved pools cannot be canceled
-        if pool.state == MarketState::Resolved {
-            Self::exit_reentrancy_guard(&env);
-            return Err(PredifiError::PoolNotResolved);
-        }
-
+        // Ensure only Active pools can be canceled
+        // This prevents canceling pools that are already Resolved or Canceled
         if !Self::is_pool_active(&pool) {
             Self::exit_reentrancy_guard(&env);
             return Err(PredifiError::InvalidPoolState);

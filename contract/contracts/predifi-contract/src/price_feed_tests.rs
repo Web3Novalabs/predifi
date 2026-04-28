@@ -29,6 +29,42 @@ mod tests {
     }
 
     #[test]
+    fn test_init_oracle_rejects_zero_max_price_age() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        let result = PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            0, // zero max_price_age — every feed would be immediately stale
+            100,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::InvalidData));
+    }
+
+    #[test]
+    fn test_init_oracle_rejects_confidence_ratio_above_10000() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        let result = PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            10_001, // above 100% in bps — confidence check can never pass
+        );
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::InvalidFeeBps));
+    }
+
+    #[test]
     fn test_price_feed_update_and_retrieval() {
         let env = Env::default();
         let admin = TestAddress::generate(&env);
