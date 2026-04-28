@@ -181,6 +181,8 @@ pub enum PredifiError {
     InvalidPagination = 92,
     /// Generic invalid input data (e.g., a zero value where a positive value is required).
     InvalidData = 90,
+    /// The provided timestamp is invalid (e.g., end_time too far in the future).
+    InvalidTimestamp = 80,
 }
 
 /// Represents the current state of a prediction market.

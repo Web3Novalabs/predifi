@@ -10224,3 +10224,75 @@ fn test_prediction_cooldown_resets_after_each_successful_prediction() {
     env.ledger().set_timestamp(1_120);
     client.place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #80)")]
+fn test_create_pool_rejects_end_time_beyond_max_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // current ledger time is 0; MAX_POOL_DURATION is 365 days (31_536_000 s)
+    // end_time one second past the limit must be rejected
+    let too_far = MAX_POOL_DURATION + 1;
+    client.create_pool(
+        &creator,
+        &too_far,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "100-year pool"),
+            metadata_url: String::from_str(&env, "ipfs://toofar"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+}
+
+#[test]
+fn test_create_pool_accepts_end_time_at_max_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // exactly at the boundary must succeed
+    let pool_id = client.create_pool(
+        &creator,
+        &MAX_POOL_DURATION,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Max duration pool"),
+            metadata_url: String::from_str(&env, "ipfs://maxdur"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+    let _ = pool_id;
+}
