@@ -244,7 +244,8 @@ pub struct Pool {
     /// Possible values: `Active` (betting open), `Resolved` (result final), `Canceled` (refunds available).
     pub state: MarketState,
     /// The winning outcome index (0-based) after resolution.
-    /// Only meaningful if `state` is `Resolved`. Default is 0.
+    /// Only meaningful if `state` is `Resolved`. 
+    /// Uses UNRESOLVED_OUTCOME (u32::MAX) as sentinel for "not yet resolved".
     pub outcome: u32,
     /// The contract address of the Stellar token (e.g., USDC) used for all stakes and payouts.
     pub token: Address,
@@ -1927,6 +1928,11 @@ impl PredifiContract {
         Self::get_config(&env).prediction_cooldown_seconds
     }
 
+    /// Returns true if the pool has a properly resolved outcome (not the sentinel value).
+    pub fn is_pool_resolved(&pool: &Pool) -> bool {
+        pool.outcome != UNRESOLVED_OUTCOME
+    }
+
     /// Return an aggregated metadata view of contract config and protocol state.
     pub fn get_contract_info(env: Env) -> ContractInfo {
         let config = Self::get_config(&env);
@@ -2173,7 +2179,7 @@ impl PredifiContract {
         let pool = Pool {
             end_time,
             state: MarketState::Active,
-            outcome: 0,
+            outcome: UNRESOLVED_OUTCOME,
             token: token.clone(),
             total_stake: config.initial_liquidity,
             category: normalized_category,
@@ -2472,6 +2478,18 @@ impl PredifiContract {
                 operator.clone(),
                 outcome,
                 pool.options_count
+            );
+            return Err(PredifiError::InvalidOutcome);
+        }
+
+        // Validate: outcome cannot be the sentinel value
+        if outcome == UNRESOLVED_OUTCOME {
+            log!(
+                &env,
+                "resolve_pool rejected: outcome cannot be sentinel value",
+                pool_id,
+                operator.clone(),
+                outcome
             );
             return Err(PredifiError::InvalidOutcome);
         }
@@ -3028,6 +3046,11 @@ impl PredifiContract {
                 return Ok(prediction.amount);
             }
 
+            // Check if pool is properly resolved
+            if !Self::is_pool_resolved(&pool) {
+                return Err(PredifiError::PoolNotResolved);
+            }
+            
             if prediction.outcome != pool.outcome {
                 return Ok(0);
             }
@@ -3842,6 +3865,29 @@ impl PredifiContract {
             return Err(PredifiError::ResolutionDelayNotMet);
         }
 
+        // Validate: outcome must be within the valid options range
+        if outcome >= pool.options_count {
+            log!(
+                &env,
+                "resolve_pool_from_price rejected: outcome is out of bounds",
+                pool_id,
+                outcome,
+                pool.options_count
+            );
+            return Err(PredifiError::InvalidOutcome);
+        }
+
+        // Validate: outcome cannot be the sentinel value
+        if outcome == UNRESOLVED_OUTCOME {
+            log!(
+                &env,
+                "resolve_pool_from_price rejected: outcome cannot be sentinel value",
+                pool_id,
+                outcome
+            );
+            return Err(PredifiError::InvalidOutcome);
+        }
+
         // Apply resolution
         pool.state = MarketState::Resolved;
         pool.outcome = outcome;
@@ -3980,6 +4026,11 @@ impl OracleCallback for PredifiContract {
 
         // Validate: outcome must be within the valid options range
         if outcome >= pool.options_count {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+        }
+
+        // Validate: outcome cannot be the sentinel value
+        if outcome == UNRESOLVED_OUTCOME {
             soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
         }
 
