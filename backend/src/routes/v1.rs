@@ -172,7 +172,7 @@ pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> 
     let state = AppState {
         config,
         cache,
-        pool,
+        db: pool,
     };
 
     Router::new()
@@ -181,6 +181,7 @@ pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> 
         .route("/fees", get(get_fees))
         .route("/prices", get(crate::price_cache::get_prices))
         .route("/referrals/{address}", get(referrals_handler))
+        .route("/users/{address}/referrals", get(user_referral_earnings_handler))
         .with_state(state)
 }
 
@@ -207,6 +208,32 @@ async fn referrals_handler(
         Some(pool) => {
             let (status, body) =
                 crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await;
+            (status, body).into_response()
+        }
+        None => {
+            ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
+                .into_response()
+        }
+    }
+}
+
+/// `GET /api/v1/users/:address/referrals` — per-pool referral earnings for a user.
+async fn user_referral_earnings_handler(
+    axum::extract::Path(address): axum::extract::Path<String>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    use crate::response::ApiResponse;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    match state.db {
+        Some(pool) => {
+            let (status, body) =
+                crate::referrals::get_user_referral_earnings(
+                    axum::extract::Path(address),
+                    State(pool),
+                )
+                .await;
             (status, body).into_response()
         }
         None => {
