@@ -1073,6 +1073,17 @@ impl PredifiContract {
         Err(PredifiError::InvalidData)
     }
 
+    /// Validate core protocol invariants for a pool.
+    /// Panics if any invariant is broken to prevent corrupted state from causing
+    /// index-out-of-bounds or other logic errors in downstream processing.
+    fn validate_pool_invariants(pool: &Pool) {
+        assert_eq!(
+            pool.outcome_descriptions.len(),
+            pool.options_count,
+            "outcome_descriptions length must equal options_count"
+        );
+    }
+
     /// Pure: Check if pool state transition is valid
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
@@ -1915,6 +1926,11 @@ impl PredifiContract {
     pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "migrate_state")?;
+
+        // v2 migration: Add any state migration logic here.
+        // Use Self::validate_pool_invariants(&pool) to ensure pool data consistency
+        // during migrations.
+
         Ok(())
     }
 
@@ -2223,12 +2239,8 @@ impl PredifiContract {
         );
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
-        if !config.outcome_descriptions.is_empty() {
-            assert!(
-                config.outcome_descriptions.len() == options_count,
-                "outcome_descriptions length must equal options_count"
-            );
-        }
+        // outcome_descriptions validation is now handled by validate_pool_invariants
+        // called right after pool structure is initialized.
 
         let pool_id: u64 = env
             .storage()
@@ -2259,6 +2271,8 @@ impl PredifiContract {
             fee_bps: 0, // Will be set at resolution
             participants_count: 0,
         };
+
+        Self::validate_pool_invariants(&pool);
 
         let pool_key = DataKey::Pool(pool_id);
         env.storage().persistent().set(&pool_key, &pool);
@@ -2429,6 +2443,7 @@ impl PredifiContract {
             .persistent()
             .get(&pool_key)
             .expect("Pool not found");
+        Self::validate_pool_invariants(&pool);
         Self::extend_persistent(&env, &pool_key);
 
         // Only the creator or a protocol admin may update the description.
@@ -2496,6 +2511,8 @@ impl PredifiContract {
             .persistent()
             .get(&pool_key)
             .expect("Pool not found");
+
+        Self::validate_pool_invariants(&pool);
 
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
@@ -3945,6 +3962,8 @@ impl PredifiContract {
             .persistent()
             .get(&pool_key)
             .expect("Pool not found");
+
+        Self::validate_pool_invariants(&pool);
 
         if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
