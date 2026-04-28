@@ -9,6 +9,7 @@ use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::price_cache::PriceCache;
+use crate::db::{self, PoolCreatedEvent};
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -19,12 +20,6 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
-/// Combined app state: config + optional DB pool.
-#[derive(Clone)]
-pub struct AppState {
-    pub config: Config,
-    pub db: Option<PgPool>,
-}
 
 /// `GET /api/v1/health` health-check endpoint.
 pub async fn health() -> Json<serde_json::Value> {
@@ -45,7 +40,7 @@ pub struct AppState {
     pub config: Config,
     pub cache: PriceCache,
     /// Optional DB pool — absent in unit tests that don't need a database.
-    pub pool: Option<sqlx::PgPool>,
+    pub db: Option<sqlx::PgPool>,
 }
 
 impl axum::extract::FromRef<AppState> for Config {
@@ -62,7 +57,7 @@ impl axum::extract::FromRef<AppState> for PriceCache {
 
 impl axum::extract::FromRef<AppState> for Option<sqlx::PgPool> {
     fn from_ref(state: &AppState) -> Self {
-        state.pool.clone()
+        state.db.clone()
     }
 }
 
@@ -92,7 +87,7 @@ pub async fn get_pools(
         return Json(json!({ "error": "database not available" }));
     };
 
-    match db::get_active_pools(db, sort_by, category, limit, offset).await {
+    match crate::db::get_active_pools(db, sort_by, category, limit, offset).await {
         Ok(pools) => Json(json!({ "pools": pools, "limit": limit, "offset": offset })),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
@@ -119,7 +114,7 @@ pub async fn get_user_history(
         return Json(json!({ "error": "database not available" }));
     };
 
-    match db::get_user_prediction_history(db, &address, limit, offset).await {
+    match crate::db::get_user_prediction_history(db, &address, limit, offset).await {
         Ok(rows) => Json(json!({
             "address": address,
             "predictions": rows,
@@ -166,7 +161,7 @@ pub async fn ingest_pool_created(
         description: payload.description,
     };
 
-    match db::insert_pool_from_event(db, &event).await {
+    match crate::db::insert_pool_from_event(db, &event).await {
         Ok(()) => Json(json!({ "status": "ok", "pool_id": event.pool_id })),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
@@ -208,7 +203,7 @@ async fn referrals_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    match state.pool {
+    match state.db {
         Some(pool) => {
             let (status, body) =
                 crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await;

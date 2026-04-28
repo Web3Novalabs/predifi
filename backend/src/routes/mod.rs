@@ -11,6 +11,6 @@ pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> 
 }
 
 /// Build the API router tree with a live database pool.
-pub fn router_with_db(config: Config, db: PgPool) -> Router {
-    Router::new().nest("/v1", v1::router_with_db(config, db))
+pub fn router_with_db(config: Config, cache: PriceCache, db: PgPool) -> Router {
+    Router::new().nest("/v1", v1::router(config, cache, Some(db)))
 }

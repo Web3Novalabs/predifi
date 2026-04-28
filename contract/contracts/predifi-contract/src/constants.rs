@@ -35,6 +35,10 @@ pub const CANCELATION_DELAY: u64 = 604800;
 /// Predictions below this threshold are rejected to prevent spam.
 pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
 
+/// Minimum withdrawal amount for treasury withdrawals (1000 units in base token units).
+/// Withdrawals below this threshold are rejected to prevent dust withdrawals and wasted gas.
+pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1000;
+
 /// Maximum number of options/outcomes allowed in a single pool.
 /// This limit prevents excessive gas costs and ensures reasonable pool complexity.
 pub const MAX_OPTIONS_COUNT: u32 = 100;

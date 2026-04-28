@@ -12,12 +12,18 @@ pub mod response;
 pub mod routes;
 pub mod worker;
 
-use axum::{routing::get, Json, Router};
+use axum::{routing::get, Json, Router, response::IntoResponse};
+use std::net::SocketAddr;
 use config::Config;
 use http::HeaderValue;
 use request_logger::LoggingLayer;
 use serde_json::json;
 use tower_http::cors::{AllowOrigin, CorsLayer};
+use std::sync::Arc;
+use tower_governor::{
+    governor::GovernorConfigBuilder,
+    GovernorLayer
+};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -68,12 +74,28 @@ async fn root() -> Json<serde_json::Value> {
     }))
 }
 
-/// Build the Axum router with CORS and logging middleware attached.
+
+/// Build the Axum router with CORS, logging, and rate limiting middleware.
 pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
+    let governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(5)
+            .burst_size(50)
+            .error_handler(|_| {
+                (axum::http::StatusCode::TOO_MANY_REQUESTS, "Too Many Requests").into_response()
+            })
+            .finish()
+            .unwrap(),
+    );
+
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
         .nest("/api", routes::router(config, cache, None))
+        .merge(openapi::swagger_router())
+        .layer(GovernorLayer {
+            config: governor_conf,
+        })
         .layer(build_cors())
         .layer(LoggingLayer)
 }
@@ -84,22 +106,26 @@ pub fn build_router_with_db(
     cache: price_cache::PriceCache,
     pool: sqlx::PgPool,
 ) -> Router {
-    Router::new()
-        .route("/", get(root))
-        .route("/health", get(health))
-        .nest("/api", routes::router(config, cache, Some(pool)))
-        .layer(build_cors())
-        .layer(LoggingLayer)
-}
+    let governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(5)
+            .burst_size(50)
+            .error_handler(|_| {
+                (axum::http::StatusCode::TOO_MANY_REQUESTS, "Too Many Requests").into_response()
+            })
+            .finish()
+            .unwrap(),
+    );
 
-/// Build the Axum router with a live database pool wired in.
-pub fn build_router_with_db(config: Config, db: sqlx::PgPool) -> Router {
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
-        .nest("/api", routes::router_with_db(config, db))
+        .nest("/api", routes::router_with_db(config, cache, pool))
         // Swagger UI served at /swagger-ui/ (#563)
         .merge(openapi::swagger_router())
+        .layer(GovernorLayer {
+            config: governor_conf,
+        })
         .layer(build_cors())
         .layer(LoggingLayer)
 }
@@ -140,7 +166,12 @@ async fn main() {
 
     info!(address = %bind_addr, "backend server listening");
 
-    if let Err(error) = axum::serve(listener, app).await {
+    if let Err(error) = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    {
         error!(error = %error, "server error");
         std::process::exit(1);
     }
