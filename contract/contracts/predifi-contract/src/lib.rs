@@ -106,6 +106,9 @@ pub const CATEGORY_ENTERTAIN: Symbol = symbol_short!("Entertain");
 /// Technology and innovation predictions (e.g., product launches, tech trends)
 pub const CATEGORY_TECH: Symbol = symbol_short!("Tech");
 
+/// Maximum allowed resolution delay: 30 days in seconds
+pub const MAX_RESOLUTION_DELAY: u64 = 2_592_000;
+
 /// Miscellaneous predictions that don't fit other categories
 pub const CATEGORY_OTHER: Symbol = symbol_short!("Other");
 
@@ -1602,6 +1605,9 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_resolution_delay")?;
+        if delay > MAX_RESOLUTION_DELAY {
+            return Err(PredifiError::InvalidData);
+        }
         let mut config = Self::get_config(&env);
         config.resolution_delay = delay;
         env.storage().instance().set(&DataKey::Config, &config);
