@@ -2308,7 +2308,7 @@ impl PredifiContract {
                 outcome,
                 pool.options_count
             );
-            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidOutcome);
+            return Err(PredifiError::InvalidOutcome);
         }
 
         // --- Multi-resolution Voting Logic ---
@@ -3858,7 +3858,10 @@ impl OracleCallback for PredifiContract {
 
         Ok(())
     }
+}
 
+#[contractimpl]
+impl PredifiContract {
     /// Emergency escape hatch: transfers any token balance held by this contract
     /// to a destination address. Restricted to the admin role.
     ///
