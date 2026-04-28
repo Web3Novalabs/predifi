@@ -71,6 +71,7 @@ fn test_price_based_pool_mock_resolution() {
     // Setup Token and Whitelist Category/Token
     let token_address = Address::generate(&env);
     client.add_token_to_whitelist(&admin, &token_address);
+    client.add_oracle(&admin, &oracle);
 
     // 2. Create a Prediction Pool
     let end_time = 4000u64; // > min_pool_duration (3600)

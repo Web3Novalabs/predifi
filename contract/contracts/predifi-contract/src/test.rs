@@ -1928,7 +1928,7 @@ fn test_get_user_predictions_overflow_large_limit_returns_invalid_pagination() {
 }
 
 #[test]
-fn test_multi_oracle_resolution() {
+fn test_multi_oracle_conflict_returns_error() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -1952,11 +1952,9 @@ fn test_multi_oracle_resolution() {
 
     let oracle1 = Address::generate(&env);
     let oracle2 = Address::generate(&env);
-    let oracle3 = Address::generate(&env);
 
     ac_client.grant_role(&oracle1, &ROLE_ORACLE);
     ac_client.grant_role(&oracle2, &ROLE_ORACLE);
-    ac_client.grant_role(&oracle3, &ROLE_ORACLE);
 
     let pool_id = client.create_pool(
         &creator,
@@ -1972,7 +1970,140 @@ fn test_multi_oracle_resolution() {
             max_total_stake: 0,
             min_total_stake: 1,
             initial_liquidity: 0i128,
-            required_resolutions: 2u32, // Changed from 1 to 2 to test multi-oracle voting
+            required_resolutions: 2u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Oracle 1 votes for outcome 1
+    client.oracle_resolve(&oracle1, &pool_id, &1u32, &String::from_str(&env, "proof1"));
+
+    // Oracle 2 votes for outcome 2 (Conflict!)
+    let result = client.try_oracle_resolve(&oracle2, &pool_id, &2u32, &String::from_str(&env, "proof2"));
+    match result {
+        Err(Ok(PredifiError::ResolutionConflict)) => {} // expected
+        other => panic!("expected Err(Ok(ResolutionConflict)), got {:?}", other),
+    }
+}
+
+#[test]
+fn test_multi_oracle_same_outcome_resolves_successfully() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let oracle1 = Address::generate(&env);
+    let oracle2 = Address::generate(&env);
+
+    ac_client.grant_role(&oracle1, &ROLE_ORACLE);
+    ac_client.grant_role(&oracle2, &ROLE_ORACLE);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Multi-Oracle Test 2"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 2u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Oracle 1 votes for outcome 1
+    client.oracle_resolve(&oracle1, &pool_id, &1u32, &String::from_str(&env, "proof1"));
+
+    // Oracle 2 votes for outcome 1 (Threshold met!)
+    client.oracle_resolve(&oracle2, &pool_id, &1u32, &String::from_str(&env, "proof2"));
+
+    // Verify pool is resolved
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 1u32);
+}
+
+#[test]
+fn test_single_oracle_insufficient_resolutions_keeps_unresolved() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let oracle1 = Address::generate(&env);
+
+    ac_client.grant_role(&oracle1, &ROLE_ORACLE);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Multi-Oracle Test 3"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 2u32,
             private: false,
             whitelist_key: None,
             outcome_descriptions: soroban_sdk::vec![
@@ -1990,20 +2121,8 @@ fn test_multi_oracle_resolution() {
     client.oracle_resolve(&oracle1, &pool_id, &1u32, &String::from_str(&env, "proof1"));
 
     // Verify pool is NOT yet resolved
-    let _stats = client.get_pool_stats(&pool_id);
-    // Since get_pool_stats doesn't directly show "resolved" bool in PoolStats struct (it shows current_odds etc)
-    // We could try to claim winnings and expect failure.
-    let _user1 = Address::generate(&env);
-    // Actually, let's just use oracle_resolve and see it works.
-
-    // Oracle 2 votes for outcome 2 (Conflict!)
-    client.oracle_resolve(&oracle2, &pool_id, &2u32, &String::from_str(&env, "proof2"));
-
-    // Oracle 3 votes for outcome 1 (Threshold met!)
-    client.oracle_resolve(&oracle3, &pool_id, &1u32, &String::from_str(&env, "proof3"));
-
-    // Now it should be resolved to 1.
-    // If we call get_user_predictions for a user who predicted 1, it should show resolved.
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Active);
 }
 // ── Pool cancellation tests ───────────────────────────────────────────────────
 
