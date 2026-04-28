@@ -52,6 +52,10 @@ pub const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 /// This allows us to distinguish between "outcome 0 won" and "pool not resolved".
 pub const UNRESOLVED_OUTCOME: u32 = u32::MAX;
 
+/// Maximum allowed pool duration in seconds (365 days).
+/// Pools with end_time beyond current_time + MAX_POOL_DURATION are rejected.
+pub const MAX_POOL_DURATION: u64 = 31_536_000;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MONITORING & ALERT THRESHOLDS
 // ═══════════════════════════════════════════════════════════════════════════
