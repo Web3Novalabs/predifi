@@ -1982,6 +1982,41 @@ impl PredifiContract {
         vol
     }
 
+    /// Update or remove the referrer for a (user, pool_id) pair.
+    ///
+    /// Callable only by the user themselves. Allows correcting a mistaken or
+    /// compromised referrer address before or after predictions are placed.
+    ///
+    /// # Arguments
+    /// * `user`         - The user whose referrer is being updated (must provide auth).
+    /// * `pool_id`      - The pool for which the referrer is being updated.
+    /// * `new_referrer` - `Some(address)` to set a new referrer, `None` to remove it.
+    ///
+    /// # Errors
+    /// * `Unauthorized` if the caller is not the user.
+    pub fn update_referrer(
+        env: Env,
+        user: Address,
+        pool_id: u64,
+        new_referrer: Option<Address>,
+    ) -> Result<(), PredifiError> {
+        user.require_auth();
+        let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+        match new_referrer {
+            Some(ref addr) => {
+                if addr == &user {
+                    return Err(PredifiError::Unauthorized);
+                }
+                env.storage().persistent().set(&referrer_key, addr);
+                Self::extend_persistent(&env, &referrer_key);
+            }
+            None => {
+                env.storage().persistent().remove(&referrer_key);
+            }
+        }
+        Ok(())
+    }
+
     /// Withdraw accumulated protocol fees or unused liquidity from the contract.
     /// Only callable by Admin (role 0).
     ///
@@ -2085,6 +2120,11 @@ impl PredifiContract {
 
         // Validate: end_time must be in the future
         assert!(end_time > current_time, "end_time must be in the future");
+
+        // Validate: end_time must not exceed MAX_POOL_DURATION from now
+        if end_time > current_time + MAX_POOL_DURATION {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidTimestamp);
+        }
 
         let min_pool_duration = env
             .storage()
@@ -3717,14 +3757,18 @@ impl PredifiContract {
             if stake == 0 {
                 current_odds.push_back(0);
             } else {
-                // Calculation: (total_stake * 10000) / stake
-                // Result is fixed-point with 4 decimal places (e.g., 2.5x odds = 25000)
-                let odds = pool
-                    .total_stake
-                    .checked_mul(10000)
-                    .expect("overflow")
-                    .checked_div(stake)
-                    .unwrap_or(0);
+                // Exclude initial_liquidity from the denominator so odds reflect
+                // only user-contributed stakes, not the creator's seed liquidity.
+                let user_stake_total = pool.total_stake.saturating_sub(pool.initial_liquidity);
+                let odds = if user_stake_total <= 0 {
+                    0
+                } else {
+                    user_stake_total
+                        .checked_mul(10000)
+                        .expect("overflow")
+                        .checked_div(stake)
+                        .unwrap_or(0)
+                };
                 current_odds.push_back(odds as u64);
             }
         }
