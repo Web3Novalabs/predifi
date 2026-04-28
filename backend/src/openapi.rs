@@ -72,6 +72,39 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+/// Dependency status in health check response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct DependencyStatus {
+    /// Database connectivity status: "ok", "unreachable", or "not_configured"
+    pub db: String,
+    /// RPC endpoint connectivity status: "ok" or "unreachable"
+    pub rpc: String,
+}
+
+/// Root-level health check response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct HealthCheckResponse {
+    /// Overall health status: "ok" or "error"
+    pub status: String,
+    /// Service name
+    pub service: String,
+    /// Service version from Cargo.toml
+    pub version: String,
+    /// Individual dependency statuses
+    pub dependencies: DependencyStatus,
+}
+
+/// API v1 health check response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct HealthCheckV1Response {
+    /// Overall health status: "ok" or "error"
+    pub status: String,
+    /// API version
+    pub version: String,
+    /// Individual dependency statuses
+    pub dependencies: DependencyStatus,
+}
+
 // ── OpenAPI spec definition ───────────────────────────────────────────────────
 
 #[derive(OpenApi)]
@@ -96,12 +129,15 @@ pub struct ErrorResponse {
             PoolListResponse,
             PredictionHistoryResponse,
             ErrorResponse,
+            HealthCheckResponse,
+            HealthCheckV1Response,
+            DependencyStatus,
         )
     ),
     tags(
         (name = "pools", description = "Active prediction market pools"),
         (name = "predictions", description = "User prediction history"),
-        (name = "health", description = "Service health endpoints"),
+        (name = "health", description = "Service health endpoints with dependency monitoring"),
     )
 )]
 pub struct ApiDoc;
@@ -162,13 +198,14 @@ async fn api_get_pool_by_id() {}
 )]
 async fn api_get_user_history() {}
 
-/// `GET /health` — service liveness check.
+/// `GET /health` — service liveness check with deep dependency monitoring.
 #[utoipa::path(
     get,
     path = "/health",
     tag = "health",
     responses(
-        (status = 200, description = "Service is healthy"),
+        (status = 200, description = "Service is healthy; all dependencies are reachable", body = HealthCheckResponse),
+        (status = 503, description = "Service is degraded; one or more dependencies are unreachable", body = HealthCheckResponse),
     )
 )]
 async fn api_health() {}

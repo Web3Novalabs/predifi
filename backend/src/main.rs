@@ -57,13 +57,63 @@ pub fn build_cors() -> CorsLayer {
         ])
 }
 
+use axum::extract::State;
+
 /// Health-check handler.
-async fn health() -> Json<serde_json::Value> {
-    Json(json!({
-        "status": "ok",
+async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use std::time::Duration;
+
+    let mut all_healthy = true;
+    let mut db_status = "ok";
+
+    if let Some(db) = &state.db {
+        if sqlx::query("SELECT 1").execute(db).await.is_err() {
+            db_status = "unreachable";
+            all_healthy = false;
+        }
+    } else {
+        db_status = "not_configured";
+    }
+
+    let mut rpc_status = "ok";
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let rpc_req = client.post(&state.config.stellar_rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getHealth"
+        }))
+        .send()
+        .await;
+
+    match rpc_req {
+        Ok(res) if res.status().is_success() => {}
+        _ => {
+            rpc_status = "unreachable";
+            all_healthy = false;
+        }
+    }
+
+    let body = json!({
+        "status": if all_healthy { "ok" } else { "error" },
         "service": "predifi-backend",
-        "version": env!("CARGO_PKG_VERSION")
-    }))
+        "version": env!("CARGO_PKG_VERSION"),
+        "dependencies": {
+            "db": db_status,
+            "rpc": rpc_status
+        }
+    });
+
+    if all_healthy {
+        (StatusCode::OK, Json(body)).into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
+    }
 }
 
 /// Root handler — returns a welcome message.
@@ -88,9 +138,16 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
             .unwrap(),
     );
 
+    let state = routes::v1::AppState {
+        config: config.clone(),
+        cache: cache.clone(),
+        db: None,
+    };
+
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .with_state(state)
         .nest("/api", routes::router(config, cache, None))
         .merge(openapi::swagger_router())
         .layer(GovernorLayer {
@@ -117,9 +174,16 @@ pub fn build_router_with_db(
             .unwrap(),
     );
 
+    let state = routes::v1::AppState {
+        config: config.clone(),
+        cache: cache.clone(),
+        db: Some(pool.clone()),
+    };
+
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .with_state(state)
         .nest("/api", routes::router_with_db(config, cache, pool))
         // Swagger UI served at /swagger-ui/ (#563)
         .merge(openapi::swagger_router())
