@@ -470,10 +470,7 @@ pub struct UserPredictionDetail {
     /// Current operational state of the pool (Active, Resolved, or Canceled).
     pub pool_state: MarketState,
     /// The winning outcome index (0-based) if the pool is `Resolved`.
-    /// Set to `UNRESOLVED_OUTCOME` (`u32::MAX`) when the pool has not yet been resolved.
-    /// Callers must check `pool_state == MarketState::Resolved` (or compare against
-    /// `UNRESOLVED_OUTCOME`) before interpreting this value; outcome index `0` is a
-    /// valid winning outcome and must not be confused with the unresolved sentinel.
+    /// Only meaningful when `pool_state` is `MarketState::Resolved`.
     pub pool_outcome: u32,
 }
 
