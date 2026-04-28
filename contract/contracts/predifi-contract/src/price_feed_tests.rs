@@ -507,4 +507,222 @@ mod tests {
         assert_eq!(pool.state, MarketState::Resolved);
         assert_eq!(pool.outcome, 1); // Condition Met
     }
+
+    // ── cleanup_expired_feeds tests ──────────────────────────────────────────
+
+    /// Calling cleanup on an empty registry returns 0 and is a no-op.
+    #[test]
+    fn test_cleanup_with_no_feeds_returns_zero() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        let removed = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(removed, 0);
+    }
+
+    /// An expired feed is deleted from storage and the count reflects it.
+    #[test]
+    fn test_cleanup_removes_expired_feed() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        )
+        .unwrap();
+
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        let current_time = env.ledger().timestamp();
+        let feed_pair = symbol!("ETH/USD");
+
+        // Push a feed that expires in 30 seconds
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 30,
+        )
+        .unwrap();
+
+        // Confirm the feed is present before cleanup
+        assert!(PredifiContract::get_price_feed(env.clone(), feed_pair.clone()).is_some());
+
+        // Fast-forward past expiration
+        env.ledger().set_timestamp(current_time + 60);
+
+        let removed = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(removed, 1);
+
+        // Feed must be gone from storage
+        assert!(PredifiContract::get_price_feed(env.clone(), feed_pair).is_none());
+    }
+
+    /// A non-expired feed survives cleanup.
+    #[test]
+    fn test_cleanup_preserves_active_feed() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        )
+        .unwrap();
+
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3);
+
+        let current_time = env.ledger().timestamp();
+        let feed_pair = symbol!("BTC/USD");
+
+        // Feed that expires far in the future
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            60_000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600,
+        )
+        .unwrap();
+
+        // Advance time, but feed is still valid
+        env.ledger().set_timestamp(current_time + 30);
+
+        let removed = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(removed, 0);
+
+        // Feed must still be retrievable
+        let feed = PredifiContract::get_price_feed(env.clone(), feed_pair.clone()).unwrap();
+        assert_eq!(feed.price, 60_000_000000_i128);
+    }
+
+    /// With multiple feeds, only the expired ones are removed.
+    #[test]
+    fn test_cleanup_mixed_expired_and_active_feeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        )
+        .unwrap();
+
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3);
+
+        let current_time = env.ledger().timestamp();
+
+        // ETH feed — expires in 30 s (short-lived)
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            symbol!("ETH/USD"),
+            3000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 30,
+        )
+        .unwrap();
+
+        // BTC feed — expires in 1 h (long-lived)
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            symbol!("BTC/USD"),
+            60_000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600,
+        )
+        .unwrap();
+
+        // Fast-forward past the ETH expiry but not the BTC expiry
+        env.ledger().set_timestamp(current_time + 60);
+
+        let removed = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(removed, 1, "only the ETH/USD feed should be removed");
+
+        assert!(
+            PredifiContract::get_price_feed(env.clone(), symbol!("ETH/USD")).is_none(),
+            "expired ETH feed should be gone"
+        );
+        assert!(
+            PredifiContract::get_price_feed(env.clone(), symbol!("BTC/USD")).is_some(),
+            "active BTC feed should still be present"
+        );
+    }
+
+    /// Cleanup is idempotent — calling it twice when nothing new has expired
+    /// returns 0 on the second call and leaves state consistent.
+    #[test]
+    fn test_cleanup_is_idempotent() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        )
+        .unwrap();
+
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3);
+
+        let current_time = env.ledger().timestamp();
+
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            symbol!("ETH/USD"),
+            3000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 30,
+        )
+        .unwrap();
+
+        // Advance past expiry and run cleanup once
+        env.ledger().set_timestamp(current_time + 60);
+        let first = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(first, 1);
+
+        // Run again — nothing left to remove
+        let second = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(second, 0);
+    }
 }
