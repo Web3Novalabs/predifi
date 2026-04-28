@@ -282,6 +282,7 @@ pub struct TreasuryWithdrawnEvent {
     pub token: Address,
     pub amount: i128,
     pub recipient: Address,
+    pub remaining_balance: i128,
     pub timestamp: u64,
 }
 #[contractevent(topics = ["refund_claimed"])]

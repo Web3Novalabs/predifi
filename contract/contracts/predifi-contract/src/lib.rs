@@ -936,6 +936,7 @@ pub struct TreasuryWithdrawnEvent {
     pub token: Address,
     pub amount: i128,
     pub recipient: Address,
+    pub remaining_balance: i128,
     pub timestamp: u64,
 }
 #[contractevent(topics = ["emergency_withdraw"])]
@@ -2059,12 +2060,16 @@ impl PredifiContract {
         // Transfer tokens to recipient
         token_client.transfer(&env.current_contract_address(), &recipient, &amount);
 
+        // Compute remaining balance after transfer for the audit event
+        let remaining_balance = token_client.balance(&env.current_contract_address());
+
         // Emit audit event
         TreasuryWithdrawnEvent {
             admin: admin.clone(),
             token: token.clone(),
             amount,
             recipient: recipient.clone(),
+            remaining_balance,
             timestamp: env.ledger().timestamp(),
         }
         .publish(&env);
