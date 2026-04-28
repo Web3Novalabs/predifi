@@ -79,8 +79,13 @@ pub(crate) mod dummy_access_control {
 }
 
 mod rogue_token {
-    use crate::PredifiContractClient;
-    use soroban_sdk::{contract, contractimpl, Address, Env};
+    use crate::{PoolConfig, PredifiContractClient};
+    use soroban_sdk::{contract, contractimpl, Address, Env, String};
+
+    // attack_mode stored at key 3u32:
+    //   0 = claim_winnings (original)
+    //   1 = place_prediction re-entry
+    //   2 = cancel_pool re-entry
 
     #[contract]
     pub struct RogueToken;
@@ -88,13 +93,30 @@ mod rogue_token {
     #[contractimpl]
     impl RogueToken {
         pub fn transfer(env: Env, _from: Address, _to: Address, _amount: i128) {
-            if env.ledger().timestamp() > 100000 {
+            let attack_mode: u32 = env.storage().instance().get(&3u32).unwrap_or(0);
+            if attack_mode == 0 {
+                // original: only attack after timestamp 100000
+                if env.ledger().timestamp() > 100000 {
+                    let target: Address = env.storage().instance().get(&0u32).unwrap();
+                    let user: Address = env.storage().instance().get(&1u32).unwrap();
+                    let pool_id: u64 = env.storage().instance().get(&2u32).unwrap();
+                    let client = PredifiContractClient::new(&env, &target);
+                    client.claim_winnings(&user, &pool_id);
+                }
+            } else if attack_mode == 1 {
+                // re-enter place_prediction during the inbound transfer
                 let target: Address = env.storage().instance().get(&0u32).unwrap();
                 let user: Address = env.storage().instance().get(&1u32).unwrap();
                 let pool_id: u64 = env.storage().instance().get(&2u32).unwrap();
-
                 let client = PredifiContractClient::new(&env, &target);
-                client.claim_winnings(&user, &pool_id);
+                client.place_prediction(&user, &pool_id, &1000i128, &0u32, &None, &None);
+            } else if attack_mode == 2 {
+                // re-enter cancel_pool during the refund transfer
+                let target: Address = env.storage().instance().get(&0u32).unwrap();
+                let operator: Address = env.storage().instance().get(&1u32).unwrap();
+                let pool_id: u64 = env.storage().instance().get(&2u32).unwrap();
+                let client = PredifiContractClient::new(&env, &target);
+                client.cancel_pool(&operator, &pool_id, &String::from_str(&env, "reentrant"));
             }
         }
 
@@ -102,6 +124,35 @@ mod rogue_token {
             env.storage().instance().set(&0u32, &target);
             env.storage().instance().set(&1u32, &user);
             env.storage().instance().set(&2u32, &pool_id);
+        }
+
+        pub fn setup_attack(
+            env: Env,
+            target: Address,
+            caller: Address,
+            pool_id: u64,
+            attack_mode: u32,
+        ) {
+            env.storage().instance().set(&0u32, &target);
+            env.storage().instance().set(&1u32, &caller);
+            env.storage().instance().set(&2u32, &pool_id);
+            env.storage().instance().set(&3u32, &attack_mode);
+        }
+
+        pub fn balance(_env: Env, _id: Address) -> i128 {
+            1_000_000i128
+        }
+
+        pub fn decimals(_env: Env) -> u32 {
+            7u32
+        }
+
+        pub fn name(env: Env) -> String {
+            String::from_str(&env, "RogueToken")
+        }
+
+        pub fn symbol(env: Env) -> String {
+            String::from_str(&env, "RGT")
         }
     }
 }
@@ -10226,4 +10277,108 @@ fn test_prediction_cooldown_resets_after_each_successful_prediction() {
     // But at t=1120 (60 seconds after the second prediction) it must succeed.
     env.ledger().set_timestamp(1_120);
     client.place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
+}
+
+// ── Reentrancy guard tests for place_prediction and cancel_pool ───────────
+
+#[test]
+#[should_panic(expected = "Error(Context, InvalidAction)")]
+fn test_place_prediction_blocks_reentrancy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, creator) = setup(&env);
+
+    // Register and whitelist the rogue token
+    let rogue_id = env.register(rogue_token::RogueToken, ());
+    let rogue_client = rogue_token::RogueTokenClient::new(&env, &rogue_id);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.add_token_to_whitelist(&admin, &rogue_id);
+
+    // Create a pool using the rogue token
+    let pool_id = client.create_pool(
+        &creator,
+        &200_000u64,
+        &rogue_id,
+        &2,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Rogue Pool"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::Vec::new(&env),
+        },
+    );
+
+    let user = Address::generate(&env);
+
+    // Configure rogue token to re-enter place_prediction (mode 1) during transfer
+    rogue_client.setup_attack(&client.address, &user, &pool_id, &1u32);
+
+    // This should panic with reentrancy detected
+    client.place_prediction(&user, &pool_id, &1000i128, &0u32, &None, &None);
+}
+
+#[test]
+#[should_panic(expected = "Error(Context, InvalidAction)")]
+fn test_cancel_pool_blocks_reentrancy() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, operator, creator) = setup(&env);
+
+    // Register and whitelist the rogue token
+    let rogue_id = env.register(rogue_token::RogueToken, ());
+    let rogue_client = rogue_token::RogueTokenClient::new(&env, &rogue_id);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.add_token_to_whitelist(&admin, &rogue_id);
+
+    // Create a pool using the rogue token
+    let pool_id = client.create_pool(
+        &creator,
+        &200_000u64,
+        &rogue_id,
+        &2,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            description: String::from_str(&env, "Rogue Pool"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::Vec::new(&env),
+        },
+    );
+
+    let user = Address::generate(&env);
+
+    // Place a prediction so there is a stake to refund on cancel
+    client.place_prediction(&user, &pool_id, &1000i128, &0u32, &None, &None);
+
+    // Configure rogue token to re-enter cancel_pool (mode 2) during the refund transfer
+    rogue_client.setup_attack(&client.address, &operator, &pool_id, &2u32);
+
+    // Cancel the pool — the rogue token fires during claim_refund's transfer
+    client.cancel_pool(
+        &operator,
+        &pool_id,
+        &String::from_str(&env, "test cancel"),
+    );
+
+    // Claim refund triggers the rogue token's re-entry into cancel_pool
+    client.claim_refund(&user, &pool_id);
 }

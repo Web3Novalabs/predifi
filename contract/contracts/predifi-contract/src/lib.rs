@@ -2068,11 +2068,15 @@ impl PredifiContract {
             return Err(PredifiError::InsufficientBalance);
         }
 
+        Self::enter_reentrancy_guard(&env);
+
         // Transfer tokens to recipient
         token_client.transfer(&env.current_contract_address(), &recipient, &amount);
 
         // Compute remaining balance after transfer for the audit event
         let remaining_balance = token_client.balance(&env.current_contract_address());
+
+        Self::exit_reentrancy_guard(&env);
 
         // Emit audit event
         TreasuryWithdrawnEvent {
@@ -4069,7 +4073,10 @@ impl PredifiContract {
         Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
 
         let token_client = token::Client::new(&env, &token);
+
+        Self::enter_reentrancy_guard(&env);
         token_client.transfer(&env.current_contract_address(), &destination, &amount);
+        Self::exit_reentrancy_guard(&env);
 
         EmergencyWithdrawEvent {
             admin,
