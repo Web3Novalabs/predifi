@@ -3614,7 +3614,7 @@ fn test_set_stake_limits_max_below_min_returns_error() {
     );
 
     let result = client.try_set_stake_limits(&operator, &pool_id, &100i128, &50i128);
-    assert_eq!(result, Err(Ok(PredifiError::StakeAboveMaximum)));
+    assert_eq!(result, Err(Ok(PredifiError::InvalidAmount)));
 }
 
 // ── #594: min_stake / max_stake boundary validation ───────────────────────────
@@ -3698,8 +3698,8 @@ fn test_set_stake_limits_min_greater_than_max_returns_error() {
     let result = client.try_set_stake_limits(&operator, &pool_id, &500i128, &100i128);
     assert_eq!(
         result,
-        Err(Ok(PredifiError::StakeAboveMaximum)),
-        "min_stake > max_stake must return StakeAboveMaximum"
+        Err(Ok(PredifiError::InvalidAmount)),
+        "min_stake > max_stake must return InvalidAmount"
     );
 }
 

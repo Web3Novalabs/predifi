@@ -3356,8 +3356,8 @@ impl PredifiContract {
         if min_stake <= 0 {
             return Err(PredifiError::StakeBelowMinimum);
         }
-        if max_stake != 0 && max_stake < min_stake {
-            return Err(PredifiError::StakeAboveMaximum);
+        if max_stake > 0 && min_stake > max_stake {
+            return Err(PredifiError::InvalidAmount);
         }
 
         pool.min_stake = min_stake;
