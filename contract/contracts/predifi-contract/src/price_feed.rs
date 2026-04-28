@@ -129,6 +129,13 @@ impl PriceFeedAdapter {
     ) -> Result<(), PredifiError> {
         admin.require_auth();
 
+        if max_price_age == 0 {
+            return Err(PredifiError::InvalidData);
+        }
+        if min_confidence_ratio > 10_000 {
+            return Err(PredifiError::InvalidFeeBps);
+        }
+
         let config = OracleConfig {
             pyth_contract: pyth_contract.clone(),
             max_price_age,
