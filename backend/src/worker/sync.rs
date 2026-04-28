@@ -33,7 +33,7 @@ pub struct PoolSyncResult {
 async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64> {
     // Build the Soroban RPC request — we call `get_pool_outcome_stakes(pool_id)`.
     // The response is a map of outcome_index → stake_amount; we sum the values.
-    let rpc_url = format!("{}/", config.soroban_rpc_url);
+    let rpc_url = format!("{}/", config.stellar_rpc_url);
     let payload = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -44,12 +44,7 @@ async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64
     });
 
     let client = reqwest::Client::new();
-    let response = client
-        .post(&rpc_url)
-        .json(&payload)
-        .send()
-        .await
-        .ok()?;
+    let response = client.post(&rpc_url).json(&payload).send().await.ok()?;
 
     let body: serde_json::Value = response.json().await.ok()?;
     parse_total_stake_from_rpc(&body)
@@ -73,10 +68,7 @@ fn parse_total_stake_from_rpc(body: &serde_json::Value) -> Option<i64> {
     // SCVal map of (u32 outcome → i128 stake). We sum all values.
     // This is a minimal parser for the happy path; production code should use
     // the stellar-xdr crate for full XDR decoding.
-    let results = body
-        .get("result")?
-        .get("results")?
-        .as_array()?;
+    let results = body.get("result")?.get("results")?.as_array()?;
 
     if results.is_empty() {
         return None;
@@ -114,11 +106,9 @@ pub async fn run_full_sync(
     info!("starting full contract-DB state sync");
 
     // Fetch all pool IDs and their current DB total_stake.
-    let rows = sqlx::query!(
-        "SELECT pool_id, total_stake FROM pools ORDER BY pool_id"
-    )
-    .fetch_all(db)
-    .await?;
+    let rows = sqlx::query!("SELECT pool_id, total_stake FROM pools ORDER BY pool_id")
+        .fetch_all(db)
+        .await?;
 
     let mut results = Vec::with_capacity(rows.len());
     let mut fixed_count = 0u32;
@@ -134,9 +124,7 @@ pub async fn run_full_sync(
                 if needs_fix {
                     warn!(
                         pool_id,
-                        db_stake,
-                        contract_stake,
-                        "pool total_stake mismatch — fixing"
+                        db_stake, contract_stake, "pool total_stake mismatch — fixing"
                     );
                     if let Err(e) = fix_pool_stake(db, pool_id, contract_stake).await {
                         error!(pool_id, error = %e, "failed to fix pool stake");

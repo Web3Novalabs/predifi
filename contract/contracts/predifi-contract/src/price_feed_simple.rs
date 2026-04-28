@@ -262,9 +262,7 @@ impl PriceFeedAdapter {
                 .unwrap_or(true); // missing entry counts as expired
 
             if expired {
-                env.storage()
-                    .persistent()
-                    .remove(&DataKey::PriceFeed(pair));
+                env.storage().persistent().remove(&DataKey::PriceFeed(pair));
                 removed += 1;
             } else {
                 remaining.push_back(pair);

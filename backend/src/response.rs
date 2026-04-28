@@ -112,7 +112,10 @@ mod tests {
     fn success_serializes_without_error_field() {
         let (_, Json(resp)) = ApiResponse::success("hello");
         let v = to_value(&resp);
-        assert!(v.get("error").is_none(), "error field must be absent on success");
+        assert!(
+            v.get("error").is_none(),
+            "error field must be absent on success"
+        );
         assert_eq!(v["status"], "success");
         assert_eq!(v["data"], "hello");
     }
@@ -121,7 +124,10 @@ mod tests {
     fn error_serializes_without_data_field() {
         let (_, Json(resp)) = ApiResponse::<()>::error(StatusCode::BAD_REQUEST, "bad input");
         let v = to_value(&resp);
-        assert!(v.get("data").is_none(), "data field must be absent on error");
+        assert!(
+            v.get("data").is_none(),
+            "data field must be absent on error"
+        );
         assert_eq!(v["status"], "error");
         assert_eq!(v["error"], "bad input");
     }

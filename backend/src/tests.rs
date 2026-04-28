@@ -219,3 +219,26 @@ async fn cors_handles_preflight_request() {
 
     assert_eq!(response.status(), StatusCode::OK);
 }
+
+/// Verify that the rate limiter returns 429 Too Many Requests after exceeding the limit.
+#[tokio::test]
+async fn rate_limiting_returns_429_after_burst() {
+    let app = build_router(Config::default_for_test(), PriceCache::new());
+
+    // The limit is 50 requests burst.
+    // We fire 50 requests which should all be 200 OK.
+    for _ in 0..50 {
+        let response = app.clone()
+            .oneshot(get("/health"))
+            .await
+            .expect("request failed");
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    // The 51st request should be rate limited.
+    let response = app.oneshot(get("/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+}

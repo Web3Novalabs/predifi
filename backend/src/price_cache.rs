@@ -65,11 +65,7 @@ impl PriceCache {
 // ── Background fetcher ───────────────────────────────────────────────────────
 
 /// CoinGecko IDs for the assets we track.
-const ASSETS: &[(&str, &str)] = &[
-    ("BTC", "bitcoin"),
-    ("ETH", "ethereum"),
-    ("XLM", "stellar"),
-];
+const ASSETS: &[(&str, &str)] = &[("BTC", "bitcoin"), ("ETH", "ethereum"), ("XLM", "stellar")];
 
 /// Spawn a background task that refreshes the cache every 60 seconds.
 pub fn spawn_fetcher(cache: PriceCache) {
