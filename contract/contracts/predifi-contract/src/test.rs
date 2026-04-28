@@ -10227,3 +10227,223 @@ fn test_prediction_cooldown_resets_after_each_successful_prediction() {
     env.ledger().set_timestamp(1_120);
     client.place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
 }
+
+// ── Multi-operator resolution enforcement tests ───────────────────────────────
+
+/// A single operator must NOT be able to resolve a pool when required_resolutions = 3.
+#[test]
+fn test_single_operator_cannot_resolve_when_threshold_is_3() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_address = env.register_stellar_asset_contract(token_admin.clone());
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+    let op3 = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&op1, &ROLE_OPERATOR);
+    ac_client.grant_role(&op2, &ROLE_OPERATOR);
+    ac_client.grant_role(&op3, &ROLE_OPERATOR);
+
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Multi-op pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 3u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // op1 votes — only 1 of 3 required votes cast
+    client.resolve_pool(&op1, &pool_id, &1u32);
+
+    // Pool must still be Active (not Resolved)
+    let pool = client.get_pool(&pool_id);
+    assert_ne!(
+        pool.outcome, 1u32,
+        "pool should not be resolved after a single vote when required_resolutions = 3"
+    );
+    assert_eq!(
+        pool.state,
+        MarketState::Active,
+        "pool state must remain Active after only one vote"
+    );
+}
+
+/// Pool resolves exactly when the vote count reaches required_resolutions (3 operators, same outcome).
+#[test]
+fn test_pool_resolves_only_after_threshold_met() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_address = env.register_stellar_asset_contract(token_admin.clone());
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+    let op3 = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&op1, &ROLE_OPERATOR);
+    ac_client.grant_role(&op2, &ROLE_OPERATOR);
+    ac_client.grant_role(&op3, &ROLE_OPERATOR);
+
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Multi-op pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 3u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // Vote 1 — still Active
+    client.resolve_pool(&op1, &pool_id, &1u32);
+    assert_eq!(client.get_pool(&pool_id).state, MarketState::Active);
+
+    // Vote 2 — still Active
+    client.resolve_pool(&op2, &pool_id, &1u32);
+    assert_eq!(client.get_pool(&pool_id).state, MarketState::Active);
+
+    // Vote 3 — threshold reached, pool must now be Resolved
+    client.resolve_pool(&op3, &pool_id, &1u32);
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.state,
+        MarketState::Resolved,
+        "pool must be Resolved once vote_count reaches required_resolutions"
+    );
+    assert_eq!(pool.outcome, 1u32);
+}
+
+/// Conflicting votes must prevent resolution even when total vote count equals required_resolutions.
+#[test]
+fn test_conflicting_votes_prevent_resolution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_address = env.register_stellar_asset_contract(token_admin.clone());
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    let op1 = Address::generate(&env);
+    let op2 = Address::generate(&env);
+    let op3 = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&op1, &ROLE_OPERATOR);
+    ac_client.grant_role(&op2, &ROLE_OPERATOR);
+    ac_client.grant_role(&op3, &ROLE_OPERATOR);
+
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Conflict pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 3u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // op1 votes outcome 1, op2 votes outcome 0 — split votes
+    client.resolve_pool(&op1, &pool_id, &1u32);
+    client.resolve_pool(&op2, &pool_id, &0u32);
+    // op3 votes outcome 1 — total votes = 3 = required_resolutions,
+    // but outcome 1 only has 2 votes, not 3, so threshold is NOT met
+    client.resolve_pool(&op3, &pool_id, &1u32);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.state,
+        MarketState::Active,
+        "pool must remain Active when no single outcome reaches required_resolutions despite total votes equaling threshold"
+    );
+}
