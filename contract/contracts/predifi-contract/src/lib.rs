@@ -185,11 +185,15 @@ pub enum PredifiError {
     InvalidPagination = 92,
     /// Generic invalid input data (e.g., a zero value where a positive value is required).
     InvalidData = 90,
+    /// The provided timestamp is invalid (e.g., end_time too far in the future).
+    InvalidTimestamp = 80,
+    /// Pool has been flagged as disputed and cannot be modified.
+    PoolDisputed = 27,
 }
 
 /// Represents the current state of a prediction market.
 ///
-/// State transitions are one-way: `Active` can only transition to `Resolved` or `Canceled`.
+/// State transitions are one-way: `Active` can only transition to `Resolved`, `Canceled`, or `Disputed`.
 #[contracttype]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MarketState {
@@ -199,6 +203,8 @@ pub enum MarketState {
     Resolved = 1,
     /// Market has been canceled and stakes can be refunded.
     Canceled = 2,
+    /// Market has been flagged as disputed by a moderator.
+    Disputed = 3,
 }
 
 /// Parameters for creating a new prediction pool.
@@ -598,6 +604,8 @@ pub enum DataKey {
     OracleWl(Address),
     /// Whitelisted oracle list: OracleWhitelist -> Vec<Address>
     OracleWhitelist,
+    /// Disputed flag for a pool: Disputed(pool_id) -> ()
+    Disputed(u64),
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -748,6 +756,14 @@ pub struct PoolCanceledEvent {
     pub caller: Address,
     pub reason: String,
     pub operator: Address,
+}
+
+#[contractevent(topics = ["pool_disputed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolDisputedEvent {
+    pub pool_id: u64,
+    pub moderator: Address,
+    pub reason: String,
 }
 
 #[contractevent(topics = ["stake_limits_updated"])]
@@ -2076,17 +2092,17 @@ impl PredifiContract {
         // Verify admin role
         Self::require_admin_role(&env, &admin, "withdraw_treasury")?;
 
-        // Validate amount meets minimum threshold
-        if amount < MIN_WITHDRAWAL_AMOUNT {
+        // Reject zero or negative withdrawals before touching token state.
+        if amount <= 0 || amount < MIN_WITHDRAWAL_AMOUNT {
             return Err(PredifiError::InvalidAmount);
         }
 
-        // Get token client and check balance
+        // Get token client and check the contract's available balance first.
         let token_client = token::Client::new(&env, &token);
-        let contract_balance = token_client.balance(&env.current_contract_address());
+        let available_balance = token_client.balance(&env.current_contract_address());
 
         // Verify sufficient balance
-        if contract_balance < amount {
+        if available_balance < amount {
             return Err(PredifiError::InsufficientBalance);
         }
 
@@ -3797,13 +3813,13 @@ impl PredifiContract {
             if stake == 0 {
                 current_odds.push_back(0);
             } else {
-                // Exclude initial_liquidity from the denominator so odds reflect
-                // only user-contributed stakes, not the creator's seed liquidity.
-                let user_stake_total = pool.total_stake.saturating_sub(pool.initial_liquidity);
-                let odds = if user_stake_total <= 0 {
+                // Include initial_liquidity in the denominator so odds reflect
+                // the true probability including house money.
+                let total_for_odds = pool.total_stake;
+                let odds = if total_for_odds <= 0 {
                     0
                 } else {
-                    user_stake_total
+                    total_for_odds
                         .checked_mul(10000)
                         .expect("overflow")
                         .checked_div(stake)
@@ -4042,6 +4058,13 @@ impl PredifiContract {
                 if tier.fee_bps > 10_000 {
                     return Err(PredifiError::InvalidFeeBps);
                 }
+                if i > 0 {
+                    if let Some(prev) = tiers.get(i - 1) {
+                        if tier.stake_threshold <= prev.stake_threshold {
+                            return Err(PredifiError::InvalidFeeBps);
+                        }
+                    }
+                }
             }
         }
 
@@ -4269,6 +4292,55 @@ impl OracleCallback for PredifiContract {
             }
             .publish(&env);
         }
+
+        Ok(())
+    }
+
+    /// Flag a pool as disputed. Only callable by a Moderator (role 2).
+    ///
+    /// Transitions the pool state from `Active` to `Disputed`, preventing
+    /// further participation or resolution until the dispute is handled.
+    ///
+    /// # Errors
+    /// - `Unauthorized` – caller does not hold the Moderator role.
+    /// - `InvalidPoolState` – pool is not currently `Active`.
+    pub fn flag_disputed_pool(
+        env: Env,
+        moderator: Address,
+        pool_id: u64,
+        reason: String,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        moderator.require_auth();
+        Self::require_role(&env, &moderator, 2)?;
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        pool.state = MarketState::Disputed;
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::Disputed(pool_id), &());
+        Self::extend_persistent(&env, &DataKey::Disputed(pool_id));
+
+        PoolDisputedEvent {
+            pool_id,
+            moderator,
+            reason,
+        }
+        .publish(&env);
 
         Ok(())
     }

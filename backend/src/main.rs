@@ -179,3 +179,5 @@ async fn main() {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod db_integration_tests;

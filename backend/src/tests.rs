@@ -242,3 +242,20 @@ async fn rate_limiting_returns_429_after_burst() {
 
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 }
+
+/// GET /api/v1/users/:address/referrals without a DB returns 503.
+#[tokio::test]
+async fn user_referrals_without_db_returns_503() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/api/v1/users/GABC123/referrals"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("database not configured"),
+        "body should mention database not configured, got: {body}"
+    );
+}

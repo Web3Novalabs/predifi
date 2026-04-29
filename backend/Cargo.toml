@@ -39,3 +39,5 @@ tower_governor = { version = "0.5.0", features = ["axum"] }
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.4", features = ["util"] }
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["postgres"] }

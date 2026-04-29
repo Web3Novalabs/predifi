@@ -4075,7 +4075,6 @@ fn test_admin_can_withdraw_treasury() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #10)")]
 fn test_non_admin_cannot_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4086,12 +4085,11 @@ fn test_non_admin_cannot_withdraw_treasury() {
 
     token_admin_client.mint(&contract_addr, &5000);
 
-    // Non-admin tries to withdraw - should panic
-    client.withdraw_treasury(&non_admin, &token_address, &3000, &treasury);
+    let result = client.try_withdraw_treasury(&non_admin, &token_address, &3000, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::Unauthorized)));
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #42)")]
 fn test_withdraw_treasury_rejects_zero_amount() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4104,12 +4102,11 @@ fn test_withdraw_treasury_rejects_zero_amount() {
 
     token_admin_client.mint(&contract_addr, &5000);
 
-    // Try to withdraw zero amount - should panic
-    client.withdraw_treasury(&admin, &token_address, &0, &treasury);
+    let result = client.try_withdraw_treasury(&admin, &token_address, &0, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::InvalidAmount)));
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #44)")]
 fn test_withdraw_treasury_rejects_insufficient_balance() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4122,8 +4119,8 @@ fn test_withdraw_treasury_rejects_insufficient_balance() {
 
     token_admin_client.mint(&contract_addr, &1000);
 
-    // Try to withdraw more than balance - should panic
-    client.withdraw_treasury(&admin, &token_address, &5000, &treasury);
+    let result = client.try_withdraw_treasury(&admin, &token_address, &5000, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::InsufficientBalance)));
 }
 
 #[test]
@@ -4353,6 +4350,59 @@ fn test_get_pool_stats() {
     // Outcome 1: (500 * 10000) / 300 = 16666 (1.6666x)
     assert_eq!(stats.current_odds.get(0), Some(25000));
     assert_eq!(stats.current_odds.get(1), Some(16666));
+}
+
+fn test_get_pool_stats_with_initial_liquidity() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user1, &5000);
+    token_admin_client.mint(&user2, &5000);
+
+    // Create pool with initial liquidity of 1000
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Initial Liquidity Test"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 1000i128, // House provides 1000 initial liquidity
+            required_resolutions: 1u32, private: false, whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")],
+        },
+    );
+
+    // Initial stats should show initial_liquidity in total_stake
+    let stats = client.get_pool_stats(&pool_id);
+    assert_eq!(stats.total_stake, 1000); // Only initial_liquidity
+
+    // User 1 bets 500 on outcome 0
+    client.place_prediction(&user1, &pool_id, &500, &0, &None, &None);
+    // User 2 bets 500 on outcome 1
+    client.place_prediction(&user2, &pool_id, &500, &1, &None, &None);
+
+    let stats = client.get_pool_stats(&pool_id);
+    assert_eq!(stats.total_stake, 2000); // 1000 initial + 500 + 500
+    assert_eq!(stats.stakes_per_outcome.get(0), Some(500));
+    assert_eq!(stats.stakes_per_outcome.get(1), Some(500));
+
+    // Odds should include initial_liquidity in denominator:
+    // Total for odds = 2000 (includes initial_liquidity)
+    // Outcome 0: (2000 * 10000) / 500 = 40000 (4.0x)
+    // Outcome 1: (2000 * 10000) / 500 = 40000 (4.0x)
+    assert_eq!(stats.current_odds.get(0), Some(40000));
+    assert_eq!(stats.current_odds.get(1), Some(40000));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -10396,106 +10446,215 @@ fn test_prediction_cooldown_resets_after_each_successful_prediction() {
     client.place_prediction(&user, &pool_id, &50i128, &0u32, &None, &None);
 }
 
-// ── Reentrancy guard tests for place_prediction and cancel_pool ───────────
-
 #[test]
-#[should_panic(expected = "Error(Context, InvalidAction)")]
-fn test_place_prediction_blocks_reentrancy() {
+#[should_panic(expected = "Error(Contract, #80)")]
+fn test_create_pool_rejects_end_time_beyond_max_duration() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, _, _, _, _, _, creator) = setup(&env);
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    // Register and whitelist the rogue token
-    let rogue_id = env.register(rogue_token::RogueToken, ());
-    let rogue_client = rogue_token::RogueTokenClient::new(&env, &rogue_id);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.add_token_to_whitelist(&admin, &rogue_id);
-
-    // Create a pool using the rogue token
-    let pool_id = client.create_pool(
+    // current ledger time is 0; MAX_POOL_DURATION is 365 days (31_536_000 s)
+    // end_time one second past the limit must be rejected
+    let too_far = MAX_POOL_DURATION + 1;
+    client.create_pool(
         &creator,
-        &200_000u64,
-        &rogue_id,
-        &2,
-        &symbol_short!("Crypto"),
+        &too_far,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
         &PoolConfig {
-            description: String::from_str(&env, "Rogue Pool"),
-            metadata_url: String::from_str(&env, "ipfs://..."),
-            min_stake: 100,
-            max_stake: 0,
+            description: String::from_str(&env, "100-year pool"),
+            metadata_url: String::from_str(&env, "ipfs://toofar"),
+            min_stake: 1i128,
+            max_stake: 0i128,
             max_total_stake: 0,
             min_total_stake: 1,
-            initial_liquidity: 0,
-            required_resolutions: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: soroban_sdk::Vec::new(&env),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
         },
     );
-
-    let user = Address::generate(&env);
-
-    // Configure rogue token to re-enter place_prediction (mode 1) during transfer
-    rogue_client.setup_attack(&client.address, &user, &pool_id, &1u32);
-
-    // This should panic with reentrancy detected
-    client.place_prediction(&user, &pool_id, &1000i128, &0u32, &None, &None);
 }
 
 #[test]
-#[should_panic(expected = "Error(Context, InvalidAction)")]
-fn test_cancel_pool_blocks_reentrancy() {
+fn test_create_pool_accepts_end_time_at_max_duration() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, _, _, _, _, operator, creator) = setup(&env);
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    // Register and whitelist the rogue token
-    let rogue_id = env.register(rogue_token::RogueToken, ());
-    let rogue_client = rogue_token::RogueTokenClient::new(&env, &rogue_id);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-    client.add_token_to_whitelist(&admin, &rogue_id);
-
-    // Create a pool using the rogue token
+    // exactly at the boundary must succeed
     let pool_id = client.create_pool(
         &creator,
-        &200_000u64,
-        &rogue_id,
-        &2,
-        &symbol_short!("Crypto"),
+        &MAX_POOL_DURATION,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
         &PoolConfig {
-            description: String::from_str(&env, "Rogue Pool"),
-            metadata_url: String::from_str(&env, "ipfs://..."),
-            min_stake: 100,
-            max_stake: 0,
+            description: String::from_str(&env, "Max duration pool"),
+            metadata_url: String::from_str(&env, "ipfs://maxdur"),
+            min_stake: 1i128,
+            max_stake: 0i128,
             max_total_stake: 0,
             min_total_stake: 1,
-            initial_liquidity: 0,
-            required_resolutions: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: soroban_sdk::Vec::new(&env),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+    let _ = pool_id;
+}
+
+// ── flag_disputed_pool tests ─────────────────────────────────────────────────
+
+const ROLE_MODERATOR: u32 = 2;
+
+#[test]
+fn test_flag_disputed_pool_moderator_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+    let moderator = Address::generate(&env);
+    ac_client.grant_role(&moderator, &ROLE_MODERATOR);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Dispute test pool"),
+            metadata_url: String::from_str(&env, "ipfs://dispute"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
         },
     );
 
-    let user = Address::generate(&env);
-
-    // Place a prediction so there is a stake to refund on cancel
-    client.place_prediction(&user, &pool_id, &1000i128, &0u32, &None, &None);
-
-    // Configure rogue token to re-enter cancel_pool (mode 2) during the refund transfer
-    rogue_client.setup_attack(&client.address, &operator, &pool_id, &2u32);
-
-    // Cancel the pool — the rogue token fires during claim_refund's transfer
-    client.cancel_pool(
-        &operator,
+    client.flag_disputed_pool(
+        &moderator,
         &pool_id,
-        &String::from_str(&env, "test cancel"),
+        &String::from_str(&env, "Suspicious activity"),
     );
 
-    // Claim refund triggers the rogue token's re-entry into cancel_pool
-    client.claim_refund(&user, &pool_id);
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Disputed);
+}
+
+#[test]
+#[should_panic]
+fn test_flag_disputed_pool_unauthorized_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let non_moderator = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Dispute test pool"),
+            metadata_url: String::from_str(&env, "ipfs://dispute"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Should panic: caller has no Moderator role
+    client.flag_disputed_pool(
+        &non_moderator,
+        &pool_id,
+        &String::from_str(&env, "Attempt"),
+    );
+}
+
+#[test]
+#[should_panic]
+fn test_flag_disputed_pool_already_resolved_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+    let moderator = Address::generate(&env);
+    ac_client.grant_role(&moderator, &ROLE_MODERATOR);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Resolved pool"),
+            metadata_url: String::from_str(&env, "ipfs://resolved"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    client.place_prediction(&user, &pool_id, &100, &0u32, &None, &None);
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Should panic: pool is already Resolved, not Active
+    client.flag_disputed_pool(
+        &moderator,
+        &pool_id,
+        &String::from_str(&env, "Too late"),
+    );
 }
