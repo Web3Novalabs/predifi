@@ -956,6 +956,7 @@ pub struct OracleWhitelistRemovedEvent {
 pub struct AddedToWhitelistEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub added_by: Address,
     pub timestamp: u64,
 }
 
@@ -964,6 +965,7 @@ pub struct AddedToWhitelistEvent {
 pub struct RemovedFromWhitelistEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub removed_by: Address,
     pub timestamp: u64,
 }
 
@@ -998,6 +1000,14 @@ pub struct RefundClaimedEvent {
 pub struct UpgradeEvent {
     pub admin: Address,
     pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent(topics = ["contract_upgraded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractUpgradedEvent {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub upgraded_by: Address,
 }
 
 #[contractevent(topics = ["oracle_init"])]
@@ -1944,17 +1954,31 @@ impl PredifiContract {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "upgrade_contract")?;
 
+        let old_version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or(0u32);
+        let new_version = old_version + 1;
+
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
 
         env.storage()
             .instance()
-            .set(&DataKey::Version, &CONTRACT_VERSION);
+            .set(&DataKey::Version, &new_version);
         Self::extend_instance(&env);
 
         UpgradeEvent {
             admin: admin.clone(),
             new_wasm_hash,
+        }
+        .publish(&env);
+
+        ContractUpgradedEvent {
+            old_version,
+            new_version,
+            upgraded_by: admin,
         }
         .publish(&env);
 
@@ -3739,6 +3763,7 @@ impl PredifiContract {
         AddedToWhitelistEvent {
             pool_id,
             user,
+            added_by: creator,
             timestamp: env.ledger().timestamp(),
         }
         .publish(&env);
@@ -3775,6 +3800,7 @@ impl PredifiContract {
         RemovedFromWhitelistEvent {
             pool_id,
             user,
+            removed_by: creator,
             timestamp: env.ledger().timestamp(),
         }
         .publish(&env);

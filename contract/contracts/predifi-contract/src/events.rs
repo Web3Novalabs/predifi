@@ -300,6 +300,14 @@ pub struct UpgradeEvent {
     pub new_wasm_hash: BytesN<32>,
 }
 
+#[contractevent(topics = ["contract_upgraded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractUpgradedEvent {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub upgraded_by: Address,
+}
+
 #[contractevent(topics = ["oracle_init"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleInitEvent {
@@ -354,6 +362,7 @@ pub struct ResolutionConflictEvent {
 pub struct AddedToWhitelistEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub added_by: Address,
     pub timestamp: u64,
 }
 
@@ -362,5 +371,6 @@ pub struct AddedToWhitelistEvent {
 pub struct RemovedFromWhitelistEvent {
     pub pool_id: u64,
     pub user: Address,
+    pub removed_by: Address,
     pub timestamp: u64,
 }

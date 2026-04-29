@@ -18,6 +18,7 @@ Emitted when a user is successfully added to a private pool's whitelist.
 |-------|------|-------------|
 | pool_id | u64 | The ID of the private pool |
 | user | Address | The Stellar address added to the whitelist |
+| added_by | Address | The pool creator who performed the addition |
 | timestamp | u64 | Ledger timestamp when the event occurred |
 
 ### `RemovedFromWhitelistEvent`
@@ -27,6 +28,7 @@ Emitted when a user is successfully removed from a private pool's whitelist.
 |-------|------|-------------|
 | pool_id | u64 | The ID of the private pool |
 | user | Address | The Stellar address removed from the whitelist |
+| removed_by | Address | The pool creator who performed the removal |
 | timestamp | u64 | Ledger timestamp when the event occurred |
 
 ---
@@ -86,11 +88,11 @@ pool creator. Emits `RemovedFromWhitelistEvent` on success.
 ```rust
 // Add a user to a private pool's whitelist
 client.add_to_whitelist(&creator, &pool_id, &user);
-// AddedToWhitelistEvent { pool_id, user, timestamp } is emitted
+// AddedToWhitelistEvent { pool_id, user, added_by: creator, timestamp } is emitted
 
 // Remove a user from a private pool's whitelist
 client.remove_from_whitelist(&creator, &pool_id, &user);
-// RemovedFromWhitelistEvent { pool_id, user, timestamp } is emitted
+// RemovedFromWhitelistEvent { pool_id, user, removed_by: creator, timestamp } is emitted
 ```
 
 ---
