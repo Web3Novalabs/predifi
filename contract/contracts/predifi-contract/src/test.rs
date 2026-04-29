@@ -1115,6 +1115,67 @@ fn test_unauthorized_oracle_resolve() {
     );
 }
 
+/// Verifies that oracle_resolve enforces Role::Oracle (role 3) on the caller.
+/// An address with no roles must receive PredifiError::Unauthorized.
+#[test]
+fn test_oracle_resolve_requires_oracle_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_address = env.register_stellar_asset_contract(token_admin.clone());
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Oracle Role Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+
+    // non_oracle has no roles assigned — must be rejected with Unauthorized
+    let non_oracle = Address::generate(&env);
+    let result = client.try_oracle_resolve(
+        &non_oracle,
+        &pool_id,
+        &0u32,
+        &String::from_str(&env, "proof"),
+    );
+    assert_eq!(result, Err(Ok(PredifiError::Unauthorized)));
+}
+
 #[test]
 fn test_whitelisted_oracle_can_update_price_feed() {
     let env = Env::default();
