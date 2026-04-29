@@ -364,4 +364,3 @@ pub struct RemovedFromWhitelistEvent {
     pub user: Address,
     pub timestamp: u64,
 }
-

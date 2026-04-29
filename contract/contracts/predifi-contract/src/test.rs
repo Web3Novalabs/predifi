@@ -1986,7 +1986,8 @@ fn test_multi_oracle_conflict_returns_error() {
     client.oracle_resolve(&oracle1, &pool_id, &1u32, &String::from_str(&env, "proof1"));
 
     // Oracle 2 votes for outcome 2 (Conflict!)
-    let result = client.try_oracle_resolve(&oracle2, &pool_id, &2u32, &String::from_str(&env, "proof2"));
+    let result =
+        client.try_oracle_resolve(&oracle2, &pool_id, &2u32, &String::from_str(&env, "proof2"));
     match result {
         Err(Ok(PredifiError::ResolutionConflict)) => {} // expected
         other => panic!("expected Err(Ok(ResolutionConflict)), got {:?}", other),
@@ -4378,8 +4379,14 @@ fn test_get_pool_stats_with_initial_liquidity() {
             max_total_stake: 0,
             min_total_stake: 1,
             initial_liquidity: 1000i128, // House provides 1000 initial liquidity
-            required_resolutions: 1u32, private: false, whitelist_key: None,
-            outcome_descriptions: soroban_sdk::vec![&env, String::from_str(&env, "Yes"), String::from_str(&env, "No")],
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No")
+            ],
         },
     );
 
@@ -8320,7 +8327,11 @@ fn test_claim_winnings_blocks_reentrancy() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: soroban_sdk::Vec::new(&env),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
         },
     );
 
@@ -8342,7 +8353,11 @@ fn test_claim_winnings_blocks_reentrancy() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: soroban_sdk::Vec::new(&env),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
         },
     );
 
@@ -10601,11 +10616,7 @@ fn test_flag_disputed_pool_unauthorized_fails() {
     );
 
     // Should panic: caller has no Moderator role
-    client.flag_disputed_pool(
-        &non_moderator,
-        &pool_id,
-        &String::from_str(&env, "Attempt"),
-    );
+    client.flag_disputed_pool(&non_moderator, &pool_id, &String::from_str(&env, "Attempt"));
 }
 
 #[test]
@@ -10652,9 +10663,5 @@ fn test_flag_disputed_pool_already_resolved_fails() {
     client.resolve_pool(&operator, &pool_id, &0u32);
 
     // Should panic: pool is already Resolved, not Active
-    client.flag_disputed_pool(
-        &moderator,
-        &pool_id,
-        &String::from_str(&env, "Too late"),
-    );
+    client.flag_disputed_pool(&moderator, &pool_id, &String::from_str(&env, "Too late"));
 }

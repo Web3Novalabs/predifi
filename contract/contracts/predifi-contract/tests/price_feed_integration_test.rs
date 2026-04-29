@@ -92,7 +92,11 @@ fn test_price_based_pool_mock_resolution() {
             required_resolutions: 1,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: soroban_sdk::Vec::new(&env),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
         },
     );
 

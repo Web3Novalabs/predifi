@@ -925,6 +925,18 @@ pub struct TokenWhitelistRemovedEvent {
     pub token: Address,
 }
 
+/// Emitted when a `place_prediction` call is rejected because the pool's token
+/// has been removed from the whitelist since the pool was created.
+/// Useful for off-chain monitors to detect affected pools and alert users.
+#[contractevent(topics = ["prediction_blocked_delisted"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionBlockedDelistedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub token: Address,
+    pub timestamp: u64,
+}
+
 #[contractevent(topics = ["oracle_whitelist_added"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleWhitelistAddedEvent {
@@ -1085,7 +1097,7 @@ impl PredifiContract {
     /// Validate that a category symbol is in the allowed list.
     /// Returns the category if valid, otherwise falls back to CATEGORY_OTHER.
     /// PRE: category is a valid Symbol
-    /// POST: returns Ok(category) if category is in the allowed list, else Ok(CATEGORY_OTHER)
+    /// POST: returns Ok(category) if category is in the allowed list, else Err(InvalidData)
     fn validate_category(env: &Env, category: &Symbol) -> Result<Symbol, PredifiError> {
         let mut allowed = Vec::new(env);
         allowed.push_back(CATEGORY_SPORTS);
@@ -1103,7 +1115,7 @@ impl PredifiContract {
                 }
             }
         }
-        Ok(CATEGORY_OTHER)
+        Err(PredifiError::InvalidData)
     }
 
     /// Validate core protocol invariants for a pool.
@@ -2187,7 +2199,7 @@ impl PredifiContract {
 
         // Validate: end_time must not exceed MAX_POOL_DURATION from now
         if end_time > current_time + MAX_POOL_DURATION {
-            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidTimestamp);
         }
 
         let min_pool_duration = env
@@ -2885,6 +2897,13 @@ impl PredifiContract {
         // Validate: token must be on the allowed betting whitelist
         if !Self::is_token_whitelisted(&env, &pool.token) {
             Self::exit_reentrancy_guard(&env);
+            PredictionBlockedDelistedEvent {
+                pool_id,
+                user: user.clone(),
+                token: pool.token.clone(),
+                timestamp: env.ledger().timestamp(),
+            }
+            .publish(&env);
             soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
         }
 
@@ -4312,7 +4331,10 @@ impl OracleCallback for PredifiContract {
 
         Ok(())
     }
+}
 
+#[contractimpl]
+impl PredifiContract {
     /// Flag a pool as disputed. Only callable by a Moderator (role 2).
     ///
     /// Transitions the pool state from `Active` to `Disputed`, preventing
