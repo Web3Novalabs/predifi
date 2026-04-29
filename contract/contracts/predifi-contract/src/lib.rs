@@ -1028,6 +1028,17 @@ pub struct PriceResolvedEvent {
     pub outcome: u32,
 }
 
+/// Emitted when expired price feeds are pruned from storage.
+///
+/// `feeds_removed` is the count of `DataKey::PriceFeed` entries deleted.
+/// `timestamp` is the ledger time at which the cleanup ran.
+#[contractevent(topics = ["price_feeds_cleaned"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceFeedsCleanedEvent {
+    pub feeds_removed: u32,
+    pub timestamp: u64,
+}
+
 #[contractevent(topics = ["resolution_conflict"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolutionConflictEvent {
@@ -3942,6 +3953,12 @@ impl PredifiContract {
         env.storage()
             .persistent()
             .set(&DataKey::PriceFeedList, &remaining);
+
+        PriceFeedsCleanedEvent {
+            feeds_removed: removed,
+            timestamp: current_time,
+        }
+        .emit(&env);
 
         removed
     }
