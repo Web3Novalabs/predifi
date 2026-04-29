@@ -1,15 +1,14 @@
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::get,
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::PgPool;
 
 use crate::config::Config;
 use crate::price_cache::PriceCache;
-use crate::db::{self, PoolCreatedEvent};
+use crate::db::PoolCreatedEvent;
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -22,8 +21,60 @@ pub struct FeeInfo {
 
 
 /// `GET /api/v1/health` health-check endpoint.
-pub async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "status": "ok", "version": "v1" }))
+pub async fn health(State(state): State<AppState>) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use std::time::Duration;
+
+    let mut all_healthy = true;
+    let mut db_status = "ok";
+
+    if let Some(db) = &state.db {
+        if sqlx::query("SELECT 1").execute(db).await.is_err() {
+            db_status = "unreachable";
+            all_healthy = false;
+        }
+    } else {
+        db_status = "not_configured";
+    }
+
+    let mut rpc_status = "ok";
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let rpc_req = client.post(&state.config.stellar_rpc_url)
+        .json(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getHealth"
+        }))
+        .send()
+        .await;
+
+    match rpc_req {
+        Ok(res) if res.status().is_success() => {}
+        _ => {
+            rpc_status = "unreachable";
+            all_healthy = false;
+        }
+    }
+
+    let body = serde_json::json!({
+        "status": if all_healthy { "ok" } else { "error" },
+        "version": "v1",
+        "dependencies": {
+            "db": db_status,
+            "rpc": rpc_status
+        }
+    });
+
+    if all_healthy {
+        (StatusCode::OK, Json(body)).into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
+    }
 }
 
 /// `GET /api/v1` version discovery endpoint.

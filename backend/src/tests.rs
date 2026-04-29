@@ -243,6 +243,228 @@ async fn rate_limiting_returns_429_after_burst() {
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Advanced Health Check Tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Test that /api/v1/health returns 200 with dependency status when everything is OK.
+#[tokio::test]
+async fn api_v1_health_returns_200_with_dependency_status() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/api/v1/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\""),
+        "body should contain status field, got: {body}"
+    );
+    assert!(
+        body.contains("\"version\":\"v1\""),
+        "body should contain version field, got: {body}"
+    );
+    assert!(
+        body.contains("\"dependencies\""),
+        "body should contain dependencies field, got: {body}"
+    );
+    assert!(
+        body.contains("\"db\""),
+        "body should contain db dependency status, got: {body}"
+    );
+    assert!(
+        body.contains("\"rpc\""),
+        "body should contain rpc dependency status, got: {body}"
+    );
+}
+
+/// Test that /health returns 200 with dependency status when everything is OK.
+#[tokio::test]
+async fn root_health_returns_200_with_dependency_status() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\""),
+        "body should contain status field, got: {body}"
+    );
+    assert!(
+        body.contains("\"service\":\"predifi-backend\""),
+        "body should contain service field, got: {body}"
+    );
+    assert!(
+        body.contains("\"dependencies\""),
+        "body should contain dependencies field, got: {body}"
+    );
+}
+
+/// Test that /api/v1/health reports db as 'not_configured' when no database is provided.
+#[tokio::test]
+async fn api_v1_health_reports_db_not_configured_without_pool() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/api/v1/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"db\":\"not_configured\""),
+        "body should indicate db is not_configured, got: {body}"
+    );
+}
+
+/// Test that /health reports db as 'not_configured' when no database is provided.
+#[tokio::test]
+async fn root_health_reports_db_not_configured_without_pool() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"db\":\"not_configured\""),
+        "body should indicate db is not_configured, got: {body}"
+    );
+}
+
+/// Test that /api/v1/health returns the "ok" status when healthy.
+#[tokio::test]
+async fn api_v1_health_status_is_ok_when_healthy() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/api/v1/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"ok\""),
+        "status should be 'ok' when healthy, got: {body}"
+    );
+}
+
+/// Test that /health returns the "ok" status when healthy.
+#[tokio::test]
+async fn root_health_status_is_ok_when_healthy() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"ok\""),
+        "status should be 'ok' when healthy, got: {body}"
+    );
+}
+
+/// Test that health endpoint includes the version from Cargo.toml.
+#[tokio::test]
+async fn health_includes_cargo_version() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    // Version should match the env!("CARGO_PKG_VERSION") value
+    assert!(
+        body.contains("\"version\""),
+        "body should contain version field, got: {body}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// 503 Service Unavailable Tests (Acceptance Criteria Verification)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Test that /api/v1/health returns HTTP 503 when RPC is unreachable.
+/// This is critical for the acceptance criteria: "Returns 503 if any dependency is unreachable."
+#[tokio::test]
+async fn api_v1_health_returns_503_when_rpc_unreachable() {
+    let mut config = Config::default_for_test();
+    // Point RPC to an invalid/unreachable endpoint to simulate failure
+    config.stellar_rpc_url = String::from("http://localhost:1/invalid");
+
+    let response = build_router(config, PriceCache::new())
+        .oneshot(get("/api/v1/health"))
+        .await
+        .expect("request failed");
+
+    // Must return 503, not 200, when a dependency is unreachable
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "health endpoint should return 503 when RPC is unreachable (acceptance criteria)"
+    );
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"error\""),
+        "status should be 'error' when degraded, got: {body}"
+    );
+    assert!(
+        body.contains("\"rpc\":\"unreachable\""),
+        "rpc status should be 'unreachable', got: {body}"
+    );
+}
+
+/// Test that /health returns HTTP 503 when RPC is unreachable.
+/// This is critical for the acceptance criteria: "Returns 503 if any dependency is unreachable."
+#[tokio::test]
+async fn root_health_returns_503_when_rpc_unreachable() {
+    let mut config = Config::default_for_test();
+    // Point RPC to an invalid/unreachable endpoint to simulate failure
+    config.stellar_rpc_url = String::from("http://localhost:1/invalid");
+
+    let response = build_router(config, PriceCache::new())
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+
+    // Must return 503, not 200, when a dependency is unreachable
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "health endpoint should return 503 when RPC is unreachable (acceptance criteria)"
+    );
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"error\""),
+        "status should be 'error' when degraded, got: {body}"
+    );
+    assert!(
+        body.contains("\"rpc\":\"unreachable\""),
+        "rpc status should be 'unreachable', got: {body}"
+    );
+}
+
+/// Verify that HTTP 503 response includes full dependency information for debugging.
+#[tokio::test]
+async fn health_503_response_includes_dependency_details() {
+    let mut config = Config::default_for_test();
+    config.stellar_rpc_url = String::from("http://localhost:1/invalid");
+
+    let response = build_router(config, PriceCache::new())
+        .oneshot(get("/health"))
 /// GET /api/v1/users/:address/referrals without a DB returns 503.
 #[tokio::test]
 async fn user_referrals_without_db_returns_503() {
@@ -254,6 +476,18 @@ async fn user_referrals_without_db_returns_503() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
     let body = body_string(response.into_body()).await;
+    // Even on 503, the response should clearly show which dependencies are healthy/unhealthy
+    assert!(
+        body.contains("\"dependencies\""),
+        "503 response should include dependencies object, got: {body}"
+    );
+    assert!(
+        body.contains("\"db\""),
+        "503 response should show db status, got: {body}"
+    );
+    assert!(
+        body.contains("\"rpc\""),
+        "503 response should show rpc status, got: {body}"
     assert!(
         body.contains("database not configured"),
         "body should mention database not configured, got: {body}"
