@@ -4003,7 +4003,7 @@ impl PredifiContract {
             feeds_removed: removed,
             timestamp: current_time,
         }
-        .emit(&env);
+        .publish(&env);
 
         removed
     }

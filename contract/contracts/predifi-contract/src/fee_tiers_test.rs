@@ -194,9 +194,9 @@ fn test_fee_tier_treasury_intake() {
     let client = crate::PredifiContractClient::new(&env, &contract_id);
 
     let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
-    let token = token::Client::new(&env, &token_contract);
-    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token = token::Client::new(&env, &token_contract.address());
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract.address());
 
     let admin = Address::generate(&env);
     let operator = Address::generate(&env);
@@ -214,7 +214,7 @@ fn test_fee_tier_treasury_intake() {
         &3600u64,
         &0u32,
     );
-    client.add_token_to_whitelist(&admin, &token_contract);
+    client.add_token_to_whitelist(&admin, &token_contract.address());
 
     // Fee tiers (small numbers for easy math)
     // Tier 1: total_stake >= 1_000 → 1% (100 bps)
@@ -238,7 +238,7 @@ fn test_fee_tier_treasury_intake() {
         client.create_pool(
             &creator,
             &end_time,
-            &token_contract,
+            &token_contract.address(),
             &2u32,
             &symbol_short!("Tech"),
             &PoolConfig {

@@ -79,7 +79,7 @@ pub(crate) mod dummy_access_control {
 }
 
 mod rogue_token {
-    use crate::{PoolConfig, PredifiContractClient};
+    use crate::PredifiContractClient;
     use soroban_sdk::{contract, contractimpl, Address, Env, String};
 
     // attack_mode stored at key 3u32:
@@ -4414,6 +4414,7 @@ fn test_get_pool_stats() {
     assert_eq!(stats.current_odds.get(1), Some(16666));
 }
 
+#[test]
 fn test_get_pool_stats_with_initial_liquidity() {
     let env = Env::default();
     env.mock_all_auths();
@@ -10204,7 +10205,7 @@ fn test_emergency_withdraw_emits_event() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, _, _, _) = setup(&env);
+    let (ac_client, client, token_address, _token, token_admin_client, _, _, _) = setup(&env);
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
