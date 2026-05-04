@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT pool_id, total_stake FROM pools ORDER BY pool_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pool_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_stake",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "b9e93849b5fceff38b055f04d6ab6b3b4b639785fb5f80946e775d17cde4450a"
+}

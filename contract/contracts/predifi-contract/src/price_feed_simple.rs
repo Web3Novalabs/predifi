@@ -1,5 +1,5 @@
 use crate::{DataKey, PredifiError};
-use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
+use soroban_sdk::{contracttype, Address, Env, Symbol, Vec as SorobanVec};
 
 /// Oracle configuration stored under `DataKey::OracleConfig`.
 #[contracttype]
@@ -47,6 +47,13 @@ impl PriceFeedAdapter {
         min_confidence_ratio: u32,
     ) -> Result<(), PredifiError> {
         admin.require_auth();
+
+        if max_price_age == 0 {
+            return Err(PredifiError::InvalidData);
+        }
+        if min_confidence_ratio > 10_000 {
+            return Err(PredifiError::InvalidFeeBps);
+        }
 
         let config = SimpleOracleConfig {
             pyth_contract,
@@ -96,7 +103,20 @@ impl PriceFeedAdapter {
 
         env.storage()
             .persistent()
-            .set(&DataKey::PriceFeed(feed_pair), &feed);
+            .set(&DataKey::PriceFeed(feed_pair.clone()), &feed);
+
+        // Track this feed pair in the global list for cleanup
+        let mut list: SorobanVec<Symbol> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceFeedList)
+            .unwrap_or_else(|| SorobanVec::new(env));
+        if !list.contains(feed_pair.clone()) {
+            list.push_back(feed_pair);
+            env.storage()
+                .persistent()
+                .set(&DataKey::PriceFeedList, &list);
+        }
 
         Ok(())
     }
@@ -202,7 +222,7 @@ impl PriceFeedAdapter {
     pub fn batch_update_price_feeds(
         env: &Env,
         oracle: &Address,
-        updates: Vec<(Symbol, i128, i128, u64, u64)>,
+        updates: SorobanVec<(Symbol, i128, i128, u64, u64)>,
     ) -> Result<(), PredifiError> {
         oracle.require_auth();
 
@@ -223,9 +243,43 @@ impl PriceFeedAdapter {
         Ok(())
     }
 
-    /// Clean up expired price feeds (placeholder — requires storage scanning).
-    pub fn cleanup_expired_feeds(env: &Env, _max_age: u64) -> Result<u32, PredifiError> {
-        let _current_time = env.ledger().timestamp();
-        Ok(0u32)
+    /// Clean up expired price feeds. Permissionless — callable by any address.
+    ///
+    /// Iterates the tracked feed list, removes entries whose `expires_at` is in
+    /// the past, and returns the number of feeds removed.
+    pub fn cleanup_expired_feeds(env: &Env) -> u32 {
+        let current_time = env.ledger().timestamp();
+
+        let list: SorobanVec<Symbol> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceFeedList)
+            .unwrap_or_else(|| SorobanVec::new(env));
+
+        let mut remaining: SorobanVec<Symbol> = SorobanVec::new(env);
+        let mut removed: u32 = 0;
+
+        for i in 0..list.len() {
+            let pair = list.get(i).unwrap();
+            let expired = env
+                .storage()
+                .persistent()
+                .get::<DataKey, SimplePriceFeed>(&DataKey::PriceFeed(pair.clone()))
+                .map(|feed| feed.expires_at < current_time)
+                .unwrap_or(true); // missing entry counts as expired
+
+            if expired {
+                env.storage().persistent().remove(&DataKey::PriceFeed(pair));
+                removed += 1;
+            } else {
+                remaining.push_back(pair);
+            }
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PriceFeedList, &remaining);
+
+        removed
     }
 }

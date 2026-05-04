@@ -155,7 +155,7 @@ else
   cp "${REAL_WASM}" "${COPY}"
   RAW_BYTES=$(wc -c < "${COPY}")
   EXIT_CODE=0
-  wasm-opt -O3 --strip-debug -o "${OPT_OUT}" "${COPY}" 2>/dev/null || EXIT_CODE=$?
+  wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-ext -o "${OPT_OUT}" "${COPY}" 2>/dev/null || EXIT_CODE=$?
   if [[ "${EXIT_CODE}" -ne 0 ]]; then
     fail "wasm-opt exited ${EXIT_CODE} on real predifi_contract.wasm"
   else

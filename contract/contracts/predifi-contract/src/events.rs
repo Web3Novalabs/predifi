@@ -59,6 +59,13 @@ pub struct MinPoolDurationUpdateEvent {
     pub duration: u64,
 }
 
+#[contractevent(topics = ["min_stake_update"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinStakeUpdateEvent {
+    pub admin: Address,
+    pub min_stake: i128,
+}
+
 #[contractevent(topics = ["pool_ready"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolReadyForResolutionEvent {
@@ -275,6 +282,7 @@ pub struct TreasuryWithdrawnEvent {
     pub token: Address,
     pub amount: i128,
     pub recipient: Address,
+    pub remaining_balance: i128,
     pub timestamp: u64,
 }
 #[contractevent(topics = ["refund_claimed"])]
@@ -290,6 +298,14 @@ pub struct RefundClaimedEvent {
 pub struct UpgradeEvent {
     pub admin: Address,
     pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent(topics = ["contract_upgraded"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractUpgradedEvent {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub upgraded_by: Address,
 }
 
 #[contractevent(topics = ["oracle_init"])]
@@ -339,4 +355,22 @@ pub struct ResolutionConflictEvent {
     pub oracle: Address,
     pub outcome: u32,
     pub existing_outcome: u32,
+}
+
+#[contractevent(topics = ["added_to_whitelist"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddedToWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub added_by: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["removed_from_whitelist"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemovedFromWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub removed_by: Address,
+    pub timestamp: u64,
 }

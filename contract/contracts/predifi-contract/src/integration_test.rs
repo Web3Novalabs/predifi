@@ -83,7 +83,7 @@ fn setup_integration(
 
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(env, &contract_id);
-    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     let token_ctx = TokenTestContext::deploy(env, &admin);
     client.add_token_to_whitelist(&admin, &token_ctx.token_address);

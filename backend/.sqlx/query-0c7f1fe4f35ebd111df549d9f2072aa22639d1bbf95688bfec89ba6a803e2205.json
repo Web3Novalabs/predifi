@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            r.pool_id,\n            pl.name          AS pool_name,\n            SUM(r.amount)    AS \"total_earned!: i64\",\n            COUNT(r.id)      AS \"referral_count!: i64\"\n        FROM referrals r\n        JOIN pools pl ON pl.pool_id = r.pool_id\n        WHERE r.referrer = $1\n        GROUP BY r.pool_id, pl.name\n        ORDER BY SUM(r.amount) DESC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pool_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "pool_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_earned!: i64",
+        "type_info": "Numeric"
+      },
+      {
+        "ordinal": 3,
+        "name": "referral_count!: i64",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "0c7f1fe4f35ebd111df549d9f2072aa22639d1bbf95688bfec89ba6a803e2205"
+}

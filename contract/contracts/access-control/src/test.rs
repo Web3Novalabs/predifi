@@ -108,6 +108,53 @@ fn test_admin_transfer() {
 }
 
 #[test]
+fn test_propose_and_accept_admin_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin1 = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+
+    client.init(&admin1);
+    client.propose_new_admin(&admin1, &admin2);
+
+    assert_eq!(client.get_admin(), admin1);
+    assert_eq!(client.get_proposed_admin(), Some(admin2.clone()));
+
+    client.accept_admin_role(&admin2);
+
+    assert_eq!(client.get_admin(), admin2.clone());
+    assert_eq!(client.get_proposed_admin(), None);
+    assert!(client.has_role(&admin2, &Role::Admin));
+    assert!(!client.has_role(&admin1, &Role::Admin));
+}
+
+#[test]
+fn test_only_proposed_admin_can_accept_admin_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin1 = Address::generate(&env);
+    let admin2 = Address::generate(&env);
+    let random_user = Address::generate(&env);
+
+    client.init(&admin1);
+    client.propose_new_admin(&admin1, &admin2);
+
+    let result = client.try_accept_admin_role(&random_user);
+    assert_eq!(result, Err(Ok(PrediFiError::Unauthorized)));
+
+    assert_eq!(client.get_admin(), admin1);
+    assert_eq!(client.get_proposed_admin(), Some(admin2));
+}
+
+#[test]
 fn test_unauthorized_assignment() {
     let env = Env::default();
     env.mock_all_auths();

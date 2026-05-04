@@ -1,4 +1,4 @@
-use crate::{PoolConfig, PredifiContract, PredifiContractClient};
+use crate::{MarketState, PoolConfig, PredifiContract, PredifiContractClient};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
@@ -76,7 +76,7 @@ fn stress_setup(
     ac_client.grant_role(&admin, &ROLE_OPERATOR); // Grant operator too for convenience
     ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
-    client.init(&ac_id, &treasury, &500, &3600, &3600u64);
+    client.init(&ac_id, &treasury, &500, &3600, &3600u64, &0u32);
 
     // Setup Token
     let token_admin = Address::generate(env);
@@ -390,6 +390,6 @@ fn test_resolution_under_load() {
     for pid in pool_ids {
         client.resolve_pool(&admin, &pid, &0);
         let pool = client.get_pool(&pid);
-        assert!(pool.resolved);
+        assert_eq!(pool.state, MarketState::Resolved);
     }
 }

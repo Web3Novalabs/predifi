@@ -129,6 +129,13 @@ impl PriceFeedAdapter {
     ) -> Result<(), PredifiError> {
         admin.require_auth();
 
+        if max_price_age == 0 {
+            return Err(PredifiError::InvalidData);
+        }
+        if min_confidence_ratio > 10_000 {
+            return Err(PredifiError::InvalidFeeBps);
+        }
+
         let config = OracleConfig {
             pyth_contract: pyth_contract.clone(),
             max_price_age,
@@ -171,8 +178,9 @@ impl PriceFeedAdapter {
             return Err(PredifiError::InvalidAmount);
         }
 
-        if timestamp > env.ledger().timestamp() || expires_at <= timestamp {
-            return Err(PredifiError::InvalidPoolState);
+        // Require timestamp to be strictly in the past (at least 1 second old)
+        if timestamp >= env.ledger().timestamp() || expires_at <= timestamp {
+            return Err(PredifiError::InvalidData);
         }
 
         let feed = PriceFeed {
@@ -336,15 +344,52 @@ impl PriceFeedAdapter {
         Vec::new(env)
     }
 
-    /// Clean up expired price feeds
+    /// Remove all expired price feeds from storage.
+    ///
+    /// Iterates the `DataKey::PriceFeedList` registry, deletes every
+    /// `DataKey::PriceFeed` entry whose `expires_at` is in the past, and
+    /// writes the pruned list back to storage.  Any entry that is absent from
+    /// storage is also treated as expired and removed from the registry.
+    ///
+    /// Returns the number of feeds removed.
     pub fn cleanup_expired_feeds(env: &Env) -> Result<u32, PredifiError> {
-        let _current_time = env.ledger().timestamp();
-        let cleaned_count = 0u32;
+        let current_time = env.ledger().timestamp();
 
-        // This would typically scan all price feeds and remove expired ones
-        // Implementation depends on storage scanning capabilities
+        let list: Vec<Symbol> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::PriceFeedList)
+            .unwrap_or_else(|| Vec::new(env));
 
-        Ok(cleaned_count)
+        let mut remaining: Vec<Symbol> = Vec::new(env);
+        let mut removed: u32 = 0;
+
+        for i in 0..list.len() {
+            let pair = list.get(i).unwrap();
+
+            // A missing entry is also treated as expired.
+            let expired = env
+                .storage()
+                .persistent()
+                .get::<DataKey, PriceFeed>(&DataKey::PriceFeed(pair.clone()))
+                .map(|feed| feed.expires_at < current_time)
+                .unwrap_or(true);
+
+            if expired {
+                env.storage()
+                    .persistent()
+                    .remove(&DataKey::PriceFeed(pair));
+                removed += 1;
+            } else {
+                remaining.push_back(pair);
+            }
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::PriceFeedList, &remaining);
+
+        Ok(removed)
     }
 }
 

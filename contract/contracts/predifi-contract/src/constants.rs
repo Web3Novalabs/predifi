@@ -27,6 +27,18 @@ pub const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 /// Pools must be active for at least this duration before they can end.
 pub const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
 
+/// Cancellation delay in seconds for overdue pools (7 days).
+/// After this period past the pool's end_time, any user can cancel the pool.
+pub const CANCELATION_DELAY: u64 = 604800;
+
+/// Default global minimum stake amount (1 unit in base token units).
+/// Predictions below this threshold are rejected to prevent spam.
+pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
+
+/// Default cooldown in seconds between consecutive place_prediction calls by the same user.
+/// Defaults to disabled so existing deployments can opt in explicitly via admin config.
+pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 0;
+
 /// Maximum number of options/outcomes allowed in a single pool.
 /// This limit prevents excessive gas costs and ensures reasonable pool complexity.
 pub const MAX_OPTIONS_COUNT: u32 = 100;
@@ -36,13 +48,21 @@ pub const MAX_OPTIONS_COUNT: u32 = 100;
 /// At 7 decimal places (e.g., USDC on Stellar), this equals 100,000,000 USDC.
 pub const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 
+/// Sentinel value used to indicate that a pool outcome has not been resolved yet.
+/// This allows us to distinguish between "outcome 0 won" and "pool not resolved".
+pub const UNRESOLVED_OUTCOME: u32 = u32::MAX;
+
+/// Maximum allowed pool duration in seconds (365 days).
+/// Pools with end_time beyond current_time + MAX_POOL_DURATION are rejected.
+pub const MAX_POOL_DURATION: u64 = 31_536_000;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MONITORING & ALERT THRESHOLDS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
-/// At 7 decimal places (e.g., USDC on Stellar), this equals 100 USDC.
+/// At 7 decimal places (e.g., USDC on Stellar), this equals 0.1 USDC.
 pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -50,7 +70,7 @@ pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Current contract version. Bump on each release to support safe migrations.
-/// This is stored in contract instance storage during initialization.
+/// This is stored in contract instance storage during initialization and upgrades.
 pub const CONTRACT_VERSION: u32 = 1;
 
 #[cfg(test)]
@@ -96,6 +116,11 @@ mod tests {
     }
 
     #[test]
+    fn test_prediction_cooldown_is_non_negative() {
+        assert_eq!(DEFAULT_PREDICTION_COOLDOWN_SECONDS, 0);
+    }
+
+    #[test]
     fn test_contract_version_is_positive() {
         assert!(CONTRACT_VERSION > 0);
     }
@@ -108,12 +133,9 @@ mod tests {
     }
 
     #[test]
-    fn test_high_value_threshold_equals_100_usdc() {
-        // At 7 decimals, 1_000_000 = 0.1 USDC, so 1_000_000 should be 100 USDC
-        // Actually, at 7 decimals: 1 USDC = 10_000_000, so 100 USDC = 1_000_000_000
-        // The comment in the constant says it equals 100 USDC, but the value is 1_000_000
-        // This means at 7 decimals, 1_000_000 = 0.1 USDC
-        // Let's verify the constant is as documented
+    fn test_high_value_threshold_equals_0_1_usdc() {
+        // At 7 decimals, 1 USDC = 10_000_000 base units.
+        // Therefore 1_000_000 base units equals 0.1 USDC.
         assert_eq!(HIGH_VALUE_THRESHOLD, 1_000_000);
     }
 }

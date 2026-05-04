@@ -62,7 +62,7 @@ mod benchmark_tests {
         let treasury = Address::generate(env);
         ac_client.grant_role(&admin, &ROLE_ADMIN);
         ac_client.grant_role(&admin, &ROLE_OPERATOR);
-        client.init(&ac_id, &treasury, &500, &3600, &3600u64);
+        client.init(&ac_id, &treasury, &500, &3600, &3600u64, &0u32);
         let token_admin = Address::generate(env);
         let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
         let token_id = token_contract.address();

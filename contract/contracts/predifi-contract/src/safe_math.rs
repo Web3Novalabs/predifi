@@ -97,10 +97,12 @@ impl SafeMath {
     /// This is the core function for payout calculations.
     ///
     /// # Arguments
-    /// * `numerator` - The user's stake or share
-    /// * `denominator` - The total stake or pool
+    /// * `numerator` - The user's stake (must be >= 0 and <= denominator)
+    /// * `denominator` - The total stake (must be > 0)
     /// * `amount` - The amount to distribute proportionally
     /// * `rounding` - Rounding mode to use
+    ///
+    /// Note: numerator == denominator is valid and represents a 100% proportional share.
     ///
     /// # Returns
     /// The proportional amount or an error
