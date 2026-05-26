@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -120,17 +120,34 @@ pub struct PoolsQuery {
     pub sort_by: Option<String>,
     /// Category filter, e.g. "Sports", "Crypto"
     pub category: Option<String>,
+    /// Status filter: "active" | "closed" | "settled" (default: "active")
+    pub status: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
 }
 
-/// `GET /api/v1/pools` — list active pools with sorting and category filter.
+/// `GET /api/v1/pools/:id` — get detailed pool information with real-time odds.
+pub async fn get_pool_by_id_handler(
+    State(state): State<AppState>,
+    Path(pool_id): Path<i64>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::get_pool_with_odds(db, pool_id).await {
+        Ok(Some(pool)) => Json(json!(pool)),
+        Ok(None) => Json(json!({ "error": "pool not found" })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
 ) -> Json<serde_json::Value> {
     let sort_by = params.sort_by.as_deref().unwrap_or("new");
     let category = params.category.as_deref();
+    let status = params.status.as_deref().unwrap_or("active");
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
@@ -138,8 +155,15 @@ pub async fn get_pools(
         return Json(json!({ "error": "database not available" }));
     };
 
-    match crate::db::get_active_pools(db, sort_by, category, limit, offset).await {
-        Ok(pools) => Json(json!({ "pools": pools, "limit": limit, "offset": offset })),
+    match crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset).await {
+        Ok(pools) => Json(json!({
+            "pools": pools,
+            "limit": limit,
+            "offset": offset,
+            "status": status,
+            "category": category,
+            "sort_by": sort_by
+        })),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
@@ -173,6 +197,77 @@ pub async fn get_user_history(
             "offset": offset,
         })),
         Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+/// `GET /api/v1/users/:address/predictions` — enhanced user predictions with current pool status.
+pub async fn get_user_predictions(
+    State(state): State<AppState>,
+    Path(address): Path<String>,
+    Query(params): Query<PaginationQuery>,
+) -> Json<serde_json::Value> {
+    let limit = params.limit.unwrap_or(20).min(100);
+    let offset = params.offset.unwrap_or(0);
+
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::get_user_predictions(db, &address, limit, offset).await {
+        Ok(predictions) => Json(json!({
+            "address": address,
+            "predictions": predictions,
+            "limit": limit,
+            "offset": offset,
+            "total_predictions": predictions.len(),
+        })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LeaderboardQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    /// Ranking type: "volume" | "winnings" (default: "volume")
+    pub rank_by: Option<String>,
+}
+
+/// `GET /api/v1/leaderboard` — user rankings by betting volume or winnings.
+pub async fn get_leaderboard(
+    State(state): State<AppState>,
+    Query(params): Query<LeaderboardQuery>,
+) -> Json<serde_json::Value> {
+    let limit = params.limit.unwrap_or(20).min(100);
+    let offset = params.offset.unwrap_or(0);
+    let rank_by = params.rank_by.as_deref().unwrap_or("volume");
+
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match rank_by {
+        "winnings" => match crate::db::get_users_by_winnings(db, limit, offset).await {
+            Ok(users) => Json(json!({
+                "leaderboard": users,
+                "rank_by": "winnings",
+                "limit": limit,
+                "offset": offset,
+            })),
+            Err(e) => Json(json!({ "error": e.to_string() })),
+        },
+        _ => {
+            // Default to volume ranking
+            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
+                Ok(users) => Json(json!({
+                    "leaderboard": users,
+                    "rank_by": "volume",
+                    "limit": limit,
+                    "offset": offset,
+                })),
+                Err(e) => Json(json!({ "error": e.to_string() })),
+            }
+        }
     }
 }
 
@@ -229,6 +324,9 @@ pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> 
     Router::new()
         .route("/", get(index))
         .route("/health", get(health))
+        .route("/pools", get(get_pools))
+        .route("/pools/:id", get(get_pool_by_id_handler))
+        .route("/leaderboard", get(get_leaderboard))
         .route("/fees", get(get_fees))
         .route("/prices", get(crate::price_cache::get_prices))
         .route("/referrals/{address}", get(referrals_handler))
@@ -236,6 +334,9 @@ pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> 
             "/users/{address}/referrals",
             get(user_referral_earnings_handler),
         )
+        .route("/users/{address}/history", get(get_user_history))
+        .route("/users/{address}/predictions", get(get_user_predictions))
+        .route("/indexer/pool-created", post(ingest_pool_created))
         .with_state(state)
 }
 
