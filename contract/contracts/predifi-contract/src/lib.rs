@@ -1494,6 +1494,13 @@ impl PredifiContract {
         max_predictions_per_user: u32,
     ) {
         if !env.storage().instance().has(&DataKey::Config) {
+            // Enforce the same 30-day cap on resolution_delay that
+            // set_resolution_delay enforces, so the contract cannot be
+            // initialised with an unbounded delay.
+            if resolution_delay > MAX_RESOLUTION_DELAY {
+                soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
+            }
+
             let config = Config {
                 fee_bps,
                 treasury: treasury.clone(),
@@ -3939,6 +3946,18 @@ impl PredifiContract {
 
         if !Self::is_oracle_whitelisted(&env, &oracle) {
             return Err(PredifiError::Unauthorized);
+        }
+
+        // Security: reject prices with a future or current timestamp — the
+        // timestamp must be strictly in the past to prevent oracle manipulation
+        // via pre-dated or same-ledger price injections.
+        if timestamp >= env.ledger().timestamp() {
+            return Err(PredifiError::InvalidData);
+        }
+
+        // expires_at must be after the timestamp
+        if expires_at <= timestamp {
+            return Err(PredifiError::InvalidData);
         }
 
         let feed_key = DataKey::PriceFeed(feed_pair.clone());

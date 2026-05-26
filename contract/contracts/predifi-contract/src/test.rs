@@ -10727,3 +10727,391 @@ fn test_flag_disputed_pool_already_resolved_fails() {
     // Should panic: pool is already Resolved, not Active
     client.flag_disputed_pool(&moderator, &pool_id, &String::from_str(&env, "Too late"));
 }
+
+// ── Issue: Strict Past-Timestamp for Prices ───────────────────────────────────
+
+/// Verifies that `update_price_feed` rejects a timestamp equal to the current
+/// ledger time (same-ledger injection is not "in the past").
+#[test]
+fn test_update_price_feed_rejects_current_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_oracle(&admin, &oracle);
+
+    // Advance ledger so we have a non-zero current time
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let now = env.ledger().timestamp(); // 1000
+    let feed_pair = Symbol::new(&env, "BTCUSD");
+
+    // timestamp == now  →  must be rejected (not strictly in the past)
+    let result = client.try_update_price_feed(
+        &oracle,
+        &feed_pair,
+        &50_000_0000000i128,
+        &100i128,
+        &now,           // timestamp == current ledger time
+        &(now + 3600),  // expires_at is fine
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidData)),
+        "expected InvalidData when timestamp == now"
+    );
+}
+
+/// Verifies that `update_price_feed` rejects a timestamp strictly in the future.
+#[test]
+fn test_update_price_feed_rejects_future_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_oracle(&admin, &oracle);
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let now = env.ledger().timestamp(); // 1000
+    let feed_pair = Symbol::new(&env, "ETHUSD");
+
+    // timestamp > now  →  must be rejected
+    let result = client.try_update_price_feed(
+        &oracle,
+        &feed_pair,
+        &3_000_0000000i128,
+        &50i128,
+        &(now + 1),     // timestamp is 1 second in the future
+        &(now + 3600),
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidData)),
+        "expected InvalidData when timestamp is in the future"
+    );
+}
+
+/// Verifies that `update_price_feed` accepts a timestamp strictly in the past.
+#[test]
+fn test_update_price_feed_accepts_past_timestamp() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_oracle(&admin, &oracle);
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    let now = env.ledger().timestamp(); // 1000
+    let feed_pair = Symbol::new(&env, "SOLUSD");
+
+    // timestamp < now  →  must succeed
+    client.update_price_feed(
+        &oracle,
+        &feed_pair,
+        &200_0000000i128,
+        &10i128,
+        &(now - 1),     // 1 second in the past
+        &(now + 3600),
+    );
+}
+
+// ── Issue: Max Resolution Delay Bounds ───────────────────────────────────────
+
+/// Verifies that `set_resolution_delay` rejects a delay exceeding 30 days.
+#[test]
+fn test_set_resolution_delay_rejects_value_above_30_days() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    // 30 days + 1 second  →  must be rejected
+    let too_long: u64 = 2_592_001;
+    let result = client.try_set_resolution_delay(&admin, &too_long);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidData)),
+        "expected InvalidData for delay > 30 days"
+    );
+}
+
+/// Verifies that `set_resolution_delay` accepts exactly 30 days (boundary).
+#[test]
+fn test_set_resolution_delay_accepts_exactly_30_days() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    let thirty_days: u64 = 2_592_000;
+    client.set_resolution_delay(&admin, &thirty_days);
+
+    let info = client.get_contract_info();
+    assert_eq!(info.resolution_delay, thirty_days);
+}
+
+/// Verifies that `init` rejects a resolution_delay exceeding 30 days.
+#[test]
+#[should_panic]
+fn test_init_rejects_resolution_delay_above_30_days() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let _token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // resolution_delay = 30 days + 1 second  →  must panic
+    client.init(&ac_id, &treasury, &0u32, &2_592_001u64, &3600u64, &0u32);
+}
+
+// ── Issue: Test Conflicting Oracle Votes (Oracle A=0, Oracle B=1) ─────────────
+
+/// Verifies that when Oracle A votes outcome 0 and Oracle B votes outcome 1,
+/// the contract returns `ResolutionConflict` and the pool remains unresolved.
+#[test]
+fn test_conflicting_oracle_votes_outcome_0_vs_1() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let oracle_a = Address::generate(&env);
+    let oracle_b = Address::generate(&env);
+
+    ac_client.grant_role(&oracle_a, &ROLE_ORACLE);
+    ac_client.grant_role(&oracle_b, &ROLE_ORACLE);
+
+    // Create a pool that requires 2 oracle votes to resolve
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Conflicting Oracle Test"),
+            metadata_url: String::from_str(&env, "ipfs://conflict-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 2u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Advance past pool end time
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+
+    // Oracle A votes for outcome 0
+    client.oracle_resolve(
+        &oracle_a,
+        &pool_id,
+        &0u32,
+        &String::from_str(&env, "oracle_a_proof"),
+    );
+
+    // Oracle B votes for outcome 1 — direct conflict with Oracle A
+    let result = client.try_oracle_resolve(
+        &oracle_b,
+        &pool_id,
+        &1u32,
+        &String::from_str(&env, "oracle_b_proof"),
+    );
+
+    // Contract must return ResolutionConflict
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::ResolutionConflict)),
+        "expected ResolutionConflict when Oracle A votes 0 and Oracle B votes 1"
+    );
+
+    // Pool must remain unresolved (Active) — not resolved to either outcome
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.state,
+        MarketState::Active,
+        "pool must remain Active after a conflicting oracle vote"
+    );
+    assert_eq!(
+        pool.outcome, UNRESOLVED_OUTCOME,
+        "pool outcome must remain UNRESOLVED_OUTCOME after conflict"
+    );
+}
+
+/// Verifies that after a conflict is detected, a third oracle voting for the
+/// majority outcome can still push the pool to resolution — the conflict only
+/// blocks the dissenting vote, not subsequent agreeing votes.
+#[test]
+fn test_conflicting_oracle_votes_third_oracle_resolves_majority() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    let oracle_a = Address::generate(&env);
+    let oracle_b = Address::generate(&env);
+    let oracle_c = Address::generate(&env);
+
+    ac_client.grant_role(&oracle_a, &ROLE_ORACLE);
+    ac_client.grant_role(&oracle_b, &ROLE_ORACLE);
+    ac_client.grant_role(&oracle_c, &ROLE_ORACLE);
+
+    // Pool requires 2 votes to resolve
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Three Oracle Conflict Test"),
+            metadata_url: String::from_str(&env, "ipfs://three-oracle-conflict"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 2u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+
+    // Oracle A votes 0
+    client.oracle_resolve(
+        &oracle_a,
+        &pool_id,
+        &0u32,
+        &String::from_str(&env, "proof_a"),
+    );
+
+    // Oracle B votes 1 — conflict; vote is rejected and NOT recorded
+    let conflict_result = client.try_oracle_resolve(
+        &oracle_b,
+        &pool_id,
+        &1u32,
+        &String::from_str(&env, "proof_b"),
+    );
+    assert_eq!(conflict_result, Err(Ok(PredifiError::ResolutionConflict)));
+
+    // Oracle C votes 0 — agrees with A; since B's vote was rejected,
+    // outcome_0_votes reaches required_resolutions (2) and the pool resolves.
+    client.oracle_resolve(
+        &oracle_c,
+        &pool_id,
+        &0u32,
+        &String::from_str(&env, "proof_c"),
+    );
+
+    // Pool must now be resolved with outcome 0
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.state,
+        MarketState::Resolved,
+        "pool should be resolved once the majority threshold is met"
+    );
+    assert_eq!(pool.outcome, 0u32, "winning outcome should be 0");
+}
