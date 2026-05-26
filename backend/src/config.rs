@@ -10,6 +10,7 @@ const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
 const DEFAULT_REFERRAL_FEE_BPS: u32 = 5000;
+const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -23,6 +24,7 @@ pub struct Config {
     pub treasury_fee_bps: u32,
     pub referral_fee_bps: u32,
     pub stellar_rpc_url: String,
+    pub redis_url: String,
 }
 
 impl Config {
@@ -47,6 +49,7 @@ impl Config {
         let treasury_fee_bps = get_u32(vars, "TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
         let stellar_rpc_url = get_string(vars, "STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
+        let redis_url = get_string(vars, "REDIS_URL", DEFAULT_REDIS_URL);
 
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
@@ -69,6 +72,7 @@ impl Config {
             treasury_fee_bps,
             referral_fee_bps,
             stellar_rpc_url,
+            redis_url,
         })
     }
 
@@ -89,6 +93,7 @@ impl Config {
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
+            redis_url: String::from(DEFAULT_REDIS_URL),
         }
     }
 }
@@ -194,6 +199,7 @@ mod tests {
         assert_eq!(config.log_level, DEFAULT_LOG_LEVEL);
         assert_eq!(config.treasury_fee_bps, DEFAULT_TREASURY_FEE_BPS);
         assert_eq!(config.referral_fee_bps, DEFAULT_REFERRAL_FEE_BPS);
+        assert_eq!(config.redis_url, DEFAULT_REDIS_URL);
     }
 
     #[test]

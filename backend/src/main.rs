@@ -6,6 +6,7 @@ pub mod config;
 pub mod db;
 pub mod openapi;
 pub mod price_cache;
+pub mod redis_cache;
 pub mod referrals;
 pub mod request_logger;
 pub mod response;
@@ -123,7 +124,7 @@ async fn root() -> Json<serde_json::Value> {
 }
 
 /// Build the Axum router with CORS, logging, and rate limiting middleware.
-pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
+pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis_cache::RedisCache) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(5)
@@ -142,6 +143,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
     let state = routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
+        redis: redis.clone(),
         db: None,
     };
 
@@ -149,7 +151,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
         .route("/", get(root))
         .route("/health", get(health))
         .with_state(state)
-        .nest("/api", routes::router(config, cache, None))
+        .nest("/api", routes::router(config, cache, redis, None))
         .merge(openapi::swagger_router())
         .layer(GovernorLayer {
             config: governor_conf,
@@ -162,6 +164,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
 pub fn build_router_with_db(
     config: Config,
     cache: price_cache::PriceCache,
+    redis: redis_cache::RedisCache,
     pool: sqlx::PgPool,
 ) -> Router {
     let governor_conf = Arc::new(
@@ -182,6 +185,7 @@ pub fn build_router_with_db(
     let state = routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
+        redis: redis.clone(),
         db: Some(pool.clone()),
     };
 
@@ -189,7 +193,7 @@ pub fn build_router_with_db(
         .route("/", get(root))
         .route("/health", get(health))
         .with_state(state)
-        .nest("/api", routes::router_with_db(config, cache, pool))
+        .nest("/api", routes::router_with_db(config, cache, redis, pool))
         // Swagger UI served at /swagger-ui/ (#563)
         .merge(openapi::swagger_router())
         .layer(GovernorLayer {
@@ -222,7 +226,15 @@ async fn main() {
     let cache = price_cache::PriceCache::new();
     price_cache::spawn_fetcher(cache.clone());
 
-    let app = build_router_with_db(config.clone(), cache, pool);
+    // Initialize Redis cache
+    let redis = redis_cache::RedisCache::new(&config.redis_url).await;
+    if redis.is_available() {
+        info!("Redis cache initialized and available");
+    } else {
+        warn!("Redis cache unavailable - running without caching");
+    }
+
+    let app = build_router_with_db(config.clone(), cache, redis, pool);
 
     let bind_addr = config.bind_address();
 
