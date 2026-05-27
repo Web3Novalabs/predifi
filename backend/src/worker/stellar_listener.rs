@@ -5,6 +5,7 @@
 //! table so the worker resumes from where it left off after a restart.
 
 use serde::Deserialize;
+use serde_json::Value;
 use sqlx::PgPool;
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
@@ -35,6 +36,8 @@ pub struct StellarEvent {
     #[serde(rename = "contractId")]
     pub contract_id: Option<String>,
     pub id: String,
+    pub topics: Option<Vec<String>>,
+    pub data: Option<Value>,
 }
 
 // ── Ledger cursor persistence ─────────────────────────────────────────────────
@@ -135,6 +138,23 @@ async fn run(rpc_url: String, db: PgPool) {
                             contract_id = ?event.contract_id,
                             "stellar event"
                         );
+
+                        if event.event_type == "contract"
+                            && event
+                                .topics
+                                .as_ref()
+                                .map(|topics| topics.iter().any(|topic| topic == "prediction_placed"))
+                                .unwrap_or(false)
+                        {
+                            if let Err(e) = handle_prediction_placed_event(&db, event).await {
+                                error!(
+                                    id = %event.id,
+                                    ledger = event.ledger,
+                                    error = %e,
+                                    "failed to process prediction_placed event"
+                                );
+                            }
+                        }
                     }
                 }
 
@@ -149,6 +169,73 @@ async fn run(rpc_url: String, db: PgPool) {
             }
         }
     }
+}
+
+async fn handle_prediction_placed_event(
+    db: &PgPool,
+    event: &StellarEvent,
+) -> Result<(), String> {
+    let data = event
+        .data
+        .as_ref()
+        .ok_or_else(|| "missing event data".to_string())?;
+
+    let pool_id = extract_u64(data, "pool_id")
+        .ok_or_else(|| "missing or invalid pool_id in event data".to_string())?;
+    let user_address = extract_string(data, "user")
+        .or_else(|| extract_string(data, "user_address"))
+        .ok_or_else(|| "missing or invalid user address in event data".to_string())?;
+    let amount = extract_i64(data, "amount")
+        .ok_or_else(|| "missing or invalid amount in event data".to_string())?;
+    let outcome = extract_i32(data, "outcome")
+        .ok_or_else(|| "missing or invalid outcome in event data".to_string())?;
+
+    let event = crate::db::PredictionPlacedEvent {
+        pool_id,
+        user_address,
+        outcome,
+        amount,
+    };
+
+    crate::db::insert_prediction_from_event(db, &event)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn extract_string(data: &Value, key: &str) -> Option<String> {
+    let value = data.get(key)?;
+    extract_string_value(value)
+}
+
+fn extract_string_value(value: &Value) -> Option<String> {
+    match value {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(map) if map.len() == 1 => map.values().next().and_then(extract_string_value),
+        _ => None,
+    }
+}
+
+fn extract_i128(value: &Value) -> Option<i128> {
+    match value {
+        Value::Number(number) => number.as_i64().map(|v| v as i128).or_else(|| {
+            number.as_u64().and_then(|v| i128::try_from(v).ok())
+        }),
+        Value::String(s) => s.parse().ok(),
+        Value::Object(map) if map.len() == 1 => map.values().next().and_then(extract_i128),
+        _ => None,
+    }
+}
+
+fn extract_i64(data: &Value, key: &str) -> Option<i64> {
+    extract_i128(data.get(key)?).and_then(|v| i64::try_from(v).ok())
+}
+
+fn extract_i32(data: &Value, key: &str) -> Option<i32> {
+    extract_i128(data.get(key)?).and_then(|v| i32::try_from(v).ok())
+}
+
+fn extract_u64(data: &Value, key: &str) -> Option<u64> {
+    extract_i128(data.get(key)?).and_then(|v| u64::try_from(v).ok())
 }
 
 #[cfg(test)]

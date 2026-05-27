@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::config::Config;
-use crate::db::PoolCreatedEvent;
+use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
+use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 
 /// Struct representing fee information, matching the contract structure.
@@ -92,6 +93,7 @@ pub struct AppState {
     pub cache: PriceCache,
     /// Optional DB pool — absent in unit tests that don't need a database.
     pub db: Option<sqlx::PgPool>,
+    pub metrics: SharedMetrics,
 }
 
 impl axum::extract::FromRef<AppState> for Config {
@@ -103,6 +105,12 @@ impl axum::extract::FromRef<AppState> for Config {
 impl axum::extract::FromRef<AppState> for PriceCache {
     fn from_ref(state: &AppState) -> Self {
         state.cache.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for SharedMetrics {
+    fn from_ref(state: &AppState) -> Self {
+        state.metrics.clone()
     }
 }
 
@@ -313,12 +321,49 @@ pub async fn ingest_pool_created(
     }
 }
 
+/// Request body for the prediction-placed event webhook.
+#[derive(Debug, Deserialize)]
+pub struct PredictionPlacedPayload {
+    pub pool_id: u64,
+    pub user_address: String,
+    pub outcome: i32,
+    pub amount: i64,
+}
+
+/// `POST /api/v1/indexer/prediction-placed` — ingest a decoded prediction event and update DB state.
+pub async fn ingest_prediction_placed(
+    State(state): State<AppState>,
+    Json(payload): Json<PredictionPlacedPayload>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    let event = PredictionPlacedEvent {
+        pool_id: payload.pool_id,
+        user_address: payload.user_address,
+        amount: payload.amount,
+        outcome: payload.outcome,
+    };
+
+    match crate::db::insert_prediction_from_event(db, &event).await {
+        Ok(()) => Json(json!({ "status": "ok", "pool_id": event.pool_id })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
 /// Build the version 1 API router.
-pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> Router {
+pub fn router(
+    config: Config,
+    cache: PriceCache,
+    pool: Option<sqlx::PgPool>,
+    metrics: SharedMetrics,
+) -> Router {
     let state = AppState {
         config,
         cache,
         db: pool,
+        metrics,
     };
 
     Router::new()
@@ -337,6 +382,7 @@ pub fn router(config: Config, cache: PriceCache, pool: Option<sqlx::PgPool>) -> 
         .route("/users/{address}/history", get(get_user_history))
         .route("/users/{address}/predictions", get(get_user_predictions))
         .route("/indexer/pool-created", post(ingest_pool_created))
+        .route("/indexer/prediction-placed", post(ingest_prediction_placed))
         .with_state(state)
 }
 

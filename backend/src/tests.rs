@@ -80,6 +80,20 @@ async fn api_v1_index_returns_200() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+/// GET /metrics must return HTTP 200 and expose Prometheus text format.
+#[tokio::test]
+async fn metrics_endpoint_returns_200() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/metrics"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_string(response.into_body()).await;
+    assert!(body.contains("# HELP app_http_requests_total"));
+    assert!(body.contains("app_up"));
+}
+
 /// GET /api/v1/fees returns the current fee configuration.
 #[tokio::test]
 async fn api_v1_fees_returns_config_values() {

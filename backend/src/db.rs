@@ -580,6 +580,38 @@ pub async fn insert_pool_from_event(
     Ok(())
 }
 
+/// Insert a decoded `prediction_placed` contract event into the prediction index.
+pub async fn insert_prediction_from_event(
+    pool: &PgPool,
+    event: &PredictionPlacedEvent,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+
+    sqlx::query!(
+        r#"
+        INSERT INTO predictions (pool_id, user_address, outcome, amount)
+        VALUES ($1, $2, $3, $4)
+        "#,
+        event.pool_id as i64,
+        event.user_address,
+        event.outcome,
+        event.amount,
+    )
+    .execute(&mut tx)
+    .await?;
+
+    sqlx::query!(
+        "UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2",
+        event.amount,
+        event.pool_id as i64,
+    )
+    .execute(&mut tx)
+    .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
 /// A single row in the referral earnings breakdown — one entry per pool.
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct ReferralEarningRow {
@@ -623,6 +655,14 @@ pub struct PoolCreatedEvent {
     pub token: String,
     pub category: String,
     pub description: String,
+}
+
+/// Decoded data from a `prediction_placed` contract event.
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user_address: String,
+    pub outcome: i32,
+    pub amount: i64,
 }
 
 #[cfg(test)]
