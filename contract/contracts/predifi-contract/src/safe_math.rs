@@ -102,7 +102,8 @@ impl SafeMath {
     /// * `amount` - The amount to distribute proportionally
     /// * `rounding` - Rounding mode to use
     ///
-    /// Note: numerator == denominator is valid and represents a 100% proportional share.
+    /// Note: `numerator == denominator` is valid and represents a 100% share of `amount`.
+    /// This means a user who owns the entire stake receives the full `amount`.
     ///
     /// # Returns
     /// The proportional amount or an error

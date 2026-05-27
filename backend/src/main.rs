@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod db;
+pub mod metrics;
 pub mod openapi;
 pub mod price_cache;
 pub mod redis_cache;
@@ -13,11 +14,14 @@ pub mod response;
 pub mod routes;
 pub mod worker;
 
-use axum::{response::IntoResponse, routing::get, Json, Router};
+use axum::{extract::State, middleware::{from_fn_with_state, Next}, response::IntoResponse, routing::get, Json, Router};
 use config::Config;
 use http::HeaderValue;
+use metrics::{Metrics, SharedMetrics};
 use request_logger::LoggingLayer;
 use serde_json::json;
+use sentry::integrations::panic::register_panic_handler;
+use sentry_tracing::layer as sentry_tracing_layer;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
@@ -123,6 +127,43 @@ async fn root() -> Json<serde_json::Value> {
     }))
 }
 
+/// Metrics endpoint exposed to Prometheus.
+async fn metrics(State(state): State<routes::v1::AppState>) -> impl IntoResponse {
+    match state.metrics.gather_text() {
+        Ok(body) => (
+            axum::http::StatusCode::OK,
+            [(http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+            body,
+        ),
+        Err(error) => {
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                [(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                format!("failed to gather metrics: {error}"),
+            )
+        }
+    }
+}
+
+async fn metrics_middleware<B>(
+    State(metrics): State<SharedMetrics>,
+    request: axum::http::Request<B>,
+    next: Next<B>,
+) -> impl IntoResponse {
+    let method = request.method().to_string();
+    let path = request.uri().path().to_string();
+
+    let response = next.run(request).await;
+    let status = response.status().as_u16().to_string();
+
+    metrics
+        .http_requests_total
+        .with_label_values(&[&method, &path, &status])
+        .inc();
+
+    response
+}
+
 /// Build the Axum router with CORS, logging, and rate limiting middleware.
 pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis_cache::RedisCache) -> Router {
     let governor_conf = Arc::new(
@@ -140,19 +181,30 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis
             .unwrap(),
     );
 
+    let prometheus_metrics = Arc::new(
+        Metrics::new().unwrap_or_else(|error| {
+            eprintln!("failed to initialize Prometheus metrics: {error}");
+            std::process::exit(1);
+        }),
+    );
+
     let state = routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
         redis: redis.clone(),
         db: None,
+        metrics: prometheus_metrics.clone(),
     };
 
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .with_state(state)
+        .nest("/api", routes::router(config, cache, None, prometheus_metrics.clone()))
         .nest("/api", routes::router(config, cache, redis, None))
         .merge(openapi::swagger_router())
+        .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
             config: governor_conf,
         })
@@ -182,20 +234,31 @@ pub fn build_router_with_db(
             .unwrap(),
     );
 
+    let prometheus_metrics = Arc::new(
+        Metrics::new().unwrap_or_else(|error| {
+            eprintln!("failed to initialize Prometheus metrics: {error}");
+            std::process::exit(1);
+        }),
+    );
+
     let state = routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
         redis: redis.clone(),
         db: Some(pool.clone()),
+        metrics: prometheus_metrics.clone(),
     };
 
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .with_state(state)
+        .nest("/api", routes::router_with_db(config, cache, pool, prometheus_metrics.clone()))
         .nest("/api", routes::router_with_db(config, cache, redis, pool))
         // Swagger UI served at /swagger-ui/ (#563)
         .merge(openapi::swagger_router())
+        .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
             config: governor_conf,
         })
@@ -212,11 +275,32 @@ async fn main() {
         std::process::exit(1);
     });
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(config.log_level.clone()))
-        .with_target(false)
-        .compact()
-        .init();
+    if let Some(dsn) = config.sentry_dsn.as_ref() {
+        let _guard = sentry::init((
+            dsn.as_str(),
+            sentry::ClientOptions {
+                release: Some(env!("CARGO_PKG_VERSION").into()),
+                ..Default::default()
+            },
+        ));
+        register_panic_handler();
+
+        tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt()
+                    .with_env_filter(EnvFilter::new(config.log_level.clone()))
+                    .with_target(false)
+                    .compact(),
+            )
+            .with(sentry_tracing_layer())
+            .init();
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::new(config.log_level.clone()))
+            .with_target(false)
+            .compact()
+            .init();
+    }
 
     let pool = db::create_pool(&config).unwrap_or_else(|error| {
         error!(error = %error, "failed to initialize PostgreSQL pool");
@@ -226,6 +310,10 @@ async fn main() {
     let cache = price_cache::PriceCache::new();
     price_cache::spawn_fetcher(cache.clone());
 
+    // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
+    worker::stellar_listener::spawn(config.stellar_rpc_url.clone(), pool.clone());
+
+    let app = build_router_with_db(config.clone(), cache, pool);
     // Initialize Redis cache
     let redis = redis_cache::RedisCache::new(&config.redis_url).await;
     if redis.is_available() {

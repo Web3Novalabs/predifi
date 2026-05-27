@@ -24,6 +24,7 @@ pub struct Config {
     pub treasury_fee_bps: u32,
     pub referral_fee_bps: u32,
     pub stellar_rpc_url: String,
+    pub sentry_dsn: Option<String>,
     pub redis_url: String,
 }
 
@@ -49,6 +50,7 @@ impl Config {
         let treasury_fee_bps = get_u32(vars, "TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
         let stellar_rpc_url = get_string(vars, "STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
+        let sentry_dsn = vars.get("SENTRY_DSN").cloned();
         let redis_url = get_string(vars, "REDIS_URL", DEFAULT_REDIS_URL);
 
         if db_min_connections > db_max_connections {
@@ -72,6 +74,7 @@ impl Config {
             treasury_fee_bps,
             referral_fee_bps,
             stellar_rpc_url,
+            sentry_dsn,
             redis_url,
         })
     }
@@ -93,6 +96,7 @@ impl Config {
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
+            sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
         }
     }
