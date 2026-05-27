@@ -7,6 +7,7 @@ pub mod db;
 pub mod metrics;
 pub mod openapi;
 pub mod price_cache;
+pub mod redis_cache;
 pub mod referrals;
 pub mod request_logger;
 pub mod response;
@@ -164,7 +165,7 @@ async fn metrics_middleware<B>(
 }
 
 /// Build the Axum router with CORS, logging, and rate limiting middleware.
-pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
+pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis_cache::RedisCache) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(5)
@@ -190,6 +191,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
     let state = routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
+        redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
     };
@@ -200,6 +202,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
         .route("/metrics", get(metrics))
         .with_state(state)
         .nest("/api", routes::router(config, cache, None, prometheus_metrics.clone()))
+        .nest("/api", routes::router(config, cache, redis, None))
         .merge(openapi::swagger_router())
         .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
@@ -213,6 +216,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
 pub fn build_router_with_db(
     config: Config,
     cache: price_cache::PriceCache,
+    redis: redis_cache::RedisCache,
     pool: sqlx::PgPool,
 ) -> Router {
     let governor_conf = Arc::new(
@@ -240,6 +244,7 @@ pub fn build_router_with_db(
     let state = routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
+        redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),
     };
@@ -250,6 +255,7 @@ pub fn build_router_with_db(
         .route("/metrics", get(metrics))
         .with_state(state)
         .nest("/api", routes::router_with_db(config, cache, pool, prometheus_metrics.clone()))
+        .nest("/api", routes::router_with_db(config, cache, redis, pool))
         // Swagger UI served at /swagger-ui/ (#563)
         .merge(openapi::swagger_router())
         .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
@@ -308,6 +314,15 @@ async fn main() {
     worker::stellar_listener::spawn(config.stellar_rpc_url.clone(), pool.clone());
 
     let app = build_router_with_db(config.clone(), cache, pool);
+    // Initialize Redis cache
+    let redis = redis_cache::RedisCache::new(&config.redis_url).await;
+    if redis.is_available() {
+        info!("Redis cache initialized and available");
+    } else {
+        warn!("Redis cache unavailable - running without caching");
+    }
+
+    let app = build_router_with_db(config.clone(), cache, redis, pool);
 
     let bind_addr = config.bind_address();
 

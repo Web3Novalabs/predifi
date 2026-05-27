@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
+use crate::redis_cache::RedisCache;
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -91,6 +92,7 @@ async fn index() -> Json<serde_json::Value> {
 pub struct AppState {
     pub config: Config,
     pub cache: PriceCache,
+    pub redis: RedisCache,
     /// Optional DB pool — absent in unit tests that don't need a database.
     pub db: Option<sqlx::PgPool>,
     pub metrics: SharedMetrics,
@@ -163,15 +165,30 @@ pub async fn get_pools(
         return Json(json!({ "error": "database not available" }));
     };
 
+    // Try to get from Redis cache first
+    let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
+    
+    if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
+        return Json(cached_response);
+    }
+
+    // Cache miss - fetch from database
     match crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset).await {
-        Ok(pools) => Json(json!({
-            "pools": pools,
-            "limit": limit,
-            "offset": offset,
-            "status": status,
-            "category": category,
-            "sort_by": sort_by
-        })),
+        Ok(pools) => {
+            let response = json!({
+                "pools": pools,
+                "limit": limit,
+                "offset": offset,
+                "status": status,
+                "category": category,
+                "sort_by": sort_by
+            });
+            
+            // Cache the response for 60 seconds
+            state.redis.set(&cache_key, &response, crate::redis_cache::POOLS_CACHE_TTL).await;
+            
+            Json(response)
+        },
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
@@ -359,9 +376,11 @@ pub fn router(
     pool: Option<sqlx::PgPool>,
     metrics: SharedMetrics,
 ) -> Router {
+pub fn router(config: Config, cache: PriceCache, redis: RedisCache, pool: Option<sqlx::PgPool>) -> Router {
     let state = AppState {
         config,
         cache,
+        redis,
         db: pool,
         metrics,
     };
