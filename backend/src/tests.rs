@@ -634,3 +634,19 @@ async fn api_v1_leaderboard_defaults_to_volume_ranking() {
     // Verify the route works with default volume ranking
     assert!(!body.is_empty(), "response should not be empty");
 }
+
+/// GET /api/v1/stats returns an error JSON when no database is configured.
+#[tokio::test]
+async fn api_v1_stats_returns_error_without_db() {
+    let response = build_router(Config::default_for_test(), PriceCache::new())
+        .oneshot(get("/api/v1/stats"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"error\""),
+        "should report error when db is absent, got: {body}"
+    );
+}

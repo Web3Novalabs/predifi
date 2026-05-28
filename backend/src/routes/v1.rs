@@ -151,6 +151,17 @@ pub async fn get_pool_by_id_handler(
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
+
+pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::get_protocol_stats(db).await {
+        Ok(stats) => Json(json!(stats)),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
@@ -390,6 +401,7 @@ pub fn router(config: Config, cache: PriceCache, redis: RedisCache, pool: Option
         .route("/health", get(health))
         .route("/pools", get(get_pools))
         .route("/pools/:id", get(get_pool_by_id_handler))
+        .route("/stats", get(get_stats))
         .route("/leaderboard", get(get_leaderboard))
         .route("/fees", get(get_fees))
         .route("/prices", get(crate::price_cache::get_prices))

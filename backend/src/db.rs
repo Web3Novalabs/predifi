@@ -646,6 +646,60 @@ pub async fn get_referral_earnings(
     .await
 }
 
+/// Protocol-wide aggregate statistics.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct ProtocolStats {
+    /// Sum of `total_stake` across all pools (TVL proxy).
+    pub total_value_locked: i64,
+    /// Total number of prediction records (bets placed).
+    pub total_bets: i64,
+    /// Total number of pools ever created.
+    pub total_pools: i64,
+}
+
+/// Fetch protocol-wide aggregate statistics in a single query.
+pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, sqlx::Error> {
+    sqlx::query_as!(
+        ProtocolStats,
+        r#"
+        SELECT
+            COALESCE(SUM(total_stake), 0) AS "total_value_locked!: i64",
+            (SELECT COUNT(*) FROM predictions)  AS "total_bets!: i64",
+            COUNT(*)                            AS "total_pools!: i64"
+        FROM pools
+        "#
+    )
+    .fetch_one(pool)
+    .await
+}
+
+/// Protocol-wide aggregate statistics.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct ProtocolStats {
+    /// Sum of `total_stake` across all pools (TVL proxy).
+    pub total_value_locked: i64,
+    /// Total number of prediction records (bets placed).
+    pub total_bets: i64,
+    /// Total number of pools ever created.
+    pub total_pools: i64,
+}
+
+/// Fetch protocol-wide aggregate statistics in a single query.
+pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, sqlx::Error> {
+    sqlx::query_as!(
+        ProtocolStats,
+        r#"
+        SELECT
+            COALESCE(SUM(total_stake), 0) AS "total_value_locked!: i64",
+            (SELECT COUNT(*) FROM predictions)  AS "total_bets!: i64",
+            COUNT(*)                            AS "total_pools!: i64"
+        FROM pools
+        "#
+    )
+    .fetch_one(pool)
+    .await
+}
+
 /// Decoded data from a `pool_created` contract event.
 #[derive(Debug)]
 pub struct PoolCreatedEvent {
