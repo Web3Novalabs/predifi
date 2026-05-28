@@ -11115,3 +11115,50 @@ fn test_conflicting_oracle_votes_third_oracle_resolves_majority() {
     );
     assert_eq!(pool.outcome, 0u32, "winning outcome should be 0");
 }
+
+#[test]
+fn test_init_oracle_rejects_zero_max_price_age() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, token_address, _, _, _, operator, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let result = client.try_init_oracle(
+        &admin,
+        &Address::generate(&env),
+        &0,
+        &100,
+    );
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_init_oracle_rejects_confidence_ratio_above_10000() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let result = client.try_init_oracle(
+        &admin,
+        &Address::generate(&env),
+        &300,
+        &10_001,
+    );
+    assert_eq!(result, Err(Ok(PredifiError::InvalidFeeBps)));
+}
+
+#[test]
+fn test_init_oracle_stores_valid_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let pyth = Address::generate(&env);
+    client.init_oracle(&admin, &pyth, &300, &100);
+    let (stored_pyth, max_age, confidence) = client.get_oracle_config().unwrap();
+    assert_eq!(stored_pyth, pyth);
+    assert_eq!(max_age, 300);
+    assert_eq!(confidence, 100);
+}
