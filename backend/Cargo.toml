@@ -31,9 +31,11 @@ sqlx = { version = "0.8", default-features = false, features = [
     "derive",
     "migrate",
 ] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }prometheus = "0.16"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+prometheus = "0.16"
 sentry = "0.33"
-sentry-tracing = "0.33"# OpenAPI / Swagger documentation (#563)
+sentry-tracing = "0.33"
+# OpenAPI / Swagger documentation (#563)
 utoipa = { version = "4", features = ["axum_extras", "chrono"] }
 utoipa-swagger-ui = { version = "7", features = ["axum"] }
 tower_governor = { version = "0.5.0", features = ["axum"] }

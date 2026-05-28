@@ -139,20 +139,33 @@ async fn run(rpc_url: String, db: PgPool) {
                             "stellar event"
                         );
 
-                        if event.event_type == "contract"
-                            && event
+                        let topic_matches = |needle: &str| {
+                            event
                                 .topics
                                 .as_ref()
-                                .map(|topics| topics.iter().any(|topic| topic == "prediction_placed"))
+                                .map(|t| t.iter().any(|s| s == needle))
                                 .unwrap_or(false)
-                        {
-                            if let Err(e) = handle_prediction_placed_event(&db, event).await {
-                                error!(
-                                    id = %event.id,
-                                    ledger = event.ledger,
-                                    error = %e,
-                                    "failed to process prediction_placed event"
-                                );
+                        };
+
+                        if event.event_type == "contract" {
+                            if topic_matches("pool_created") {
+                                if let Err(e) = handle_pool_created_event(&db, event).await {
+                                    error!(
+                                        id = %event.id,
+                                        ledger = event.ledger,
+                                        error = %e,
+                                        "failed to process pool_created event"
+                                    );
+                                }
+                            } else if topic_matches("prediction_placed") {
+                                if let Err(e) = handle_prediction_placed_event(&db, event).await {
+                                    error!(
+                                        id = %event.id,
+                                        ledger = event.ledger,
+                                        error = %e,
+                                        "failed to process prediction_placed event"
+                                    );
+                                }
                             }
                         }
                     }
@@ -169,6 +182,40 @@ async fn run(rpc_url: String, db: PgPool) {
             }
         }
     }
+}
+
+async fn handle_pool_created_event(db: &PgPool, event: &StellarEvent) -> Result<(), String> {
+    let data = event
+        .data
+        .as_ref()
+        .ok_or_else(|| "missing event data".to_string())?;
+
+    let pool_id = extract_u64(data, "pool_id")
+        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let creator = extract_string(data, "creator")
+        .ok_or_else(|| "missing or invalid creator".to_string())?;
+    let end_time = extract_u64(data, "end_time")
+        .ok_or_else(|| "missing or invalid end_time".to_string())?;
+    let token = extract_string(data, "token")
+        .ok_or_else(|| "missing or invalid token".to_string())?;
+    let category = extract_string(data, "category").unwrap_or_default();
+    // The on-chain event carries metadata_url; use it as the pool name/description.
+    let description = extract_string(data, "description")
+        .or_else(|| extract_string(data, "metadata_url"))
+        .unwrap_or_default();
+
+    let pool_event = crate::db::PoolCreatedEvent {
+        pool_id,
+        creator,
+        end_time,
+        token,
+        category,
+        description,
+    };
+
+    crate::db::insert_pool_from_event(db, &pool_event)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 async fn handle_prediction_placed_event(
@@ -282,5 +329,35 @@ mod tests {
         let result = resp.result.unwrap();
         assert_eq!(result.latest_ledger, 100);
         assert!(result.events.is_empty());
+    }
+
+    /// Verify that pool_created event data is parsed into the correct fields.
+    #[test]
+    fn extract_pool_created_fields_from_event_data() {
+        let data = serde_json::json!({
+            "pool_id": 7,
+            "creator": "GABC123",
+            "end_time": 1_700_000_000u64,
+            "token": "GTOKEN",
+            "category": "Sports",
+            "metadata_url": "ipfs://Qm123"
+        });
+
+        assert_eq!(extract_u64(&data, "pool_id"), Some(7));
+        assert_eq!(extract_string(&data, "creator"), Some("GABC123".into()));
+        assert_eq!(extract_u64(&data, "end_time"), Some(1_700_000_000));
+        assert_eq!(extract_string(&data, "token"), Some("GTOKEN".into()));
+        assert_eq!(extract_string(&data, "category"), Some("Sports".into()));
+        // description absent → falls back to metadata_url
+        assert_eq!(extract_string(&data, "description"), None);
+        assert_eq!(extract_string(&data, "metadata_url"), Some("ipfs://Qm123".into()));
+    }
+
+    /// Missing required fields must produce None so the handler returns an error.
+    #[test]
+    fn extract_pool_created_missing_required_field_returns_none() {
+        let data = serde_json::json!({ "pool_id": 1 });
+        assert!(extract_string(&data, "creator").is_none());
+        assert!(extract_u64(&data, "end_time").is_none());
     }
 }

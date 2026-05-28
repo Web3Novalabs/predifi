@@ -3901,6 +3901,53 @@ impl PredifiContract {
         }
     }
 
+    /// Initialize the oracle configuration. Only callable by Admin (role 0).
+    ///
+    /// # Errors
+    /// - `InvalidData`   – `max_price_age` is 0 (every feed would be immediately stale).
+    /// - `InvalidFeeBps` – `min_confidence_ratio` exceeds 10 000 bps (100 %).
+    pub fn init_oracle(
+        env: Env,
+        admin: Address,
+        pyth_contract: Address,
+        max_price_age: u64,
+        min_confidence_ratio: u32,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "init_oracle")?;
+
+        if max_price_age == 0 {
+            return Err(PredifiError::InvalidData);
+        }
+        if min_confidence_ratio > 10_000 {
+            return Err(PredifiError::InvalidFeeBps);
+        }
+
+        env.storage().persistent().set(
+            &DataKey::OracleConfig,
+            &(pyth_contract.clone(), max_price_age, min_confidence_ratio),
+        );
+        Self::extend_persistent(&env, &DataKey::OracleConfig);
+
+        OracleInitEvent {
+            admin,
+            pyth_contract,
+            max_price_age,
+            min_confidence_ratio,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Return the current oracle configuration, if initialised.
+    pub fn get_oracle_config(env: Env) -> Option<(Address, u64, u32)> {
+        env.storage()
+            .persistent()
+            .get::<DataKey, (Address, u64, u32)>(&DataKey::OracleConfig)
+    }
+
     /// Set a price-based condition for automated pool resolution.
     /// Only callable by Operator (role 1).
     pub fn set_price_condition(
