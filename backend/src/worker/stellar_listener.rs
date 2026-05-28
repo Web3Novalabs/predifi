@@ -101,15 +101,16 @@ async fn fetch_events(
 
 /// Spawn the Stellar event listener as a background Tokio task.
 ///
-/// `rpc_url` – Stellar RPC endpoint (e.g. `https://soroban-testnet.stellar.org`)
-/// `db`      – PostgreSQL connection pool used to persist the ledger cursor
-pub fn spawn(rpc_url: String, db: PgPool) {
+/// `rpc_url`   – Stellar RPC endpoint (e.g. `https://soroban-testnet.stellar.org`)
+/// `db`        – PostgreSQL connection pool used to persist the ledger cursor
+/// `event_bus` – broadcast channel; new predictions are published here
+pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
     tokio::spawn(async move {
-        run(rpc_url, db).await;
+        run(rpc_url, db, event_bus).await;
     });
 }
 
-async fn run(rpc_url: String, db: PgPool) {
+async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
     let client = reqwest::Client::new();
     let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
 
@@ -158,7 +159,7 @@ async fn run(rpc_url: String, db: PgPool) {
                                     );
                                 }
                             } else if topic_matches("prediction_placed") {
-                                if let Err(e) = handle_prediction_placed_event(&db, event).await {
+                                if let Err(e) = handle_prediction_placed_event(&db, event, &event_bus).await {
                                     error!(
                                         id = %event.id,
                                         ledger = event.ledger,
@@ -239,6 +240,7 @@ async fn handle_pool_created_event(db: &PgPool, event: &StellarEvent) -> Result<
 async fn handle_prediction_placed_event(
     db: &PgPool,
     event: &StellarEvent,
+    event_bus: &crate::ws::EventBus,
 ) -> Result<(), String> {
     let data = event
         .data
@@ -255,16 +257,26 @@ async fn handle_prediction_placed_event(
     let outcome = extract_i32(data, "outcome")
         .ok_or_else(|| "missing or invalid outcome in event data".to_string())?;
 
-    let event = crate::db::PredictionPlacedEvent {
+    let ev = crate::db::PredictionPlacedEvent {
         pool_id,
         user_address,
         outcome,
         amount,
     };
 
-    crate::db::insert_prediction_from_event(db, &event)
+    crate::db::insert_prediction_from_event(db, &ev)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    event_bus.send(&serde_json::json!({
+        "type": "prediction_placed",
+        "pool_id": ev.pool_id,
+        "user_address": ev.user_address,
+        "outcome": ev.outcome,
+        "amount": ev.amount,
+    }));
+
+    Ok(())
 }
 
 async fn handle_pool_resolved_event(db: &PgPool, event: &StellarEvent) -> Result<(), String> {

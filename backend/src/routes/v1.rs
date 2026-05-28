@@ -96,6 +96,7 @@ pub struct AppState {
     /// Optional DB pool — absent in unit tests that don't need a database.
     pub db: Option<sqlx::PgPool>,
     pub metrics: SharedMetrics,
+    pub event_bus: crate::ws::EventBus,
 }
 
 impl axum::extract::FromRef<AppState> for Config {
@@ -119,6 +120,12 @@ impl axum::extract::FromRef<AppState> for SharedMetrics {
 impl axum::extract::FromRef<AppState> for Option<sqlx::PgPool> {
     fn from_ref(state: &AppState) -> Self {
         state.db.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
+    fn from_ref(state: &AppState) -> Self {
+        state.event_bus.clone()
     }
 }
 
@@ -375,7 +382,16 @@ pub async fn ingest_prediction_placed(
     };
 
     match crate::db::insert_prediction_from_event(db, &event).await {
-        Ok(()) => Json(json!({ "status": "ok", "pool_id": event.pool_id })),
+        Ok(()) => {
+            state.event_bus.send(&json!({
+                "type": "prediction_placed",
+                "pool_id": event.pool_id,
+                "user_address": event.user_address,
+                "outcome": event.outcome,
+                "amount": event.amount,
+            }));
+            Json(json!({ "status": "ok", "pool_id": event.pool_id }))
+        }
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
@@ -384,16 +400,18 @@ pub async fn ingest_prediction_placed(
 pub fn router(
     config: Config,
     cache: PriceCache,
+    redis: RedisCache,
     pool: Option<sqlx::PgPool>,
     metrics: SharedMetrics,
+    event_bus: crate::ws::EventBus,
 ) -> Router {
-pub fn router(config: Config, cache: PriceCache, redis: RedisCache, pool: Option<sqlx::PgPool>) -> Router {
     let state = AppState {
         config,
         cache,
         redis,
         db: pool,
         metrics,
+        event_bus,
     };
 
     Router::new()
@@ -406,14 +424,12 @@ pub fn router(config: Config, cache: PriceCache, redis: RedisCache, pool: Option
         .route("/fees", get(get_fees))
         .route("/prices", get(crate::price_cache::get_prices))
         .route("/referrals/{address}", get(referrals_handler))
-        .route(
-            "/users/{address}/referrals",
-            get(user_referral_earnings_handler),
-        )
+        .route("/users/{address}/referrals", get(user_referral_earnings_handler))
         .route("/users/{address}/history", get(get_user_history))
         .route("/users/{address}/predictions", get(get_user_predictions))
         .route("/indexer/pool-created", post(ingest_pool_created))
         .route("/indexer/prediction-placed", post(ingest_prediction_placed))
+        .route("/ws", get(crate::ws::ws_handler))
         .with_state(state)
 }
 
