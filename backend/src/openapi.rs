@@ -1,63 +1,60 @@
-//! OpenAPI / Swagger documentation (#563).
+//! OpenAPI / Swagger documentation.
 //!
-//! Documents the `Pool` and `Prediction` types and all v1 API endpoints.
 //! The Swagger UI is served at `/swagger-ui/`.
-//!
-//! # Integration
-//! Call [`swagger_router`] and merge the returned router into the main app:
-//! ```rust,no_run
-//! let app = Router::new()
-//!     .merge(openapi::swagger_router())
-//!     .nest("/api", routes::router(...));
-//! ```
 
 use axum::Router;
 use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
-// ── Documented types ──────────────────────────────────────────────────────────
+// ── Documented schemas ────────────────────────────────────────────────────────
 
-/// A prediction market pool.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PoolDoc {
-    /// Unique pool identifier (auto-incremented on-chain).
     pub pool_id: i64,
-    /// Human-readable pool name / question.
     pub name: String,
-    /// Market category (e.g. "Crypto", "Sports").
     pub category: String,
-    /// Aggregated stake across all outcomes (in stroops).
     pub total_stake: i64,
-    /// Unix timestamp (seconds) when the pool closes.
     pub end_time: i64,
-    /// ISO-8601 timestamp when the pool was indexed into the DB.
     pub created_at: String,
+    pub state: String,
+    pub creator: String,
+    pub token: String,
+    pub result: Option<String>,
 }
 
-/// A user's prediction on a pool.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
-pub struct PredictionDoc {
-    /// Pool the prediction belongs to.
-    pub pool_id: i64,
-    /// Stellar address of the predictor.
-    pub user_address: String,
-    /// Outcome index the user predicted (0-based).
+pub struct OutcomeOddsDoc {
     pub outcome: i32,
-    /// Amount staked in stroops.
-    pub amount: i64,
-    /// ISO-8601 timestamp when the prediction was indexed.
-    pub created_at: String,
+    pub stake: i64,
+    pub odds: f64,
 }
 
-/// Paginated list of active pools.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct PoolWithOddsDoc {
+    #[serde(flatten)]
+    pub pool: PoolDoc,
+    pub odds: Vec<OutcomeOddsDoc>,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PoolListResponse {
     pub pools: Vec<PoolDoc>,
     pub limit: i64,
     pub offset: i64,
+    pub status: String,
+    pub sort_by: String,
 }
 
-/// Paginated list of a user's predictions.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct PredictionDoc {
+    pub pool_id: i64,
+    pub pool_name: String,
+    pub pool_result: Option<String>,
+    pub outcome: i32,
+    pub amount: i64,
+    pub created_at: String,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PredictionHistoryResponse {
     pub address: String,
@@ -66,66 +63,130 @@ pub struct PredictionHistoryResponse {
     pub offset: i64,
 }
 
-/// Generic error response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct UserPredictionDoc {
+    pub prediction_id: i64,
+    pub pool_id: i64,
+    pub pool_name: String,
+    pub pool_category: String,
+    pub pool_state: String,
+    pub pool_total_stake: i64,
+    pub pool_result: Option<String>,
+    pub user_outcome: i32,
+    pub user_amount: i64,
+    pub is_winning_outcome: Option<bool>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct UserPredictionsResponse {
+    pub address: String,
+    pub predictions: Vec<UserPredictionDoc>,
+    pub limit: i64,
+    pub offset: i64,
+    pub total_predictions: usize,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ProtocolStatsDoc {
+    /// Total value locked across all pools (stroops).
+    pub total_value_locked: i64,
+    pub total_bets: i64,
+    pub total_pools: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct FeeInfoDoc {
+    /// Protocol (treasury) fee in basis points.
+    pub treasury_fee_bps: u32,
+    /// Referral share of the protocol fee in basis points.
+    pub referral_fee_bps: u32,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct LeaderboardEntryVolume {
+    pub user_address: String,
+    pub total_volume: i64,
+    pub prediction_count: i64,
+    pub rank: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct LeaderboardEntryWinnings {
+    pub user_address: String,
+    pub total_winnings: i64,
+    pub winning_predictions: i64,
+    pub total_predictions: i64,
+    pub win_rate: f64,
+    pub rank: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct LeaderboardResponse {
+    pub leaderboard: Vec<LeaderboardEntryVolume>,
+    pub rank_by: String,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ReferralEarningDoc {
+    pub pool_id: i64,
+    pub pool_name: String,
+    pub total_earned: i64,
+    pub referral_count: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ReferralEarningsResponse {
+    pub referrer: String,
+    pub total_earned: i64,
+    pub pools: Vec<ReferralEarningDoc>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct DependencyStatus {
+    pub db: String,
+    pub rpc: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct HealthResponse {
+    pub status: String,
+    pub service: String,
+    pub version: String,
+    pub dependencies: DependencyStatus,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
-/// Dependency status in health check response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
-pub struct DependencyStatus {
-    /// Database connectivity status: "ok", "unreachable", or "not_configured"
-    pub db: String,
-    /// RPC endpoint connectivity status: "ok" or "unreachable"
-    pub rpc: String,
+pub struct PoolCreatedPayloadDoc {
+    pub pool_id: u64,
+    pub creator: String,
+    pub end_time: u64,
+    pub token: String,
+    pub category: String,
+    pub description: String,
 }
 
-/// Root-level health check response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
-pub struct HealthCheckResponse {
-    /// Overall health status: "ok" or "error"
+pub struct PredictionPlacedPayloadDoc {
+    pub pool_id: u64,
+    pub user_address: String,
+    pub outcome: i32,
+    pub amount: i64,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct IndexerOkResponse {
     pub status: String,
-    /// Service name
-    pub service: String,
-    /// Service version from Cargo.toml
-    pub version: String,
-    /// Individual dependency statuses
-    pub dependencies: DependencyStatus,
+    pub pool_id: u64,
 }
 
-/// API v1 health check response.
-#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
-pub struct HealthCheckV1Response {
-    /// Overall health status: "ok" or "error"
-    pub status: String,
-    /// API version
-    pub version: String,
-    /// Individual dependency statuses
-    pub dependencies: DependencyStatus,
-}
-
-/// Per-pool referral earnings entry.
-#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
-pub struct ReferralEarningDoc {
-    pub pool_id: i64,
-    pub pool_name: String,
-    /// Total amount earned from referrals in this pool (stroops).
-    pub total_earned: i64,
-    /// Number of referred users who staked in this pool.
-    pub referral_count: i64,
-}
-
-/// Referral earnings breakdown response.
-#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
-pub struct ReferralEarningsResponse {
-    pub referrer: String,
-    /// Aggregate earnings across all pools (stroops).
-    pub total_earned: i64,
-    pub pools: Vec<ReferralEarningDoc>,
-}
-
-// ── OpenAPI spec definition ───────────────────────────────────────────────────
+// ── OpenAPI spec ──────────────────────────────────────────────────────────────
 
 #[derive(OpenApi)]
 #[openapi(
@@ -137,133 +198,202 @@ pub struct ReferralEarningsResponse {
         license(name = "MIT")
     ),
     paths(
+        api_health,
         api_get_pools,
         api_get_pool_by_id,
+        api_get_stats,
+        api_get_fees,
+        api_get_prices,
+        api_get_leaderboard,
         api_get_user_history,
+        api_get_user_predictions,
+        api_get_referrals,
         api_get_user_referral_earnings,
-        api_health,
+        api_ingest_pool_created,
+        api_ingest_prediction_placed,
     ),
-    components(
-        schemas(
-            PoolDoc,
-            PredictionDoc,
-            PoolListResponse,
-            PredictionHistoryResponse,
-            ReferralEarningDoc,
-            ReferralEarningsResponse,
-            ErrorResponse,
-            HealthCheckResponse,
-            HealthCheckV1Response,
-            DependencyStatus,
-        )
-    ),
+    components(schemas(
+        PoolDoc,
+        OutcomeOddsDoc,
+        PoolWithOddsDoc,
+        PoolListResponse,
+        PredictionDoc,
+        PredictionHistoryResponse,
+        UserPredictionDoc,
+        UserPredictionsResponse,
+        ProtocolStatsDoc,
+        FeeInfoDoc,
+        LeaderboardEntryVolume,
+        LeaderboardEntryWinnings,
+        LeaderboardResponse,
+        ReferralEarningDoc,
+        ReferralEarningsResponse,
+        DependencyStatus,
+        HealthResponse,
+        ErrorResponse,
+        PoolCreatedPayloadDoc,
+        PredictionPlacedPayloadDoc,
+        IndexerOkResponse,
+    )),
     tags(
-        (name = "pools", description = "Active prediction market pools"),
+        (name = "health", description = "Service liveness and dependency checks"),
+        (name = "pools", description = "Prediction market pools"),
+        (name = "stats", description = "Protocol-wide statistics"),
+        (name = "leaderboard", description = "User rankings"),
         (name = "predictions", description = "User prediction history"),
-        (name = "health", description = "Service health endpoints with dependency monitoring"),
-        (name = "referrals", description = "Referral earnings dashboard"),
-        (name = "health", description = "Service health endpoints"),
+        (name = "referrals", description = "Referral earnings"),
+        (name = "indexer", description = "Internal event ingestion endpoints"),
     )
 )]
 pub struct ApiDoc;
 
-// ── Path stubs for utoipa path macros ─────────────────────────────────────────
-// These are documentation-only stubs. The real handlers live in routes/v1.rs.
-// utoipa requires #[utoipa::path] attributes on functions; we use lightweight
-// stubs here so the OpenAPI spec can be generated without duplicating business
-// logic.
+// ── Path stubs ────────────────────────────────────────────────────────────────
 
-/// `GET /api/v1/pools` — list active pools with optional sorting and filtering.
 #[allow(dead_code)]
-#[utoipa::path(
-    get,
-    path = "/api/v1/pools",
-    tag = "pools",
+#[utoipa::path(get, path = "/health", tag = "health",
+    responses(
+        (status = 200, description = "All dependencies healthy", body = HealthResponse),
+        (status = 503, description = "One or more dependencies unreachable", body = HealthResponse),
+    )
+)]
+async fn api_health() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/pools", tag = "pools",
     params(
-        ("sort_by" = Option<String>, Query, description = "Sort order: popular | ending_soon | new (default)"),
-        ("category" = Option<String>, Query, description = "Filter by category e.g. Sports, Crypto"),
-        ("limit" = Option<i64>, Query, description = "Max results per page (default 20, max 100)"),
+        ("sort_by" = Option<String>, Query, description = "popular | ending_soon | new (default)"),
+        ("category" = Option<String>, Query, description = "Category filter e.g. Sports, Crypto"),
+        ("status" = Option<String>, Query, description = "active | closed | settled (default: active)"),
+        ("limit" = Option<i64>, Query, description = "Max results (default 20, max 100)"),
         ("offset" = Option<i64>, Query, description = "Pagination offset (default 0)"),
     ),
     responses(
-        (status = 200, description = "List of active pools", body = PoolListResponse),
+        (status = 200, description = "Paginated pool list", body = PoolListResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
 async fn api_get_pools() {}
 
-/// `GET /api/v1/pools/{pool_id}` — retrieve a single pool by ID.
 #[allow(dead_code)]
-#[utoipa::path(
-    get,
-    path = "/api/v1/pools/{pool_id}",
-    tag = "pools",
-    params(
-        ("pool_id" = i64, Path, description = "On-chain pool identifier"),
-    ),
+#[utoipa::path(get, path = "/api/v1/pools/{pool_id}", tag = "pools",
+    params(("pool_id" = i64, Path, description = "On-chain pool identifier")),
     responses(
-        (status = 200, description = "Pool details", body = PoolDoc),
+        (status = 200, description = "Pool details with live odds", body = PoolWithOddsDoc),
         (status = 404, description = "Pool not found", body = ErrorResponse),
     )
 )]
 async fn api_get_pool_by_id() {}
 
-/// `GET /api/v1/users/{address}/history` — paginated prediction history for a user.
 #[allow(dead_code)]
-#[utoipa::path(
-    get,
-    path = "/api/v1/users/{address}/history",
-    tag = "predictions",
+#[utoipa::path(get, path = "/api/v1/stats", tag = "stats",
+    responses(
+        (status = 200, description = "Protocol-wide aggregate statistics", body = ProtocolStatsDoc),
+        (status = 500, description = "Database error", body = ErrorResponse),
+    )
+)]
+async fn api_get_stats() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/fees", tag = "stats",
+    responses(
+        (status = 200, description = "Current protocol fee configuration", body = FeeInfoDoc),
+    )
+)]
+async fn api_get_fees() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/prices", tag = "stats",
+    responses(
+        (status = 200, description = "Latest cached asset prices"),
+    )
+)]
+async fn api_get_prices() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/leaderboard", tag = "leaderboard",
     params(
-        ("address" = String, Path, description = "Stellar account address (G...)"),
-        ("limit" = Option<i64>, Query, description = "Max results per page (default 20, max 100)"),
+        ("rank_by" = Option<String>, Query, description = "volume (default) | winnings"),
+        ("limit" = Option<i64>, Query, description = "Max results (default 20, max 100)"),
         ("offset" = Option<i64>, Query, description = "Pagination offset (default 0)"),
     ),
     responses(
-        (status = 200, description = "Prediction history", body = PredictionHistoryResponse),
+        (status = 200, description = "User leaderboard", body = LeaderboardResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
+    )
+)]
+async fn api_get_leaderboard() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/users/{address}/history", tag = "predictions",
+    params(
+        ("address" = String, Path, description = "Stellar account address (G...)"),
+        ("limit" = Option<i64>, Query, description = "Max results (default 20, max 100)"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset (default 0)"),
+    ),
+    responses(
+        (status = 200, description = "Paginated prediction history", body = PredictionHistoryResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
 async fn api_get_user_history() {}
 
-/// `GET /health` — service liveness check with deep dependency monitoring.
 #[allow(dead_code)]
-#[utoipa::path(
-    get,
-    path = "/health",
-    tag = "health",
-    responses(
-        (status = 200, description = "Service is healthy; all dependencies are reachable", body = HealthCheckResponse),
-        (status = 503, description = "Service is degraded; one or more dependencies are unreachable", body = HealthCheckResponse),
-    )
-)]
-async fn api_health() {}
-
-/// `GET /api/v1/users/{address}/referrals` — per-pool referral earnings for a user.
-#[allow(dead_code)]
-#[utoipa::path(
-    get,
-    path = "/api/v1/users/{address}/referrals",
-    tag = "referrals",
+#[utoipa::path(get, path = "/api/v1/users/{address}/predictions", tag = "predictions",
     params(
-        ("address" = String, Path, description = "Stellar referrer address (G...)"),
+        ("address" = String, Path, description = "Stellar account address (G...)"),
+        ("limit" = Option<i64>, Query, description = "Max results (default 20, max 100)"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset (default 0)"),
     ),
     responses(
-        (status = 200, description = "Referral earnings breakdown per pool", body = ReferralEarningsResponse),
-        (status = 404, description = "No referral records found", body = ErrorResponse),
+        (status = 200, description = "Enhanced predictions with pool status", body = UserPredictionsResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
+    )
+)]
+async fn api_get_user_predictions() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/referrals/{address}", tag = "referrals",
+    params(("address" = String, Path, description = "Stellar referrer address (G...)")),
+    responses(
+        (status = 200, description = "Referral summary", body = ReferralEarningsResponse),
+        (status = 503, description = "Database not configured", body = ErrorResponse),
+    )
+)]
+async fn api_get_referrals() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/users/{address}/referrals", tag = "referrals",
+    params(("address" = String, Path, description = "Stellar referrer address (G...)")),
+    responses(
+        (status = 200, description = "Per-pool referral earnings", body = ReferralEarningsResponse),
         (status = 503, description = "Database not configured", body = ErrorResponse),
     )
 )]
 async fn api_get_user_referral_earnings() {}
 
-// ── Swagger UI router ─────────────────────────────────────────────────────────
+#[allow(dead_code)]
+#[utoipa::path(post, path = "/api/v1/indexer/pool-created", tag = "indexer",
+    request_body = PoolCreatedPayloadDoc,
+    responses(
+        (status = 200, description = "Pool indexed successfully", body = IndexerOkResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
+    )
+)]
+async fn api_ingest_pool_created() {}
 
-/// Build the Swagger UI router and mount it at `/swagger-ui/`.
-///
-/// Merge this into the main Axum router before serving:
-/// ```rust,no_run
-/// let app = Router::new().merge(openapi::swagger_router()).nest("/api", ...);
-/// ```
+#[allow(dead_code)]
+#[utoipa::path(post, path = "/api/v1/indexer/prediction-placed", tag = "indexer",
+    request_body = PredictionPlacedPayloadDoc,
+    responses(
+        (status = 200, description = "Prediction indexed successfully", body = IndexerOkResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
+    )
+)]
+async fn api_ingest_prediction_placed() {}
+
+// ── Router ────────────────────────────────────────────────────────────────────
+
+/// Mount Swagger UI at `/swagger-ui` and serve the OpenAPI JSON at `/api-docs/openapi.json`.
 pub fn swagger_router() -> Router {
     SwaggerUi::new("/swagger-ui")
         .url("/api-docs/openapi.json", ApiDoc::openapi())

@@ -101,15 +101,16 @@ async fn fetch_events(
 
 /// Spawn the Stellar event listener as a background Tokio task.
 ///
-/// `rpc_url` – Stellar RPC endpoint (e.g. `https://soroban-testnet.stellar.org`)
-/// `db`      – PostgreSQL connection pool used to persist the ledger cursor
-pub fn spawn(rpc_url: String, db: PgPool) {
+/// `rpc_url`   – Stellar RPC endpoint (e.g. `https://soroban-testnet.stellar.org`)
+/// `db`        – PostgreSQL connection pool used to persist the ledger cursor
+/// `event_bus` – broadcast channel; new predictions are published here
+pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
     tokio::spawn(async move {
-        run(rpc_url, db).await;
+        run(rpc_url, db, event_bus).await;
     });
 }
 
-async fn run(rpc_url: String, db: PgPool) {
+async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
     let client = reqwest::Client::new();
     let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
 
@@ -158,12 +159,30 @@ async fn run(rpc_url: String, db: PgPool) {
                                     );
                                 }
                             } else if topic_matches("prediction_placed") {
-                                if let Err(e) = handle_prediction_placed_event(&db, event).await {
+                                if let Err(e) = handle_prediction_placed_event(&db, event, &event_bus).await {
                                     error!(
                                         id = %event.id,
                                         ledger = event.ledger,
                                         error = %e,
                                         "failed to process prediction_placed event"
+                                    );
+                                }
+                            } else if topic_matches("pool_resolved") {
+                                if let Err(e) = handle_pool_resolved_event(&db, event).await {
+                                    error!(
+                                        id = %event.id,
+                                        ledger = event.ledger,
+                                        error = %e,
+                                        "failed to process pool_resolved event"
+                                    );
+                                }
+                            } else if topic_matches("pool_canceled") {
+                                if let Err(e) = handle_pool_canceled_event(&db, event).await {
+                                    error!(
+                                        id = %event.id,
+                                        ledger = event.ledger,
+                                        error = %e,
+                                        "failed to process pool_canceled event"
                                     );
                                 }
                             }
@@ -221,6 +240,7 @@ async fn handle_pool_created_event(db: &PgPool, event: &StellarEvent) -> Result<
 async fn handle_prediction_placed_event(
     db: &PgPool,
     event: &StellarEvent,
+    event_bus: &crate::ws::EventBus,
 ) -> Result<(), String> {
     let data = event
         .data
@@ -237,14 +257,54 @@ async fn handle_prediction_placed_event(
     let outcome = extract_i32(data, "outcome")
         .ok_or_else(|| "missing or invalid outcome in event data".to_string())?;
 
-    let event = crate::db::PredictionPlacedEvent {
+    let ev = crate::db::PredictionPlacedEvent {
         pool_id,
         user_address,
         outcome,
         amount,
     };
 
-    crate::db::insert_prediction_from_event(db, &event)
+    crate::db::insert_prediction_from_event(db, &ev)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    event_bus.send(&serde_json::json!({
+        "type": "prediction_placed",
+        "pool_id": ev.pool_id,
+        "user_address": ev.user_address,
+        "outcome": ev.outcome,
+        "amount": ev.amount,
+    }));
+
+    Ok(())
+}
+
+async fn handle_pool_resolved_event(db: &PgPool, event: &StellarEvent) -> Result<(), String> {
+    let data = event
+        .data
+        .as_ref()
+        .ok_or_else(|| "missing event data".to_string())?;
+
+    let pool_id = extract_u64(data, "pool_id")
+        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let outcome = extract_i32(data, "outcome")
+        .ok_or_else(|| "missing or invalid outcome".to_string())?;
+
+    crate::db::resolve_pool_in_db(db, pool_id, outcome)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn handle_pool_canceled_event(db: &PgPool, event: &StellarEvent) -> Result<(), String> {
+    let data = event
+        .data
+        .as_ref()
+        .ok_or_else(|| "missing event data".to_string())?;
+
+    let pool_id = extract_u64(data, "pool_id")
+        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+
+    crate::db::cancel_pool_in_db(db, pool_id)
         .await
         .map_err(|e| e.to_string())
 }

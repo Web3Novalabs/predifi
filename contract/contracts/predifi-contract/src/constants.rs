@@ -62,8 +62,8 @@ pub const MAX_POOL_DURATION: u64 = 31_536_000;
 
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
-/// At 7 decimal places (e.g., USDC on Stellar), this equals 0.1 USDC.
-pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
+/// At 7 decimal places (e.g., USDC on Stellar), this equals 100 USDC.
+pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000_000;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // VERSION CONSTANTS
@@ -133,9 +133,9 @@ mod tests {
     }
 
     #[test]
-    fn test_high_value_threshold_equals_0_1_usdc() {
+    fn test_high_value_threshold_equals_100_usdc() {
         // At 7 decimals, 1 USDC = 10_000_000 base units.
-        // Therefore 1_000_000 base units equals 0.1 USDC.
-        assert_eq!(HIGH_VALUE_THRESHOLD, 1_000_000);
+        // Therefore 1_000_000_000 base units equals 100 USDC.
+        assert_eq!(HIGH_VALUE_THRESHOLD, 1_000_000_000);
     }
 }
