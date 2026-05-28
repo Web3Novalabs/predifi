@@ -1155,7 +1155,7 @@ impl PredifiContract {
     /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
     #[allow(dead_code)]
     fn is_valid_fee_bps(fee_bps: u32) -> bool {
-        fee_bps <= 10_000
+        fee_bps <= MAX_FEE_BPS
     }
 
     /// Pure: Check if a pool is currently active.
@@ -1500,6 +1500,9 @@ impl PredifiContract {
             if resolution_delay > MAX_RESOLUTION_DELAY {
                 soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
             }
+            if !Self::is_valid_fee_bps(fee_bps) {
+                soroban_sdk::panic_with_error!(&env, PredifiError::InvalidFeeBps);
+            }
 
             let config = Config {
                 fee_bps,
@@ -1607,7 +1610,9 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_fee_bps")?;
-        assert!(Self::is_valid_fee_bps(fee_bps), "fee_bps exceeds 10000");
+        if !Self::is_valid_fee_bps(fee_bps) {
+            return Err(PredifiError::InvalidFeeBps);
+        }
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
@@ -4183,7 +4188,7 @@ impl PredifiContract {
 
         for i in 0..tiers.len() {
             if let Some(tier) = tiers.get(i) {
-                if tier.fee_bps > 10_000 {
+                if tier.fee_bps > MAX_FEE_BPS {
                     return Err(PredifiError::InvalidFeeBps);
                 }
                 if i > 0 {

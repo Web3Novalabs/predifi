@@ -48,6 +48,9 @@ pub const MAX_OPTIONS_COUNT: u32 = 100;
 /// At 7 decimal places (e.g., USDC on Stellar), this equals 100,000,000 USDC.
 pub const MAX_INITIAL_LIQUIDITY: i128 = 100_000_000_000_000;
 
+/// Maximum protocol fee in basis points. 10,000 bps equals 100%.
+pub const MAX_FEE_BPS: u32 = 10_000;
+
 /// Sentinel value used to indicate that a pool outcome has not been resolved yet.
 /// This allows us to distinguish between "outcome 0 won" and "pool not resolved".
 pub const UNRESOLVED_OUTCOME: u32 = u32::MAX;
@@ -108,6 +111,11 @@ mod tests {
     #[test]
     fn test_max_initial_liquidity_is_positive() {
         assert!(MAX_INITIAL_LIQUIDITY > 0);
+    }
+
+    #[test]
+    fn test_max_fee_bps_equals_100_percent() {
+        assert_eq!(MAX_FEE_BPS, 10_000);
     }
 
     #[test]

@@ -1483,6 +1483,47 @@ fn test_admin_can_set_fee_bps() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #93)")]
+fn test_init_rejects_fee_bps_above_100_percent() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    let treasury = Address::generate(&env);
+
+    client.init(&ac_id, &treasury, &10_001u32, &0u64, &3600u64, &0u32);
+}
+
+#[test]
+fn test_set_fee_bps_rejects_above_100_percent() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let result = client.try_set_fee_bps(&admin, &10_001u32);
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidFeeBps)));
+}
+
+#[test]
+fn test_set_fee_bps_allows_exactly_100_percent() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &10_000u32);
+    assert_eq!(client.get_fees().treasury_fee_bps, 10_000);
+}
+
+#[test]
 fn test_admin_can_set_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -10762,8 +10803,8 @@ fn test_update_price_feed_rejects_current_timestamp() {
         &feed_pair,
         &50_000_0000000i128,
         &100i128,
-        &now,           // timestamp == current ledger time
-        &(now + 3600),  // expires_at is fine
+        &now,          // timestamp == current ledger time
+        &(now + 3600), // expires_at is fine
     );
     assert_eq!(
         result,
@@ -10802,7 +10843,7 @@ fn test_update_price_feed_rejects_future_timestamp() {
         &feed_pair,
         &3_000_0000000i128,
         &50i128,
-        &(now + 1),     // timestamp is 1 second in the future
+        &(now + 1), // timestamp is 1 second in the future
         &(now + 3600),
     );
     assert_eq!(
@@ -10842,7 +10883,7 @@ fn test_update_price_feed_accepts_past_timestamp() {
         &feed_pair,
         &200_0000000i128,
         &10i128,
-        &(now - 1),     // 1 second in the past
+        &(now - 1), // 1 second in the past
         &(now + 3600),
     );
 }
@@ -11123,12 +11164,7 @@ fn test_init_oracle_rejects_zero_max_price_age() {
     let (ac_client, client, token_address, _, _, _, operator, _) = setup(&env);
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    let result = client.try_init_oracle(
-        &admin,
-        &Address::generate(&env),
-        &0,
-        &100,
-    );
+    let result = client.try_init_oracle(&admin, &Address::generate(&env), &0, &100);
     assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
 }
 
@@ -11139,12 +11175,7 @@ fn test_init_oracle_rejects_confidence_ratio_above_10000() {
     let (ac_client, client, _, _, _, _, _, _) = setup(&env);
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    let result = client.try_init_oracle(
-        &admin,
-        &Address::generate(&env),
-        &300,
-        &10_001,
-    );
+    let result = client.try_init_oracle(&admin, &Address::generate(&env), &300, &10_001);
     assert_eq!(result, Err(Ok(PredifiError::InvalidFeeBps)));
 }
 
