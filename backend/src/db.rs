@@ -557,6 +557,33 @@ pub async fn get_users_by_winnings(
     Ok(rankings)
 }
 
+/// Mark a pool as settled and record the winning outcome.
+pub async fn resolve_pool_in_db(
+    pool: &PgPool,
+    pool_id: u64,
+    winning_outcome: i32,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE pools SET state = 'settled', result = $1 WHERE pool_id = $2",
+        winning_outcome.to_string(),
+        pool_id as i64,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Mark a pool as closed (cancelled on-chain).
+pub async fn cancel_pool_in_db(pool: &PgPool, pool_id: u64) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        "UPDATE pools SET state = 'closed' WHERE pool_id = $1",
+        pool_id as i64,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Insert a new pool record decoded from a `PoolCreated` contract event.
 pub async fn insert_pool_from_event(
     pool: &PgPool,

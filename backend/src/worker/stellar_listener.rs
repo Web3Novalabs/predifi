@@ -166,6 +166,24 @@ async fn run(rpc_url: String, db: PgPool) {
                                         "failed to process prediction_placed event"
                                     );
                                 }
+                            } else if topic_matches("pool_resolved") {
+                                if let Err(e) = handle_pool_resolved_event(&db, event).await {
+                                    error!(
+                                        id = %event.id,
+                                        ledger = event.ledger,
+                                        error = %e,
+                                        "failed to process pool_resolved event"
+                                    );
+                                }
+                            } else if topic_matches("pool_canceled") {
+                                if let Err(e) = handle_pool_canceled_event(&db, event).await {
+                                    error!(
+                                        id = %event.id,
+                                        ledger = event.ledger,
+                                        error = %e,
+                                        "failed to process pool_canceled event"
+                                    );
+                                }
                             }
                         }
                     }
@@ -245,6 +263,36 @@ async fn handle_prediction_placed_event(
     };
 
     crate::db::insert_prediction_from_event(db, &event)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn handle_pool_resolved_event(db: &PgPool, event: &StellarEvent) -> Result<(), String> {
+    let data = event
+        .data
+        .as_ref()
+        .ok_or_else(|| "missing event data".to_string())?;
+
+    let pool_id = extract_u64(data, "pool_id")
+        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let outcome = extract_i32(data, "outcome")
+        .ok_or_else(|| "missing or invalid outcome".to_string())?;
+
+    crate::db::resolve_pool_in_db(db, pool_id, outcome)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+async fn handle_pool_canceled_event(db: &PgPool, event: &StellarEvent) -> Result<(), String> {
+    let data = event
+        .data
+        .as_ref()
+        .ok_or_else(|| "missing event data".to_string())?;
+
+    let pool_id = extract_u64(data, "pool_id")
+        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+
+    crate::db::cancel_pool_in_db(db, pool_id)
         .await
         .map_err(|e| e.to_string())
 }
