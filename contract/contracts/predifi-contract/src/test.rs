@@ -11162,3 +11162,85 @@ fn test_init_oracle_stores_valid_config() {
     assert_eq!(max_age, 300);
     assert_eq!(confidence, 100);
 }
+
+#[test]
+fn test_duplicate_staking_on_same_outcome() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, _, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Duplicate stake test"),
+            metadata_url: String::from_str(&env, "ipfs://duplicate"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let user = Address::generate(&env);
+    let stake1 = 100i128;
+    let stake2 = 50i128;
+
+    token_admin_client.mint(&user, &(stake1 + stake2));
+
+    client.place_prediction(&user, &pool_id, &stake1, &0, &None, &None);
+    client.place_prediction(&user, &pool_id, &stake2, &0, &None, &None);
+
+    let prediction = client.get_user_prediction(&user, &pool_id);
+    assert_eq!(prediction.amount, stake1 + stake2);
+    assert_eq!(prediction.outcome, 0);
+
+    assert_eq!(token.balance(&contract_addr), stake1 + stake2);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_unauthorized_admin_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let not_admin = Address::generate(&env);
+    client.pause(&not_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_unauthorized_admin_unpause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let not_admin = Address::generate(&env);
+    client.unpause(&not_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_unauthorized_admin_set_max_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let not_admin = Address::generate(&env);
+    client.set_max_predictions_per_user(&not_admin, &10u32);
+}
