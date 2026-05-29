@@ -4020,11 +4020,22 @@ impl PredifiContract {
             .get(&DataKey::PriceFeedList)
             .unwrap_or_else(|| Vec::new(&env));
         if !list.contains(feed_pair.clone()) {
-            list.push_back(feed_pair);
+            list.push_back(feed_pair.clone());
             env.storage()
                 .persistent()
                 .set(&DataKey::PriceFeedList, &list);
         }
+
+        // Emit event so off-chain monitors and indexers can track price updates.
+        PriceFeedUpdatedEvent {
+            oracle,
+            feed_pair,
+            price,
+            confidence,
+            timestamp,
+            expires_at,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -4477,6 +4488,7 @@ impl PredifiContract {
     }
 }
 
+mod edge_case_tests;
 mod fee_tiers_test;
 mod integration_test;
 mod test;

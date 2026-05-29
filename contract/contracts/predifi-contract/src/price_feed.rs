@@ -270,7 +270,8 @@ impl PriceFeedAdapter {
         }
 
         // Calculate tolerance amount
-        let tolerance_amount = (condition.target_price * condition.tolerance_bps as i128) / MAX_TOLERANCE as i128;
+        let tolerance_amount =
+            (condition.target_price * condition.tolerance_bps as i128) / MAX_TOLERANCE as i128;
 
         // Evaluate condition based on operator
         let result = match condition.operator {

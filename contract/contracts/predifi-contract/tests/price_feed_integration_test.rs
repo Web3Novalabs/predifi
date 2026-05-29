@@ -114,16 +114,17 @@ fn test_price_based_pool_mock_resolution() {
     );
 
     // 4. Mock the PriceFeed update
-    let current_time = env.ledger().timestamp();
+    // Advance ledger to a non-zero time so we can use a strictly-past timestamp.
+    env.ledger().with_mut(|li| li.timestamp = 1000);
     let mock_price = 4100_0000000i128; // ETH is now $4100
 
     client.update_price_feed(
         &oracle,
         &asset,
         &mock_price,
-        &100i128, // confidence
-        &current_time,
-        &(current_time + 10000), // expires at
+        &100i128,  // confidence
+        &999u64,   // strictly in the past (< 1000)
+        &10000u64, // expires well after end_time
     );
 
     // 5. Verify Resolution logic
