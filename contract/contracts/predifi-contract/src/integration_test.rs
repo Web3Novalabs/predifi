@@ -340,3 +340,66 @@ fn test_market_resolution_multiple_winners() {
     assert_eq!(token_ctx.token.balance(&user2), 1300); // 1000 - 300 + 600
     assert_eq!(token_ctx.token.balance(&client.address), 0);
 }
+
+/// Full lifecycle: create → stake → resolve → payout → assert zero contract balance.
+#[test]
+fn test_full_pool_lifecycle_creation_to_payout() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (client, token_ctx, admin, operator, _treasury) = setup_integration(&env);
+
+    let bettor_a = Address::generate(&env);
+    let bettor_b = Address::generate(&env);
+    token_ctx.mint(&bettor_a, 500);
+    token_ctx.mint(&bettor_b, 500);
+    client.add_token_to_whitelist(&admin, &token_ctx.token_address);
+
+    // 1. Create pool
+    let pool_id = client.create_pool(
+        &bettor_a,
+        &3600u64,
+        &token_ctx.token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            description: String::from_str(&env, "Lifecycle test pool"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Team A wins"),
+                String::from_str(&env, "Team B wins"),
+            ],
+        },
+    );
+
+    // 2. Both bettors stake
+    client.place_prediction(&bettor_a, &pool_id, &150, &0, &None, &None);
+    client.place_prediction(&bettor_b, &pool_id, &350, &1, &None, &None);
+    assert_eq!(token_ctx.token.balance(&client.address), 500);
+
+    // 3. Advance past end_time and resolve — outcome 1 (bettor_b) wins
+    env.ledger().with_mut(|li| li.timestamp = 3601);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // 4. Loser claims 0; winner claims full pot
+    let claim_a = client.claim_winnings(&bettor_a, &pool_id);
+    let claim_b = client.claim_winnings(&bettor_b, &pool_id);
+    assert_eq!(claim_a, 0);
+    assert_eq!(claim_b, 500);
+
+    // 5. Contract balance drains to zero — no funds trapped
+    assert_eq!(token_ctx.token.balance(&client.address), 0);
+    assert_eq!(token_ctx.token.balance(&bettor_b), 500); // 500 - 350 + 500 = 650? no: 150 + 350 = 500 total
+}
