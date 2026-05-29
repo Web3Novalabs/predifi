@@ -1,4 +1,32 @@
 #!/bin/bash
+#
+# build.sh - Build and optimize PrediFi Soroban smart contracts
+#
+# DESCRIPTION:
+#   Compiles the Soroban contracts to WASM using the Soroban CLI, then
+#   optimizes the resulting WASM binaries with wasm-opt. The optimized
+#   files (suffixed with "_optimized.wasm") are the ones intended for
+#   deployment.
+#
+# USAGE:
+#   ./build.sh
+#
+# PREREQUISITES:
+#   - Rust toolchain with the appropriate wasm target installed
+#   - Soroban CLI (`soroban`) available on PATH
+#   - binaryen (`wasm-opt`) available on PATH:
+#       brew install binaryen        # macOS
+#       apt-get install binaryen     # Ubuntu/Debian
+#
+# OUTPUT:
+#   Original and optimized WASM files in:
+#     target/wasm32-unknown-unknown/release/
+#   Use the "_optimized.wasm" files for deployment.
+#
+# EXIT CODES:
+#   0  Build and optimization completed successfully
+#   1  wasm-opt not found (binaryen not installed)
+#
 set -e
 
 echo "Building Soroban contracts..."
