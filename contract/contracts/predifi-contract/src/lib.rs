@@ -189,6 +189,8 @@ pub enum PredifiError {
     InvalidTimestamp = 80,
     /// Pool has been flagged as disputed and cannot be modified.
     PoolDisputed = 27,
+    /// target_price must be strictly positive.
+    InvalidTargetPrice = 201,
 }
 
 /// Represents the current state of a prediction market.
@@ -1501,6 +1503,11 @@ impl PredifiContract {
                 soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
             }
 
+            // Validate fee_bps on init — consistent with set_fee_bps (INV-6)
+            if !Self::is_valid_fee_bps(fee_bps) {
+                soroban_sdk::panic_with_error!(&env, PredifiError::InvalidFeeBps);
+            }
+
             let config = Config {
                 fee_bps,
                 treasury: treasury.clone(),
@@ -1607,7 +1614,9 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_fee_bps")?;
-        assert!(Self::is_valid_fee_bps(fee_bps), "fee_bps exceeds 10000");
+        if !Self::is_valid_fee_bps(fee_bps) {
+            return Err(PredifiError::InvalidFeeBps);
+        }
         let mut config = Self::get_config(&env);
         config.fee_bps = fee_bps;
         env.storage().instance().set(&DataKey::Config, &config);
@@ -3962,6 +3971,10 @@ impl PredifiContract {
         Self::require_not_paused(&env);
         operator.require_auth();
         Self::require_role(&env, &operator, 1)?; // Role Operator
+
+        if target_price <= 0 {
+            return Err(PredifiError::InvalidTargetPrice);
+        }
 
         let pool_key = DataKey::Pool(pool_id);
         if !env.storage().persistent().has(&pool_key) {
