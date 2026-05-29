@@ -33,6 +33,41 @@
 // - Role 1 (Operator): resolve_pool, cancel_pool, set_stake_limits
 // - Role 3 (Oracle): oracle_resolve (OracleCallback trait)
 //
+// HOW TO BOOTSTRAP THE ADMIN ROLE
+// ─────────────────────────────────
+// The access-control contract must be initialised exactly once before any
+// other protocol contract can use it.  Follow these steps:
+//
+// Step 1 — Deploy the access-control contract.
+//   The contract has no constructor arguments; deploy it like any other
+//   Soroban contract and note its contract address.
+//
+// Step 2 — Call `init(admin_address)`.
+//   This is the ONLY function that can be called before initialisation.
+//   It stores `admin_address` as the sole administrator and automatically
+//   grants it the Admin role (0).  Calling `init` a second time will panic
+//   with `AlreadyInitializedOrConfigNotSet`.
+//
+//   Example (Stellar CLI):
+//     stellar contract invoke --id <ACCESS_CONTROL_ID> \
+//       -- init --admin <ADMIN_ADDRESS>
+//
+// Step 3 — Grant operational roles.
+//   Once initialised, the admin can assign roles to other addresses:
+//     stellar contract invoke --id <ACCESS_CONTROL_ID> \
+//       -- assign_role \
+//          --admin_caller <ADMIN_ADDRESS> \
+//          --user <OPERATOR_ADDRESS> \
+//          --role '{"Operator": null}'
+//
+//   Repeat for Oracle (role 3) and any other roles needed.
+//
+// Step 4 — Pass the access-control address to predifi-contract.
+//   When calling `predifi_contract::init`, supply the deployed
+//   access-control contract address as the `access_control` argument.
+//   The predifi contract will cross-call `has_role` on every privileged
+//   operation to enforce permissions.
+//
 // ROLES ARE ASSIGNED
 // ───────────────────
 // 1. Deploy this access-control contract and call `init(admin)` to set the
@@ -43,7 +78,7 @@
 //    - `revoke_role`: Remove a specific role from a user
 //    - `transfer_role`: Move a role from one user to another
 //    - `revoke_all_roles`: Remove all roles from a user
-//    - `propose_new_admin` + `accept_admin_role`: Two-step admin transfer
+//    - `propose_new_admin` + `accept_admin_role`: Two-step admin transfer (recommended)
 //    - `transfer_admin`: Legacy one-step admin transfer
 // 4. Any contract can check if a user has a role by calling `has_role(user, role)`.
 // 5. The `has_any_role` function allows checking if a user has any of a set of roles.
@@ -203,6 +238,21 @@ pub struct AccessControl;
 
 #[contractimpl]
 impl AccessControl {
+    /// Initialise the access-control contract and set the first administrator.
+    ///
+    /// This function **must be called exactly once** immediately after deployment.
+    /// It stores `admin` as the sole administrator and automatically grants it
+    /// the `Admin` role (discriminant 0).
+    ///
+    /// # Panics
+    /// Panics with `AlreadyInitializedOrConfigNotSet` if called a second time.
+    ///
+    /// # Bootstrap sequence
+    /// 1. Deploy this contract and note its address.
+    /// 2. Call `init(admin_address)` — the admin role is set automatically.
+    /// 3. Use `assign_role` to grant `Operator` / `Oracle` roles as needed.
+    /// 4. Pass this contract's address to `predifi_contract::init` as the
+    ///    `access_control` argument so the main contract can verify permissions.
     pub fn init(env: Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             soroban_sdk::panic_with_error!(&env, PrediFiError::AlreadyInitializedOrConfigNotSet);
