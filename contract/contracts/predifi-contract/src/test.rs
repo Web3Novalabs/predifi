@@ -268,6 +268,7 @@ fn test_increase_max_total_stake_auth_only_happens_at_entry_point() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cap Increase Pool"),
             metadata_url: String::from_str(&env, "ipfs://cap-increase"),
             min_stake: 1i128,
@@ -313,6 +314,7 @@ fn test_resolve_pool_auth_only_happens_at_entry_point() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Resolve Auth Pool"),
             metadata_url: String::from_str(&env, "ipfs://resolve-auth"),
             min_stake: 1i128,
@@ -362,6 +364,7 @@ fn test_oracle_resolve_auth_only_happens_at_entry_point() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Oracle Auth Pool"),
             metadata_url: String::from_str(&env, "ipfs://oracle-auth"),
             min_stake: 1i128,
@@ -413,6 +416,7 @@ fn test_claim_winnings() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -492,6 +496,7 @@ fn test_claim_winnings_zero_share() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Small Stake Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -581,6 +586,7 @@ fn test_claim_winnings_zero_total_winnings_high_fee() {
         &2u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "High Fee Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -677,6 +683,7 @@ fn test_referral_fee_distribution() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Referral Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -734,6 +741,7 @@ fn test_double_claim() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -783,6 +791,7 @@ fn test_claim_unresolved() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -828,6 +837,7 @@ fn test_multiple_pools_independent() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -856,6 +866,7 @@ fn test_multiple_pools_independent() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -908,6 +919,7 @@ fn test_invalid_category_fails() {
         &2u32,
         &Symbol::new(&env, "InvalidCat"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Invalid Category Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -966,6 +978,7 @@ fn test_unauthorized_resolve_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1023,6 +1036,7 @@ fn test_oracle_can_resolve() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1086,6 +1100,7 @@ fn test_unauthorized_oracle_resolve() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1145,6 +1160,7 @@ fn test_oracle_resolve_requires_oracle_role() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Oracle Role Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1300,6 +1316,7 @@ fn test_oracle_resolve_long_proof() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1381,6 +1398,7 @@ fn test_oracle_resolve_utf8_emoji_proof() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1684,6 +1702,7 @@ fn test_paused_blocks_create_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1804,6 +1823,7 @@ fn test_unpause_restores_functionality() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1847,6 +1867,7 @@ fn test_get_user_predictions() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1875,6 +1896,7 @@ fn test_get_user_predictions() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1903,6 +1925,7 @@ fn test_get_user_predictions() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2025,6 +2048,7 @@ fn test_multi_oracle_conflict_returns_error() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Multi-Oracle Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -2093,6 +2117,7 @@ fn test_multi_oracle_same_outcome_resolves_successfully() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Multi-Oracle Test 2"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -2159,6 +2184,7 @@ fn test_single_oracle_insufficient_resolutions_keeps_unresolved() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Multi-Oracle Test 3"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -2219,6 +2245,7 @@ fn test_admin_can_cancel_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2274,6 +2301,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2315,6 +2343,7 @@ fn test_non_admin_non_creator_cannot_cancel() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2370,6 +2399,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool"),
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 0i128,
@@ -2548,6 +2578,7 @@ fn test_is_whitelisted_tracks_explicit_private_pool_membership() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Private whitelist helper"),
             metadata_url: String::from_str(&env, "ipfs://private-whitelist-helper"),
             min_stake: 1i128,
@@ -2592,6 +2623,7 @@ fn test_is_whitelisted_returns_false_for_public_pool_without_entry() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Public whitelist helper"),
             metadata_url: String::from_str(&env, "ipfs://public-whitelist-helper"),
             min_stake: 1i128,
@@ -2632,6 +2664,7 @@ fn test_add_to_whitelist_is_idempotent_for_already_whitelisted_user() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Private pool for idempotency test"),
             metadata_url: String::from_str(&env, "ipfs://idempotency-test"),
             min_stake: 1i128,
@@ -2721,6 +2754,7 @@ fn test_place_prediction_fails_for_non_whitelisted_token() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "desc"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 10i128,
@@ -2775,6 +2809,7 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "desc"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 10i128,
@@ -2834,6 +2869,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2898,6 +2934,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2958,6 +2995,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -3022,6 +3060,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -3089,6 +3128,7 @@ fn test_cancel_pool_refunds_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cancel Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3136,6 +3176,7 @@ fn test_cannot_cancel_resolved_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Resolve Then Cancel Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3198,6 +3239,7 @@ fn test_cancel_pool_after_resolution_returns_invalid_pool_state() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "State Transition Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3267,6 +3309,7 @@ fn test_cannot_resolve_canceled_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3308,6 +3351,7 @@ fn test_cannot_predict_on_canceled_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Predict Canceled Pool Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3362,6 +3406,7 @@ fn test_resolve_pool_before_delay() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Delay Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3420,6 +3465,7 @@ fn test_resolve_pool_logs_reason_when_resolution_delay_not_met() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Delay log test"),
             metadata_url: String::from_str(&env, "ipfs://delay-log"),
             min_stake: 1i128,
@@ -3483,6 +3529,7 @@ fn test_resolve_pool_after_delay() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Delay Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3534,6 +3581,7 @@ fn test_mark_pool_ready() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Ready Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3585,6 +3633,7 @@ fn test_stake_below_minimum_rejected() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Min Stake Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 50i128,
@@ -3627,6 +3676,7 @@ fn test_stake_above_maximum_rejected() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max Stake Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3670,6 +3720,7 @@ fn test_stake_at_boundaries_accepted() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Boundary Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 10i128,
@@ -3712,6 +3763,7 @@ fn test_set_stake_limits_by_operator() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Update Limits Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3753,6 +3805,7 @@ fn test_set_stake_limits_unauthorized() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Unauthorized Limits Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3791,6 +3844,7 @@ fn test_set_stake_limits_zero_min_stake_returns_error() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Min Stake Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3828,6 +3882,7 @@ fn test_set_stake_limits_max_below_min_returns_error() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max Below Min Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3869,6 +3924,7 @@ fn test_set_stake_limits_min_equals_max_is_valid() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Equal Stakes Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3909,6 +3965,7 @@ fn test_set_stake_limits_min_greater_than_max_returns_error() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Min Greater Than Max Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3953,6 +4010,7 @@ fn test_set_stake_limits_max_zero_means_unlimited() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Unlimited Max Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3996,6 +4054,7 @@ fn test_get_pools_by_category() {
         &2u32,
         &cat1,
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 0"),
             metadata_url: String::from_str(&env, "ipfs://0"),
             min_stake: 1i128,
@@ -4020,6 +4079,7 @@ fn test_get_pools_by_category() {
         &2u32,
         &cat1,
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1i128,
@@ -4044,6 +4104,7 @@ fn test_get_pools_by_category() {
         &2u32,
         &cat2,
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1i128,
@@ -4217,6 +4278,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
         &2u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1 - Token 1"),
             metadata_url: String::from_str(&env, "ipfs://pool1"),
             min_stake: 1i128,
@@ -4242,6 +4304,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
         &2u32,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2 - Token 2"),
             metadata_url: String::from_str(&env, "ipfs://pool2"),
             min_stake: 1i128,
@@ -4377,6 +4440,7 @@ fn test_get_pool_stats() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: // Binary pool
         String::from_str(&env, "Stats Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
@@ -4439,6 +4503,7 @@ fn test_get_pool_stats_with_initial_liquidity() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Initial Liquidity Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -4521,6 +4586,7 @@ fn test_pool_end_time_on_leap_day() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Leap year pool"),
             metadata_url: String::from_str(&env, "ipfs://leap"),
             min_stake: 1i128,
@@ -4566,6 +4632,7 @@ fn test_pool_end_time_at_leap_day_already_past() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Expired leap pool"),
             metadata_url: String::from_str(&env, "ipfs://expired"),
             min_stake: 1i128,
@@ -4606,6 +4673,7 @@ fn test_pool_end_time_spans_leap_day_resolution() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Leap span pool"),
             metadata_url: String::from_str(&env, "ipfs://span"),
             min_stake: 1i128,
@@ -4666,6 +4734,7 @@ fn test_maximum_single_stake_roundtrip() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max stake pool"),
             metadata_url: String::from_str(&env, "ipfs://max"),
             min_stake: 1i128,
@@ -4714,6 +4783,7 @@ fn test_large_stake_winnings_split_correctly() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Large stake split"),
             metadata_url: String::from_str(&env, "ipfs://large"),
             min_stake: 1i128,
@@ -4778,6 +4848,7 @@ fn test_double_resolution_attempt() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Double resolve"),
             metadata_url: String::from_str(&env, "ipfs://double"),
             min_stake: 1i128,
@@ -4819,6 +4890,7 @@ fn test_many_users_rapid_claim_after_resolution() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Rapid claim"),
             metadata_url: String::from_str(&env, "ipfs://rapid"),
             min_stake: 1i128,
@@ -4894,6 +4966,7 @@ fn test_resolution_then_new_pool_state_isolation() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -4927,6 +5000,7 @@ fn test_resolution_then_new_pool_state_isolation() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -4975,6 +5049,7 @@ fn test_create_pool_rejects_zero_min_stake() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero min stake"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 0i128, // invalid
@@ -5010,6 +5085,7 @@ fn test_create_pool_rejects_single_option() {
         &1u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Single option pool"), // invalid
             metadata_url: String::from_str(&env, "ipfs://single"),
             min_stake: 1i128,
@@ -5041,6 +5117,7 @@ fn test_create_pool_rejects_excess_options_count() {
         &101u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Too many options"),
             metadata_url: String::from_str(&env, "ipfs://many"),
             min_stake: 1i128,
@@ -5175,6 +5252,7 @@ fn test_create_pool_accepts_maximum_options_count() {
         &100u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max options pool"),
             metadata_url: String::from_str(&env, "ipfs://maxopts"),
             min_stake: 1i128,
@@ -5314,6 +5392,7 @@ fn test_place_prediction_rejects_out_of_bounds_outcome() {
         &3u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Three options"),
             metadata_url: String::from_str(&env, "ipfs://three"),
             min_stake: 1i128,
@@ -5356,6 +5435,7 @@ fn test_place_prediction_rejects_outcome_equal_to_options_count() {
         &5u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Five options"),
             metadata_url: String::from_str(&env, "ipfs://five"),
             min_stake: 1i128,
@@ -5400,6 +5480,7 @@ fn test_place_prediction_all_valid_outcomes() {
         &options_count,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Ten options"),
             metadata_url: String::from_str(&env, "ipfs://ten"),
             min_stake: 1i128,
@@ -5459,6 +5540,7 @@ fn test_stakes_length_consistency_with_options_count() {
         &options_count,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Seven options"),
             metadata_url: String::from_str(&env, "ipfs://seven"),
             min_stake: 1i128,
@@ -5532,6 +5614,7 @@ fn test_outcome_bounds_with_maximum_options_count() {
         &100u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max options pool"),
             metadata_url: String::from_str(&env, "ipfs://maxopts"),
             min_stake: 1i128,
@@ -5681,6 +5764,7 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Too short pool"),
             metadata_url: String::from_str(&env, "ipfs://short"),
             min_stake: 1i128,
@@ -5718,6 +5802,7 @@ fn test_create_pool_rejects_zero_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero duration pool"),
             metadata_url: String::from_str(&env, "ipfs://zero-duration"),
             min_stake: 1i128,
@@ -5754,6 +5839,7 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Min duration pool"),
             metadata_url: String::from_str(&env, "ipfs://mintime"),
             min_stake: 1i128,
@@ -5792,6 +5878,7 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Inverted stake limits"),
             metadata_url: String::from_str(&env, "ipfs://inverted"),
             min_stake: 100i128,
@@ -5826,6 +5913,7 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Equal stake limits"),
             metadata_url: String::from_str(&env, "ipfs://equal"),
             min_stake: 100i128,
@@ -5865,6 +5953,7 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
         &3u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "OOB outcome"),
             metadata_url: String::from_str(&env, "ipfs://oob"),
             min_stake: 1i128,
@@ -5909,6 +5998,7 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Auth test pool"),
             metadata_url: String::from_str(&env, "ipfs://auth"),
             min_stake: 1i128,
@@ -5975,6 +6065,7 @@ fn test_unauthorized_admin_op_does_not_mutate_state() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Post-attack pool"),
             metadata_url: String::from_str(&env, "ipfs://postattack"),
             min_stake: 1i128,
@@ -6011,6 +6102,7 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cancel guard pool"),
             metadata_url: String::from_str(&env, "ipfs://guard"),
             min_stake: 1i128,
@@ -6060,6 +6152,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 0"),
             metadata_url: String::from_str(&env, "ipfs://0"),
             min_stake: 1i128,
@@ -6085,6 +6178,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1i128,
@@ -6110,6 +6204,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1i128,
@@ -6135,6 +6230,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 3"),
             metadata_url: String::from_str(&env, "ipfs://3"),
             min_stake: 1i128,
@@ -6160,6 +6256,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 4"),
             metadata_url: String::from_str(&env, "ipfs://4"),
             min_stake: 1i128,
@@ -6258,6 +6355,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A (cancel)"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -6283,6 +6381,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B (resolve)"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -6348,6 +6447,7 @@ fn test_all_bettors_on_winning_side() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "All win pool"),
             metadata_url: String::from_str(&env, "ipfs://allwin"),
             min_stake: 1i128,
@@ -6405,6 +6505,7 @@ fn test_no_bettor_on_winning_side() {
         &3u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Empty winner pool"),
             metadata_url: String::from_str(&env, "ipfs://emptywinner"),
             min_stake: 1i128,
@@ -6607,6 +6708,7 @@ fn test_is_pool_active_returns_true_for_active_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Active pool test"),
             metadata_url: String::from_str(&env, "ipfs://active"),
             min_stake: 1i128,
@@ -6659,6 +6761,7 @@ fn create_test_pool(
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(env, "bump_ttl test pool"),
             metadata_url: String::from_str(
                 env,
@@ -6697,6 +6800,7 @@ fn test_is_pool_active_false_after_resolve() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Resolve inactive test"),
             metadata_url: String::from_str(&env, "ipfs://resolved"),
             min_stake: 1i128,
@@ -6738,6 +6842,7 @@ fn test_is_pool_active_false_after_cancel() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cancel inactive test"),
             metadata_url: String::from_str(&env, "ipfs://canceled"),
             min_stake: 1i128,
@@ -6781,6 +6886,7 @@ fn test_is_pool_active_blocks_resolve_on_canceled_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cancel then resolve test"),
             metadata_url: String::from_str(&env, "ipfs://cancelresolve"),
             min_stake: 1i128,
@@ -6823,6 +6929,7 @@ fn test_is_pool_active_blocks_double_cancel() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Double cancel test"),
             metadata_url: String::from_str(&env, "ipfs://doublecancel"),
             min_stake: 1i128,
@@ -6863,6 +6970,7 @@ fn test_is_pool_active_blocks_increase_max_stake_on_resolved_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max stake resolved test"),
             metadata_url: String::from_str(&env, "ipfs://maxresolved"),
             min_stake: 1i128,
@@ -6905,6 +7013,7 @@ fn test_is_pool_active_full_lifecycle() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Lifecycle test"),
             metadata_url: String::from_str(&env, "ipfs://lifecycle"),
             min_stake: 1i128,
@@ -7153,6 +7262,7 @@ fn test_get_pool_config_matches_creation_params() {
     let required_resolutions = 1u32;
 
     let config = PoolConfig {
+            start_time: 0,
         description: description.clone(),
         metadata_url: metadata_url.clone(),
         min_stake,
@@ -7200,6 +7310,7 @@ fn test_get_pool_config_private_pool_with_whitelist_key() {
 
     let whitelist_key = symbol_short!("secret");
     let config = PoolConfig {
+            start_time: 0,
         description: String::from_str(&env, "Private pool"),
         metadata_url: String::from_str(&env, "ipfs://test"),
         min_stake: 1i128,
@@ -7242,6 +7353,7 @@ fn test_get_pool_config_with_initial_liquidity() {
 
     let initial_liquidity = 200i128;
     let config = PoolConfig {
+            start_time: 0,
         description: String::from_str(&env, "Liquidity pool"),
         metadata_url: String::from_str(&env, "ipfs://test"),
         min_stake: 5i128,
@@ -7292,6 +7404,7 @@ fn test_get_pool_config_multiple_pools_independent() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, ""),
             min_stake: 1i128,
@@ -7317,6 +7430,7 @@ fn test_get_pool_config_multiple_pools_independent() {
         &3u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, ""),
             min_stake: 10i128,
@@ -7417,6 +7531,7 @@ fn test_create_pool_with_max_total_stake() {
         &2u32,
         &Symbol::new(&env, "Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Capped pool"),
             metadata_url: String::from_str(&env, "https://example.com"),
             min_stake: 100,
@@ -7453,6 +7568,7 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
         &2u32,
         &Symbol::new(&env, "Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Unlimited pool"),
             metadata_url: String::from_str(&env, "https://example.com"),
             min_stake: 100,
@@ -7506,6 +7622,7 @@ fn test_get_active_pools_contains_new_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Active pool"),
             metadata_url: String::from_str(&env, "ipfs://active"),
             min_stake: 1i128,
@@ -7550,6 +7667,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
         &3u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Match outcome"),
             metadata_url: String::from_str(&env, "ipfs://match"),
             min_stake: 1i128,
@@ -7596,6 +7714,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Tech"),
 //         &PoolConfig {
+            start_time: 0,
 //             description: String::from_str(&env, "Tech pool"),
 //             metadata_url: String::from_str(&env, "ipfs://tech"),
 //             min_stake: 1i128,
@@ -7616,6 +7735,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Sports"),
 //         &PoolConfig {
+            start_time: 0,
 //             description: String::from_str(&env, "Sports pool"),
 //             metadata_url: String::from_str(&env, "ipfs://sports"),
 //             min_stake: 1i128,
@@ -7636,6 +7756,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Crypto"),
 //         &PoolConfig {
+            start_time: 0,
 //             description: String::from_str(&env, "Crypto pool"),
 //             metadata_url: String::from_str(&env, "ipfs://crypto"),
 //             min_stake: 1i128,
@@ -7656,6 +7777,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Finance"),
 //         &PoolConfig {
+            start_time: 0,
 //             description: String::from_str(&env, "Finance pool"),
 //             metadata_url: String::from_str(&env, "ipfs://finance"),
 //             min_stake: 1i128,
@@ -7695,6 +7817,7 @@ fn test_outcome_descriptions_length_mismatch_panics() {
         &3u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Mismatch test"),
             metadata_url: String::from_str(&env, "ipfs://mismatch"),
             min_stake: 1i128,
@@ -7729,6 +7852,7 @@ fn test_get_active_pools_excludes_resolved_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -7754,6 +7878,7 @@ fn test_get_active_pools_excludes_resolved_pool() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -7797,6 +7922,7 @@ fn test_get_active_pools_excludes_canceled_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -7822,6 +7948,7 @@ fn test_get_active_pools_excludes_canceled_pool() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -7890,6 +8017,7 @@ fn test_create_pool_respects_configurable_min_duration() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Short Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -7926,6 +8054,7 @@ fn test_get_active_pools_pagination() {
             &2u32,
             &symbol_short!("Tech"),
             &PoolConfig {
+            start_time: 0,
                 description: String::from_str(&env, "Pool"),
                 metadata_url: String::from_str(&env, "ipfs://p"),
                 min_stake: 1i128,
@@ -8020,6 +8149,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_a = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"),
 //         &PoolConfig {
+            start_time: 0,
 //             description: String::from_str(&env, "A"),
 //             metadata_url: String::from_str(&env, "ipfs://a"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -8031,6 +8161,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_b = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Sports"),
 //         &PoolConfig {
+            start_time: 0,
 //             description: String::from_str(&env, "B"),
 //             metadata_url: String::from_str(&env, "ipfs://b"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -8042,6 +8173,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_c = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Crypto"),
 //         &PoolConfig {
+            start_time: 0,
 //             description: String::from_str(&env, "C"),
 //             metadata_url: String::from_str(&env, "ipfs://c"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -8079,6 +8211,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -8103,6 +8236,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -8127,6 +8261,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
         &2u32,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "C"),
             metadata_url: String::from_str(&env, "ipfs://c"),
             min_stake: 1i128,
@@ -8170,6 +8305,7 @@ fn test_get_active_pools_empty_after_all_resolved() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -8194,6 +8330,7 @@ fn test_get_active_pools_empty_after_all_resolved() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -8238,6 +8375,7 @@ fn test_get_active_pools_excludes_oracle_resolved_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -8262,6 +8400,7 @@ fn test_get_active_pools_excludes_oracle_resolved_pool() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -8305,6 +8444,7 @@ fn test_pool_created_event_contains_creator() {
         &2u32,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://..."),
             min_stake: 100,
@@ -8384,6 +8524,7 @@ fn test_claim_winnings_blocks_reentrancy() {
         &2,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Rogue Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://..."),
             min_stake: 100,
@@ -8410,6 +8551,7 @@ fn test_claim_winnings_blocks_reentrancy() {
         &2,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Rogue Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://..."),
             min_stake: 100,
@@ -8475,6 +8617,7 @@ fn test_creator_can_cancel_empty_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Empty Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -8519,6 +8662,7 @@ fn test_cancel_pool_zero_participants_state_is_canceled() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8558,6 +8702,7 @@ fn test_cancel_pool_zero_participants_no_contract_balance_change() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8603,6 +8748,7 @@ fn test_any_user_can_cancel_overdue_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Overdue Pool"),
             metadata_url: String::from_str(&env, "ipfs://overdue"),
             min_stake: 1i128,
@@ -8687,6 +8833,7 @@ fn test_claim_refund_on_zero_participant_canceled_pool_returns_error() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8729,6 +8876,7 @@ fn test_claim_winnings_on_zero_participant_canceled_pool_returns_zero() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8776,6 +8924,7 @@ fn test_create_pool_rejects_metadata_url_exceeding_512_bytes() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Valid description"),
             metadata_url: long_url,
             min_stake: 1i128,
@@ -8811,6 +8960,7 @@ fn test_create_pool_accepts_metadata_url_at_512_bytes() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Valid description"),
             metadata_url: exact_url.clone(),
             min_stake: 1i128,
@@ -8847,6 +8997,7 @@ fn test_create_pool_accepts_empty_metadata_url() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Valid description"),
             metadata_url: String::from_str(&env, ""),
             min_stake: 1i128,
@@ -8885,6 +9036,7 @@ fn test_cancel_pool_zero_participants_removed_from_active_index() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8929,6 +9081,7 @@ fn test_cancel_pool_zero_participants_catpoolix_still_readable() {
         &2u32,
         &category,
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8975,6 +9128,7 @@ fn test_creator_cannot_cancel_pool_with_bets() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool with bets"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -9014,6 +9168,7 @@ fn test_operator_can_cancel_pool_with_bets() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool with bets"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -9103,6 +9258,7 @@ fn test_pool_created_with_each_category() {
             &2u32,
             &cat,
             &PoolConfig {
+            start_time: 0,
                 description: String::from_str(&env, "Category test pool"),
                 metadata_url: String::from_str(&env, "ipfs://test"),
                 min_stake: 1i128,
@@ -9168,6 +9324,7 @@ fn test_get_contract_info_returns_config_and_stats() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
     let pool_config = PoolConfig {
+            start_time: 0,
         description: String::from_str(&env, "Pool"),
         metadata_url: String::from_str(&env, "ipfs://pool"),
         min_stake: 1i128,
@@ -9250,6 +9407,7 @@ fn test_whitelist_events_emitted() {
         &2u32,
         &symbol_short!("Other"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Will it rain?"),
             metadata_url: String::from_str(&env, ""),
             min_stake: 1_000_000i128,
@@ -9371,6 +9529,7 @@ fn test_create_pool_rejects_zero_min_total_stake() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero min_total_stake pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -9408,6 +9567,7 @@ fn test_create_pool_accepts_positive_min_total_stake() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Valid min_total_stake pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -9473,6 +9633,7 @@ fn test_max_predictions_per_user_enforcement() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://pool1"),
             min_stake: 1i128,
@@ -9499,6 +9660,7 @@ fn test_max_predictions_per_user_enforcement() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://pool2"),
             min_stake: 1i128,
@@ -9525,6 +9687,7 @@ fn test_max_predictions_per_user_enforcement() {
         &2u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 3"),
             metadata_url: String::from_str(&env, "ipfs://pool3"),
             min_stake: 1i128,
@@ -9577,6 +9740,7 @@ fn test_max_predictions_per_user_zero_means_no_limit() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://pool1"),
             min_stake: 1i128,
@@ -9602,6 +9766,7 @@ fn test_max_predictions_per_user_zero_means_no_limit() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://pool2"),
             min_stake: 1i128,
@@ -9627,6 +9792,7 @@ fn test_max_predictions_per_user_zero_means_no_limit() {
         &2u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 3"),
             metadata_url: String::from_str(&env, "ipfs://pool3"),
             min_stake: 1i128,
@@ -9676,6 +9842,7 @@ fn test_max_predictions_per_user_same_pool_stake_increase() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -9708,6 +9875,7 @@ fn test_max_predictions_per_user_same_pool_stake_increase() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://pool2"),
             min_stake: 1i128,
@@ -9806,6 +9974,7 @@ fn test_prediction_cooldown_blocks_rapid_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://cooldown"),
             min_stake: 1i128,
@@ -9851,6 +10020,7 @@ fn test_prediction_cooldown_allows_prediction_after_elapsed_time() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://cooldown"),
             min_stake: 1i128,
@@ -9937,6 +10107,7 @@ fn test_update_pool_description_by_creator_before_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Will BTC hit 100k?"),
             metadata_url: String::from_str(&env, "ipfs://desc-test"),
             min_stake: 1i128,
@@ -9977,6 +10148,7 @@ fn test_update_pool_description_by_admin_before_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Original description"),
             metadata_url: String::from_str(&env, "ipfs://admin-desc-test"),
             min_stake: 1i128,
@@ -10020,6 +10192,7 @@ fn test_update_pool_description_locked_after_prediction() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Original description"),
             metadata_url: String::from_str(&env, "ipfs://locked-desc-test"),
             min_stake: 1i128,
@@ -10073,6 +10246,7 @@ fn test_update_pool_description_unauthorized() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Original description"),
             metadata_url: String::from_str(&env, "ipfs://unauth-desc-test"),
             min_stake: 1i128,
@@ -10120,6 +10294,7 @@ fn test_batch_claim_winnings_three_pools() {
             &2u32,
             &symbol_short!("Sports"),
             &PoolConfig {
+            start_time: 0,
                 description: String::from_str(&env, desc),
                 metadata_url: String::from_str(&env, "ipfs://test"),
                 min_stake: 1i128,
@@ -10258,6 +10433,7 @@ fn test_prediction_cooldown_first_prediction_always_allowed() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "First prediction pool"),
             metadata_url: String::from_str(&env, "ipfs://first-pred"),
             min_stake: 1i128,
@@ -10303,6 +10479,7 @@ fn test_prediction_cooldown_boundary_one_second_before_is_rejected() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Boundary pool"),
             metadata_url: String::from_str(&env, "ipfs://boundary"),
             min_stake: 1i128,
@@ -10362,6 +10539,7 @@ fn test_prediction_cooldown_is_per_user_independent() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Per-user cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://per-user"),
             min_stake: 1i128,
@@ -10415,6 +10593,7 @@ fn test_prediction_cooldown_disabled_allows_rapid_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "No cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://no-cooldown"),
             min_stake: 1i128,
@@ -10489,6 +10668,7 @@ fn test_prediction_cooldown_resets_after_each_successful_prediction() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Reset cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://reset-cooldown"),
             min_stake: 1i128,
@@ -10546,6 +10726,7 @@ fn test_create_pool_rejects_end_time_beyond_max_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "100-year pool"),
             metadata_url: String::from_str(&env, "ipfs://toofar"),
             min_stake: 1i128,
@@ -10580,6 +10761,7 @@ fn test_create_pool_accepts_end_time_at_max_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max duration pool"),
             metadata_url: String::from_str(&env, "ipfs://maxdur"),
             min_stake: 1i128,
@@ -10620,6 +10802,7 @@ fn test_flag_disputed_pool_moderator_succeeds() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Dispute test pool"),
             metadata_url: String::from_str(&env, "ipfs://dispute"),
             min_stake: 1i128,
@@ -10664,6 +10847,7 @@ fn test_flag_disputed_pool_unauthorized_fails() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Dispute test pool"),
             metadata_url: String::from_str(&env, "ipfs://dispute"),
             min_stake: 1i128,
@@ -10707,6 +10891,7 @@ fn test_flag_disputed_pool_already_resolved_fails() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Resolved pool"),
             metadata_url: String::from_str(&env, "ipfs://resolved"),
             min_stake: 1i128,
@@ -10967,6 +11152,7 @@ fn test_conflicting_oracle_votes_outcome_0_vs_1() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Conflicting Oracle Test"),
             metadata_url: String::from_str(&env, "ipfs://conflict-test"),
             min_stake: 1i128,
@@ -11065,6 +11251,7 @@ fn test_conflicting_oracle_votes_third_oracle_resolves_majority() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Three Oracle Conflict Test"),
             metadata_url: String::from_str(&env, "ipfs://three-oracle-conflict"),
             min_stake: 1i128,
@@ -11173,6 +11360,7 @@ fn test_duplicate_staking_on_same_outcome() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Duplicate stake test"),
             metadata_url: String::from_str(&env, "ipfs://duplicate"),
             min_stake: 1i128,

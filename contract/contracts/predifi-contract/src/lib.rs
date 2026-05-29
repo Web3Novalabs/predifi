@@ -216,6 +216,8 @@ pub enum MarketState {
 #[contracttype]
 #[derive(Clone)]
 pub struct CreatePoolParams {
+    /// Unix timestamp at which the pool opens for predictions.
+    pub start_time: u64,
     /// Unix timestamp after which no more predictions are accepted.
     pub end_time: u64,
     /// The Stellar token contract address used for staking.
@@ -256,8 +258,10 @@ pub struct CreatePoolParams {
 #[contracttype]
 #[derive(Clone)]
 pub struct Pool {
+    /// Unix timestamp at which the pool opens for predictions.
+    pub start_time: u64,
     /// Unix timestamp after which no more predictions (stakes) are accepted.
-    /// This defines the end of the "betting window".
+    /// This defines the end of the "betting window". Must be > start_time.
     pub end_time: u64,
     /// Current operational state of the market.
     /// Possible values: `Active` (betting open), `Resolved` (result final), `Canceled` (refunds available).
@@ -317,6 +321,9 @@ pub struct Pool {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolConfig {
+    /// Unix timestamp at which the pool opens for predictions.
+    /// Must be less than `end_time`.
+    pub start_time: u64,
     /// A short, human-readable title or question for the prediction market (max 256 bytes).
     pub description: String,
     /// A URL (e.g., IPFS URI) pointing to extended metadata, rules, or rich media (max 512 bytes).
@@ -2234,6 +2241,11 @@ impl PredifiContract {
 
         let current_time = env.ledger().timestamp();
 
+        // Validate: end_time must be greater than start_time
+        if end_time <= config.start_time {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidTimestamp);
+        }
+
         // Validate: end_time must be in the future
         assert!(end_time > current_time, "end_time must be in the future");
 
@@ -2338,6 +2350,7 @@ impl PredifiContract {
             .unwrap_or(0);
         // Initialize pool data structure
         let pool = Pool {
+            start_time: config.start_time,
             end_time,
             state: MarketState::Active,
             outcome: UNRESOLVED_OUTCOME,
@@ -3590,6 +3603,7 @@ impl PredifiContract {
             .expect("Pool not found");
         Self::extend_persistent(&env, &pool_key);
         PoolConfig {
+            start_time: pool.start_time,
             description: pool.description,
             metadata_url: pool.metadata_url,
             min_stake: pool.min_stake,
