@@ -65,6 +65,11 @@ pub const MAX_POOL_DURATION: u64 = 31_536_000;
 /// At 7 decimal places (e.g., USDC on Stellar), this equals 100 USDC.
 pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000_000;
 
+/// Maximum tolerance in basis points (1 bp = 0.01%).
+/// Used as the denominator for calculating tolerance amounts in price conditions.
+/// This represents 100% (10,000 basis points = 100%).
+pub const MAX_TOLERANCE: u32 = 10_000;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // VERSION CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════

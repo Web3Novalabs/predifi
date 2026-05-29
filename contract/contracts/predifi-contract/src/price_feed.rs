@@ -12,7 +12,7 @@
 //! 4. **Resolve Pool**: Once the market ends, call `resolve_pool_from_price` to automatically
 //!    determine the winning outcome based on the latest valid price data.
 
-use crate::{DataKey, PredifiError};
+use crate::{DataKey, PredifiError, MAX_TOLERANCE};
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec};
 
 /// Price feed data structure for external oracle integration.
@@ -270,7 +270,7 @@ impl PriceFeedAdapter {
         }
 
         // Calculate tolerance amount
-        let tolerance_amount = (condition.target_price * condition.tolerance_bps as i128) / 10000;
+        let tolerance_amount = (condition.target_price * condition.tolerance_bps as i128) / MAX_TOLERANCE as i128;
 
         // Evaluate condition based on operator
         let result = match condition.operator {
