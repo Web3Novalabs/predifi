@@ -533,6 +533,7 @@ mod tests {
                 &2u32,
                 &symbol_short!("Tech"),
                 &PoolConfig {
+            start_time: 0,
                     description: String::from_str(&env, "Test pool"),
                     metadata_url: String::from_str(&env, "ipfs://test"),
                     min_stake: 1i128,

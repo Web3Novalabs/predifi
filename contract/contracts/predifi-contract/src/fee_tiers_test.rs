@@ -58,6 +58,7 @@ fn test_dynamic_fee_tiers_application() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Low Volume Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -92,6 +93,7 @@ fn test_dynamic_fee_tiers_application() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Med Volume Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -136,6 +138,7 @@ fn test_dynamic_fee_tiers_application() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "High Volume Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -242,6 +245,7 @@ fn test_fee_tier_treasury_intake() {
             &2u32,
             &symbol_short!("Tech"),
             &PoolConfig {
+            start_time: 0,
                 description: String::from_str(&env, "pool"),
                 metadata_url: String::from_str(&env, "ipfs://x"),
                 min_stake: 1i128,
@@ -419,6 +423,7 @@ fn test_fee_tiers_full_lifecycle() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1,
@@ -459,6 +464,7 @@ fn test_fee_tiers_full_lifecycle() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1,
@@ -499,6 +505,7 @@ fn test_fee_tiers_full_lifecycle() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 3"),
             metadata_url: String::from_str(&env, "ipfs://3"),
             min_stake: 1,

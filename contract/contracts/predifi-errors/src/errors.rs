@@ -398,4 +398,415 @@ mod tests {
             "message should help explain access failure"
         );
     }
+
+    // --- Exhaustive per-variant tests ---
+
+    #[test]
+    fn not_initialized() {
+        let e = PrediFiError::NotInitialized;
+        assert_eq!(e.code(), 1);
+        assert_eq!(e.category(), "initialization");
+        assert_eq!(e.label(), "INIT_NOT_INITIALIZED");
+        assert!(!e.is_recoverable());
+        assert!(!e.as_str().is_empty());
+    }
+
+    #[test]
+    fn already_initialized_or_config_not_set() {
+        let e = PrediFiError::AlreadyInitializedOrConfigNotSet;
+        assert_eq!(e.code(), 2);
+        assert_eq!(e.category(), "initialization");
+        assert_eq!(e.label(), "INIT_ALREADY_INITIALIZED_OR_CONFIG_NOT_SET");
+        assert!(!e.is_recoverable());
+    }
+
+    #[test]
+    fn unauthorized() {
+        let e = PrediFiError::Unauthorized;
+        assert_eq!(e.code(), 10);
+        assert_eq!(e.category(), "authorization");
+        assert_eq!(e.label(), "AUTH_UNAUTHORIZED");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn insufficient_permissions() {
+        let e = PrediFiError::InsufficientPermissions;
+        assert_eq!(e.code(), 11);
+        assert_eq!(e.category(), "authorization");
+        assert_eq!(e.label(), "AUTH_INSUFFICIENT_PERMISSIONS");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn pool_not_found() {
+        let e = PrediFiError::PoolNotFound;
+        assert_eq!(e.code(), 20);
+        assert_eq!(e.category(), "pool_state");
+        assert_eq!(e.label(), "POOL_NOT_FOUND");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn pool_already_resolved() {
+        let e = PrediFiError::PoolAlreadyResolved;
+        assert_eq!(e.code(), 21);
+        assert_eq!(e.category(), "pool_state");
+        assert_eq!(e.label(), "POOL_ALREADY_RESOLVED");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn pool_not_resolved() {
+        let e = PrediFiError::PoolNotResolved;
+        assert_eq!(e.code(), 22);
+        assert_eq!(e.category(), "pool_state");
+        assert_eq!(e.label(), "POOL_NOT_RESOLVED");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn pool_expiry_error() {
+        let e = PrediFiError::PoolExpiryError;
+        assert_eq!(e.code(), 23);
+        assert_eq!(e.category(), "pool_state");
+        assert_eq!(e.label(), "POOL_EXPIRY_ERROR");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_pool_state() {
+        let e = PrediFiError::InvalidPoolState;
+        assert_eq!(e.code(), 24);
+        assert_eq!(e.category(), "pool_state");
+        assert_eq!(e.label(), "POOL_INVALID_STATE");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_outcome() {
+        let e = PrediFiError::InvalidOutcome;
+        assert_eq!(e.code(), 25);
+        assert_eq!(e.category(), "pool_state");
+        assert_eq!(e.label(), "POOL_INVALID_OUTCOME");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn state_error() {
+        let e = PrediFiError::StateError;
+        assert_eq!(e.code(), 26);
+        assert_eq!(e.category(), "pool_state");
+        assert_eq!(e.label(), "POOL_STATE_ERROR");
+        assert!(!e.is_recoverable());
+    }
+
+    #[test]
+    fn prediction_not_found() {
+        let e = PrediFiError::PredictionNotFound;
+        assert_eq!(e.code(), 40);
+        assert_eq!(e.category(), "prediction");
+        assert_eq!(e.label(), "PREDICTION_NOT_FOUND");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn prediction_already_exists() {
+        let e = PrediFiError::PredictionAlreadyExists;
+        assert_eq!(e.code(), 41);
+        assert_eq!(e.category(), "prediction");
+        assert_eq!(e.label(), "PREDICTION_ALREADY_EXISTS");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_prediction_amount() {
+        let e = PrediFiError::InvalidPredictionAmount;
+        assert_eq!(e.code(), 42);
+        assert_eq!(e.category(), "prediction");
+        assert_eq!(e.label(), "PREDICTION_INVALID_AMOUNT");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn prediction_too_late() {
+        let e = PrediFiError::PredictionTooLate;
+        assert_eq!(e.code(), 43);
+        assert_eq!(e.category(), "prediction");
+        assert_eq!(e.label(), "PREDICTION_TOO_LATE");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn insufficient_balance_or_stake_limit() {
+        let e = PrediFiError::InsufficientBalanceOrStakeLimit;
+        assert_eq!(e.code(), 44);
+        assert_eq!(e.category(), "prediction");
+        assert_eq!(e.label(), "PREDICTION_INSUFFICIENT_BALANCE_OR_STAKE_LIMIT");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn already_claimed() {
+        let e = PrediFiError::AlreadyClaimed;
+        assert_eq!(e.code(), 60);
+        assert_eq!(e.category(), "claiming");
+        assert_eq!(e.label(), "CLAIM_ALREADY_CLAIMED");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn not_a_winner() {
+        let e = PrediFiError::NotAWinner;
+        assert_eq!(e.code(), 61);
+        assert_eq!(e.category(), "claiming");
+        assert_eq!(e.label(), "CLAIM_NOT_A_WINNER");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn reward_error() {
+        let e = PrediFiError::RewardError;
+        assert_eq!(e.code(), 62);
+        assert_eq!(e.category(), "claiming");
+        assert_eq!(e.label(), "CLAIM_REWARD_ERROR");
+        assert!(!e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_timestamp() {
+        let e = PrediFiError::InvalidTimestamp;
+        assert_eq!(e.code(), 80);
+        assert_eq!(e.category(), "timestamp");
+        assert_eq!(e.label(), "TIME_INVALID_TIMESTAMP");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn time_constraint_error() {
+        let e = PrediFiError::TimeConstraintError;
+        assert_eq!(e.code(), 81);
+        assert_eq!(e.category(), "timestamp");
+        assert_eq!(e.label(), "TIME_CONSTRAINT_ERROR");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_data() {
+        let e = PrediFiError::InvalidData;
+        assert_eq!(e.code(), 90);
+        assert_eq!(e.category(), "validation");
+        assert_eq!(e.label(), "VALIDATION_INVALID_DATA");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_address_or_token() {
+        let e = PrediFiError::InvalidAddressOrToken;
+        assert_eq!(e.code(), 91);
+        assert_eq!(e.category(), "validation");
+        assert_eq!(e.label(), "VALIDATION_INVALID_ADDRESS_OR_TOKEN");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_pagination() {
+        let e = PrediFiError::InvalidPagination;
+        assert_eq!(e.code(), 92);
+        assert_eq!(e.category(), "validation");
+        assert_eq!(e.label(), "VALIDATION_INVALID_PAGINATION");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_fee_bps() {
+        let e = PrediFiError::InvalidFeeBps;
+        assert_eq!(e.code(), 93);
+        assert_eq!(e.category(), "validation");
+        assert_eq!(e.label(), "VALIDATION_INVALID_FEE_BPS");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn metadata_error() {
+        let e = PrediFiError::MetadataError;
+        assert_eq!(e.code(), 94);
+        assert_eq!(e.category(), "validation");
+        assert_eq!(e.label(), "VALIDATION_METADATA_ERROR");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn arithmetic_error() {
+        let e = PrediFiError::ArithmeticError;
+        assert_eq!(e.code(), 110);
+        assert_eq!(e.category(), "arithmetic");
+        assert_eq!(e.label(), "MATH_ARITHMETIC_ERROR");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn fee_exceeds_amount() {
+        let e = PrediFiError::FeeExceedsAmount;
+        assert_eq!(e.code(), 111);
+        assert_eq!(e.category(), "arithmetic");
+        assert_eq!(e.label(), "MATH_FEE_EXCEEDS_AMOUNT");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn invalid_amount() {
+        let e = PrediFiError::InvalidAmount;
+        assert_eq!(e.code(), 112);
+        assert_eq!(e.category(), "arithmetic");
+        assert_eq!(e.label(), "MATH_INVALID_AMOUNT");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn storage_error() {
+        let e = PrediFiError::StorageError;
+        assert_eq!(e.code(), 120);
+        assert_eq!(e.category(), "storage");
+        assert_eq!(e.label(), "STORAGE_ERROR");
+        assert!(!e.is_recoverable());
+    }
+
+    #[test]
+    fn consistency_error() {
+        let e = PrediFiError::ConsistencyError;
+        assert_eq!(e.code(), 121);
+        assert_eq!(e.category(), "storage");
+        assert_eq!(e.label(), "STORAGE_CONSISTENCY_ERROR");
+        assert!(!e.is_recoverable());
+    }
+
+    #[test]
+    fn balance_mismatch() {
+        let e = PrediFiError::BalanceMismatch;
+        assert_eq!(e.code(), 122);
+        assert_eq!(e.category(), "storage");
+        assert_eq!(e.label(), "STORAGE_BALANCE_MISMATCH");
+        assert!(!e.is_recoverable());
+    }
+
+    #[test]
+    fn token_error() {
+        let e = PrediFiError::TokenError;
+        assert_eq!(e.code(), 150);
+        assert_eq!(e.category(), "token");
+        assert_eq!(e.label(), "TOKEN_ERROR");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn withdrawal_or_treasury_error() {
+        let e = PrediFiError::WithdrawalOrTreasuryError;
+        assert_eq!(e.code(), 151);
+        assert_eq!(e.category(), "token");
+        assert_eq!(e.label(), "TOKEN_WITHDRAWAL_OR_TREASURY_ERROR");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn oracle_error() {
+        let e = PrediFiError::OracleError;
+        assert_eq!(e.code(), 160);
+        assert_eq!(e.category(), "oracle");
+        assert_eq!(e.label(), "ORACLE_ERROR");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn resolution_error() {
+        let e = PrediFiError::ResolutionError;
+        assert_eq!(e.code(), 161);
+        assert_eq!(e.category(), "oracle");
+        assert_eq!(e.label(), "ORACLE_RESOLUTION_ERROR");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn admin_error() {
+        let e = PrediFiError::AdminError;
+        assert_eq!(e.code(), 180);
+        assert_eq!(e.category(), "admin");
+        assert_eq!(e.label(), "ADMIN_ERROR");
+        assert!(!e.is_recoverable());
+    }
+
+    #[test]
+    fn rate_limit_or_suspicious_activity() {
+        let e = PrediFiError::RateLimitOrSuspiciousActivity;
+        assert_eq!(e.code(), 190);
+        assert_eq!(e.category(), "rate_limiting");
+        assert_eq!(e.label(), "RATE_LIMIT_OR_SUSPICIOUS_ACTIVITY");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn required_resolutions_exceed_operators() {
+        let e = PrediFiError::RequiredResolutionsExceedOperators;
+        assert_eq!(e.code(), 200);
+        assert_eq!(e.category(), "pool_configuration");
+        assert_eq!(e.label(), "POOL_REQUIRED_RESOLUTIONS_EXCEED_OPERATORS");
+        assert!(e.is_recoverable());
+    }
+
+    #[test]
+    fn display_impl_non_empty() {
+        // Verify Display impl delegates to as_str (non-empty output)
+        let e = PrediFiError::PoolNotFound;
+        assert!(!e.as_str().is_empty());
+    }
+
+    #[test]
+    fn all_variants_have_non_empty_label_and_message() {
+        let variants = [
+            PrediFiError::NotInitialized,
+            PrediFiError::AlreadyInitializedOrConfigNotSet,
+            PrediFiError::Unauthorized,
+            PrediFiError::InsufficientPermissions,
+            PrediFiError::PoolNotFound,
+            PrediFiError::PoolAlreadyResolved,
+            PrediFiError::PoolNotResolved,
+            PrediFiError::PoolExpiryError,
+            PrediFiError::InvalidPoolState,
+            PrediFiError::InvalidOutcome,
+            PrediFiError::StateError,
+            PrediFiError::PredictionNotFound,
+            PrediFiError::PredictionAlreadyExists,
+            PrediFiError::InvalidPredictionAmount,
+            PrediFiError::PredictionTooLate,
+            PrediFiError::InsufficientBalanceOrStakeLimit,
+            PrediFiError::AlreadyClaimed,
+            PrediFiError::NotAWinner,
+            PrediFiError::RewardError,
+            PrediFiError::InvalidTimestamp,
+            PrediFiError::TimeConstraintError,
+            PrediFiError::InvalidData,
+            PrediFiError::InvalidAddressOrToken,
+            PrediFiError::InvalidPagination,
+            PrediFiError::InvalidFeeBps,
+            PrediFiError::MetadataError,
+            PrediFiError::ArithmeticError,
+            PrediFiError::FeeExceedsAmount,
+            PrediFiError::InvalidAmount,
+            PrediFiError::StorageError,
+            PrediFiError::ConsistencyError,
+            PrediFiError::BalanceMismatch,
+            PrediFiError::TokenError,
+            PrediFiError::WithdrawalOrTreasuryError,
+            PrediFiError::OracleError,
+            PrediFiError::ResolutionError,
+            PrediFiError::AdminError,
+            PrediFiError::RateLimitOrSuspiciousActivity,
+            PrediFiError::RequiredResolutionsExceedOperators,
+        ];
+        for v in variants {
+            assert!(!v.label().is_empty(), "label empty for code {}", v.code());
+            assert!(!v.as_str().is_empty(), "message empty for code {}", v.code());
+            assert!(!v.category().is_empty(), "category empty for code {}", v.code());
+        }
+    }
 }

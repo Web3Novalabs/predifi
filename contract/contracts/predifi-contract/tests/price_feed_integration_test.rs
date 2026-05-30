@@ -82,6 +82,7 @@ fn test_price_based_pool_mock_resolution() {
         &2u32, // 2 outcomes: 0 (No), 1 (Yes)
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Will ETH > $4000?"),
             metadata_url: String::from_str(&env, "ipfs://..."),
             min_stake: 100,

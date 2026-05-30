@@ -109,6 +109,7 @@ fn test_high_volume_predictions_single_pool() {
         &2,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "High Volume Stress Test"),
             metadata_url: String::from_str(&env, "ipfs://stress"),
             min_stake: 10i128,
@@ -159,6 +160,7 @@ fn test_bulk_claim_winnings() {
         &2,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Bulk Claim Test"),
             metadata_url: String::from_str(&env, "ipfs://bulk"),
             min_stake: 1i128,
@@ -214,6 +216,7 @@ fn test_sequential_pool_creation_stress() {
             &2,
             &symbol_short!("Other"),
             &PoolConfig {
+            start_time: 0,
                 description: String::from_str(&env, "Stress Pool"),
                 metadata_url: String::from_str(&env, "ipfs://meta"),
                 min_stake: 1i128,
@@ -250,6 +253,7 @@ fn test_max_outcomes_high_volume() {
         &max_options,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "High Options Test"),
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 1i128,
@@ -306,6 +310,7 @@ fn test_prediction_throughput_measurement() {
         &2,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Throughput Test"),
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 1i128,
@@ -356,6 +361,7 @@ fn test_resolution_under_load() {
             &2,
             &symbol_short!("Other"),
             &PoolConfig {
+            start_time: 0,
                 description: String::from_str(&env, "Load Pool"),
                 metadata_url: String::from_str(&env, "ipfs://load"),
                 min_stake: 1i128,

@@ -121,6 +121,7 @@ fn test_full_market_lifecycle() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -209,6 +210,7 @@ fn test_multi_user_betting_and_balance_verification() {
         &4u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -292,6 +294,7 @@ fn test_market_resolution_multiple_winners() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -363,6 +366,7 @@ fn test_full_pool_lifecycle_creation_to_payout() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Lifecycle test pool"),
             metadata_url: String::from_str(
                 &env,
