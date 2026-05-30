@@ -3640,6 +3640,99 @@ fn test_resolve_pool_after_delay() {
 }
 
 #[test]
+fn test_pool_resolved_event_emitted_on_resolution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Init contract with zero resolution delay for easier testing
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token);
+
+    let end_time = 5000u64;
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Event Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Advance time to end_time (eligible for resolution with zero delay)
+    env.ledger().with_mut(|li| li.timestamp = end_time);
+
+    // Resolve the pool with outcome 1
+    let expected_outcome = 1u32;
+    client.resolve_pool(&operator, &pool_id, &expected_outcome);
+
+    // Verify the PoolResolvedEvent was emitted
+    let events = env.events().all();
+    let pool_resolved_topic = Symbol::new(&env, "pool_resolved");
+    let mut found = false;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == pool_resolved_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let event_pool_id: u64 = event_data
+                        .get(Symbol::new(&env, "pool_id"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_operator: Address = event_data
+                        .get(Symbol::new(&env, "operator"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_outcome: u32 = event_data
+                        .get(Symbol::new(&env, "outcome"))
+                        .unwrap()
+                        .into_val(&env);
+
+                    assert_eq!(event_pool_id, pool_id);
+                    assert_eq!(event_operator, operator);
+                    assert_eq!(event_outcome, expected_outcome);
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(found, "PoolResolvedEvent not found in emitted events");
+}
+
+
+#[test]
 fn test_mark_pool_ready() {
     let env = Env::default();
     env.mock_all_auths();
@@ -7798,13 +7891,12 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Tech"),
 //         &PoolConfig {
-            start_time: 0,
 //             description: String::from_str(&env, "Tech pool"),
 //             metadata_url: String::from_str(&env, "ipfs://tech"),
 //             min_stake: 1i128,
 //             max_stake: 0i128,
 //             max_total_stake: 0,
-// min_total_stake: 1,
+//             min_total_stake: 1,
 //             initial_liquidity: 0i128,
 //             required_resolutions: 1u32,
 //             private: false,
@@ -7819,7 +7911,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Sports"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "Sports pool"),
 //             metadata_url: String::from_str(&env, "ipfs://sports"),
 //             min_stake: 1i128,
@@ -7840,13 +7932,13 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Crypto"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "Crypto pool"),
 //             metadata_url: String::from_str(&env, "ipfs://crypto"),
 //             min_stake: 1i128,
 //             max_stake: 0i128,
 //             max_total_stake: 0,
-// min_total_stake: 1,
+//             min_total_stake: 1,
 //             initial_liquidity: 0i128,
 //             required_resolutions: 1u32,
 //             private: false,
@@ -7861,7 +7953,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Finance"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "Finance pool"),
 //             metadata_url: String::from_str(&env, "ipfs://finance"),
 //             min_stake: 1i128,
