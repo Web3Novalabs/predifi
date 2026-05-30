@@ -7798,7 +7798,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Tech"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "Tech pool"),
 //             metadata_url: String::from_str(&env, "ipfs://tech"),
 //             min_stake: 1i128,

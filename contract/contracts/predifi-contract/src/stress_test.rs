@@ -211,7 +211,7 @@ fn test_sequential_pool_creation_stress() {
     for i in 0..num_pools {
         let pool_id = client.create_pool(
             &creator,
-            &200000u64,
+            &200_000_u64,
             &token_client.address,
             &2,
             &symbol_short!("Other"),

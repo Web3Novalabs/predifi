@@ -1164,8 +1164,7 @@ impl PredifiContract {
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
-            (MarketState::Active, MarketState::Resolved)
-                | (MarketState::Active, MarketState::Canceled)
+            (MarketState::Active, MarketState::Resolved | MarketState::Canceled)
         )
     }
 

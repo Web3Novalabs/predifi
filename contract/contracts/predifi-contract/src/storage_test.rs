@@ -178,7 +178,7 @@ mod tests {
             );
 
             // Must NOT be stored under OutStake with magic pool_id
-            let magic_key = DataKey::OutStake(999999, 0);
+            let magic_key = DataKey::OutStake(999_999, 0);
             assert!(
                 !env.storage().persistent().has(&magic_key),
                 "Price feed must not be stored under DataKey::OutStake with magic id"
