@@ -487,6 +487,19 @@ pub struct WinningsClaimedEvent {
 }
 ```
 
+### `RewardClaimedEvent`
+
+Emitted when a user claims a payout from the contract. This event is published for both winning claims and refund claims.
+
+```rust
+pub struct RewardClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub claim_type: String,
+}
+```
+
 ---
 
 ## Error Codes
