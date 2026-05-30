@@ -5,6 +5,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::Duration;
+use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::Config;
 use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
@@ -41,26 +43,66 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
 
     let mut rpc_status = "ok";
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(state.config.rpc_health_timeout_secs))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
-    let rpc_req = client
-        .post(&state.config.stellar_rpc_url)
-        .json(&serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getHealth"
-        }))
-        .send()
-        .await;
+    // Try RPC health check with retry logic
+    let mut rpc_attempts = 0;
+    let max_attempts = state.config.rpc_health_retry_count as usize;
+    let mut last_error = String::new();
+    
+    while rpc_attempts < max_attempts {
+        rpc_attempts += 1;
+        
+        let rpc_req = client
+            .post(&state.config.stellar_rpc_url)
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getHealth"
+            }))
+            .send()
+            .await;
 
-    match rpc_req {
-        Ok(res) if res.status().is_success() => {}
-        _ => {
-            rpc_status = "unreachable";
-            all_healthy = false;
+        match rpc_req {
+            Ok(res) if res.status().is_success() => {
+                // Success - break out of retry loop
+                break;
+            }
+            Ok(res) => {
+                last_error = format!("HTTP {} response", res.status());
+            }
+            Err(e) => {
+                last_error = e.to_string();
+            }
         }
+        
+        // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
+        if rpc_attempts < max_attempts {
+            let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
+            sleep(TokioDuration::from_secs(backoff_duration)).await;
+        }
+    }
+    
+    if rpc_attempts >= max_attempts {
+        rpc_status = "unreachable";
+        all_healthy = false;
+    }
+
+    let mut redis_status = "ok";
+    if !state.redis.is_available() {
+        redis_status = "not_configured";
+        all_healthy = false;
+    } else if !state.redis.ping().await {
+        redis_status = "unreachable";
+        all_healthy = false;
+    }
+
+    let mut price_cache_status = "ok";
+    if state.cache.snapshot().is_empty() {
+        price_cache_status = "not_ready";
+        all_healthy = false;
     }
 
     let body = serde_json::json!({
@@ -68,7 +110,15 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
         "version": "v1",
         "dependencies": {
             "db": db_status,
-            "rpc": rpc_status
+            "rpc": rpc_status,
+            "redis": redis_status,
+            "price_cache": price_cache_status
+        },
+        "errors": {
+            "db": if db_status == "unreachable" { Some(db_error.clone()) } else { None },
+            "rpc": if rpc_status == "unreachable" { Some(last_error.clone()) } else { None },
+            "redis": if redis_status == "unreachable" { Some(redis_error.clone()) } else { None },
+            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None }
         }
     });
 
