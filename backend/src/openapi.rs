@@ -147,6 +147,16 @@ pub struct ReferralEarningsResponse {
 pub struct DependencyStatus {
     pub db: String,
     pub rpc: String,
+    pub redis: String,
+    pub price_cache: String,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct HealthErrors {
+    pub db: Option<String>,
+    pub rpc: Option<String>,
+    pub redis: Option<String>,
+    pub price_cache: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
@@ -155,6 +165,7 @@ pub struct HealthResponse {
     pub service: String,
     pub version: String,
     pub dependencies: DependencyStatus,
+    pub errors: HealthErrors,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
