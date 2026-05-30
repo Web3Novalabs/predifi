@@ -401,5 +401,5 @@ fn test_full_pool_lifecycle_creation_to_payout() {
 
     // 5. Contract balance drains to zero — no funds trapped
     assert_eq!(token_ctx.token.balance(&client.address), 0);
-    assert_eq!(token_ctx.token.balance(&bettor_b), 500); // 500 - 350 + 500 = 650? no: 150 + 350 = 500 total
+    assert_eq!(token_ctx.token.balance(&bettor_b), 650); // 500 - 350 + 500 = 650
 }

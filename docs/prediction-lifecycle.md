@@ -282,6 +282,7 @@ Every phase emits events for off-chain indexing and monitoring:
 | `PredictionPlacedEvent` | Trading | User places prediction |
 | `PoolResolvedEvent` | Resolution | Operator resolves pool |
 | `WinningsClaimedEvent` | Settlement | Winner claims rewards |
+| `RewardClaimedEvent` | Settlement | User claim payout (winnings or refund) |
 
 See [Contract Reference](./contract-reference.md) for complete event schemas.
 

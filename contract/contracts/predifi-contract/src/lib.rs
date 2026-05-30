@@ -802,6 +802,15 @@ pub struct WinningsClaimedEvent {
     pub amount: i128,
 }
 
+#[contractevent(topics = ["reward_claimed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RewardClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub claim_type: String,
+}
+
 #[contractevent(topics = ["referral_paid"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReferralPaidEvent {
@@ -3218,6 +3227,14 @@ impl PredifiContract {
                 }
                 .publish(env);
 
+                RewardClaimedEvent {
+                    pool_id,
+                    user: user.clone(),
+                    amount: prediction.amount,
+                    claim_type: String::from_str(&env, "winnings"),
+                }
+                .publish(env);
+
                 return Ok(prediction.amount);
             }
 
@@ -3298,6 +3315,14 @@ impl PredifiContract {
                 pool_id,
                 user: user.clone(),
                 amount: winnings,
+            }
+            .publish(env);
+
+            RewardClaimedEvent {
+                pool_id,
+                user: user.clone(),
+                amount: winnings,
+                claim_type: String::from_str(&env, "winnings"),
             }
             .publish(env);
 
@@ -3431,6 +3456,14 @@ impl PredifiContract {
                 pool_id,
                 user: user.clone(),
                 amount: refund_amount,
+            }
+            .publish(&env);
+
+            RewardClaimedEvent {
+                pool_id,
+                user: user.clone(),
+                amount: refund_amount,
+                claim_type: String::from_str(&env, "refund"),
             }
             .publish(&env);
 

@@ -453,6 +453,90 @@ fn test_claim_winnings() {
 }
 
 #[test]
+fn test_reward_claimed_event_emitted_on_winnings_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
+        },
+    );
+
+    client.place_prediction(&user, &pool_id, &100, &1, &None, &None);
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    let winnings = client.claim_winnings(&user, &pool_id);
+    assert_eq!(winnings, 100);
+
+    let events = env.events().all();
+    let reward_claimed_topic = Symbol::new(&env, "reward_claimed");
+    let mut found = false;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == reward_claimed_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let event_pool_id: u64 = event_data
+                        .get(Symbol::new(&env, "pool_id"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_user: Address = event_data
+                        .get(Symbol::new(&env, "user"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_amount: i128 = event_data
+                        .get(Symbol::new(&env, "amount"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_claim_type: String = event_data
+                        .get(Symbol::new(&env, "claim_type"))
+                        .unwrap()
+                        .into_val(&env);
+
+                    assert_eq!(event_pool_id, pool_id);
+                    assert_eq!(event_user, user);
+                    assert_eq!(event_amount, winnings);
+                    assert_eq!(event_claim_type, String::from_str(&env, "winnings"));
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(found, "RewardClaimedEvent not found");
+    assert_eq!(token.balance(&user), 1000);
+}
+
+#[test]
 fn test_claim_winnings_zero_share() {
     let env = Env::default();
     env.mock_all_auths();
