@@ -178,6 +178,7 @@ mod tests {
     #[tokio::test]
     async fn get_prices_returns_503_when_empty() {
         use axum::{body::Body, http::Request};
+        use http_body_util::BodyExt;
         use tower::ServiceExt;
 
         let cache = PriceCache::new();
@@ -196,6 +197,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        // Consume the body so the underlying stream is closed before the test exits.
+        let _ = response.into_body().collect().await.unwrap();
     }
 
     #[tokio::test]
@@ -224,6 +227,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        // Consume the full body before the test exits.
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("BTC"));
