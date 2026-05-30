@@ -32,16 +32,17 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-/// Allowed frontend origins for CORS.
-const ALLOWED_ORIGINS: &[&str] = &[
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "https://predifi.app",
-];
-
-/// Build the CORS middleware layer.
-pub fn build_cors() -> CorsLayer {
-    let origins: Vec<HeaderValue> = ALLOWED_ORIGINS
+/// Build the CORS middleware layer from the validated origin list in `config`.
+///
+/// Only the origins listed in [`Config::cors_allowed_origins`] are permitted.
+/// The list is validated at startup (see `config::parse_cors_origins`), so any
+/// entry that reaches this function is already a well-formed `http://` or
+/// `https://` origin.  Entries that cannot be parsed into a [`HeaderValue`] are
+/// silently skipped (this should never happen in practice given the prior
+/// validation).
+pub fn build_cors(config: &Config) -> CorsLayer {
+    let origins: Vec<HeaderValue> = config
+        .cors_allowed_origins
         .iter()
         .filter_map(|origin| origin.parse().ok())
         .collect();
@@ -259,7 +260,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis
         .layer(GovernorLayer {
             config: governor_conf,
         })
-        .layer(build_cors())
+        .layer(build_cors(&config))
         .layer(LoggingLayer)
 }
 
@@ -313,7 +314,7 @@ pub fn build_router_with_db(
         .layer(GovernorLayer {
             config: governor_conf,
         })
-        .layer(build_cors())
+        .layer(build_cors(&config))
         .layer(LoggingLayer)
 }
 
