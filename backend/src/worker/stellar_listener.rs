@@ -159,7 +159,9 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
                                     );
                                 }
                             } else if topic_matches("prediction_placed") {
-                                if let Err(e) = handle_prediction_placed_event(&db, event, &event_bus).await {
+                                if let Err(e) =
+                                    handle_prediction_placed_event(&db, event, &event_bus).await
+                                {
                                     error!(
                                         id = %event.id,
                                         ledger = event.ledger,
@@ -209,14 +211,14 @@ async fn handle_pool_created_event(db: &PgPool, event: &StellarEvent) -> Result<
         .as_ref()
         .ok_or_else(|| "missing event data".to_string())?;
 
-    let pool_id = extract_u64(data, "pool_id")
-        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
-    let creator = extract_string(data, "creator")
-        .ok_or_else(|| "missing or invalid creator".to_string())?;
-    let end_time = extract_u64(data, "end_time")
-        .ok_or_else(|| "missing or invalid end_time".to_string())?;
-    let token = extract_string(data, "token")
-        .ok_or_else(|| "missing or invalid token".to_string())?;
+    let pool_id =
+        extract_u64(data, "pool_id").ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let creator =
+        extract_string(data, "creator").ok_or_else(|| "missing or invalid creator".to_string())?;
+    let end_time =
+        extract_u64(data, "end_time").ok_or_else(|| "missing or invalid end_time".to_string())?;
+    let token =
+        extract_string(data, "token").ok_or_else(|| "missing or invalid token".to_string())?;
     let category = extract_string(data, "category").unwrap_or_default();
     // The on-chain event carries metadata_url; use it as the pool name/description.
     let description = extract_string(data, "description")
@@ -285,10 +287,10 @@ async fn handle_pool_resolved_event(db: &PgPool, event: &StellarEvent) -> Result
         .as_ref()
         .ok_or_else(|| "missing event data".to_string())?;
 
-    let pool_id = extract_u64(data, "pool_id")
-        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
-    let outcome = extract_i32(data, "outcome")
-        .ok_or_else(|| "missing or invalid outcome".to_string())?;
+    let pool_id =
+        extract_u64(data, "pool_id").ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let outcome =
+        extract_i32(data, "outcome").ok_or_else(|| "missing or invalid outcome".to_string())?;
 
     crate::db::resolve_pool_in_db(db, pool_id, outcome)
         .await
@@ -301,8 +303,8 @@ async fn handle_pool_canceled_event(db: &PgPool, event: &StellarEvent) -> Result
         .as_ref()
         .ok_or_else(|| "missing event data".to_string())?;
 
-    let pool_id = extract_u64(data, "pool_id")
-        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let pool_id =
+        extract_u64(data, "pool_id").ok_or_else(|| "missing or invalid pool_id".to_string())?;
 
     crate::db::cancel_pool_in_db(db, pool_id)
         .await
@@ -324,9 +326,10 @@ fn extract_string_value(value: &Value) -> Option<String> {
 
 fn extract_i128(value: &Value) -> Option<i128> {
     match value {
-        Value::Number(number) => number.as_i64().map(|v| v as i128).or_else(|| {
-            number.as_u64().and_then(|v| i128::try_from(v).ok())
-        }),
+        Value::Number(number) => number
+            .as_i64()
+            .map(|v| v as i128)
+            .or_else(|| number.as_u64().and_then(|v| i128::try_from(v).ok())),
         Value::String(s) => s.parse().ok(),
         Value::Object(map) if map.len() == 1 => map.values().next().and_then(extract_i128),
         _ => None,
@@ -410,7 +413,10 @@ mod tests {
         assert_eq!(extract_string(&data, "category"), Some("Sports".into()));
         // description absent → falls back to metadata_url
         assert_eq!(extract_string(&data, "description"), None);
-        assert_eq!(extract_string(&data, "metadata_url"), Some("ipfs://Qm123".into()));
+        assert_eq!(
+            extract_string(&data, "metadata_url"),
+            Some("ipfs://Qm123".into())
+        );
     }
 
     /// Missing required fields must produce None so the handler returns an error.

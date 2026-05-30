@@ -15,7 +15,10 @@ pub fn router(
     metrics: crate::metrics::SharedMetrics,
     event_bus: EventBus,
 ) -> Router {
-    Router::new().nest("/v1", v1::router(config, cache, redis, pool, metrics, event_bus))
+    Router::new().nest(
+        "/v1",
+        v1::router(config, cache, redis, pool, metrics, event_bus),
+    )
 }
 
 pub fn router_with_db(
@@ -26,5 +29,8 @@ pub fn router_with_db(
     metrics: crate::metrics::SharedMetrics,
     event_bus: EventBus,
 ) -> Router {
-    Router::new().nest("/v1", v1::router(config, cache, redis, Some(db), metrics, event_bus))
+    Router::new().nest(
+        "/v1",
+        v1::router(config, cache, redis, Some(db), metrics, event_bus),
+    )
 }
