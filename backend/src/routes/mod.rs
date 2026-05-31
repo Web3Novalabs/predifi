@@ -7,6 +7,10 @@ use sqlx::PgPool;
 
 pub mod v1;
 
+/// Build the versioned API router without a database pool.
+///
+/// All routes that require a database will return an error response at
+/// runtime. Useful for unit tests and health-check-only deployments.
 pub fn router(
     config: Config,
     cache: PriceCache,
@@ -21,6 +25,9 @@ pub fn router(
     )
 }
 
+/// Build the versioned API router with a live PostgreSQL connection pool.
+///
+/// Wraps the pool in `Some` and delegates to [`router`].
 pub fn router_with_db(
     config: Config,
     cache: PriceCache,
