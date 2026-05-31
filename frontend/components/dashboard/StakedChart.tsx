@@ -4,6 +4,7 @@ import { Bar, BarChart, ResponsiveContainer, XAxis, Tooltip, Cell } from "rechar
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const data = [
     { name: "JAN", value: 35000 },
@@ -27,7 +28,6 @@ const CustomTooltip = ({ active, payload, label }: any) => {
             <div className="bg-zinc-900 border border-white/10 p-2 rounded-lg shadow-xl">
                 <p className="text-zinc-400 text-xs mb-1">{label}</p>
                 <p className="text-white font-bold font-mono">
-                    {/* Formatter for currency */}
                     ${(payload[0].value / 1000).toFixed(0)}k
                 </p>
             </div>
@@ -36,7 +36,34 @@ const CustomTooltip = ({ active, payload, label }: any) => {
     return null;
 };
 
-export function StakedChart() {
+interface StakedChartProps {
+    isLoading?: boolean;
+}
+
+export function StakedChart({ isLoading = false }: StakedChartProps) {
+    if (isLoading) {
+        return (
+            <Card className="bg-[#121212] border-none text-white h-full">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <Skeleton className="h-5 w-28" />
+                    <div className="flex items-center gap-2">
+                        <Skeleton className="h-7 w-12 rounded-full" />
+                        <Skeleton className="h-8 w-28 rounded-full" />
+                    </div>
+                </CardHeader>
+                <CardContent className="h-[240px] mt-4 flex items-end gap-2 px-6">
+                    {[55, 70, 55, 45, 90, 25, 75, 40, 70, 100, 70, 85].map((h, i) => (
+                        <Skeleton
+                            key={i}
+                            className="flex-1 rounded-t-sm"
+                            style={{ height: `${h}%` }}
+                        />
+                    ))}
+                </CardContent>
+            </Card>
+        );
+    }
+
     return (
         <Card className="bg-[#121212] border-none text-white h-full">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
