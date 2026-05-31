@@ -5,6 +5,7 @@
 pub mod config;
 pub mod db;
 pub mod metrics;
+pub mod session;
 pub mod openapi;
 pub mod price_cache;
 pub mod redis_cache;
