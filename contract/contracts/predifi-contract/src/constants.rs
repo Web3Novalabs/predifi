@@ -29,7 +29,7 @@ pub const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
 
 /// Cancellation delay in seconds for overdue pools (7 days).
 /// After this period past the pool's end_time, any user can cancel the pool.
-pub const CANCELATION_DELAY: u64 = 604800;
+pub const CANCELATION_DELAY: u64 = 604_800;
 
 /// Default global minimum stake amount (1 unit in base token units).
 /// Predictions below this threshold are rejected to prevent spam.

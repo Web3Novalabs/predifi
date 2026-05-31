@@ -1,5 +1,6 @@
-use prometheus::{Encoder, Gauge, Opts, Registry, TextEncoder, CounterVec};
+use prometheus::{CounterVec, Encoder, Gauge, Opts, Registry, TextEncoder};
 use std::sync::Arc;
+use sysinfo::{System, SystemExt};
 
 /// Shared application metrics exposed to Prometheus.
 #[derive(Clone)]
@@ -8,11 +9,19 @@ pub struct Metrics {
     pub http_requests_total: CounterVec,
     pub app_up: Gauge,
     pub app_info: Gauge,
+    pub memory_used_bytes: Gauge,
+    pub memory_total_bytes: Gauge,
 }
 
+/// Type alias for a reference-counted [`Metrics`] instance shared across handlers.
 pub type SharedMetrics = Arc<Metrics>;
 
 impl Metrics {
+    /// Create and register all Prometheus metrics with a fresh [`Registry`].
+    ///
+    /// Returns an error if any metric fails to register (e.g. duplicate name).
+    /// In practice this should never fail because the metric names are
+    /// hard-coded constants.
     pub fn new() -> Result<Self, prometheus::Error> {
         let registry = Registry::new();
 
@@ -34,25 +43,38 @@ impl Metrics {
         )?;
         app_info.set(1.0);
 
+        let memory_used_bytes = Gauge::with_opts(Opts::new("app_memory_used_bytes", "Memory used by the backend in bytes."))?;
+        let memory_total_bytes = Gauge::with_opts(Opts::new("app_memory_total_bytes", "Total system memory in bytes."))?;
+
         registry.register(Box::new(http_requests_total.clone()))?;
         registry.register(Box::new(app_up.clone()))?;
         registry.register(Box::new(app_info.clone()))?;
+        registry.register(Box::new(memory_used_bytes.clone()))?;
+        registry.register(Box::new(memory_total_bytes.clone()))?;
 
         Ok(Self {
             registry,
             http_requests_total,
             app_up,
             app_info,
+            memory_used_bytes,
+            memory_total_bytes,
         })
     }
 
+    /// Encode all registered metrics into the Prometheus text exposition format.
+    ///
+    /// Returns the UTF-8 encoded text ready to be served at `/metrics`.
+    /// Returns an error if encoding fails or the output is not valid UTF-8
+    /// (neither should happen in practice).
     pub fn gather_text(&self) -> Result<String, prometheus::Error> {
         let encoder = TextEncoder::new();
         let metric_families = self.registry.gather();
         let mut buffer = Vec::new();
-        encoder.encode(&metric_families, &mut buffer).map_err(|e| {
-            prometheus::Error::Msg(format!("failed to encode metrics: {e}"))
-        })?;
-        String::from_utf8(buffer).map_err(|e| prometheus::Error::Msg(format!("invalid metrics UTF-8: {e}")))
+        encoder
+            .encode(&metric_families, &mut buffer)
+            .map_err(|e| prometheus::Error::Msg(format!("failed to encode metrics: {e}")))?;
+        String::from_utf8(buffer)
+            .map_err(|e| prometheus::Error::Msg(format!("invalid metrics UTF-8: {e}")))
     }
 }

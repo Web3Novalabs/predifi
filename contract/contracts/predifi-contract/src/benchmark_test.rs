@@ -93,7 +93,7 @@ mod benchmark_tests {
             &options_count,
             &symbol_short!("Tech"),
             &PoolConfig {
-            start_time: 0,
+                start_time: 0,
                 description: String::from_str(&env, "Bench"),
                 metadata_url: String::from_str(&env, "ipfs://bench"),
                 min_stake: 10i128,

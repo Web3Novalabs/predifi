@@ -211,12 +211,12 @@ fn test_sequential_pool_creation_stress() {
     for i in 0..num_pools {
         let pool_id = client.create_pool(
             &creator,
-            &200000u64,
+            &200_000_u64,
             &token_client.address,
             &2,
             &symbol_short!("Other"),
             &PoolConfig {
-            start_time: 0,
+                start_time: 0,
                 description: String::from_str(&env, "Stress Pool"),
                 metadata_url: String::from_str(&env, "ipfs://meta"),
                 min_stake: 1i128,
@@ -361,7 +361,7 @@ fn test_resolution_under_load() {
             &2,
             &symbol_short!("Other"),
             &PoolConfig {
-            start_time: 0,
+                start_time: 0,
                 description: String::from_str(&env, "Load Pool"),
                 metadata_url: String::from_str(&env, "ipfs://load"),
                 min_stake: 1i128,
