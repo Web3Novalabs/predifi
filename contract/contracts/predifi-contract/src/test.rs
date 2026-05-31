@@ -1879,6 +1879,313 @@ fn test_paused_blocks_claim_winnings() {
 }
 
 #[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_max_predictions_per_user() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_max_predictions_per_user(&admin, &10u32);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_prediction_cooldown() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_prediction_cooldown(&admin, &60u64);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_resolution_delay() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_resolution_delay(&admin, &3600u64);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_min_pool_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_min_pool_duration(&admin, &3600u64);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_min_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_min_stake(&admin, &100i128);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_referral_cut_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_referral_cut_bps(&admin, &500u32);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_referral_rate() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_referral_rate(&admin, &500u32);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_add_token_to_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.add_token_to_whitelist(&admin, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_remove_token_from_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.remove_token_from_whitelist(&admin, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_add_oracle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.add_oracle(&admin, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_remove_oracle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.remove_oracle(&admin, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_increase_max_total_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.increase_max_total_stake(&admin, &0u64, &1000i128);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_update_pool_description() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.update_pool_description(&admin, &0u64, &String::from_str(&env, "new desc"));
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_cancel_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.cancel_pool(&admin, &0u64, &String::from_str(&env, "reason"));
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_claim_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.claim_refund(&user, &0u64);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_stake_limits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    client.pause(&admin);
+    client.set_stake_limits(&operator, &0u64, &1i128, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_add_to_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.add_to_whitelist(&admin, &0u64, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_remove_from_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.remove_from_whitelist(&admin, &0u64, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_init_oracle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.init_oracle(&admin, &Address::generate(&env), &3600u64, &100u32);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_price_condition() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    client.pause(&admin);
+    client.set_price_condition(
+        &operator,
+        &0u64,
+        &symbol_short!("BTCUSD"),
+        &50000i128,
+        &1u32,
+        &100u32,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_update_price_feed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.update_price_feed(
+        &Address::generate(&env),
+        &symbol_short!("BTCUSD"),
+        &50000i128,
+        &10i128,
+        &1u64,
+        &9999u64,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_resolve_pool_from_price() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.resolve_pool_from_price(&0u64);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_set_fee_tiers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_fee_tiers(&admin, &soroban_sdk::vec![&env]);
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_flag_disputed_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.flag_disputed_pool(&admin, &0u64, &String::from_str(&env, "dispute reason"));
+}
+
+#[test]
 fn test_unpause_restores_functionality() {
     let env = Env::default();
     env.mock_all_auths();
