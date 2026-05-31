@@ -81,8 +81,8 @@ impl RedisCache {
         let manager = self.manager.as_ref()?;
         let mut conn = manager.clone();
 
-        match conn.get::<_, String>(key).await {
-            Ok(data) => match serde_json::from_str::<T>(&data) {
+        match conn.get::<_, Option<String>>(key).await {
+            Ok(Some(data)) => match serde_json::from_str::<T>(&data) {
                 Ok(value) => {
                     debug!("Cache hit: {}", key);
                     Some(value)
@@ -92,7 +92,7 @@ impl RedisCache {
                     None
                 }
             },
-            Err(RedisError::Nil) => {
+            Ok(None) => {
                 debug!("Cache miss: {}", key);
                 None
             }
@@ -192,7 +192,7 @@ impl RedisCache {
 
         let mut conn = manager.clone();
         redis::cmd("PING")
-            .query_async::<_, String>(&mut conn)
+            .query_async::<String>(&mut conn)
             .await
             .is_ok()
     }
