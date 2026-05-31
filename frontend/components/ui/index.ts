@@ -13,3 +13,4 @@ export {
   TooltipArrow,
   type TooltipProps,
 } from "./tooltip";
+export { default as SocialIcon, type SocialIconId } from "./SocialIcon";

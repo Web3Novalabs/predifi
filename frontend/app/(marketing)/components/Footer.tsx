@@ -1,5 +1,6 @@
 import React from "react";
 import Image from "next/image";
+import SocialIcon from "@/components/ui/SocialIcon";
 
 function Footer() {
   return (
@@ -7,10 +8,12 @@ function Footer() {
       <div className="pb-5 border-b-[#CBECEF] lg:flex-row flex-col-reverse gap-y-8 items-center border-b-[0.5px] flex justify-between lg:items-baseline">
         <Image src="/logo.svg" width={100} height={32} alt="PrediFi logo" />
         <div className="flex gap-x-[34px]">
-          <Image src="/socials/telegram.svg" width={24} height={24} className="w-6 h-6" alt="Telegram" />
-          <Image src="/socials/reddit.svg" width={24} height={24} className="w-6 h-6" alt="Reddit" />
-          <Image src="/socials/x.svg" width={24} height={24} className="w-6 h-6" alt="X (Twitter)" />
-          <Image src="/socials/discord.svg" width={24} height={24} className="w-6 h-6" alt="Discord" />
+          {/* Social icons are served from a single SVG sprite (/sprite.svg)
+              so the browser makes one request instead of four. */}
+          <SocialIcon id="telegram" label="Telegram" className="w-6 h-6" />
+          <SocialIcon id="reddit" label="Reddit" className="w-6 h-6" />
+          <SocialIcon id="x" label="X (Twitter)" className="w-6 h-6" />
+          <SocialIcon id="discord" label="Discord" className="w-6 h-6" />
         </div>
       </div>
 
