@@ -51,10 +51,10 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
     let mut rpc_attempts = 0;
     let max_attempts = state.config.rpc_health_retry_count as usize;
     let mut last_error = String::new();
-    
+
     while rpc_attempts < max_attempts {
         rpc_attempts += 1;
-        
+
         let rpc_req = client
             .post(&state.config.stellar_rpc_url)
             .json(&serde_json::json!({
@@ -77,14 +77,14 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
                 last_error = e.to_string();
             }
         }
-        
+
         // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
         if rpc_attempts < max_attempts {
             let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
             sleep(TokioDuration::from_secs(backoff_duration)).await;
         }
     }
-    
+
     if rpc_attempts >= max_attempts {
         rpc_status = "unreachable";
         all_healthy = false;
@@ -235,7 +235,7 @@ pub async fn get_pools(
 
     // Try to get from Redis cache first
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
-    
+
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
         return Json(cached_response);
     }
@@ -251,12 +251,15 @@ pub async fn get_pools(
                 "category": category,
                 "sort_by": sort_by
             });
-            
+
             // Cache the response for 60 seconds
-            state.redis.set(&cache_key, &response, crate::redis_cache::POOLS_CACHE_TTL).await;
-            
+            state
+                .redis
+                .set(&cache_key, &response, crate::redis_cache::POOLS_CACHE_TTL)
+                .await;
+
             Json(response)
-        },
+        }
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
@@ -474,7 +477,10 @@ pub fn router(
         .route("/fees", get(get_fees))
         .route("/prices", get(crate::price_cache::get_prices))
         .route("/referrals/{address}", get(referrals_handler))
-        .route("/users/{address}/referrals", get(user_referral_earnings_handler))
+        .route(
+            "/users/{address}/referrals",
+            get(user_referral_earnings_handler),
+        )
         .route("/users/{address}/history", get(get_user_history))
         .route("/users/{address}/predictions", get(get_user_predictions))
         .route("/indexer/pool-created", post(ingest_pool_created))

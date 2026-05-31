@@ -113,7 +113,7 @@ fn setup(
 /// Convenience: build a minimal two-outcome `PoolConfig`.
 fn two_outcome_config(env: &Env) -> PoolConfig {
     PoolConfig {
-            start_time: 0,
+        start_time: 0,
         description: String::from_str(env, "Edge case pool"),
         metadata_url: String::from_str(env, "ipfs://edge"),
         min_stake: 1i128,

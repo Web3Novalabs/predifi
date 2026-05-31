@@ -1,7 +1,7 @@
 //! Redis caching layer for hot data
 //!
 //! Implements issue #714: Redis Caching for Hot Data
-//! 
+//!
 //! This module provides a caching layer for frequently accessed API responses
 //! to reduce database load. Uses Redis with configurable TTL values.
 //!
@@ -118,10 +118,7 @@ impl RedisCache {
             }
         };
 
-        if let Err(err) = conn
-            .set_ex::<_, _, ()>(key, data, ttl_secs)
-            .await
-        {
+        if let Err(err) = conn.set_ex::<_, _, ()>(key, data, ttl_secs).await {
             error!("Redis SET error for {}: {}", key, err);
         } else {
             debug!("Cached: {} (TTL: {}s)", key, ttl_secs);
@@ -174,7 +171,11 @@ impl RedisCache {
         if let Err(err) = conn.del::<_, ()>(&keys).await {
             error!("Redis DEL error for pattern {}: {}", pattern, err);
         } else {
-            debug!("Invalidated {} cache entries matching: {}", keys.len(), pattern);
+            debug!(
+                "Invalidated {} cache entries matching: {}",
+                keys.len(),
+                pattern
+            );
         }
     }
 
@@ -194,7 +195,13 @@ impl RedisCache {
 }
 
 /// Generate cache key for pools list
-pub fn pools_cache_key(sort_by: &str, category: Option<&str>, status: &str, limit: i64, offset: i64) -> String {
+pub fn pools_cache_key(
+    sort_by: &str,
+    category: Option<&str>,
+    status: &str,
+    limit: i64,
+    offset: i64,
+) -> String {
     match category {
         Some(cat) => format!("pools:{}:{}:{}:{}:{}", sort_by, cat, status, limit, offset),
         None => format!("pools:{}:all:{}:{}:{}", sort_by, status, limit, offset),

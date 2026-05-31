@@ -805,8 +805,16 @@ mod tests {
         ];
         for v in variants {
             assert!(!v.label().is_empty(), "label empty for code {}", v.code());
-            assert!(!v.as_str().is_empty(), "message empty for code {}", v.code());
-            assert!(!v.category().is_empty(), "category empty for code {}", v.code());
+            assert!(
+                !v.as_str().is_empty(),
+                "message empty for code {}",
+                v.code()
+            );
+            assert!(
+                !v.category().is_empty(),
+                "category empty for code {}",
+                v.code()
+            );
         }
     }
 }
