@@ -23,9 +23,13 @@ const SYNC_RPC_TIMEOUT_SECS: u64 = 10;
 /// Result of a single pool sync operation.
 #[derive(Debug)]
 pub struct PoolSyncResult {
+    /// On-chain pool identifier.
     pub pool_id: i64,
+    /// `total_stake` value read from the database before the sync.
     pub db_stake: i64,
+    /// `total_stake` value returned by the Soroban contract.
     pub contract_stake: i64,
+    /// `true` if the database row was updated to match the contract.
     pub fixed: bool,
 }
 

@@ -570,12 +570,15 @@ pub enum DataKey {
     /// Category pool index: `CatPoolIx(category, index)` -> `u64` (pool_id)
     CatPoolIx(Symbol, u32),
 
-    // ── Resolution voting ────────────────────────────────────────────────────
-    /// Tracks if an oracle/operator has already voted: `ResVote(pool_id, voter_address)` -> `()`
+    // ── Resolution voting (TEMPORARY STORAGE) ────────────────────────────────
+    /// Tracks if an oracle/operator has already voted (temporary): `ResVote(pool_id, voter_address)` -> `()`
+    /// Stored in temporary storage as it's only needed during resolution process.
     ResVote(u64, Address),
-    /// Vote count for a specific outcome: `ResVoteCt(pool_id, outcome)` -> `u32`
+    /// Vote count for a specific outcome (temporary): `ResVoteCt(pool_id, outcome)` -> `u32`
+    /// Stored in temporary storage as it's only needed during resolution process.
     ResVoteCt(u64, u32),
-    /// Total number of votes cast for a pool: `ResTotal(pool_id)` -> `u32`
+    /// Total number of votes cast for a pool (temporary): `ResTotal(pool_id)` -> `u32`
+    /// Stored in temporary storage as it's only needed during resolution process.
     ResTotal(u64),
 
     // ── Referrals ────────────────────────────────────────────────────────────
@@ -1295,6 +1298,12 @@ impl PredifiContract {
     fn extend_persistent(env: &Env, key: &DataKey) {
         env.storage()
             .persistent()
+            .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
+    fn extend_temporary(env: &Env, key: &DataKey) {
+        env.storage()
+            .temporary()
             .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
     }
 
@@ -2717,7 +2726,7 @@ impl PredifiContract {
 
         // Check if this operator has already voted for this pool
         let vote_key = DataKey::ResVote(pool_id, operator.clone());
-        if env.storage().persistent().has(&vote_key) {
+        if env.storage().temporary().has(&vote_key) {
             log!(
                 &env,
                 "resolve_pool rejected: operator already voted",
@@ -2728,35 +2737,35 @@ impl PredifiContract {
             return Err(PredifiError::OracleAlreadyVoted); // Reusing error code for operators
         }
 
-        // Record the operator's vote
-        env.storage().persistent().set(&vote_key, &outcome);
-        Self::extend_persistent(&env, &vote_key);
+        // Record the operator's vote in temporary storage
+        env.storage().temporary().set(&vote_key, &outcome);
+        Self::extend_temporary(&env, &vote_key);
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
         let total_votes: u32 = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&total_votes_key)
             .unwrap_or(0);
         let new_total_votes = total_votes + 1;
         env.storage()
-            .persistent()
+            .temporary()
             .set(&total_votes_key, &new_total_votes);
-        Self::extend_persistent(&env, &total_votes_key);
+        Self::extend_temporary(&env, &total_votes_key);
 
         // Increment specific outcome vote count
         let outcome_votes_key = DataKey::ResVoteCt(pool_id, outcome);
         let outcome_votes: u32 = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&outcome_votes_key)
             .unwrap_or(0);
         let new_outcome_votes = outcome_votes + 1;
         env.storage()
-            .persistent()
+            .temporary()
             .set(&outcome_votes_key, &new_outcome_votes);
-        Self::extend_persistent(&env, &outcome_votes_key);
+        Self::extend_temporary(&env, &outcome_votes_key);
 
         // Emit a ResolutionVoteCastEvent for observability
         ResolutionVoteCastEvent {
@@ -2775,7 +2784,7 @@ impl PredifiContract {
                     continue;
                 }
                 let other_key = DataKey::ResVoteCt(pool_id, i);
-                if env.storage().persistent().has(&other_key) {
+                if env.storage().temporary().has(&other_key) {
                     ResolutionConflictEvent {
                         pool_id,
                         oracle: operator.clone(),
@@ -4485,39 +4494,39 @@ impl OracleCallback for PredifiContract {
         // --- Multi-oracle Voting Logic ---
 
         let vote_key = DataKey::ResVote(pool_id, oracle.clone());
-        if env.storage().persistent().has(&vote_key) {
+        if env.storage().temporary().has(&vote_key) {
             return Err(PredifiError::OracleAlreadyVoted);
         }
 
-        // Record the oracle's vote
-        env.storage().persistent().set(&vote_key, &outcome);
-        Self::extend_persistent(&env, &vote_key);
+        // Record the oracle's vote in temporary storage
+        env.storage().temporary().set(&vote_key, &outcome);
+        Self::extend_temporary(&env, &vote_key);
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
         let total_votes: u32 = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&total_votes_key)
             .unwrap_or(0);
         let new_total_votes = total_votes + 1;
         env.storage()
-            .persistent()
+            .temporary()
             .set(&total_votes_key, &new_total_votes);
-        Self::extend_persistent(&env, &total_votes_key);
+        Self::extend_temporary(&env, &total_votes_key);
 
         // Increment specific outcome vote count
         let outcome_votes_key = DataKey::ResVoteCt(pool_id, outcome);
         let outcome_votes: u32 = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&outcome_votes_key)
             .unwrap_or(0);
         let new_outcome_votes = outcome_votes + 1;
         env.storage()
-            .persistent()
+            .temporary()
             .set(&outcome_votes_key, &new_outcome_votes);
-        Self::extend_persistent(&env, &outcome_votes_key);
+        Self::extend_temporary(&env, &outcome_votes_key);
 
         // Detect conflicts: if there are ANY votes for a different outcome
         if new_total_votes > new_outcome_votes {
@@ -4527,7 +4536,7 @@ impl OracleCallback for PredifiContract {
                     continue;
                 }
                 let other_key = DataKey::ResVoteCt(pool_id, i);
-                if env.storage().persistent().has(&other_key) {
+                if env.storage().temporary().has(&other_key) {
                     ResolutionConflictEvent {
                         pool_id,
                         oracle: oracle.clone(),

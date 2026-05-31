@@ -8,6 +8,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 // ── Documented schemas ────────────────────────────────────────────────────────
 
+/// OpenAPI schema for a prediction market pool.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PoolDoc {
     pub pool_id: i64,
@@ -22,6 +23,7 @@ pub struct PoolDoc {
     pub result: Option<String>,
 }
 
+/// OpenAPI schema for outcome odds within a pool.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct OutcomeOddsDoc {
     pub outcome: i32,
@@ -29,6 +31,7 @@ pub struct OutcomeOddsDoc {
     pub odds: f64,
 }
 
+/// OpenAPI schema for a pool with real-time odds attached.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PoolWithOddsDoc {
     #[serde(flatten)]
@@ -36,6 +39,7 @@ pub struct PoolWithOddsDoc {
     pub odds: Vec<OutcomeOddsDoc>,
 }
 
+/// OpenAPI schema for the paginated pool list response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PoolListResponse {
     pub pools: Vec<PoolDoc>,
@@ -45,6 +49,7 @@ pub struct PoolListResponse {
     pub sort_by: String,
 }
 
+/// OpenAPI schema for a single prediction record.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PredictionDoc {
     pub pool_id: i64,
@@ -55,6 +60,7 @@ pub struct PredictionDoc {
     pub created_at: String,
 }
 
+/// OpenAPI schema for the paginated prediction history response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PredictionHistoryResponse {
     pub address: String,
@@ -63,6 +69,7 @@ pub struct PredictionHistoryResponse {
     pub offset: i64,
 }
 
+/// OpenAPI schema for an enhanced user prediction with current pool status.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct UserPredictionDoc {
     pub prediction_id: i64,
@@ -77,6 +84,7 @@ pub struct UserPredictionDoc {
     pub is_winning_outcome: Option<bool>,
 }
 
+/// OpenAPI schema for the enhanced user predictions response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct UserPredictionsResponse {
     pub address: String,
@@ -86,6 +94,7 @@ pub struct UserPredictionsResponse {
     pub total_predictions: usize,
 }
 
+/// OpenAPI schema for protocol-wide aggregate statistics.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ProtocolStatsDoc {
     /// Total value locked across all pools (stroops).
@@ -94,6 +103,7 @@ pub struct ProtocolStatsDoc {
     pub total_pools: i64,
 }
 
+/// OpenAPI schema for the fee configuration response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct FeeInfoDoc {
     /// Protocol (treasury) fee in basis points.
@@ -102,6 +112,7 @@ pub struct FeeInfoDoc {
     pub referral_fee_bps: u32,
 }
 
+/// OpenAPI schema for a leaderboard entry ranked by betting volume.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct LeaderboardEntryVolume {
     pub user_address: String,
@@ -110,6 +121,7 @@ pub struct LeaderboardEntryVolume {
     pub rank: i64,
 }
 
+/// OpenAPI schema for a leaderboard entry ranked by winnings.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct LeaderboardEntryWinnings {
     pub user_address: String,
@@ -120,6 +132,7 @@ pub struct LeaderboardEntryWinnings {
     pub rank: i64,
 }
 
+/// OpenAPI schema for the leaderboard response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct LeaderboardResponse {
     pub leaderboard: Vec<LeaderboardEntryVolume>,
@@ -128,6 +141,7 @@ pub struct LeaderboardResponse {
     pub offset: i64,
 }
 
+/// OpenAPI schema for a single referral earning row (per pool).
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ReferralEarningDoc {
     pub pool_id: i64,
@@ -136,6 +150,7 @@ pub struct ReferralEarningDoc {
     pub referral_count: i64,
 }
 
+/// OpenAPI schema for the referral earnings response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ReferralEarningsResponse {
     pub referrer: String,
@@ -143,6 +158,7 @@ pub struct ReferralEarningsResponse {
     pub pools: Vec<ReferralEarningDoc>,
 }
 
+/// OpenAPI schema for the dependency status block inside a health response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct DependencyStatus {
     pub db: String,
@@ -151,6 +167,7 @@ pub struct DependencyStatus {
     pub price_cache: String,
 }
 
+/// OpenAPI schema for the per-dependency error details block inside a health response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct HealthErrors {
     pub db: Option<String>,
@@ -159,6 +176,7 @@ pub struct HealthErrors {
     pub price_cache: Option<String>,
 }
 
+/// OpenAPI schema for the full health check response body.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct HealthResponse {
     pub status: String,
@@ -168,11 +186,13 @@ pub struct HealthResponse {
     pub errors: HealthErrors,
 }
 
+/// OpenAPI schema for a generic error response body.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
+/// OpenAPI schema for the `pool_created` event ingestion request body.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PoolCreatedPayloadDoc {
     pub pool_id: u64,
@@ -183,6 +203,7 @@ pub struct PoolCreatedPayloadDoc {
     pub description: String,
 }
 
+/// OpenAPI schema for the `prediction_placed` event ingestion request body.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PredictionPlacedPayloadDoc {
     pub pool_id: u64,
@@ -191,6 +212,7 @@ pub struct PredictionPlacedPayloadDoc {
     pub amount: i64,
 }
 
+/// OpenAPI schema for a successful indexer ingestion response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct IndexerOkResponse {
     pub status: String,

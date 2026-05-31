@@ -140,12 +140,17 @@ async fn index() -> Json<serde_json::Value> {
 /// Shared state for all v1 routes.
 #[derive(Clone)]
 pub struct AppState {
+    /// Validated runtime configuration (fees, URLs, timeouts, etc.).
     pub config: Config,
+    /// In-memory oracle price cache refreshed every 60 seconds.
     pub cache: PriceCache,
+    /// Redis cache client for hot-path response caching.
     pub redis: RedisCache,
     /// Optional DB pool — absent in unit tests that don't need a database.
     pub db: Option<sqlx::PgPool>,
+    /// Shared Prometheus metrics registry.
     pub metrics: SharedMetrics,
+    /// Broadcast channel for pushing live prediction events to WebSocket clients.
     pub event_bus: crate::ws::EventBus,
 }
 
@@ -181,6 +186,7 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
 
 // ── Task 2: Active Pools API ──────────────────────────────────────────────────
 
+/// Query parameters for the `GET /api/v1/pools` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct PoolsQuery {
     /// Sort order: "popular" | "ending_soon" | "new" (default)
@@ -191,6 +197,17 @@ pub struct PoolsQuery {
     pub status: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PoolsResponse {
+    pub pools: Vec<crate::db::PoolRow>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+    pub status: String,
+    pub category: Option<String>,
+    pub sort_by: String,
 }
 
 /// `GET /api/v1/pools/:id` — get detailed pool information with real-time odds.
@@ -209,6 +226,10 @@ pub async fn get_pool_by_id_handler(
     }
 }
 
+/// `GET /api/v1/stats` — protocol-wide aggregate statistics.
+///
+/// Returns total value locked, total bets placed, and total pools created.
+/// Responds with a database-unavailable error if no pool is configured.
 pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
     let Some(db) = &state.db else {
         return Json(json!({ "error": "database not available" }));
@@ -219,6 +240,10 @@ pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value>
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
+/// `GET /api/v1/pools` — paginated list of pools with optional filters.
+///
+/// Checks the Redis cache first; falls back to the database on a cache miss
+/// and stores the result for [`POOLS_CACHE_TTL`](crate::redis_cache::POOLS_CACHE_TTL) seconds.
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
@@ -241,6 +266,28 @@ pub async fn get_pools(
     }
 
     // Cache miss - fetch from database
+    match tokio::try_join!(
+        crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset),
+        crate::db::count_pools_with_filters(db, category, status)
+    ) {
+        Ok((pools, total)) => {
+            let response = PoolsResponse {
+                pools,
+                total,
+                limit,
+                offset,
+                status: status.to_string(),
+                category: category.map(|s| s.to_string()),
+                sort_by: sort_by.to_string(),
+            };
+            
+            let json_response = json!(&response);
+            
+            // Cache the response for 60 seconds
+            state.redis.set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL).await;
+            
+            Json(json_response)
+        },
     match crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset).await {
         Ok(pools) => {
             let response = json!({
@@ -266,9 +313,12 @@ pub async fn get_pools(
 
 // ── Task 3: User Prediction History API ──────────────────────────────────────
 
+/// Generic pagination query parameters used by history and prediction endpoints.
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {
+    /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<i64>,
+    /// Zero-based offset for pagination (default 0).
     pub offset: Option<i64>,
 }
 
@@ -321,9 +371,12 @@ pub async fn get_user_predictions(
     }
 }
 
+/// Query parameters for the `GET /api/v1/leaderboard` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct LeaderboardQuery {
+    /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<i64>,
+    /// Zero-based offset for pagination (default 0).
     pub offset: Option<i64>,
     /// Ranking type: "volume" | "winnings" (default: "volume")
     pub rank_by: Option<String>,

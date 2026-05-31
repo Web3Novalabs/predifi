@@ -28,16 +28,23 @@ struct GetEventsResult {
     latest_ledger: u64,
 }
 
+/// A single event returned by the Stellar RPC `getEvents` call.
 #[derive(Debug, Deserialize)]
 pub struct StellarEvent {
+    /// Event type string, e.g. `"contract"` or `"system"`.
     #[serde(rename = "type")]
     pub event_type: String,
+    /// Ledger sequence number in which this event was emitted.
     #[serde(rename = "ledger")]
     pub ledger: u64,
+    /// Soroban contract address that emitted the event, if applicable.
     #[serde(rename = "contractId")]
     pub contract_id: Option<String>,
+    /// Unique event identifier assigned by the RPC node.
     pub id: String,
+    /// XDR-encoded topic values decoded as strings by the RPC node.
     pub topics: Option<Vec<String>>,
+    /// Arbitrary JSON payload decoded from the event's XDR data field.
     pub data: Option<Value>,
 }
 
@@ -136,6 +143,9 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeou
                         events = count,
                         "stellar events received"
                     );
+                    // Collect referral events for bulk insert to minimise DB round-trips.
+                    let mut referral_events: Vec<crate::db::ReferralPaidEvent> = Vec::new();
+
                     for event in &result.events {
                         info!(
                             id = %event.id,
@@ -192,7 +202,28 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeou
                                         "failed to process pool_canceled event"
                                     );
                                 }
+                            } else if topic_matches("referral_paid") {
+                                match parse_referral_paid_event(event) {
+                                    Ok(ev) => referral_events.push(ev),
+                                    Err(e) => error!(
+                                        id = %event.id,
+                                        ledger = event.ledger,
+                                        error = %e,
+                                        "failed to parse referral_paid event"
+                                    ),
+                                }
                             }
+                        }
+                    }
+
+                    // Bulk-insert all collected referral events in a single query.
+                    if !referral_events.is_empty() {
+                        if let Err(e) = crate::db::insert_referrals_bulk(&db, &referral_events).await {
+                            error!(
+                                error = %e,
+                                count = referral_events.len(),
+                                "failed to bulk insert referral events"
+                            );
                         }
                     }
                 }
@@ -314,6 +345,35 @@ async fn handle_pool_canceled_event(db: &PgPool, event: &StellarEvent) -> Result
     crate::db::cancel_pool_in_db(db, pool_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Parse a `referral_paid` event into a [`ReferralPaidEvent`] without touching the database.
+///
+/// This is used in conjunction with `insert_referrals_bulk` so that multiple referral
+/// events from a single poll cycle are inserted in one batch.
+fn parse_referral_paid_event(event: &StellarEvent) -> Result<crate::db::ReferralPaidEvent, String> {
+    let data = event
+        .data
+        .as_ref()
+        .ok_or_else(|| "missing event data".to_string())?;
+
+    let pool_id = extract_u64(data, "pool_id")
+        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let referrer = extract_string(data, "referrer")
+        .ok_or_else(|| "missing or invalid referrer".to_string())?;
+    let referred_user = extract_string(data, "referred_user")
+        .or_else(|| extract_string(data, "user"))
+        .ok_or_else(|| "missing or invalid referred_user".to_string())?;
+    let referral_amount = extract_i64(data, "referral_amount")
+        .or_else(|| extract_i64(data, "amount"))
+        .ok_or_else(|| "missing or invalid referral_amount".to_string())?;
+
+    Ok(crate::db::ReferralPaidEvent {
+        pool_id,
+        referrer,
+        referred_user,
+        referral_amount,
+    })
 }
 
 fn extract_string(data: &Value, key: &str) -> Option<String> {

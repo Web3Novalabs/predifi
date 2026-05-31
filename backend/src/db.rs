@@ -298,6 +298,34 @@ pub async fn get_pools_with_filters(
         .await
 }
 
+/// Count total number of pools matching the filters.
+pub async fn count_pools_with_filters(
+    pool: &PgPool,
+    category: Option<&str>,
+    status: &str,
+) -> Result<i64, sqlx::Error> {
+    // Validate status parameter to prevent SQL injection
+    let valid_status = match status {
+        "active" | "closed" | "settled" => status,
+        _ => "active", // default to active for invalid status
+    };
+
+    let sql = r#"
+        SELECT COUNT(*)
+        FROM pools
+        WHERE state = $1
+          AND ($2::text IS NULL OR category = $2)
+        "#;
+
+    let count: (i64,) = sqlx::query_as(sql)
+        .bind(valid_status)
+        .bind(category)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(count.0)
+}
+
 /// Fetch detailed information for a specific pool by ID.
 pub async fn get_pool_by_id(
     pool: &PgPool,
@@ -700,33 +728,6 @@ pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, sqlx::Er
     .await
 }
 
-/// Protocol-wide aggregate statistics.
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-pub struct ProtocolStats {
-    /// Sum of `total_stake` across all pools (TVL proxy).
-    pub total_value_locked: i64,
-    /// Total number of prediction records (bets placed).
-    pub total_bets: i64,
-    /// Total number of pools ever created.
-    pub total_pools: i64,
-}
-
-/// Fetch protocol-wide aggregate statistics in a single query.
-pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, sqlx::Error> {
-    sqlx::query_as!(
-        ProtocolStats,
-        r#"
-        SELECT
-            COALESCE(SUM(total_stake), 0) AS "total_value_locked!: i64",
-            (SELECT COUNT(*) FROM predictions)  AS "total_bets!: i64",
-            COUNT(*)                            AS "total_pools!: i64"
-        FROM pools
-        "#
-    )
-    .fetch_one(pool)
-    .await
-}
-
 /// Decoded data from a `pool_created` contract event.
 #[derive(Debug)]
 pub struct PoolCreatedEvent {
@@ -744,6 +745,91 @@ pub struct PredictionPlacedEvent {
     pub user_address: String,
     pub outcome: i32,
     pub amount: i64,
+}
+
+/// Decoded data from a `referral_paid` contract event.
+#[derive(Debug)]
+pub struct ReferralPaidEvent {
+    pub pool_id: u64,
+    pub referrer: String,
+    pub referred_user: String,
+    pub referral_amount: i64,
+}
+
+/// Insert multiple referral records using bulk insert for optimal performance.
+///
+/// This function uses PostgreSQL's `INSERT INTO ... VALUES (...), (...), ...` syntax
+/// to insert all referral records in a single database round-trip, significantly
+/// improving performance over individual inserts when processing multiple events.
+pub async fn insert_referrals_bulk(
+    pool: &PgPool,
+    events: &[ReferralPaidEvent],
+) -> Result<(), sqlx::Error> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = pool.begin().await?;
+
+    // Build bulk insert query with dynamic values
+    let query = r#"
+        INSERT INTO referrals (referrer, user_address, pool_id, amount)
+        VALUES 
+    "#;
+
+    let mut values = Vec::new();
+    let mut param_index = 1i32;
+
+    for event in events {
+        values.push(format!(
+            "(${}, ${}, ${}, ${})",
+            param_index,
+            param_index + 1,
+            param_index + 2,
+            param_index + 3
+        ));
+        param_index += 4;
+    }
+
+    let full_query = format!("{} {}", query, values.join(", "));
+
+    let mut query_builder = sqlx::query(&full_query);
+
+    for event in events {
+        query_builder = query_builder
+            .bind(&event.referrer)
+            .bind(&event.referred_user)
+            .bind(event.pool_id as i64)
+            .bind(event.referral_amount);
+    }
+
+    query_builder.execute(&mut tx).await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Insert a single referral record.
+///
+/// For inserting multiple referrals, use `insert_referrals_bulk` instead for better performance.
+pub async fn insert_referral_from_event(
+    pool: &PgPool,
+    event: &ReferralPaidEvent,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        INSERT INTO referrals (referrer, user_address, pool_id, amount)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT DO NOTHING
+        "#,
+        event.referrer,
+        event.referred_user,
+        event.pool_id as i64,
+        event.referral_amount,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

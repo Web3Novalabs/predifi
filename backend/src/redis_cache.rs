@@ -25,7 +25,11 @@ pub const POOL_DETAILS_CACHE_TTL: u64 = 30;
 /// Default TTL for user predictions (45 seconds)
 pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 
-/// Redis cache client wrapper
+/// Thread-safe Redis cache client with graceful fail-open behaviour.
+///
+/// All operations silently no-op when Redis is unavailable so the application
+/// continues to function without caching rather than returning errors to users.
+/// Use [`RedisCache::disabled`] to create an always-no-op instance for tests.
 #[derive(Clone)]
 pub struct RedisCache {
     manager: Option<ConnectionManager>,
@@ -194,7 +198,10 @@ impl RedisCache {
     }
 }
 
-/// Generate cache key for pools list
+/// Generate a cache key for a pools list query.
+///
+/// The key encodes all query parameters so that different filter/sort/page
+/// combinations are stored independently in Redis.
 pub fn pools_cache_key(
     sort_by: &str,
     category: Option<&str>,
@@ -208,12 +215,12 @@ pub fn pools_cache_key(
     }
 }
 
-/// Generate cache key for pool details
+/// Generate a cache key for a single pool's detail page.
 pub fn pool_details_cache_key(pool_id: i64) -> String {
     format!("pool:{}:details", pool_id)
 }
 
-/// Generate cache key for user predictions
+/// Generate a cache key for a user's paginated predictions list.
 pub fn user_predictions_cache_key(address: &str, limit: i64, offset: i64) -> String {
     format!("user:{}:predictions:{}:{}", address, limit, offset)
 }
