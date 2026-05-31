@@ -191,6 +191,13 @@ pub enum PredifiError {
     PoolDisputed = 27,
     /// target_price must be strictly positive.
     InvalidTargetPrice = 201,
+    /// `close_staking` called before pool.end_time has passed.
+    StakingStillOpen = 82,
+    /// The contract is currently paused; all state-mutating operations are blocked.
+    ///
+    /// Callers should check `is_contract_paused()` before submitting a transaction,
+    /// or listen for `PauseEvent` / `UnpauseEvent` on-chain to stay in sync.
+    ContractPaused = 83,
 }
 
 /// Represents the current state of a prediction market.
@@ -615,6 +622,13 @@ pub enum DataKey {
     OracleWhitelist,
     /// Disputed flag for a pool: Disputed(pool_id) -> ()
     Disputed(u64),
+    /// Sentinel that records staking has been closed for a pool:
+    /// `StakingClosed(pool_id)` -> `bool`
+    ///
+    /// Written (once) the first time `close_staking` is successfully called
+    /// for a given pool so that subsequent calls are idempotent — they return
+    /// `Ok(())` but do NOT re-emit the `StakingClosedEvent`.
+    StakingClosed(u64),
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -714,6 +728,29 @@ pub struct MinStakeUpdateEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolReadyForResolutionEvent {
     pub pool_id: u64,
+    pub timestamp: u64,
+}
+
+/// Emitted exactly once per pool when its staking window closes, i.e. the
+/// first time `close_staking` is successfully called after `pool.end_time`
+/// has elapsed.
+///
+/// Off-chain subscribers (event indexers, front-ends, keepers) should watch
+/// the `"staking_closed"` topic on this contract to react to the transition —
+/// for example to hide a "Place Prediction" button or to queue a resolution
+/// workflow.  The event is guaranteed to fire **at most once** per pool; the
+/// `StakingClosed(pool_id)` storage sentinel prevents duplicate emission even
+/// if multiple callers race to trigger the transition.
+#[contractevent(topics = ["staking_closed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakingClosedEvent {
+    /// The pool whose staking window has just closed.
+    pub pool_id: u64,
+    /// The pool's configured `end_time` — the boundary at which staking closed.
+    pub end_time: u64,
+    /// Total stake locked in the pool at the moment staking was closed.
+    pub total_stake: i128,
+    /// Ledger timestamp when this event was emitted.
     pub timestamp: u64,
 }
 
@@ -1391,10 +1428,14 @@ impl PredifiContract {
         paused
     }
 
-    fn require_not_paused(env: &Env) {
+    /// Returns `Err(PredifiError::ContractPaused)` if the contract is currently
+    /// paused, `Ok(())` otherwise. All state-mutating entry points call this at
+    /// their top to block execution while the emergency pause is active.
+    fn require_not_paused(env: &Env) -> Result<(), PredifiError> {
         if Self::is_paused(env) {
-            panic!("Contract is paused");
+            return Err(PredifiError::ContractPaused);
         }
+        Ok(())
     }
 
     fn enter_reentrancy_guard(env: &Env) {
@@ -1627,7 +1668,7 @@ impl PredifiContract {
     /// PRE: admin has role 0
     /// POST: Config.fee_bps ≤ 10_000 (INV-6)
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_fee_bps")?;
         if !Self::is_valid_fee_bps(fee_bps) {
@@ -1644,7 +1685,7 @@ impl PredifiContract {
 
     /// Set treasury address. Caller must have Admin role (0).
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_treasury")?;
         let mut config = Self::get_config(&env);
@@ -1664,7 +1705,7 @@ impl PredifiContract {
         admin: Address,
         limit: u32,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_max_predictions_per_user")?;
         let mut config = Self::get_config(&env);
@@ -1682,7 +1723,7 @@ impl PredifiContract {
         admin: Address,
         cooldown_seconds: u64,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_prediction_cooldown")?;
 
@@ -1701,7 +1742,7 @@ impl PredifiContract {
 
     /// Set resolution delay in seconds. Caller must have Admin role (0).
     pub fn set_resolution_delay(env: Env, admin: Address, delay: u64) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_resolution_delay")?;
         if delay > MAX_RESOLUTION_DELAY {
@@ -1722,7 +1763,7 @@ impl PredifiContract {
         admin: Address,
         duration: u64,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_min_pool_duration")?;
 
@@ -1744,7 +1785,7 @@ impl PredifiContract {
     /// * `admin`  - Address with Admin role (0).
     /// * `amount` - New minimum stake in base token units. Must be > 0.
     pub fn set_min_stake(env: Env, admin: Address, amount: i128) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_min_stake")?;
         assert!(amount > 0, "min_stake must be greater than zero");
@@ -1769,7 +1810,7 @@ impl PredifiContract {
         admin: Address,
         referral_cut_bps: u32,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_referral_cut_bps")?;
         assert!(
@@ -1795,7 +1836,7 @@ impl PredifiContract {
     ///
     /// Caller must hold the Admin role. `bps` must be ≤ 10_000.
     pub fn set_referral_rate(env: Env, admin: Address, bps: u32) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_referral_rate")?;
         if bps > 10_000 {
@@ -1814,7 +1855,7 @@ impl PredifiContract {
         admin: Address,
         token: Address,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "add_token_to_whitelist")?;
         let key = DataKey::TokenWl(token.clone());
@@ -1850,7 +1891,7 @@ impl PredifiContract {
         admin: Address,
         token: Address,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "remove_token_from_whitelist")?;
         let key = DataKey::TokenWl(token.clone());
@@ -1891,7 +1932,7 @@ impl PredifiContract {
         admin: Address,
         oracle_address: Address,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "add_oracle")?;
 
@@ -1927,7 +1968,7 @@ impl PredifiContract {
         admin: Address,
         oracle_address: Address,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "remove_oracle")?;
 
@@ -2124,6 +2165,7 @@ impl PredifiContract {
         pool_id: u64,
         new_referrer: Option<Address>,
     ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
         user.require_auth();
         let referrer_key = DataKey::Referrer(user.clone(), pool_id);
         match new_referrer {
@@ -2165,7 +2207,7 @@ impl PredifiContract {
         amount: i128,
         recipient: Address,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
 
         // Verify admin role
@@ -2233,8 +2275,8 @@ impl PredifiContract {
         options_count: u32,
         category: Symbol,
         config: PoolConfig,
-    ) -> u64 {
-        Self::require_not_paused(&env);
+    ) -> Result<u64, PredifiError> {
+        Self::require_not_paused(&env)?;
         creator.require_auth();
 
         // Validate: category must be in the allowed list, return error if invalid
@@ -2464,7 +2506,7 @@ impl PredifiContract {
         // Register pool in the global active pool index.
         Self::add_to_active_index(&env, pool_id);
 
-        pool_id
+        Ok(pool_id)
     }
 
     /// Increase the maximum total stake cap for a pool.
@@ -2478,7 +2520,7 @@ impl PredifiContract {
         pool_id: u64,
         new_max_total_stake: i128,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         creator.require_auth();
 
         let pool_key = DataKey::Pool(pool_id);
@@ -2545,7 +2587,7 @@ impl PredifiContract {
         pool_id: u64,
         new_desc: String,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         caller.require_auth();
 
         let pool_key = DataKey::Pool(pool_id);
@@ -2612,7 +2654,7 @@ impl PredifiContract {
         pool_id: u64,
         outcome: u32,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         operator.require_auth();
         Self::require_operator_role_for_resolution(&env, &operator, pool_id)?;
 
@@ -2795,6 +2837,7 @@ impl PredifiContract {
     /// Mark a pool as ready for resolution and emit an event.
     /// Can be called by anyone once the resolution delay has passed.
     pub fn mark_pool_ready(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
             .storage()
@@ -2821,6 +2864,75 @@ impl PredifiContract {
         }
     }
 
+    /// Signal that staking has closed for a pool and emit a `StakingClosedEvent`.
+    ///
+    /// Staking is considered closed once `pool.end_time` has passed — at that
+    /// point no more predictions can be placed.  This function provides an
+    /// explicit, permissionless on-chain signal of that transition so that
+    /// off-chain subscribers (event indexers, front-ends, keepers) can react
+    /// without having to poll block timestamps themselves.
+    ///
+    /// The function is **idempotent**: if it has already been called for the
+    /// given pool, subsequent calls succeed silently without re-emitting the
+    /// event.  This prevents duplicate events even if multiple callers race to
+    /// trigger the transition.
+    ///
+    /// # Arguments
+    /// * `pool_id` - The ID of the pool whose staking window has ended.
+    ///
+    /// # Errors
+    /// - `PoolNotFound`     — no pool exists for `pool_id`.
+    /// - `InvalidPoolState` — pool is not in the `Active` state (already
+    ///                        resolved or cancelled pools have no open staking
+    ///                        window to close).
+    /// - `StakingStillOpen` — `pool.end_time` has not yet been reached; the
+    ///                        staking window is still open.
+    ///
+    /// PRE:  pool.state = Active, env.ledger().timestamp() >= pool.end_time
+    /// POST: StakingClosed(pool_id) sentinel written; StakingClosedEvent emitted
+    ///       exactly once per pool.
+    pub fn close_staking(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .ok_or(PredifiError::PoolNotFound)?;
+
+        // Only pools that are still Active have a meaningful open staking window.
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let current_time = env.ledger().timestamp();
+
+        // Staking closes when the ledger passes end_time.
+        if current_time < pool.end_time {
+            return Err(PredifiError::StakingStillOpen);
+        }
+
+        // Idempotency guard — if the event has already been emitted for this
+        // pool, return success without re-emitting.
+        let sentinel_key = DataKey::StakingClosed(pool_id);
+        if env.storage().persistent().has(&sentinel_key) {
+            return Ok(());
+        }
+
+        // Mark as closed and emit the event.
+        env.storage().persistent().set(&sentinel_key, &true);
+        Self::extend_persistent(&env, &sentinel_key);
+
+        StakingClosedEvent {
+            pool_id,
+            end_time: pool.end_time,
+            total_stake: pool.total_stake,
+            timestamp: current_time,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Cancel an active pool. Caller must have Operator role (1).
     /// Cancel a pool, freezing all betting and enabling refund process.
     /// Only callable by Admin (role 0) - can cancel any pool for any reason.
@@ -2842,7 +2954,7 @@ impl PredifiContract {
         pool_id: u64,
         reason: String,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         operator.require_auth();
 
         // Protect state-modifying external interactions from reentrancy
@@ -2921,8 +3033,8 @@ impl PredifiContract {
         outcome: u32,
         referrer: Option<Address>,
         invite_key: Option<Symbol>,
-    ) {
-        Self::require_not_paused(&env);
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
         user.require_auth();
         assert!(amount > 0, "amount must be positive");
 
@@ -3178,6 +3290,8 @@ impl PredifiContract {
             }
             .publish(&env);
         }
+
+        Ok(())
     }
 
     /// Claim winnings from a resolved pool. Returns the amount paid out (0 for losers).
@@ -3244,7 +3358,7 @@ impl PredifiContract {
                     pool_id,
                     user: user.clone(),
                     amount: prediction.amount,
-                    claim_type: String::from_str(&env, "winnings"),
+                    claim_type: String::from_str(env, "winnings"),
                 }
                 .publish(env);
 
@@ -3335,7 +3449,7 @@ impl PredifiContract {
                 pool_id,
                 user: user.clone(),
                 amount: winnings,
-                claim_type: String::from_str(&env, "winnings"),
+                claim_type: String::from_str(env, "winnings"),
             }
             .publish(env);
 
@@ -3348,7 +3462,7 @@ impl PredifiContract {
 
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         user.require_auth();
         Self::claim_winnings_internal(&env, &user, pool_id)
     }
@@ -3371,14 +3485,15 @@ impl PredifiContract {
         env: Env,
         user: Address,
         pool_ids: Vec<u64>,
-    ) -> soroban_sdk::Map<u64, i128> {
+    ) -> Result<soroban_sdk::Map<u64, i128>, PredifiError> {
+        Self::require_not_paused(&env)?;
         user.require_auth();
         let mut results: soroban_sdk::Map<u64, i128> = soroban_sdk::Map::new(&env);
         for pool_id in pool_ids.iter() {
             let amount = Self::claim_winnings_internal(&env, &user, pool_id).unwrap_or(0);
             results.set(pool_id, amount);
         }
-        results
+        Ok(results)
     }
 
     /// Claim a refund from a canceled pool. Returns the refunded amount.
@@ -3402,7 +3517,7 @@ impl PredifiContract {
     /// - `PoolNotResolved` if pool is resolved (not canceled)
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn claim_refund(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         user.require_auth();
 
         // 🛡️ RE-ENTRANCY GUARD: Protect against recursive withdrawal attempts
@@ -3497,7 +3612,7 @@ impl PredifiContract {
         min_stake: i128,
         max_stake: i128,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         operator.require_auth();
         Self::require_role(&env, &operator, 1)?;
 
@@ -3802,7 +3917,7 @@ impl PredifiContract {
         pool_id: u64,
         user: Address,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         creator.require_auth();
 
         let pool_key = DataKey::Pool(pool_id);
@@ -3840,7 +3955,7 @@ impl PredifiContract {
         pool_id: u64,
         user: Address,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         creator.require_auth();
 
         let pool_key = DataKey::Pool(pool_id);
@@ -3969,7 +4084,7 @@ impl PredifiContract {
         max_price_age: u64,
         min_confidence_ratio: u32,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "init_oracle")?;
 
@@ -4015,7 +4130,7 @@ impl PredifiContract {
         operator_type: u32,
         tolerance_bps: u32,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         operator.require_auth();
         Self::require_role(&env, &operator, 1)?; // Role Operator
 
@@ -4048,7 +4163,7 @@ impl PredifiContract {
         timestamp: u64,
         expires_at: u64,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         oracle.require_auth();
 
         if !Self::is_oracle_whitelisted(&env, &oracle) {
@@ -4148,7 +4263,7 @@ impl PredifiContract {
     /// Automatically resolve a pool based on its configured price condition.
     /// Anyone can trigger this once the pool's end time and resolution delay have passed.
     pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
 
         let condition_key = DataKey::PriceCondition(pool_id);
         let (feed_pair, target_price, op, _tolerance): (Symbol, i128, u32, u32) = env
@@ -4248,7 +4363,7 @@ impl PredifiContract {
         admin: Address,
         tiers: Vec<FeeTier>,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_fee_tiers")?;
 
@@ -4346,7 +4461,7 @@ impl OracleCallback for PredifiContract {
         outcome: u32,
         proof: String,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         oracle.require_auth();
 
         Self::require_oracle_role_for_resolution(&env, &oracle, pool_id)?;
@@ -4512,7 +4627,7 @@ impl PredifiContract {
         pool_id: u64,
         reason: String,
     ) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
         moderator.require_auth();
         Self::require_role(&env, &moderator, 2)?;
 

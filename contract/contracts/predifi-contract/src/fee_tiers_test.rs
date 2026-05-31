@@ -245,7 +245,7 @@ fn test_fee_tier_treasury_intake() {
             &2u32,
             &symbol_short!("Tech"),
             &PoolConfig {
-            start_time: 0,
+                start_time: 0,
                 description: String::from_str(&env, "pool"),
                 metadata_url: String::from_str(&env, "ipfs://x"),
                 min_stake: 1i128,

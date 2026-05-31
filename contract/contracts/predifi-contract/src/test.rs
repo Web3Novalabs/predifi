@@ -472,8 +472,12 @@ fn test_reward_claimed_event_emitted_on_winnings_claim() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
-            metadata_url: String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake: 0,
@@ -1720,7 +1724,6 @@ fn test_non_admin_cannot_pause() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1736,11 +1739,11 @@ fn test_paused_blocks_set_fee_bps() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.set_fee_bps(&admin, &100u32);
+    let result = client.try_set_fee_bps(&admin, &100u32);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_set_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1756,11 +1759,11 @@ fn test_paused_blocks_set_treasury() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.set_treasury(&admin, &Address::generate(&env));
+    let result = client.try_set_treasury(&admin, &Address::generate(&env));
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_create_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1779,7 +1782,7 @@ fn test_paused_blocks_create_pool() {
 
     let creator = Address::generate(&env);
     client.pause(&admin);
-    client.create_pool(
+    let result = client.try_create_pool(
         &creator,
         &100000u64,
         &token,
@@ -1808,10 +1811,10 @@ fn test_paused_blocks_create_pool() {
             ],
         },
     );
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_place_prediction() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1828,11 +1831,11 @@ fn test_paused_blocks_place_prediction() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.place_prediction(&user, &0u64, &10, &1, &None, &None);
+    let result = client.try_place_prediction(&user, &0u64, &10, &1, &None, &None);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_resolve_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1850,11 +1853,11 @@ fn test_paused_blocks_resolve_pool() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.resolve_pool(&operator, &0u64, &1u32);
+    let result = client.try_resolve_pool(&operator, &0u64, &1u32);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_claim_winnings() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1871,7 +1874,8 @@ fn test_paused_blocks_claim_winnings() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.claim_winnings(&user, &0u64);
+    let result = client.try_claim_winnings(&user, &0u64);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
@@ -4483,7 +4487,6 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4499,8 +4502,58 @@ fn test_paused_blocks_withdraw_treasury() {
     // Pause contract
     client.pause(&admin);
 
-    // Try to withdraw while paused - should panic
-    client.withdraw_treasury(&admin, &token_address, &1000, &treasury);
+    // Try to withdraw while paused — must return ContractPaused error
+    let result = client.try_withdraw_treasury(&admin, &token_address, &1000, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_update_referrer() {
+    // Verify that update_referrer returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let result = client.try_update_referrer(&creator, &0u64, &Some(Address::generate(&env)));
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_mark_pool_ready() {
+    // Verify that mark_pool_ready returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let result = client.try_mark_pool_ready(&0u64);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_batch_claim_winnings() {
+    // Verify that batch_claim_winnings returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let pool_ids = soroban_sdk::vec![&env, 0u64];
+    let result = client.try_batch_claim_winnings(&creator, &pool_ids);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
@@ -7346,7 +7399,7 @@ fn test_get_pool_config_matches_creation_params() {
     let required_resolutions = 1u32;
 
     let config = PoolConfig {
-            start_time: 0,
+        start_time: 0,
         description: description.clone(),
         metadata_url: metadata_url.clone(),
         min_stake,
@@ -7394,7 +7447,7 @@ fn test_get_pool_config_private_pool_with_whitelist_key() {
 
     let whitelist_key = symbol_short!("secret");
     let config = PoolConfig {
-            start_time: 0,
+        start_time: 0,
         description: String::from_str(&env, "Private pool"),
         metadata_url: String::from_str(&env, "ipfs://test"),
         min_stake: 1i128,
@@ -7437,7 +7490,7 @@ fn test_get_pool_config_with_initial_liquidity() {
 
     let initial_liquidity = 200i128;
     let config = PoolConfig {
-            start_time: 0,
+        start_time: 0,
         description: String::from_str(&env, "Liquidity pool"),
         metadata_url: String::from_str(&env, "ipfs://test"),
         min_stake: 5i128,
@@ -7798,7 +7851,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Tech"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "Tech pool"),
 //             metadata_url: String::from_str(&env, "ipfs://tech"),
 //             min_stake: 1i128,
@@ -7819,7 +7872,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Sports"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "Sports pool"),
 //             metadata_url: String::from_str(&env, "ipfs://sports"),
 //             min_stake: 1i128,
@@ -7840,7 +7893,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Crypto"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "Crypto pool"),
 //             metadata_url: String::from_str(&env, "ipfs://crypto"),
 //             min_stake: 1i128,
@@ -7861,7 +7914,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Finance"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "Finance pool"),
 //             metadata_url: String::from_str(&env, "ipfs://finance"),
 //             min_stake: 1i128,
@@ -8138,7 +8191,7 @@ fn test_get_active_pools_pagination() {
             &2u32,
             &symbol_short!("Tech"),
             &PoolConfig {
-            start_time: 0,
+                start_time: 0,
                 description: String::from_str(&env, "Pool"),
                 metadata_url: String::from_str(&env, "ipfs://p"),
                 min_stake: 1i128,
@@ -8233,7 +8286,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_a = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "A"),
 //             metadata_url: String::from_str(&env, "ipfs://a"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -8245,7 +8298,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_b = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Sports"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "B"),
 //             metadata_url: String::from_str(&env, "ipfs://b"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -8257,7 +8310,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_c = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Crypto"),
 //         &PoolConfig {
-            start_time: 0,
+//             start_time: 0,
 //             description: String::from_str(&env, "C"),
 //             metadata_url: String::from_str(&env, "ipfs://c"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -9342,7 +9395,7 @@ fn test_pool_created_with_each_category() {
             &2u32,
             &cat,
             &PoolConfig {
-            start_time: 0,
+                start_time: 0,
                 description: String::from_str(&env, "Category test pool"),
                 metadata_url: String::from_str(&env, "ipfs://test"),
                 min_stake: 1i128,
@@ -9408,7 +9461,7 @@ fn test_get_contract_info_returns_config_and_stats() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
     let pool_config = PoolConfig {
-            start_time: 0,
+        start_time: 0,
         description: String::from_str(&env, "Pool"),
         metadata_url: String::from_str(&env, "ipfs://pool"),
         min_stake: 1i128,
@@ -10378,7 +10431,7 @@ fn test_batch_claim_winnings_three_pools() {
             &2u32,
             &symbol_short!("Sports"),
             &PoolConfig {
-            start_time: 0,
+                start_time: 0,
                 description: String::from_str(&env, desc),
                 metadata_url: String::from_str(&env, "ipfs://test"),
                 min_stake: 1i128,
@@ -11034,7 +11087,7 @@ fn test_update_price_feed_rejects_current_timestamp() {
     let result = client.try_update_price_feed(
         &oracle,
         &feed_pair,
-        &50_000_0000000i128,
+        &500_000_000_000_i128,
         &100i128,
         &now,          // timestamp == current ledger time
         &(now + 3600), // expires_at is fine
@@ -11074,7 +11127,7 @@ fn test_update_price_feed_rejects_future_timestamp() {
     let result = client.try_update_price_feed(
         &oracle,
         &feed_pair,
-        &3_000_0000000i128,
+        &30_000_000_000_i128,
         &50i128,
         &(now + 1), // timestamp is 1 second in the future
         &(now + 3600),
@@ -11396,7 +11449,7 @@ fn test_conflicting_oracle_votes_third_oracle_resolves_majority() {
 fn test_init_oracle_rejects_zero_max_price_age() {
     let env = Env::default();
     env.mock_all_auths();
-    let (ac_client, client, token_address, _, _, _, operator, _) = setup(&env);
+    let (ac_client, client, _token_address, _, _, _, _operator, _) = setup(&env);
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     let result = client.try_init_oracle(&admin, &Address::generate(&env), &0, &100);
@@ -11513,4 +11566,182 @@ fn test_unauthorized_admin_set_max_predictions() {
     let (_, client, _, _, _, _, _, _) = setup(&env);
     let not_admin = Address::generate(&env);
     client.set_max_predictions_per_user(&not_admin, &10u32);
+}
+
+// ── close_staking tests ───────────────────────────────────────────────────────
+
+/// Shared helper: create a minimal 2-outcome pool ending at timestamp 100_000.
+fn create_basic_pool(
+    env: &Env,
+    client: &PredifiContractClient<'_>,
+    token_address: &Address,
+    creator: &Address,
+) -> u64 {
+    client.create_pool(
+        creator,
+        &100_000u64,
+        token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(env, "Staking close test pool"),
+            metadata_url: String::from_str(
+                env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                env,
+                String::from_str(env, "Yes"),
+                String::from_str(env, "No"),
+            ],
+        },
+    )
+}
+
+#[test]
+fn test_close_staking_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_basic_pool(&env, &client, &token_address, &creator);
+
+    // Advance past end_time.
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+
+    client.close_staking(&pool_id);
+
+    // Verify that exactly one "staking_closed" event was emitted and check payload.
+    let events = env.events().all();
+    let staking_closed_topic = Symbol::new(&env, "staking_closed");
+    let mut found = false;
+    let mut match_count = 0u32;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == staking_closed_topic {
+                    match_count += 1;
+                    if !found {
+                        let data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+
+                        let emitted_pool_id: u64 = data
+                            .get(Symbol::new(&env, "pool_id"))
+                            .unwrap()
+                            .into_val(&env);
+                        let emitted_end_time: u64 = data
+                            .get(Symbol::new(&env, "end_time"))
+                            .unwrap()
+                            .into_val(&env);
+                        let emitted_timestamp: u64 = data
+                            .get(Symbol::new(&env, "timestamp"))
+                            .unwrap()
+                            .into_val(&env);
+
+                        assert_eq!(emitted_pool_id, pool_id);
+                        assert_eq!(emitted_end_time, 100_000u64);
+                        assert_eq!(emitted_timestamp, 100_001u64);
+                        found = true;
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(found, "StakingClosedEvent not found");
+    assert_eq!(match_count, 1, "Expected exactly one StakingClosedEvent");
+}
+
+#[test]
+fn test_close_staking_idempotent_no_duplicate_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_basic_pool(&env, &client, &token_address, &creator);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    let staking_closed_topic = Symbol::new(&env, "staking_closed");
+
+    // Helper: count staking_closed events in the current event log snapshot.
+    let count_staking_closed = |topic: &Symbol| -> u32 {
+        let mut n = 0u32;
+        for e in env.events().all().iter() {
+            if let Some(tv) = e.1.get(0) {
+                if let Ok(s) = Symbol::try_from_val(&env, &tv) {
+                    if &s == topic {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n
+    };
+
+    // First call — event should be emitted once.
+    client.close_staking(&pool_id);
+    assert_eq!(
+        count_staking_closed(&staking_closed_topic),
+        1,
+        "Expected one StakingClosedEvent after first call"
+    );
+
+    // Second call — must succeed but emit NO new event.
+    // The Soroban test env clears the log between top-level calls, so after the
+    // second call the log reflects only what that call emitted (nothing).
+    client.close_staking(&pool_id);
+    assert_eq!(
+        count_staking_closed(&staking_closed_topic),
+        0,
+        "StakingClosedEvent must NOT be re-emitted on a second call (idempotency check)"
+    );
+}
+
+#[test]
+fn test_close_staking_fails_before_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_basic_pool(&env, &client, &token_address, &creator);
+
+    // Still before end_time; staking window is open.
+    let result = client.try_close_staking(&pool_id);
+    assert!(
+        result.is_err(),
+        "close_staking should fail when end_time has not been reached"
+    );
+}
+
+#[test]
+fn test_close_staking_fails_for_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = create_basic_pool(&env, &client, &token_address, &creator);
+
+    // Resolve the pool before calling close_staking.
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // A resolved pool is not Active; close_staking should return InvalidPoolState.
+    let result = client.try_close_staking(&pool_id);
+    assert!(
+        result.is_err(),
+        "close_staking should fail for an already-resolved pool"
+    );
 }
