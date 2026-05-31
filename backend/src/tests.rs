@@ -287,6 +287,137 @@ async fn cors_handles_preflight_request() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+/// Requests from an origin that is NOT in the allow-list must not receive an
+/// `Access-Control-Allow-Origin` header.  The request itself is still served
+/// (CORS is enforced by the browser, not the server), but the missing header
+/// tells the browser to block the response.
+#[tokio::test]
+async fn cors_rejects_disallowed_origin() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(
+        Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .header(header::ORIGIN, "https://evil.example.com")
+            .body(axum::body::Body::empty())
+            .expect("failed to build request"),
+    )
+    .await
+    .expect("request failed");
+
+    let allow_origin = response
+        .headers()
+        .get("access-control-allow-origin")
+        .and_then(|v| v.to_str().ok());
+
+    assert_eq!(
+        allow_origin, None,
+        "disallowed origin must not receive an Access-Control-Allow-Origin header"
+    );
+}
+
+/// Preflight from a disallowed origin must not receive an
+/// `Access-Control-Allow-Origin` header.
+#[tokio::test]
+async fn cors_rejects_disallowed_origin_preflight() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(
+        Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/health")
+            .header(header::ORIGIN, "https://evil.example.com")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+            .body(axum::body::Body::empty())
+            .expect("failed to build request"),
+    )
+    .await
+    .expect("request failed");
+
+    let allow_origin = response
+        .headers()
+        .get("access-control-allow-origin")
+        .and_then(|v| v.to_str().ok());
+
+    assert_eq!(
+        allow_origin, None,
+        "preflight from a disallowed origin must not receive an Access-Control-Allow-Origin header"
+    );
+}
+
+/// A custom origin list supplied via Config is respected.
+#[tokio::test]
+async fn cors_respects_custom_origin_list() {
+    let mut config = Config::default_for_test();
+    config.cors_allowed_origins = vec![String::from("https://custom.example.com")];
+
+    // The custom origin should be allowed.
+    let response = build_router(
+        config.clone(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(
+        Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .header(header::ORIGIN, "https://custom.example.com")
+            .body(axum::body::Body::empty())
+            .expect("failed to build request"),
+    )
+    .await
+    .expect("request failed");
+
+    let allow_origin = response
+        .headers()
+        .get("access-control-allow-origin")
+        .and_then(|v| v.to_str().ok());
+
+    assert_eq!(
+        allow_origin,
+        Some("https://custom.example.com"),
+        "custom allowed origin should receive the CORS header"
+    );
+
+    // The default localhost origin should now be blocked.
+    let response2 = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(
+        Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .header(header::ORIGIN, "http://localhost:5173")
+            .body(axum::body::Body::empty())
+            .expect("failed to build request"),
+    )
+    .await
+    .expect("request failed");
+
+    let allow_origin2 = response2
+        .headers()
+        .get("access-control-allow-origin")
+        .and_then(|v| v.to_str().ok());
+
+    assert_eq!(
+        allow_origin2, None,
+        "origin not in the custom list must be blocked"
+    );
+}
+
 /// Verify that the rate limiter returns 429 Too Many Requests after exceeding the limit.
 #[tokio::test]
 async fn rate_limiting_returns_429_after_burst() {
