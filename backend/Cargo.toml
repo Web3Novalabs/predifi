@@ -32,7 +32,7 @@ sqlx = { version = "0.8", default-features = false, features = [
     "migrate",
 ] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-prometheus = "0.16"
+prometheus = "0.13"
 sentry = "0.33"
 sentry-tracing = "0.33"
 # OpenAPI / Swagger documentation (#563)
@@ -41,10 +41,11 @@ utoipa-swagger-ui = { version = "7", features = ["axum"] }
 tower_governor = { version = "0.5.0", features = ["axum"] }
 # Redis caching for hot data (#714)
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+sysinfo = "0.29"
 
 
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.4", features = ["util"] }
 testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["postgres"] }
+testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }
