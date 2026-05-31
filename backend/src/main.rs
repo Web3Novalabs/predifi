@@ -180,6 +180,7 @@ async fn root() -> Json<serde_json::Value> {
 
 /// Metrics endpoint exposed to Prometheus.
 async fn metrics(State(state): State<routes::v1::AppState>) -> impl IntoResponse {
+    state.metrics.update_memory_metrics();
     match state.metrics.gather_text() {
         Ok(body) => (
             axum::http::StatusCode::OK,
