@@ -394,6 +394,7 @@ async fn main() {
         config.stellar_rpc_url.clone(),
         pool.clone(),
         event_bus.clone(),
+        std::time::Duration::from_secs(config.rpc_timeout_secs),
     );
 
     // Initialize Redis cache

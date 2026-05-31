@@ -8,6 +8,7 @@ const DEFAULT_DB_MIN_CONNECTIONS: u32 = 1;
 const DEFAULT_DB_ACQUIRE_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_RPC_HEALTH_TIMEOUT_SECS: u64 = 2;
 const DEFAULT_RPC_HEALTH_RETRY_COUNT: u8 = 3;
+const DEFAULT_RPC_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
@@ -31,6 +32,7 @@ pub struct Config {
     pub db_acquire_timeout_secs: u64,
     pub rpc_health_timeout_secs: u64,
     pub rpc_health_retry_count: u8,
+    pub rpc_timeout_secs: u64,
     pub log_level: String,
     pub treasury_fee_bps: u32,
     pub referral_fee_bps: u32,
@@ -76,6 +78,11 @@ impl Config {
             "RPC_HEALTH_RETRY_COUNT",
             DEFAULT_RPC_HEALTH_RETRY_COUNT,
         )?;
+        let rpc_timeout_secs = get_u64(
+            vars,
+            "RPC_TIMEOUT_SECS",
+            DEFAULT_RPC_TIMEOUT_SECS,
+        )?;
         let log_level = get_string(vars, "RUST_LOG", DEFAULT_LOG_LEVEL);
         let treasury_fee_bps = get_u32(vars, "TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
@@ -105,6 +112,7 @@ impl Config {
             db_acquire_timeout_secs,
             rpc_health_timeout_secs,
             rpc_health_retry_count,
+            rpc_timeout_secs,
             log_level,
             treasury_fee_bps,
             referral_fee_bps,
@@ -130,6 +138,7 @@ impl Config {
             db_acquire_timeout_secs: 1,
             rpc_health_timeout_secs: 2,
             rpc_health_retry_count: 3,
+            rpc_timeout_secs: 10,
             log_level: String::from("debug"),
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
