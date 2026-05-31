@@ -66,6 +66,8 @@ async fn main() {
 }
 
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod db_integration_tests;
 #[cfg(test)]
 mod redis_integration_tests;
