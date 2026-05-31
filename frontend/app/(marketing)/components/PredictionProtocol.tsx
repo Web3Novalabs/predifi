@@ -1,7 +1,10 @@
 "use client";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useCallback, memo } from "react";
 
-// define your content and images here
+// ---------------------------------------------------------------------------
+// Data (module-level constant — never recreated)
+// ---------------------------------------------------------------------------
+
 const steps = [
   {
     title: "Create or Join",
@@ -12,47 +15,160 @@ const steps = [
     title: "Stake Your Insight",
     description:
       "Pick a side, lock your stake — outcomes are resolved trustlessly.",
-    image: "/home-screen-2.svg", // Replace with distinct images if available
+    image: "/home-screen-2.svg",
   },
   {
     title: "Flip and Earn",
     description: "If you're right, you earn. If not, you still gain insight.",
-    image: "/home-screen-3.svg", // Replace with distinct images if available
+    image: "/home-screen-3.svg",
   },
 ];
+
+// ---------------------------------------------------------------------------
+// StepButton — memoized desktop step button
+//
+// Extracted from the inline .map() so React.memo can prevent re-renders of
+// inactive buttons when only the active index changes.
+// The parent passes `onSelect` (a stable useCallback reference) and `index`
+// as a primitive; the child creates its own stable handleClick.
+// ---------------------------------------------------------------------------
+
+interface StepButtonProps {
+  index: number;
+  title: string;
+  description: string;
+  isActive: boolean;
+  /** Stable parent-level handler — parent must wrap with useCallback */
+  onSelect: (index: number) => void;
+}
+
+const StepButton = memo(function StepButton({
+  index,
+  title,
+  description,
+  isActive,
+  onSelect,
+}: StepButtonProps) {
+  /**
+   * Stable click handler scoped to this step.
+   * Called at the top level of the component (not inside a loop), so it
+   * satisfies the Rules of Hooks. `onSelect` is stable (parent useCallback)
+   * and `index` is a primitive that never changes for a given list position.
+   */
+  const handleClick = useCallback(() => {
+    onSelect(index);
+  }, [onSelect, index]);
+
+  return (
+    <button
+      onClick={handleClick}
+      className={`
+        px-6 py-2 space-y-2 text-left relative transition-opacity duration-300 ease-in-out
+        ${isActive ? "opacity-100" : "opacity-50 hover:opacity-100"}
+      `}
+    >
+      {/* Gradient border line — only rendered for the active step */}
+      {isActive && (
+        <span className="absolute left-0 top-0 h-full w-[3.66px] bg-[linear-gradient(180deg,#828282_0%,#1C1C1C_100%)] rounded-full animate-fade-in" />
+      )}
+      <h4 className="text-[30px] leading-[100%] tracking-0 font-medium text-white">
+        {title}
+      </h4>
+      <p className="text-xl text-gray-300 max-w-[450px]">{description}</p>
+    </button>
+  );
+});
+
+StepButton.displayName = "StepButton";
+
+// ---------------------------------------------------------------------------
+// DotButton — memoized mobile pagination dot
+// ---------------------------------------------------------------------------
+
+interface DotButtonProps {
+  index: number;
+  isActive: boolean;
+  /** Stable parent-level handler — parent must wrap with useCallback */
+  onSelect: (index: number) => void;
+}
+
+const DotButton = memo(function DotButton({
+  index,
+  isActive,
+  onSelect,
+}: DotButtonProps) {
+  const handleClick = useCallback(() => {
+    onSelect(index);
+  }, [onSelect, index]);
+
+  return (
+    <button
+      onClick={handleClick}
+      className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
+        isActive ? "bg-[#37B7C3] w-6" : "bg-[#FFFFFF33]"
+      }`}
+      aria-label={`Go to slide ${index + 1}`}
+    />
+  );
+});
+
+DotButton.displayName = "DotButton";
+
+// ---------------------------------------------------------------------------
+// PredictionProtocol — parent component
+//
+// Memoization strategy:
+//   - StepButton and DotButton are wrapped with React.memo so only the
+//     button whose `isActive` prop changed re-renders on tab switch.
+//   - handleSelect is wrapped with useCallback (no deps — uses functional
+//     updater form) so its reference is stable across renders.
+//   - Touch handlers are wrapped with useCallback so they don't cause
+//     unnecessary re-renders of the image container div.
+// ---------------------------------------------------------------------------
 
 function PredictionProtocol() {
   const [activeTab, setActiveTab] = useState(0);
 
-  // Touch handling for mobile swipe
   const touchStartX = useRef<number | null>(null);
   const touchEndX = useRef<number | null>(null);
 
-  const handleTouchStart = (e: React.TouchEvent) => {
+  /**
+   * Stable tab selector — passed to both StepButton and DotButton.
+   * No dependency on activeTab because it uses the direct value, not state.
+   */
+  const handleSelect = useCallback((index: number) => {
+    setActiveTab(index);
+  }, []);
+
+  /** Records the X position where a touch gesture started. */
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.targetTouches[0].clientX;
-  };
+  }, []);
 
-  const handleTouchMove = (e: React.TouchEvent) => {
+  /** Tracks the current X position as the finger moves. */
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
     touchEndX.current = e.targetTouches[0].clientX;
-  };
+  }, []);
 
-  const handleTouchEnd = () => {
+  /**
+   * Resolves the swipe direction and advances/retreats the active tab.
+   * Uses the functional updater form so it has no dependency on activeTab.
+   */
+  const handleTouchEnd = useCallback(() => {
     if (!touchStartX.current || !touchEndX.current) return;
     const distance = touchStartX.current - touchEndX.current;
-    const isLeftSwipe = distance > 50;
-    const isRightSwipe = distance < -50;
 
-    if (isLeftSwipe) {
+    if (distance > 50) {
+      // Left swipe — advance
       setActiveTab((prev) => (prev + 1) % steps.length);
-    }
-    if (isRightSwipe) {
+    } else if (distance < -50) {
+      // Right swipe — retreat
       setActiveTab((prev) => (prev - 1 + steps.length) % steps.length);
     }
 
-    // Reset
     touchStartX.current = null;
     touchEndX.current = null;
-  };
+  }, []);
 
   return (
     <div className="px-5 overflow-hidden">
@@ -61,7 +177,7 @@ function PredictionProtocol() {
       </h1>
 
       <div className="flex flex-col md:flex-row items-center md:items-start md:justify-center gap-y-8 md:gap-x-[73px]">
-        {/* === RIGHT SIDE (Image) - Ordered First on Mobile === */}
+        {/* === RIGHT SIDE (Image) — ordered first on mobile === */}
         <div
           className="order-1 md:order-2 flex-shrink-0 w-full md:w-auto flex justify-center"
           onTouchStart={handleTouchStart}
@@ -70,7 +186,7 @@ function PredictionProtocol() {
         >
           <div className="relative w-full max-w-[320px] md:max-w-none">
             <img
-              key={activeTab} // Key forces re-render for animation
+              key={activeTab} // key forces re-mount for the fade-in animation
               src={steps[activeTab].image}
               alt={steps[activeTab].title}
               className="animate-fade-in w-full h-auto md:h-[700px] object-contain drop-shadow-2xl"
@@ -79,23 +195,21 @@ function PredictionProtocol() {
           </div>
         </div>
 
-        {/* === LEFT SIDE (Content) - Ordered Second on Mobile === */}
+        {/* === LEFT SIDE (Content) — ordered second on mobile === */}
         <div className="order-2 md:order-1 flex flex-col items-center md:items-start gap-y-6 md:gap-y-10 max-w-[700px] w-full">
-          {/* MOBILE: Pagination Dots */}
+          {/* MOBILE: Pagination dots */}
           <div className="flex md:hidden gap-3 mb-2">
             {steps.map((_, index) => (
-              <button
+              <DotButton
                 key={index}
-                onClick={() => setActiveTab(index)}
-                className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                  activeTab === index ? "bg-[#37B7C3] w-6" : "bg-[#FFFFFF33]"
-                }`}
-                aria-label={`Go to slide ${index + 1}`}
+                index={index}
+                isActive={activeTab === index}
+                onSelect={handleSelect}
               />
             ))}
           </div>
 
-          {/* MOBILE: Centered Text (Only shows active step) */}
+          {/* MOBILE: Active step text */}
           <div className="block md:hidden text-center animate-fade-in">
             <h4 className="text-[24px] leading-[100%] font-medium text-white mb-3">
               {steps[activeTab].title}
@@ -105,33 +219,18 @@ function PredictionProtocol() {
             </p>
           </div>
 
-          {/* DESKTOP: List of Buttons (Hidden on mobile) */}
+          {/* DESKTOP: Step buttons list */}
           <div className="hidden md:flex flex-col gap-y-10">
-            {steps.map((step, index) => {
-              const isActive = activeTab === index;
-              return (
-                <button
-                  key={index}
-                  onClick={() => setActiveTab(index)}
-                  className={`
-                    px-6 py-2 space-y-2 text-left relative transition-opacity duration-300 ease-in-out
-                    ${isActive ? "opacity-100" : "opacity-50 hover:opacity-100"}
-                  `}
-                >
-                  {/* Gradient Border Line */}
-                  {isActive && (
-                    <span className="absolute left-0 top-0 h-full w-[3.66px] bg-[linear-gradient(180deg,#828282_0%,#1C1C1C_100%)] rounded-full animate-fade-in" />
-                  )}
-
-                  <h4 className="text-[30px] leading-[100%] tracking-0 font-medium text-white">
-                    {step.title}
-                  </h4>
-                  <p className="text-xl text-gray-300 max-w-[450px]">
-                    {step.description}
-                  </p>
-                </button>
-              );
-            })}
+            {steps.map((step, index) => (
+              <StepButton
+                key={index}
+                index={index}
+                title={step.title}
+                description={step.description}
+                isActive={activeTab === index}
+                onSelect={handleSelect}
+              />
+            ))}
           </div>
         </div>
       </div>
