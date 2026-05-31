@@ -47,4 +47,4 @@ redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 http-body-util = "0.1"
 tower = { version = "0.4", features = ["util"] }
 testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["postgres"] }
+testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }

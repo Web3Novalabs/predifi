@@ -8079,6 +8079,65 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
     assert_eq!(pool.max_total_stake, 0);
 }
 
+/// Create a pool with a `max_total_stake` cap, fill it to the limit with
+/// predictions, then verify that an additional prediction is rejected with
+/// `MaxTotalStakeExceeded`.
+#[test]
+#[should_panic(expected = "MaxTotalStakeExceeded")]
+fn test_place_prediction_rejects_when_max_total_stake_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 100_000),
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Capped pool"),
+            metadata_url: String::from_str(&env, "https://example.com"),
+            min_stake: 100,
+            max_stake: 0,
+            // Cap total stake at 1000 units.
+            max_total_stake: 1000,
+            min_total_stake: 1,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // First prediction: fits under the cap (total now 400).
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    client.place_prediction(&user1, &pool_id, &400, &0, &None, &None);
+
+    // Second prediction: brings total to 900, still below the 1000 cap.
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user2, &1000);
+    client.place_prediction(&user2, &pool_id, &500, &1, &None, &None);
+
+    // Verify the pool.total_stake is now 900.
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.total_stake, 900);
+
+    // Third prediction: would push total to 1400, exceeding the 1000 cap.
+    // This should panic with MaxTotalStakeExceeded.
+    let user3 = Address::generate(&env);
+    token_admin_client.mint(&user3, &1000);
+    client.place_prediction(&user3, &pool_id, &500, &0, &None, &None);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // get_active_pools Tests (#389)
 // ═══════════════════════════════════════════════════════════════════════════

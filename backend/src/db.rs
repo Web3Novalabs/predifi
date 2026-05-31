@@ -746,6 +746,91 @@ pub struct PredictionPlacedEvent {
     pub amount: i64,
 }
 
+/// Decoded data from a `referral_paid` contract event.
+#[derive(Debug)]
+pub struct ReferralPaidEvent {
+    pub pool_id: u64,
+    pub referrer: String,
+    pub referred_user: String,
+    pub referral_amount: i64,
+}
+
+/// Insert multiple referral records using bulk insert for optimal performance.
+///
+/// This function uses PostgreSQL's `INSERT INTO ... VALUES (...), (...), ...` syntax
+/// to insert all referral records in a single database round-trip, significantly
+/// improving performance over individual inserts when processing multiple events.
+pub async fn insert_referrals_bulk(
+    pool: &PgPool,
+    events: &[ReferralPaidEvent],
+) -> Result<(), sqlx::Error> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = pool.begin().await?;
+
+    // Build bulk insert query with dynamic values
+    let query = r#"
+        INSERT INTO referrals (referrer, user_address, pool_id, amount)
+        VALUES 
+    "#;
+
+    let mut values = Vec::new();
+    let mut param_index = 1i32;
+
+    for event in events {
+        values.push(format!(
+            "(${}, ${}, ${}, ${})",
+            param_index,
+            param_index + 1,
+            param_index + 2,
+            param_index + 3
+        ));
+        param_index += 4;
+    }
+
+    let full_query = format!("{} {}", query, values.join(", "));
+
+    let mut query_builder = sqlx::query(&full_query);
+
+    for event in events {
+        query_builder = query_builder
+            .bind(&event.referrer)
+            .bind(&event.referred_user)
+            .bind(event.pool_id as i64)
+            .bind(event.referral_amount);
+    }
+
+    query_builder.execute(&mut tx).await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Insert a single referral record.
+///
+/// For inserting multiple referrals, use `insert_referrals_bulk` instead for better performance.
+pub async fn insert_referral_from_event(
+    pool: &PgPool,
+    event: &ReferralPaidEvent,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        INSERT INTO referrals (referrer, user_address, pool_id, amount)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT DO NOTHING
+        "#,
+        event.referrer,
+        event.referred_user,
+        event.pool_id as i64,
+        event.referral_amount,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
