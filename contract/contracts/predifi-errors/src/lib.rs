@@ -1,8 +1,8 @@
 #![no_std]
 
-//! # PrediFi Errors
+//! # `PrediFi` Errors
 //!
-//! This crate provides a comprehensive error handling system for PrediFi smart contracts.
+//! This crate provides a comprehensive error handling system for `PrediFi` smart contracts.
 //!
 //! ## Features
 //!
