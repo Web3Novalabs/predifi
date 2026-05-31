@@ -10,9 +10,15 @@ pub struct Metrics {
     pub app_info: Gauge,
 }
 
+/// Type alias for a reference-counted [`Metrics`] instance shared across handlers.
 pub type SharedMetrics = Arc<Metrics>;
 
 impl Metrics {
+    /// Create and register all Prometheus metrics with a fresh [`Registry`].
+    ///
+    /// Returns an error if any metric fails to register (e.g. duplicate name).
+    /// In practice this should never fail because the metric names are
+    /// hard-coded constants.
     pub fn new() -> Result<Self, prometheus::Error> {
         let registry = Registry::new();
 
@@ -46,6 +52,11 @@ impl Metrics {
         })
     }
 
+    /// Encode all registered metrics into the Prometheus text exposition format.
+    ///
+    /// Returns the UTF-8 encoded text ready to be served at `/metrics`.
+    /// Returns an error if encoding fails or the output is not valid UTF-8
+    /// (neither should happen in practice).
     pub fn gather_text(&self) -> Result<String, prometheus::Error> {
         let encoder = TextEncoder::new();
         let metric_families = self.registry.gather();

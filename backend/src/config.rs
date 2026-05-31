@@ -21,25 +21,46 @@ pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
     "https://predifi.app",
 ];
 
+/// Runtime configuration loaded from environment variables.
+///
+/// All fields have compiled-in defaults so the server can start without any
+/// environment variables set (useful for local development and unit tests).
+/// Call [`Config::from_env`] at startup to populate the struct from the
+/// process environment, or [`Config::from_map`] in tests to supply values
+/// directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
+    /// IP address the HTTP server binds to (default `0.0.0.0`).
     pub host: String,
+    /// TCP port the HTTP server listens on (default `3000`).
     pub port: u16,
+    /// PostgreSQL connection string (default points to a local `predifi` DB).
     pub database_url: String,
+    /// Maximum number of connections in the SQLx pool (default `10`).
     pub db_max_connections: u32,
+    /// Minimum number of idle connections kept alive in the pool (default `1`).
     pub db_min_connections: u32,
+    /// Seconds to wait when acquiring a connection from the pool (default `30`).
     pub db_acquire_timeout_secs: u64,
+    /// Per-attempt timeout in seconds for the Stellar RPC health check (default `2`).
     pub rpc_health_timeout_secs: u64,
+    /// Number of times to retry the Stellar RPC health check before reporting failure (default `3`).
     pub rpc_health_retry_count: u8,
+    /// Tracing log level passed to `RUST_LOG` / `EnvFilter` (default `"info"`).
     pub log_level: String,
+    /// Protocol treasury fee in basis points (default `300` = 3 %).
     pub treasury_fee_bps: u32,
+    /// Referral share of the protocol fee in basis points (default `5000` = 50 % of the fee).
     pub referral_fee_bps: u32,
+    /// Stellar Soroban RPC endpoint URL (default: testnet).
     pub stellar_rpc_url: String,
+    /// Optional Sentry DSN for error reporting. `None` disables Sentry.
     pub sentry_dsn: Option<String>,
+    /// Redis connection URL (default `redis://localhost:6379`).
     pub redis_url: String,
     /// Validated list of origins permitted by the CORS policy.
     ///
-    /// Loaded from the `CORS_ALLOWED_ORIGINS` environment variable as a
+    /// Loaded from the `PREDIFI_CORS_ALLOWED_ORIGINS` environment variable as a
     /// comma-separated list of origins (e.g. `https://app.example.com,https://admin.example.com`).
     /// Each entry must be a valid `http://` or `https://` origin — scheme + host (+ optional port)
     /// with no path, query string, or fragment.  Invalid entries are rejected at startup.
@@ -115,10 +136,16 @@ impl Config {
         })
     }
 
+    /// Return the `host:port` string used to bind the TCP listener.
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
 
+    /// Build a minimal [`Config`] suitable for unit tests.
+    ///
+    /// Uses `127.0.0.1:0` (OS-assigned port), an in-memory-style Postgres URL,
+    /// and the compiled-in fee defaults so tests do not depend on environment
+    /// variables.
     #[cfg(test)]
     pub fn default_for_test() -> Self {
         Self {
@@ -144,15 +171,25 @@ impl Config {
     }
 }
 
+/// Error returned when a configuration value cannot be parsed or is logically invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
+    /// An environment variable was set but its value could not be parsed as the
+    /// expected numeric type.
     InvalidNumber {
+        /// Name of the environment variable.
         key: &'static str,
+        /// The raw string value that failed to parse.
         value: String,
+        /// Human-readable parse error from the standard library.
         reason: String,
     },
+    /// An environment variable was set to a syntactically valid string but the
+    /// value violates a semantic constraint (e.g. min > max, invalid URL).
     InvalidValue {
+        /// Name of the environment variable.
         key: &'static str,
+        /// Human-readable description of the constraint that was violated.
         reason: String,
     },
 }

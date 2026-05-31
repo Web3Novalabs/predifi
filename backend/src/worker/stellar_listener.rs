@@ -27,16 +27,23 @@ struct GetEventsResult {
     latest_ledger: u64,
 }
 
+/// A single event returned by the Stellar RPC `getEvents` call.
 #[derive(Debug, Deserialize)]
 pub struct StellarEvent {
+    /// Event type string, e.g. `"contract"` or `"system"`.
     #[serde(rename = "type")]
     pub event_type: String,
+    /// Ledger sequence number in which this event was emitted.
     #[serde(rename = "ledger")]
     pub ledger: u64,
+    /// Soroban contract address that emitted the event, if applicable.
     #[serde(rename = "contractId")]
     pub contract_id: Option<String>,
+    /// Unique event identifier assigned by the RPC node.
     pub id: String,
+    /// XDR-encoded topic values decoded as strings by the RPC node.
     pub topics: Option<Vec<String>>,
+    /// Arbitrary JSON payload decoded from the event's XDR data field.
     pub data: Option<Value>,
 }
 
