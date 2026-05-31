@@ -431,4 +431,6 @@ async fn main() {
 #[cfg(test)]
 mod db_integration_tests;
 #[cfg(test)]
+mod redis_integration_tests;
+#[cfg(test)]
 mod tests;
