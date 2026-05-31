@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useRef } from "react";
+import Image from "next/image";
 
 // define your content and images here
 const steps = [
@@ -69,10 +70,12 @@ function PredictionProtocol() {
           onTouchEnd={handleTouchEnd}
         >
           <div className="relative w-full max-w-[320px] md:max-w-none">
-            <img
-              key={activeTab} // Key forces re-render for animation
+            <Image
+              key={activeTab}
               src={steps[activeTab].image}
               alt={steps[activeTab].title}
+              width={400}
+              height={700}
               className="animate-fade-in w-full h-auto md:h-[700px] object-contain drop-shadow-2xl"
               draggable={false}
             />

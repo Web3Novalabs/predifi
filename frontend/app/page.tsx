@@ -5,6 +5,7 @@ import InstinctsToSignals from "./(marketing)/components/InstinctsToSignals";
 import FAQ from "./(marketing)/components/FAQ";
 import Footer from "./(marketing)/components/Footer";
 import NavBar from "./(marketing)/components/NavBar";
+import Image from "next/image";
 
 export default function Home() {
   return (
@@ -14,11 +15,14 @@ export default function Home() {
         <NavBar />
         <HeroSection />
         <div className="relative space-y-10 lg:space-y-[150px] pt-[80px] lg:pt-[180px]">
-          <img
+          {/* Decorative background gradient — loaded eagerly as it is above the fold */}
+          <Image
             src="/gradient.png"
             alt=""
             aria-hidden="true"
-            className="absolute top-0 left-0 w-full pointer-events-none z-0"
+            fill
+            className="absolute top-0 left-0 w-full pointer-events-none z-0 object-cover"
+            priority
           />
           <PredictionProtocol />
           <Features />
