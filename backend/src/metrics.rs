@@ -1,5 +1,6 @@
 use prometheus::{CounterVec, Encoder, Gauge, Opts, Registry, TextEncoder};
 use std::sync::Arc;
+use sysinfo::{System, SystemExt};
 
 /// Shared application metrics exposed to Prometheus.
 #[derive(Clone)]
@@ -8,6 +9,8 @@ pub struct Metrics {
     pub http_requests_total: CounterVec,
     pub app_up: Gauge,
     pub app_info: Gauge,
+    pub memory_used_bytes: Gauge,
+    pub memory_total_bytes: Gauge,
 }
 
 pub type SharedMetrics = Arc<Metrics>;
@@ -34,16 +37,30 @@ impl Metrics {
         )?;
         app_info.set(1.0);
 
+        let memory_used_bytes = Gauge::with_opts(Opts::new("app_memory_used_bytes", "Memory used by the backend in bytes."))?;
+        let memory_total_bytes = Gauge::with_opts(Opts::new("app_memory_total_bytes", "Total system memory in bytes."))?;
+
         registry.register(Box::new(http_requests_total.clone()))?;
         registry.register(Box::new(app_up.clone()))?;
         registry.register(Box::new(app_info.clone()))?;
+        registry.register(Box::new(memory_used_bytes.clone()))?;
+        registry.register(Box::new(memory_total_bytes.clone()))?;
 
         Ok(Self {
             registry,
             http_requests_total,
             app_up,
             app_info,
+            memory_used_bytes,
+            memory_total_bytes,
         })
+    }
+
+    pub fn update_memory_metrics(&self) {
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+        self.memory_used_bytes.set(sys.used_memory() as f64);
+        self.memory_total_bytes.set(sys.total_memory() as f64);
     }
 
     pub fn gather_text(&self) -> Result<String, prometheus::Error> {
