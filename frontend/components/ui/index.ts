@@ -1,6 +1,7 @@
 // Component exports
 export { Button, buttonVariants, type ButtonProps } from "./button";
 export { Input, type InputProps } from "./input";
+export { SearchBar, type SearchBarProps } from "./search-bar";
 export { Toast, toastVariants, type ToastProps } from "./toast";
 export { ToastProvider, useToast } from "./toast-provider";
 export { Checkbox, type CheckboxProps } from "./checkbox";
