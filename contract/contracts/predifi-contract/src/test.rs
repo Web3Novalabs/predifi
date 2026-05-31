@@ -11514,3 +11514,469 @@ fn test_unauthorized_admin_set_max_predictions() {
     let not_admin = Address::generate(&env);
     client.set_max_predictions_per_user(&not_admin, &10u32);
 }
+
+// ─── Pool initialization event tests (issue #1012) ───────────────────────────
+//
+// These tests verify that `create_pool` emits a `pool_created` event whose
+// payload contains every field with the exact value that was passed to the
+// function.  A separate test verifies the `initial_liquidity_provided` event
+// that fires alongside `pool_created` when the creator seeds the pool with
+// house money.
+//
+// The existing `test_pool_created_event_contains_creator` test only checks
+// three fields (pool_id, creator, end_time).  The tests below cover the full
+// event contract so that any future change to the emitted payload is caught
+// immediately.
+
+/// `create_pool` must emit a `pool_created` event that contains every field
+/// of the pool configuration with the exact values supplied by the caller.
+#[test]
+fn test_pool_created_event_emitted_with_all_fields() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let end_time = 100_000u64;
+    let options_count = 3u32;
+    let category = symbol_short!("Sports");
+    let metadata_url = String::from_str(&env, "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi");
+    let min_stake = 50i128;
+    let max_stake = 5_000i128;
+    let min_total_stake = 100i128;
+    let max_total_stake = 50_000i128;
+    let required_resolutions = 1u32;
+    let outcome_descriptions = soroban_sdk::vec![
+        &env,
+        String::from_str(&env, "Team A wins"),
+        String::from_str(&env, "Draw"),
+        String::from_str(&env, "Team B wins"),
+    ];
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &options_count,
+        &category,
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Sports prediction pool"),
+            metadata_url: metadata_url.clone(),
+            min_stake,
+            max_stake,
+            min_total_stake,
+            max_total_stake,
+            initial_liquidity: 0,
+            required_resolutions,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: outcome_descriptions.clone(),
+        },
+    );
+
+    // Scan all events for the `pool_created` topic.
+    let events = env.events().all();
+    let pool_created_topic = Symbol::new(&env, "pool_created");
+    let mut found = false;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == pool_created_topic {
+                    let data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+
+                    // ── pool_id ──────────────────────────────────────────────
+                    let ev_pool_id: u64 = data
+                        .get(Symbol::new(&env, "pool_id"))
+                        .expect("pool_id missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_pool_id, pool_id, "pool_id mismatch");
+
+                    // ── creator ──────────────────────────────────────────────
+                    let ev_creator: Address = data
+                        .get(Symbol::new(&env, "creator"))
+                        .expect("creator missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_creator, creator, "creator mismatch");
+
+                    // ── end_time ─────────────────────────────────────────────
+                    let ev_end_time: u64 = data
+                        .get(Symbol::new(&env, "end_time"))
+                        .expect("end_time missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_end_time, end_time, "end_time mismatch");
+
+                    // ── token ────────────────────────────────────────────────
+                    let ev_token: Address = data
+                        .get(Symbol::new(&env, "token"))
+                        .expect("token missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_token, token_address, "token mismatch");
+
+                    // ── options_count ────────────────────────────────────────
+                    let ev_options_count: u32 = data
+                        .get(Symbol::new(&env, "options_count"))
+                        .expect("options_count missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_options_count, options_count, "options_count mismatch");
+
+                    // ── metadata_url ─────────────────────────────────────────
+                    let ev_metadata_url: String = data
+                        .get(Symbol::new(&env, "metadata_url"))
+                        .expect("metadata_url missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_metadata_url, metadata_url, "metadata_url mismatch");
+
+                    // ── initial_liquidity ────────────────────────────────────
+                    let ev_initial_liquidity: i128 = data
+                        .get(Symbol::new(&env, "initial_liquidity"))
+                        .expect("initial_liquidity missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_initial_liquidity, 0i128, "initial_liquidity mismatch");
+
+                    // ── category ─────────────────────────────────────────────
+                    let ev_category: Symbol = data
+                        .get(Symbol::new(&env, "category"))
+                        .expect("category missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_category, category, "category mismatch");
+
+                    // ── required_resolutions ─────────────────────────────────
+                    let ev_required_resolutions: u32 = data
+                        .get(Symbol::new(&env, "required_resolutions"))
+                        .expect("required_resolutions missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(
+                        ev_required_resolutions, required_resolutions,
+                        "required_resolutions mismatch"
+                    );
+
+                    // ── max_total_stake ──────────────────────────────────────
+                    let ev_max_total_stake: i128 = data
+                        .get(Symbol::new(&env, "max_total_stake"))
+                        .expect("max_total_stake missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(ev_max_total_stake, max_total_stake, "max_total_stake mismatch");
+
+                    // ── outcome_descriptions ─────────────────────────────────
+                    let ev_outcome_descriptions: soroban_sdk::Vec<String> = data
+                        .get(Symbol::new(&env, "outcome_descriptions"))
+                        .expect("outcome_descriptions missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(
+                        ev_outcome_descriptions, outcome_descriptions,
+                        "outcome_descriptions mismatch"
+                    );
+
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(
+        found,
+        "pool_created event was not emitted after a successful create_pool call"
+    );
+}
+
+/// When `create_pool` is called with `initial_liquidity > 0`, both a
+/// `pool_created` event and an `initial_liquidity_provided` event must be
+/// emitted.  The `initial_liquidity_provided` event must carry the correct
+/// `pool_id`, `creator`, and `amount`.
+#[test]
+fn test_pool_created_event_emitted_with_initial_liquidity() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    // Mint enough tokens for the creator to seed the pool.
+    let initial_liquidity = 500i128;
+    token_admin_client.mint(&creator, &initial_liquidity);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Liquidity seeded pool"),
+            metadata_url: String::from_str(&env, "ipfs://liquidity-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            min_total_stake: 1i128,
+            max_total_stake: 0i128,
+            initial_liquidity,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let events = env.events().all();
+
+    // ── Verify pool_created carries the correct initial_liquidity value ──────
+    let pool_created_topic = Symbol::new(&env, "pool_created");
+    let mut pool_created_found = false;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == pool_created_topic {
+                    let data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let ev_initial_liquidity: i128 = data
+                        .get(Symbol::new(&env, "initial_liquidity"))
+                        .expect("initial_liquidity missing from pool_created event")
+                        .into_val(&env);
+                    assert_eq!(
+                        ev_initial_liquidity, initial_liquidity,
+                        "pool_created event must carry the initial_liquidity amount"
+                    );
+                    pool_created_found = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(pool_created_found, "pool_created event not found");
+
+    // ── Verify initial_liquidity_provided is also emitted ────────────────────
+    let liquidity_topic = Symbol::new(&env, "initial_liquidity_provided");
+    let mut liquidity_event_found = false;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == liquidity_topic {
+                    let data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+
+                    let ev_pool_id: u64 = data
+                        .get(Symbol::new(&env, "pool_id"))
+                        .expect("pool_id missing from initial_liquidity_provided event")
+                        .into_val(&env);
+                    let ev_creator: Address = data
+                        .get(Symbol::new(&env, "creator"))
+                        .expect("creator missing from initial_liquidity_provided event")
+                        .into_val(&env);
+                    let ev_amount: i128 = data
+                        .get(Symbol::new(&env, "amount"))
+                        .expect("amount missing from initial_liquidity_provided event")
+                        .into_val(&env);
+
+                    assert_eq!(ev_pool_id, pool_id, "initial_liquidity_provided: pool_id mismatch");
+                    assert_eq!(ev_creator, creator, "initial_liquidity_provided: creator mismatch");
+                    assert_eq!(
+                        ev_amount, initial_liquidity,
+                        "initial_liquidity_provided: amount mismatch"
+                    );
+                    liquidity_event_found = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(
+        liquidity_event_found,
+        "initial_liquidity_provided event was not emitted when initial_liquidity > 0"
+    );
+}
+
+/// When `initial_liquidity` is 0, only the `pool_created` event must be
+/// emitted — the `initial_liquidity_provided` event must NOT appear.
+#[test]
+fn test_pool_created_event_no_liquidity_event_when_zero_liquidity() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "No liquidity pool"),
+            metadata_url: String::from_str(&env, "ipfs://no-liquidity"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            min_total_stake: 1i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let events = env.events().all();
+    let liquidity_topic = Symbol::new(&env, "initial_liquidity_provided");
+
+    let liquidity_event_emitted = events.iter().any(|e| {
+        e.1.get(0)
+            .and_then(|v| Symbol::try_from_val(&env, &v).ok())
+            .map(|sym| sym == liquidity_topic)
+            .unwrap_or(false)
+    });
+
+    assert!(
+        !liquidity_event_emitted,
+        "initial_liquidity_provided must NOT be emitted when initial_liquidity is 0"
+    );
+}
+
+/// Each call to `create_pool` must emit exactly one `pool_created` event, and
+/// successive pools must receive monotonically increasing IDs starting from 0.
+#[test]
+fn test_pool_created_event_emitted_once_per_pool_with_sequential_ids() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_config = || PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Sequential pool"),
+        metadata_url: String::from_str(&env, "ipfs://seq"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        min_total_stake: 1i128,
+        max_total_stake: 0i128,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: soroban_sdk::vec![
+            &env,
+            String::from_str(&env, "Yes"),
+            String::from_str(&env, "No"),
+        ],
+    };
+
+    let pool_id_0 = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"), &pool_config(),
+    );
+    let pool_id_1 = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"), &pool_config(),
+    );
+    let pool_id_2 = client.create_pool(
+        &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"), &pool_config(),
+    );
+
+    // IDs must be sequential starting from 0.
+    assert_eq!(pool_id_0, 0, "first pool must have id 0");
+    assert_eq!(pool_id_1, 1, "second pool must have id 1");
+    assert_eq!(pool_id_2, 2, "third pool must have id 2");
+
+    // Count pool_created events — must be exactly 3.
+    let events = env.events().all();
+    let pool_created_topic = Symbol::new(&env, "pool_created");
+    let count = events.iter().filter(|e| {
+        e.1.get(0)
+            .and_then(|v| Symbol::try_from_val(&env, &v).ok())
+            .map(|sym| sym == pool_created_topic)
+            .unwrap_or(false)
+    }).count();
+
+    assert_eq!(
+        count, 3,
+        "expected exactly one pool_created event per create_pool call, got {count}"
+    );
+}
+
+/// The `pool_created` event must reflect the normalised category symbol, not
+/// an arbitrary string.  Passing a valid category must result in that exact
+/// symbol appearing in the event payload.
+#[test]
+fn test_pool_created_event_category_field_matches_input() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let categories = [
+        symbol_short!("Sports"),
+        symbol_short!("Finance"),
+        symbol_short!("Crypto"),
+        symbol_short!("Politics"),
+        symbol_short!("Entertain"),
+        symbol_short!("Tech"),
+        symbol_short!("Other"),
+    ];
+
+    for category in categories.iter() {
+        let pool_id = client.create_pool(
+            &creator,
+            &100_000u64,
+            &token_address,
+            &2u32,
+            category,
+            &PoolConfig {
+                start_time: 0,
+                description: String::from_str(&env, "Category test pool"),
+                metadata_url: String::from_str(&env, "ipfs://cat-test"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                min_total_stake: 1i128,
+                max_total_stake: 0i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Yes"),
+                    String::from_str(&env, "No"),
+                ],
+            },
+        );
+
+        let events = env.events().all();
+        let pool_created_topic = Symbol::new(&env, "pool_created");
+        let mut found = false;
+
+        for e in events.iter() {
+            if let Some(topic_val) = e.1.get(0) {
+                if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                    if topic_sym == pool_created_topic {
+                        let data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                        let ev_pool_id: u64 = data
+                            .get(Symbol::new(&env, "pool_id"))
+                            .unwrap()
+                            .into_val(&env);
+                        if ev_pool_id == pool_id {
+                            let ev_category: Symbol = data
+                                .get(Symbol::new(&env, "category"))
+                                .expect("category missing from pool_created event")
+                                .into_val(&env);
+                            assert_eq!(
+                                ev_category, *category,
+                                "category in pool_created event does not match input"
+                            );
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(found, "pool_created event not found for category {:?}", category);
+    }
+}
