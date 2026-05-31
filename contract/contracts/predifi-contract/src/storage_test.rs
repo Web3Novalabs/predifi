@@ -178,7 +178,7 @@ mod tests {
             );
 
             // Must NOT be stored under OutStake with magic pool_id
-            let magic_key = DataKey::OutStake(999999, 0);
+            let magic_key = DataKey::OutStake(999_999, 0);
             assert!(
                 !env.storage().persistent().has(&magic_key),
                 "Price feed must not be stored under DataKey::OutStake with magic id"
@@ -533,7 +533,7 @@ mod tests {
                 &2u32,
                 &symbol_short!("Tech"),
                 &PoolConfig {
-            start_time: 0,
+                    start_time: 0,
                     description: String::from_str(&env, "Test pool"),
                     metadata_url: String::from_str(&env, "ipfs://test"),
                     min_stake: 1i128,

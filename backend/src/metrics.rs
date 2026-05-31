@@ -1,4 +1,4 @@
-use prometheus::{Encoder, Gauge, Opts, Registry, TextEncoder, CounterVec};
+use prometheus::{CounterVec, Encoder, Gauge, Opts, Registry, TextEncoder};
 use std::sync::Arc;
 use sysinfo::{System, SystemExt};
 
@@ -67,9 +67,10 @@ impl Metrics {
         let encoder = TextEncoder::new();
         let metric_families = self.registry.gather();
         let mut buffer = Vec::new();
-        encoder.encode(&metric_families, &mut buffer).map_err(|e| {
-            prometheus::Error::Msg(format!("failed to encode metrics: {e}"))
-        })?;
-        String::from_utf8(buffer).map_err(|e| prometheus::Error::Msg(format!("invalid metrics UTF-8: {e}")))
+        encoder
+            .encode(&metric_families, &mut buffer)
+            .map_err(|e| prometheus::Error::Msg(format!("failed to encode metrics: {e}")))?;
+        String::from_utf8(buffer)
+            .map_err(|e| prometheus::Error::Msg(format!("invalid metrics UTF-8: {e}")))
     }
 }

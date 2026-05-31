@@ -15,14 +15,20 @@ pub mod routes;
 pub mod worker;
 pub mod ws;
 
-use axum::{extract::State, middleware::{from_fn_with_state, Next}, response::IntoResponse, routing::get, Json, Router};
+use axum::{
+    extract::State,
+    middleware::{from_fn_with_state, Next},
+    response::IntoResponse,
+    routing::get,
+    Json, Router,
+};
 use config::Config;
 use http::HeaderValue;
 use metrics::{Metrics, SharedMetrics};
 use request_logger::LoggingLayer;
-use serde_json::json;
 use sentry::integrations::panic::register_panic_handler;
 use sentry_tracing::layer as sentry_tracing_layer;
+use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,16 +38,17 @@ use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-/// Allowed frontend origins for CORS.
-const ALLOWED_ORIGINS: &[&str] = &[
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "https://predifi.app",
-];
-
-/// Build the CORS middleware layer.
-pub fn build_cors() -> CorsLayer {
-    let origins: Vec<HeaderValue> = ALLOWED_ORIGINS
+/// Build the CORS middleware layer from the validated origin list in `config`.
+///
+/// Only the origins listed in [`Config::cors_allowed_origins`] are permitted.
+/// The list is validated at startup (see `config::parse_cors_origins`), so any
+/// entry that reaches this function is already a well-formed `http://` or
+/// `https://` origin.  Entries that cannot be parsed into a [`HeaderValue`] are
+/// silently skipped (this should never happen in practice given the prior
+/// validation).
+pub fn build_cors(config: &Config) -> CorsLayer {
+    let origins: Vec<HeaderValue> = config
+        .cors_allowed_origins
         .iter()
         .filter_map(|origin| origin.parse().ok())
         .collect();
@@ -91,10 +98,10 @@ async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Re
     let mut rpc_attempts = 0;
     let max_attempts = state.config.rpc_health_retry_count as usize;
     let mut last_error = String::new();
-    
+
     while rpc_attempts < max_attempts {
         rpc_attempts += 1;
-        
+
         let rpc_req = client
             .post(&state.config.stellar_rpc_url)
             .json(&serde_json::json!({
@@ -117,14 +124,14 @@ async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Re
                 last_error = e.to_string();
             }
         }
-        
+
         // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
         if rpc_attempts < max_attempts {
             let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
             sleep(TokioDuration::from_secs(backoff_duration)).await;
         }
     }
-    
+
     if rpc_attempts >= max_attempts {
         rpc_status = "unreachable";
         all_healthy = false;
@@ -187,13 +194,11 @@ async fn metrics(State(state): State<routes::v1::AppState>) -> impl IntoResponse
             [(http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
             body,
         ),
-        Err(error) => {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                [(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                format!("failed to gather metrics: {error}"),
-            )
-        }
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            [(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            format!("failed to gather metrics: {error}"),
+        ),
     }
 }
 
@@ -217,7 +222,12 @@ async fn metrics_middleware<B>(
 }
 
 /// Build the Axum router with CORS, logging, and rate limiting middleware.
-pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis_cache::RedisCache, event_bus: ws::EventBus) -> Router {
+pub fn build_router(
+    config: Config,
+    cache: price_cache::PriceCache,
+    redis: redis_cache::RedisCache,
+    event_bus: ws::EventBus,
+) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(5)
@@ -233,12 +243,10 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis
             .unwrap(),
     );
 
-    let prometheus_metrics = Arc::new(
-        Metrics::new().unwrap_or_else(|error| {
-            eprintln!("failed to initialize Prometheus metrics: {error}");
-            std::process::exit(1);
-        }),
-    );
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
 
     let state = routes::v1::AppState {
         config: config.clone(),
@@ -254,13 +262,23 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .with_state(state)
-        .nest("/api", routes::router(config, cache, redis, None, prometheus_metrics.clone(), event_bus))
+        .nest(
+            "/api",
+            routes::router(
+                config,
+                cache,
+                redis,
+                None,
+                prometheus_metrics.clone(),
+                event_bus,
+            ),
+        )
         .merge(openapi::swagger_router())
         .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
             config: governor_conf,
         })
-        .layer(build_cors())
+        .layer(build_cors(&config))
         .layer(LoggingLayer)
 }
 
@@ -287,12 +305,10 @@ pub fn build_router_with_db(
             .unwrap(),
     );
 
-    let prometheus_metrics = Arc::new(
-        Metrics::new().unwrap_or_else(|error| {
-            eprintln!("failed to initialize Prometheus metrics: {error}");
-            std::process::exit(1);
-        }),
-    );
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
 
     let state = routes::v1::AppState {
         config: config.clone(),
@@ -308,13 +324,23 @@ pub fn build_router_with_db(
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .with_state(state)
-        .nest("/api", routes::router_with_db(config, cache, redis, pool, prometheus_metrics.clone(), event_bus))
+        .nest(
+            "/api",
+            routes::router_with_db(
+                config,
+                cache,
+                redis,
+                pool,
+                prometheus_metrics.clone(),
+                event_bus,
+            ),
+        )
         .merge(openapi::swagger_router())
         .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
             config: governor_conf,
         })
-        .layer(build_cors())
+        .layer(build_cors(&config))
         .layer(LoggingLayer)
 }
 
@@ -365,7 +391,11 @@ async fn main() {
     let event_bus = ws::EventBus::new();
 
     // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
-    worker::stellar_listener::spawn(config.stellar_rpc_url.clone(), pool.clone(), event_bus.clone());
+    worker::stellar_listener::spawn(
+        config.stellar_rpc_url.clone(),
+        pool.clone(),
+        event_bus.clone(),
+    );
 
     // Initialize Redis cache
     let redis = redis_cache::RedisCache::new(&config.redis_url).await;

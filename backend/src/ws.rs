@@ -43,10 +43,7 @@ impl EventBus {
 }
 
 /// Axum handler — upgrades the HTTP connection to WebSocket and streams events.
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(bus): State<EventBus>,
-) -> impl IntoResponse {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(bus): State<EventBus>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, bus))
 }
 

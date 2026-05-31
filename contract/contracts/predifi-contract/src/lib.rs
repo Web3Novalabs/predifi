@@ -191,6 +191,8 @@ pub enum PredifiError {
     PoolDisputed = 27,
     /// target_price must be strictly positive.
     InvalidTargetPrice = 201,
+    /// `close_staking` called before pool.end_time has passed.
+    StakingStillOpen = 82,
 }
 
 /// Represents the current state of a prediction market.
@@ -615,6 +617,13 @@ pub enum DataKey {
     OracleWhitelist,
     /// Disputed flag for a pool: Disputed(pool_id) -> ()
     Disputed(u64),
+    /// Sentinel that records staking has been closed for a pool:
+    /// `StakingClosed(pool_id)` -> `bool`
+    ///
+    /// Written (once) the first time `close_staking` is successfully called
+    /// for a given pool so that subsequent calls are idempotent — they return
+    /// `Ok(())` but do NOT re-emit the `StakingClosedEvent`.
+    StakingClosed(u64),
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -714,6 +723,29 @@ pub struct MinStakeUpdateEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolReadyForResolutionEvent {
     pub pool_id: u64,
+    pub timestamp: u64,
+}
+
+/// Emitted exactly once per pool when its staking window closes, i.e. the
+/// first time `close_staking` is successfully called after `pool.end_time`
+/// has elapsed.
+///
+/// Off-chain subscribers (event indexers, front-ends, keepers) should watch
+/// the `"staking_closed"` topic on this contract to react to the transition —
+/// for example to hide a "Place Prediction" button or to queue a resolution
+/// workflow.  The event is guaranteed to fire **at most once** per pool; the
+/// `StakingClosed(pool_id)` storage sentinel prevents duplicate emission even
+/// if multiple callers race to trigger the transition.
+#[contractevent(topics = ["staking_closed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakingClosedEvent {
+    /// The pool whose staking window has just closed.
+    pub pool_id: u64,
+    /// The pool's configured `end_time` — the boundary at which staking closed.
+    pub end_time: u64,
+    /// Total stake locked in the pool at the moment staking was closed.
+    pub total_stake: i128,
+    /// Ledger timestamp when this event was emitted.
     pub timestamp: u64,
 }
 
@@ -1164,8 +1196,7 @@ impl PredifiContract {
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
-            (MarketState::Active, MarketState::Resolved)
-                | (MarketState::Active, MarketState::Canceled)
+            (MarketState::Active, MarketState::Resolved | MarketState::Canceled)
         )
     }
 
@@ -2821,6 +2852,75 @@ impl PredifiContract {
         }
     }
 
+    /// Signal that staking has closed for a pool and emit a `StakingClosedEvent`.
+    ///
+    /// Staking is considered closed once `pool.end_time` has passed — at that
+    /// point no more predictions can be placed.  This function provides an
+    /// explicit, permissionless on-chain signal of that transition so that
+    /// off-chain subscribers (event indexers, front-ends, keepers) can react
+    /// without having to poll block timestamps themselves.
+    ///
+    /// The function is **idempotent**: if it has already been called for the
+    /// given pool, subsequent calls succeed silently without re-emitting the
+    /// event.  This prevents duplicate events even if multiple callers race to
+    /// trigger the transition.
+    ///
+    /// # Arguments
+    /// * `pool_id` - The ID of the pool whose staking window has ended.
+    ///
+    /// # Errors
+    /// - `PoolNotFound`     — no pool exists for `pool_id`.
+    /// - `InvalidPoolState` — pool is not in the `Active` state (already
+    ///                        resolved or cancelled pools have no open staking
+    ///                        window to close).
+    /// - `StakingStillOpen` — `pool.end_time` has not yet been reached; the
+    ///                        staking window is still open.
+    ///
+    /// PRE:  pool.state = Active, env.ledger().timestamp() >= pool.end_time
+    /// POST: StakingClosed(pool_id) sentinel written; StakingClosedEvent emitted
+    ///       exactly once per pool.
+    pub fn close_staking(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .ok_or(PredifiError::PoolNotFound)?;
+
+        // Only pools that are still Active have a meaningful open staking window.
+        if pool.state != MarketState::Active {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        let current_time = env.ledger().timestamp();
+
+        // Staking closes when the ledger passes end_time.
+        if current_time < pool.end_time {
+            return Err(PredifiError::StakingStillOpen);
+        }
+
+        // Idempotency guard — if the event has already been emitted for this
+        // pool, return success without re-emitting.
+        let sentinel_key = DataKey::StakingClosed(pool_id);
+        if env.storage().persistent().has(&sentinel_key) {
+            return Ok(());
+        }
+
+        // Mark as closed and emit the event.
+        env.storage().persistent().set(&sentinel_key, &true);
+        Self::extend_persistent(&env, &sentinel_key);
+
+        StakingClosedEvent {
+            pool_id,
+            end_time: pool.end_time,
+            total_stake: pool.total_stake,
+            timestamp: current_time,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
     /// Cancel an active pool. Caller must have Operator role (1).
     /// Cancel a pool, freezing all betting and enabling refund process.
     /// Only callable by Admin (role 0) - can cancel any pool for any reason.
@@ -3244,7 +3344,7 @@ impl PredifiContract {
                     pool_id,
                     user: user.clone(),
                     amount: prediction.amount,
-                    claim_type: String::from_str(&env, "winnings"),
+                    claim_type: String::from_str(env, "winnings"),
                 }
                 .publish(env);
 
@@ -3335,7 +3435,7 @@ impl PredifiContract {
                 pool_id,
                 user: user.clone(),
                 amount: winnings,
-                claim_type: String::from_str(&env, "winnings"),
+                claim_type: String::from_str(env, "winnings"),
             }
             .publish(env);
 
