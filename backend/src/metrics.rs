@@ -62,18 +62,6 @@ impl Metrics {
         })
     }
 
-    /// Refresh the memory gauge metrics from the current system state.
-    ///
-    /// Reads live memory figures via [`sysinfo`] and updates
-    /// `app_memory_used_bytes` and `app_memory_total_bytes`. Call this
-    /// periodically (e.g. from a background task) to keep the gauges current.
-    pub fn update_memory_metrics(&self) {
-        let mut sys = System::new_all();
-        sys.refresh_memory();
-        self.memory_used_bytes.set(sys.used_memory() as f64);
-        self.memory_total_bytes.set(sys.total_memory() as f64);
-    }
-
     /// Encode all registered metrics into the Prometheus text exposition format.
     ///
     /// Returns the UTF-8 encoded text ready to be served at `/metrics`.
