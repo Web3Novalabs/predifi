@@ -19,17 +19,18 @@ pub fn init(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `access_control` | `Address` | Access control contract address |
-| `treasury` | `Address` | Treasury address for fee collection |
-| `fee_bps` | `u32` | Fee in basis points (max 10000 = 100%) |
+| Parameter        | Type      | Description                            |
+| ---------------- | --------- | -------------------------------------- |
+| `access_control` | `Address` | Access control contract address        |
+| `treasury`       | `Address` | Treasury address for fee collection    |
+| `fee_bps`        | `u32`     | Fee in basis points (max 10000 = 100%) |
 
 **Returns:** None
 
 **Events:** `InitEvent`
 
 **Notes:**
+
 - Idempotent - safe to call multiple times
 - Only sets config if not already initialized
 
@@ -51,18 +52,19 @@ pub fn create_pool(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `end_time` | `u64` | Unix timestamp after which predictions close |
-| `token` | `Address` | Stellar token contract for staking |
-| `description` | `String` | Event description (max 256 bytes) |
-| `metadata_url` | `String` | Extended metadata URL (max 512 bytes) |
+| Parameter      | Type      | Description                                  |
+| -------------- | --------- | -------------------------------------------- |
+| `end_time`     | `u64`     | Unix timestamp after which predictions close |
+| `token`        | `Address` | Stellar token contract for staking           |
+| `description`  | `String`  | Event description (max 256 bytes)            |
+| `metadata_url` | `String`  | Extended metadata URL (max 512 bytes)        |
 
 **Returns:** `u64` - New pool ID
 
 **Events:** `PoolCreatedEvent`
 
 **Validations:**
+
 - `end_time` must be in the future
 - `description` length ≤ 256 bytes
 - `metadata_url` length ≤ 512 bytes
@@ -98,12 +100,12 @@ pub fn place_prediction(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `user` | `Address` | User placing the prediction |
-| `pool_id` | `u64` | Pool to predict on |
-| `amount` | `i128` | Prediction amount (in token's smallest unit) |
-| `outcome` | `u32` | Outcome index (0, 1, 2, etc.) |
+| Parameter  | Type              | Description                                                                                                                 |
+| ---------- | ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `user`     | `Address`         | User placing the prediction                                                                                                 |
+| `pool_id`  | `u64`             | Pool to predict on                                                                                                          |
+| `amount`   | `i128`            | Prediction amount (in token's smallest unit)                                                                                |
+| `outcome`  | `u32`             | Outcome index (0, 1, 2, etc.)                                                                                               |
 | `referrer` | `Option<Address>` | Optional address that referred this user; stored on first prediction for (user, pool) and used for referral payout on claim |
 
 **Returns:** None
@@ -111,6 +113,7 @@ pub fn place_prediction(
 **Events:** `PredictionPlacedEvent`
 
 **Validations:**
+
 - Pool must exist
 - Pool must not be resolved
 - Current time < pool.end_time
@@ -119,6 +122,7 @@ pub fn place_prediction(
 - If `referrer` is set: cannot be the user or the contract address
 
 **Token Transfer:**
+
 - Transfers `amount` tokens from user to contract
 
 **Example:**
@@ -151,22 +155,24 @@ pub fn resolve_pool(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
+| Parameter  | Type      | Description                         |
+| ---------- | --------- | ----------------------------------- |
 | `operator` | `Address` | Operator address (must have role 1) |
-| `pool_id` | `u64` | Pool to resolve |
-| `outcome` | `u32` | Winning outcome index |
+| `pool_id`  | `u64`     | Pool to resolve                     |
+| `outcome`  | `u32`     | Winning outcome index               |
 
 **Returns:** `Result<(), PredifiError>`
 
 **Events:** `PoolResolvedEvent`
 
 **Validations:**
+
 - Operator must have role 1
 - Pool must exist
 - Pool must not already be resolved
 
 **Errors:**
+
 - `Unauthorized` - Operator lacks required role
 - `PoolNotFound` - Pool doesn't exist
 - `PoolAlreadyResolved` - Pool already resolved
@@ -198,16 +204,17 @@ pub fn claim_winnings(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `user` | `Address` | User claiming winnings |
-| `pool_id` | `u64` | Pool to claim from |
+| Parameter | Type      | Description            |
+| --------- | --------- | ---------------------- |
+| `user`    | `Address` | User claiming winnings |
+| `pool_id` | `u64`     | Pool to claim from     |
 
 **Returns:** `Result<i128, PredifiError>` - Amount claimed (0 if didn't win)
 
 **Events:** `WinningsClaimedEvent`, `ReferralPaidEvent` (when user had a referrer and wins)
 
 **Validations:**
+
 - Pool must be resolved
 - User must not have already claimed
 - User must have placed a prediction
@@ -220,6 +227,7 @@ pub fn claim_winnings(
 - If user has a referrer: referrer receives `referral_cut_bps` of the user's share of the protocol fee (the rest remains for treasury withdrawal).
 
 **Errors:**
+
 - `PoolNotResolved` - Pool not yet resolved
 - `AlreadyClaimed` - User already claimed winnings
 
@@ -254,11 +262,11 @@ pub fn get_user_predictions(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `user` | `Address` | User address |
-| `offset` | `u32` | Pagination offset |
-| `limit` | `u32` | Maximum results to return |
+| Parameter | Type      | Description               |
+| --------- | --------- | ------------------------- |
+| `user`    | `Address` | User address              |
+| `offset`  | `u32`     | Pagination offset         |
+| `limit`   | `u32`     | Maximum results to return |
 
 **Returns:** `Vec<UserPredictionDetail>`
 
@@ -287,9 +295,9 @@ pub fn pause(env: Env, admin: Address)
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `admin` | `Address` | Admin address (must have role 0) |
+| Parameter | Type      | Description                      |
+| --------- | --------- | -------------------------------- |
+| `admin`   | `Address` | Admin address (must have role 0) |
 
 **Events:** `PauseEvent`
 
@@ -305,9 +313,9 @@ pub fn unpause(env: Env, admin: Address)
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `admin` | `Address` | Admin address (must have role 0) |
+| Parameter | Type      | Description                      |
+| --------- | --------- | -------------------------------- |
+| `admin`   | `Address` | Admin address (must have role 0) |
 
 **Events:** `UnpauseEvent`
 
@@ -327,10 +335,10 @@ pub fn set_fee_bps(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `admin` | `Address` | Admin address |
-| `fee_bps` | `u32` | New fee in basis points (max 10000) |
+| Parameter | Type      | Description                         |
+| --------- | --------- | ----------------------------------- |
+| `admin`   | `Address` | Admin address                       |
+| `fee_bps` | `u32`     | New fee in basis points (max 10000) |
 
 **Events:** `FeeUpdateEvent`
 
@@ -350,10 +358,10 @@ pub fn set_referral_cut_bps(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `admin` | `Address` | Admin address |
-| `referral_cut_bps` | `u32` | Share of protocol fee (attributable to referred user) paid to referrer (max 10000) |
+| Parameter          | Type      | Description                                                                        |
+| ------------------ | --------- | ---------------------------------------------------------------------------------- |
+| `admin`            | `Address` | Admin address                                                                      |
+| `referral_cut_bps` | `u32`     | Share of protocol fee (attributable to referred user) paid to referrer (max 10000) |
 
 **Referral view functions:**
 
@@ -376,9 +384,9 @@ pub fn set_treasury(
 
 **Parameters:**
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `admin` | `Address` | Admin address |
+| Parameter  | Type      | Description          |
+| ---------- | --------- | -------------------- |
+| `admin`    | `Address` | Admin address        |
 | `treasury` | `Address` | New treasury address |
 
 **Events:** `TreasuryUpdateEvent`
@@ -465,13 +473,61 @@ pub struct PredictionPlacedEvent {
 
 ### `PoolResolvedEvent`
 
-Emitted when a pool is resolved.
+Emitted when a pool is resolved and the outcome is determined. This occurs when:
+
+- An operator calls `resolve_pool()` with a valid outcome after the resolution delay
+- An oracle calls `oracle_resolve()` and the voting threshold is reached
+- `resolve_pool_from_price()` is called and the price condition is evaluated
+
+The `operator` field indicates the address (operator or oracle) that triggered the resolution, or the contract itself if resolved automatically via price feed.
 
 ```rust
 pub struct PoolResolvedEvent {
-    pub pool_id: u64,
-    pub operator: Address,
-    pub outcome: u32,
+    pub pool_id: u64,     // Unique identifier for the resolved pool
+    pub operator: Address, // Address that triggered the resolution
+    pub outcome: u32,      // The determined winning outcome (0-based index)
+}
+```
+
+**Example**: When outcome 1 is selected for pool 12345 by operator addr123:
+
+```rust
+PoolResolvedEvent {
+    pool_id: 12345,
+    operator: addr123,
+    outcome: 1,
+}
+```
+
+### `PoolResolvedDiagEvent`
+
+Emitted alongside `PoolResolvedEvent` with enriched numeric context for monitoring and payout calculations. This diagnostic event allows off-chain systems to:
+
+- Calculate implied payouts
+- Flag anomalies (e.g., `winning_stake == 0` indicates no winners)
+- Track liquidity and stake distribution at resolution time
+
+This event is **always** published immediately after `PoolResolvedEvent`.
+
+```rust
+pub struct PoolResolvedDiagEvent {
+    pub pool_id: u64,           // Same pool as PoolResolvedEvent
+    pub outcome: u32,            // Same outcome as PoolResolvedEvent
+    pub total_stake: i128,       // Total stake across all outcomes
+    pub winning_stake: i128,     // Stake on the winning outcome (0 ⟹ no winners)
+    pub timestamp: u64,          // Ledger timestamp at resolution
+}
+```
+
+**Example**: Diagnostic data for the same resolution:
+
+```rust
+PoolResolvedDiagEvent {
+    pool_id: 12345,
+    outcome: 1,
+    total_stake: 5000,          // 5000 total tokens staked
+    winning_stake: 2000,        // 2000 on outcome 1
+    timestamp: 1234567890,
 }
 ```
 
@@ -506,11 +562,11 @@ pub struct RewardClaimedEvent {
 
 See [Troubleshooting](./troubleshooting.md) for complete error reference.
 
-| Code | Error | Description |
-|------|-------|-------------|
-| 10 | `Unauthorized` | Caller lacks required role |
-| 22 | `PoolNotResolved` | Pool not yet resolved |
-| 60 | `AlreadyClaimed` | User already claimed winnings |
+| Code | Error             | Description                   |
+| ---- | ----------------- | ----------------------------- |
+| 10   | `Unauthorized`    | Caller lacks required role    |
+| 22   | `PoolNotResolved` | Pool not yet resolved         |
+| 60   | `AlreadyClaimed`  | User already claimed winnings |
 
 ---
 

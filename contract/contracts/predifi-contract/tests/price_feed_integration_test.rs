@@ -139,3 +139,89 @@ fn test_price_based_pool_mock_resolution() {
     assert_eq!(pool.state, MarketState::Resolved);
     assert_eq!(pool.outcome, 1); // "Yes" outcome wins as 4100 > 4000
 }
+
+/// Verifies that `resolve_pool_from_price` rejects a price feed whose
+/// `expires_at` timestamp has already passed (i.e. stale oracle data).
+///
+/// The contract must return `PredifiError::InvalidPoolState` in this case,
+/// preventing any pool from being resolved with outdated price information.
+#[test]
+fn test_resolve_pool_rejects_stale_price_feed() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    // Register dummy access control and predifi contracts
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    let token_address = Address::generate(&env);
+    client.add_token_to_whitelist(&admin, &token_address);
+    client.add_oracle(&admin, &oracle);
+
+    // Create a pool with end_time = 4000
+    let end_time = 4000u64;
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Will ETH > $4000?"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    // Set price condition: ETH > $4000
+    let asset = symbol_short!("ETH_USD");
+    let target_price = 4000_0000000i128;
+    client.set_price_condition(&operator, &pool_id, &asset, &target_price, &1u32, &100u32);
+
+    // Push a price feed at ledger time 1000 that expires at 2000 (before resolution time)
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    client.update_price_feed(
+        &oracle,
+        &asset,
+        &4100_0000000i128, // price above target
+        &100i128,
+        &999u64,  // strictly in the past
+        &2000u64, // expires at 2000 — will be stale by resolution time
+    );
+
+    // Fast-forward past end_time AND past expires_at — price is now stale
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+
+    // Resolution must fail because the price feed has expired
+    let result = client.try_resolve_pool_from_price(&pool_id);
+    assert!(
+        result.is_err(),
+        "Expected error when resolving with stale price feed"
+    );
+}
