@@ -199,6 +199,17 @@ pub struct PoolsQuery {
     pub offset: Option<i64>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PoolsResponse {
+    pub pools: Vec<crate::db::PoolRow>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+    pub status: String,
+    pub category: Option<String>,
+    pub sort_by: String,
+}
+
 /// `GET /api/v1/pools/:id` — get detailed pool information with real-time odds.
 pub async fn get_pool_by_id_handler(
     State(state): State<AppState>,
@@ -255,6 +266,28 @@ pub async fn get_pools(
     }
 
     // Cache miss - fetch from database
+    match tokio::try_join!(
+        crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset),
+        crate::db::count_pools_with_filters(db, category, status)
+    ) {
+        Ok((pools, total)) => {
+            let response = PoolsResponse {
+                pools,
+                total,
+                limit,
+                offset,
+                status: status.to_string(),
+                category: category.map(|s| s.to_string()),
+                sort_by: sort_by.to_string(),
+            };
+            
+            let json_response = json!(&response);
+            
+            // Cache the response for 60 seconds
+            state.redis.set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL).await;
+            
+            Json(json_response)
+        },
     match crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset).await {
         Ok(pools) => {
             let response = json!({
