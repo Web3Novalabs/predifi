@@ -21,7 +21,7 @@ mod test_utils;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, log, symbol_short, token,
-    Address, BytesN, Env, IntoVal, String, Symbol, Vec,
+    Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
 };
 
 pub use constants::*;
@@ -1181,16 +1181,18 @@ impl PredifiContract {
         Err(PredifiError::InvalidData)
     }
 
-    fn validate_referral_code(code: &Symbol) -> Result<(), PredifiError> {
-        let code_str = code.as_str();
-        let len = code_str.len();
+    fn validate_referral_code(env: &Env, code: &Symbol) -> Result<(), PredifiError> {
+        let code_str = SymbolStr::try_from_val(env, &code.to_symbol_val())
+            .map_err(|_| PredifiError::InvalidData)?;
+        let code_bytes: &[u8] = code_str.as_ref();
+        let len = code_bytes.len();
 
-        if len < 6 || len > 12 {
+        if !(6..=12).contains(&len) {
             return Err(PredifiError::InvalidData);
         }
 
-        for ch in code_str.chars() {
-            if !matches!(ch, 'A'..='Z' | '0'..='9') {
+        for byte in code_bytes {
+            if !matches!(*byte, b'A'..=b'Z' | b'0'..=b'9') {
                 return Err(PredifiError::InvalidData);
             }
         }
@@ -1216,7 +1218,10 @@ impl PredifiContract {
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
-            (MarketState::Active, MarketState::Resolved | MarketState::Canceled)
+            (
+                MarketState::Active,
+                MarketState::Resolved | MarketState::Canceled
+            )
         )
     }
 
@@ -2407,7 +2412,7 @@ impl PredifiContract {
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
         if let Some(ref whitelist_key) = config.whitelist_key {
-            if let Err(e) = Self::validate_referral_code(whitelist_key) {
+            if let Err(e) = Self::validate_referral_code(&env, whitelist_key) {
                 soroban_sdk::panic_with_error!(&env, e);
             }
         }
@@ -2766,11 +2771,7 @@ impl PredifiContract {
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
-        let total_votes: u32 = env
-            .storage()
-            .temporary()
-            .get(&total_votes_key)
-            .unwrap_or(0);
+        let total_votes: u32 = env.storage().temporary().get(&total_votes_key).unwrap_or(0);
         let new_total_votes = total_votes + 1;
         env.storage()
             .temporary()
@@ -3077,7 +3078,7 @@ impl PredifiContract {
         }
 
         if let Some(ref invite_key) = invite_key {
-            if let Err(e) = Self::validate_referral_code(invite_key) {
+            if let Err(e) = Self::validate_referral_code(&env, invite_key) {
                 soroban_sdk::panic_with_error!(&env, e);
             }
         }
@@ -4286,33 +4287,44 @@ impl PredifiContract {
         removed
     }
 
-    /// Automatically resolve a pool based on its configured price condition.
-    /// Anyone can trigger this once the pool's end time and resolution delay have passed.
-    pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+    /// Load the price condition tuple configured for a pool.
+    ///
+    /// This intentionally preserves the previous missing-condition behavior:
+    /// callers panic with "Condition not found" when the pool has no condition.
+    fn load_price_resolution_condition(env: &Env, pool_id: u64) -> (Symbol, i128, u32, u32) {
+        env.storage()
+            .persistent()
+            .get(&DataKey::PriceCondition(pool_id))
+            .expect("Condition not found")
+    }
 
-        let condition_key = DataKey::PriceCondition(pool_id);
-        let (feed_pair, target_price, op, _tolerance): (Symbol, i128, u32, u32) = env
+    /// Load the current price and expiry timestamp for the configured feed.
+    ///
+    /// This intentionally preserves the previous missing-feed behavior:
+    /// callers panic with "Feed not found" when the feed has not been updated.
+    fn load_price_feed_for_resolution(env: &Env, feed_pair: Symbol) -> (i128, u64) {
+        let (price, _confidence, _timestamp, expires_at): (i128, i128, u64, u64) = env
             .storage()
             .persistent()
-            .get(&condition_key)
-            .expect("Condition not found");
-
-        let feed_key = DataKey::PriceFeed(feed_pair);
-        let (price, _conf, _ts, expires_at): (i128, i128, u64, u64) = env
-            .storage()
-            .persistent()
-            .get(&feed_key)
+            .get(&DataKey::PriceFeed(feed_pair))
             .expect("Feed not found");
 
+        (price, expires_at)
+    }
+
+    fn require_fresh_price_feed(env: &Env, expires_at: u64) -> Result<(), PredifiError> {
         if env.ledger().timestamp() > expires_at {
             return Err(PredifiError::InvalidPoolState);
         }
 
-        // Logic matched to price_feed_integration_test.rs:
-        // ComparisonOp: 0=LT, 1=GT
-        // Outcome: 0=No, 1=Yes
-        let outcome = if op == 1 {
+        Ok(())
+    }
+
+    /// Convert the evaluated price condition into the pool outcome convention.
+    ///
+    /// ComparisonOp: 0=LT, 1=GT. Outcome: 0=No, 1=Yes.
+    fn price_resolution_outcome(price: i128, target_price: i128, comparison_op: u32) -> u32 {
+        if comparison_op == 1 {
             if price > target_price {
                 1
             } else {
@@ -4322,10 +4334,16 @@ impl PredifiContract {
             0
         } else {
             1
-        };
+        }
+    }
 
+    /// Load the pool and validate all non-outcome preconditions for price resolution.
+    fn load_resolvable_price_pool(
+        env: &Env,
+        pool_id: u64,
+    ) -> Result<(DataKey, Pool), PredifiError> {
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
+        let pool: Pool = env
             .storage()
             .persistent()
             .get(&pool_key)
@@ -4338,28 +4356,35 @@ impl PredifiContract {
         }
 
         let current_time = env.ledger().timestamp();
-        let config = Self::get_config(&env);
+        let config = Self::get_config(env);
 
         if current_time < pool.end_time.saturating_add(config.resolution_delay) {
             return Err(PredifiError::ResolutionDelayNotMet);
         }
 
-        // Validate: outcome must be within the valid options range
-        if outcome >= pool.options_count {
+        Ok((pool_key, pool))
+    }
+
+    fn validate_price_resolution_outcome(
+        env: &Env,
+        pool_id: u64,
+        outcome: u32,
+        options_count: u32,
+    ) -> Result<(), PredifiError> {
+        if outcome >= options_count {
             log!(
-                &env,
+                env,
                 "resolve_pool_from_price rejected: outcome is out of bounds",
                 pool_id,
                 outcome,
-                pool.options_count
+                options_count
             );
             return Err(PredifiError::InvalidOutcome);
         }
 
-        // Validate: outcome cannot be the sentinel value
         if outcome == UNRESOLVED_OUTCOME {
             log!(
-                &env,
+                env,
                 "resolve_pool_from_price rejected: outcome cannot be sentinel value",
                 pool_id,
                 outcome
@@ -4367,20 +4392,45 @@ impl PredifiContract {
             return Err(PredifiError::InvalidOutcome);
         }
 
-        // Apply resolution
+        Ok(())
+    }
+
+    fn persist_price_resolution(
+        env: &Env,
+        pool_key: &DataKey,
+        pool_id: u64,
+        mut pool: Pool,
+        outcome: u32,
+    ) {
         pool.state = MarketState::Resolved;
         pool.outcome = outcome;
-        pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
+        pool.fee_bps = Self::calculate_dynamic_fee(env, &pool);
 
-        env.storage().persistent().set(&pool_key, &pool);
-        Self::bump_ttl(&env, &pool_key);
+        env.storage().persistent().set(pool_key, &pool);
+        Self::bump_ttl(env, pool_key);
 
         PoolResolvedEvent {
             pool_id,
-            operator: env.current_contract_address(), // System resolved
+            operator: env.current_contract_address(),
             outcome,
         }
-        .publish(&env);
+        .publish(env);
+    }
+
+    /// Automatically resolve a pool based on its configured price condition.
+    /// Anyone can trigger this once the pool's end time and resolution delay have passed.
+    pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+
+        let (feed_pair, target_price, comparison_op, _tolerance_bps) =
+            Self::load_price_resolution_condition(&env, pool_id);
+        let (price, expires_at) = Self::load_price_feed_for_resolution(&env, feed_pair);
+        Self::require_fresh_price_feed(&env, expires_at)?;
+
+        let outcome = Self::price_resolution_outcome(price, target_price, comparison_op);
+        let (pool_key, pool) = Self::load_resolvable_price_pool(&env, pool_id)?;
+        Self::validate_price_resolution_outcome(&env, pool_id, outcome, pool.options_count)?;
+        Self::persist_price_resolution(&env, &pool_key, pool_id, pool, outcome);
 
         Ok(())
     }
@@ -4536,11 +4586,7 @@ impl OracleCallback for PredifiContract {
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
-        let total_votes: u32 = env
-            .storage()
-            .temporary()
-            .get(&total_votes_key)
-            .unwrap_or(0);
+        let total_votes: u32 = env.storage().temporary().get(&total_votes_key).unwrap_or(0);
         let new_total_votes = total_votes + 1;
         env.storage()
             .temporary()
