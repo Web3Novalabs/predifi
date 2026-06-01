@@ -189,6 +189,8 @@ function PredictionProtocol() {
               key={activeTab} // key forces re-mount for the fade-in animation
               src={steps[activeTab].image}
               alt={steps[activeTab].title}
+              width={400}
+              height={700}
               className="animate-fade-in w-full h-auto md:h-[700px] object-contain drop-shadow-2xl"
               draggable={false}
             />
