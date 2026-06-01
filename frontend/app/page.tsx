@@ -123,11 +123,14 @@ export default function Home() {
         {/* Below the fold — lazily loaded; each wrapped in Suspense so the
             rest of the page can stream in independently */}
         <div className="relative space-y-10 lg:space-y-[150px] pt-[80px] lg:pt-[180px]">
-          <img
+          {/* Decorative background gradient — loaded eagerly as it is above the fold */}
+          <Image
             src="/gradient.png"
             alt=""
             aria-hidden="true"
-            className="absolute top-0 left-0 w-full pointer-events-none z-0"
+            fill
+            className="absolute top-0 left-0 w-full pointer-events-none z-0 object-cover"
+            priority
           />
           <Suspense
             fallback={

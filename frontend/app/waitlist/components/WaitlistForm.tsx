@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, FormEvent } from "react";
+import Image from "next/image";
 import { Button, Input } from "@/components/ui";
 import { CheckCircle2 } from "lucide-react";
 
@@ -50,12 +51,14 @@ export default function WaitlistForm() {
 
   return (
     <section className="relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible px-5">
-      {/* Background Pattern */}
-      <img
+      {/* Background Pattern — decorative full-bleed raster image */}
+      <Image
         src="/swirl-pattern.png"
         alt=""
         aria-hidden="true"
-        className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
+        fill
+        className="object-cover pointer-events-none z-0"
+        priority
       />
 
       {/* Main Content */}

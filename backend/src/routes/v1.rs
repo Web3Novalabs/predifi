@@ -31,10 +31,12 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
 
     let mut all_healthy = true;
     let mut db_status = "ok";
+    let mut db_error = String::new();
 
     if let Some(db) = &state.db {
-        if sqlx::query("SELECT 1").execute(db).await.is_err() {
+        if let Err(e) = sqlx::query("SELECT 1").execute(db).await {
             db_status = "unreachable";
+            db_error = e.to_string();
             all_healthy = false;
         }
     } else {
@@ -91,11 +93,13 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
     }
 
     let mut redis_status = "ok";
+    let mut redis_error = String::new();
     if !state.redis.is_available() {
         redis_status = "not_configured";
         all_healthy = false;
     } else if !state.redis.ping().await {
         redis_status = "unreachable";
+        redis_error = String::from("Redis ping failed");
         all_healthy = false;
     }
 
@@ -280,32 +284,16 @@ pub async fn get_pools(
                 category: category.map(|s| s.to_string()),
                 sort_by: sort_by.to_string(),
             };
-            
+
             let json_response = json!(&response);
-            
-            // Cache the response for 60 seconds
-            state.redis.set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL).await;
-            
-            Json(json_response)
-        },
-    match crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset).await {
-        Ok(pools) => {
-            let response = json!({
-                "pools": pools,
-                "limit": limit,
-                "offset": offset,
-                "status": status,
-                "category": category,
-                "sort_by": sort_by
-            });
 
             // Cache the response for 60 seconds
             state
                 .redis
-                .set(&cache_key, &response, crate::redis_cache::POOLS_CACHE_TTL)
+                .set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL)
                 .await;
 
-            Json(response)
+            Json(json_response)
         }
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
