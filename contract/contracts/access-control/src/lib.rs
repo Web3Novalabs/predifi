@@ -127,12 +127,14 @@ pub enum Role {
 }
 
 #[contractevent(topics = ["admin_init"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminInitEvent {
     pub admin: Address,
 }
 
 #[contractevent(topics = ["role_assigned"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleAssignedEvent {
     pub admin: Address,
@@ -141,6 +143,7 @@ pub struct RoleAssignedEvent {
 }
 
 #[contractevent(topics = ["role_revoked"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleRevokedEvent {
     pub admin: Address,
@@ -149,6 +152,7 @@ pub struct RoleRevokedEvent {
 }
 
 #[contractevent(topics = ["role_transferred"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleTransferredEvent {
     pub admin: Address,
@@ -158,6 +162,7 @@ pub struct RoleTransferredEvent {
 }
 
 #[contractevent(topics = ["admin_transferred"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminTransferredEvent {
     pub admin: Address,
@@ -165,6 +170,7 @@ pub struct AdminTransferredEvent {
 }
 
 #[contractevent(topics = ["admin_transfer_proposed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminTransferProposedEvent {
     pub admin: Address,
@@ -172,6 +178,7 @@ pub struct AdminTransferProposedEvent {
 }
 
 #[contractevent(topics = ["all_roles_revoked"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AllRolesRevokedEvent {
     pub admin: Address,
@@ -262,7 +269,7 @@ impl AccessControl {
             .persistent()
             .set(&DataKey::Role(admin.clone(), Role::Admin), &());
 
-        AdminInitEvent { admin }.publish(&env);
+        AdminInitEvent { admin }.publish(env);
     }
 
     /// Gets the current admin address.
@@ -460,12 +467,12 @@ impl AccessControl {
     ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone());
-        if admin_caller != current_admin {
+        let current_admin = Self::get_admin(env);
+        if admin_caller != &current_admin {
             return Err(PrediFiError::Unauthorized);
         }
 
-        Self::apply_admin_transfer(env, current_admin.clone(), new_admin.clone());
+        Self::apply_admin_transfer(env, current_admin.clone(), &new_admin);
 
         AdminTransferredEvent {
             admin: current_admin,
@@ -518,7 +525,7 @@ impl AccessControl {
         }
 
         let current_admin = Self::get_admin(env);
-        Self::apply_admin_transfer(env, current_admin.clone(), new_admin.clone());
+        Self::apply_admin_transfer(env, current_admin.clone(), &new_admin);
 
         AdminTransferredEvent {
             admin: current_admin,
@@ -561,8 +568,7 @@ impl AccessControl {
             Role::Moderator,
             Role::Oracle,
             Role::User,
-        ]
-        {
+        ] {
             let key = DataKey::Role(user.clone(), role.clone());
             if env.storage().persistent().has(&key) {
                 env.storage().persistent().remove(&key);
