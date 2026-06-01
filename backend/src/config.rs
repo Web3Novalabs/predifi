@@ -6,6 +6,9 @@ const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@localhost:5432/
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 10;
 const DEFAULT_DB_MIN_CONNECTIONS: u32 = 1;
 const DEFAULT_DB_ACQUIRE_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_DB_CONNECT_MAX_ATTEMPTS: u32 = 5;
+const DEFAULT_DB_CONNECT_BASE_DELAY_MS: u64 = 200;
+const DEFAULT_DB_CONNECT_MAX_DELAY_MS: u64 = 5_000;
 const DEFAULT_RPC_HEALTH_TIMEOUT_SECS: u64 = 2;
 const DEFAULT_RPC_HEALTH_RETRY_COUNT: u8 = 3;
 const DEFAULT_LOG_LEVEL: &str = "info";
@@ -42,6 +45,12 @@ pub struct Config {
     pub db_min_connections: u32,
     /// Seconds to wait when acquiring a connection from the pool (default `30`).
     pub db_acquire_timeout_secs: u64,
+    /// Max startup attempts when connecting to Postgres (default `5`).
+    pub db_connect_max_attempts: u32,
+    /// Initial backoff delay in ms between startup connection attempts (default `200`).
+    pub db_connect_base_delay_ms: u64,
+    /// Maximum backoff delay in ms between startup connection attempts (default `5000`).
+    pub db_connect_max_delay_ms: u64,
     /// Per-attempt timeout in seconds for the Stellar RPC health check (default `2`).
     pub rpc_health_timeout_secs: u64,
     /// Number of times to retry the Stellar RPC health check before reporting failure (default `3`).
@@ -80,12 +89,35 @@ impl Config {
         let host = get_string(vars, "PREDIFI_APP_HOST", DEFAULT_HOST);
         let port = get_u16(vars, "PREDIFI_APP_PORT", DEFAULT_PORT)?;
         let database_url = get_string(vars, "PREDIFI_DATABASE_URL", DEFAULT_DATABASE_URL);
-        let db_max_connections = get_u32(vars, "PREDIFI_DB_MAX_CONNECTIONS", DEFAULT_DB_MAX_CONNECTIONS)?;
-        let db_min_connections = get_u32(vars, "PREDIFI_DB_MIN_CONNECTIONS", DEFAULT_DB_MIN_CONNECTIONS)?;
+        let db_max_connections = get_u32(
+            vars,
+            "PREDIFI_DB_MAX_CONNECTIONS",
+            DEFAULT_DB_MAX_CONNECTIONS,
+        )?;
+        let db_min_connections = get_u32(
+            vars,
+            "PREDIFI_DB_MIN_CONNECTIONS",
+            DEFAULT_DB_MIN_CONNECTIONS,
+        )?;
         let db_acquire_timeout_secs = get_u64(
             vars,
             "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
             DEFAULT_DB_ACQUIRE_TIMEOUT_SECS,
+        )?;
+        let db_connect_max_attempts = get_u32(
+            vars,
+            "PREDIFI_DB_CONNECT_MAX_ATTEMPTS",
+            DEFAULT_DB_CONNECT_MAX_ATTEMPTS,
+        )?;
+        let db_connect_base_delay_ms = get_u64(
+            vars,
+            "PREDIFI_DB_CONNECT_BASE_DELAY_MS",
+            DEFAULT_DB_CONNECT_BASE_DELAY_MS,
+        )?;
+        let db_connect_max_delay_ms = get_u64(
+            vars,
+            "PREDIFI_DB_CONNECT_MAX_DELAY_MS",
+            DEFAULT_DB_CONNECT_MAX_DELAY_MS,
         )?;
         let rpc_health_timeout_secs = get_u64(
             vars,
@@ -124,6 +156,9 @@ impl Config {
             db_max_connections,
             db_min_connections,
             db_acquire_timeout_secs,
+            db_connect_max_attempts,
+            db_connect_base_delay_ms,
+            db_connect_max_delay_ms,
             rpc_health_timeout_secs,
             rpc_health_retry_count,
             log_level,
@@ -155,6 +190,9 @@ impl Config {
             db_max_connections: 1,
             db_min_connections: 1,
             db_acquire_timeout_secs: 1,
+            db_connect_max_attempts: 1,
+            db_connect_base_delay_ms: 0,
+            db_connect_max_delay_ms: 0,
             rpc_health_timeout_secs: 2,
             rpc_health_retry_count: 3,
             log_level: String::from("debug"),
@@ -163,10 +201,7 @@ impl Config {
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
-            cors_allowed_origins: DEFAULT_CORS_ORIGINS
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -236,10 +271,7 @@ fn parse_cors_origins(vars: &HashMap<String, String>) -> Result<Vec<String>, Con
     let raw = match vars.get("PREDIFI_CORS_ALLOWED_ORIGINS") {
         Some(v) => v.clone(),
         None => {
-            return Ok(DEFAULT_CORS_ORIGINS
-                .iter()
-                .map(|s| s.to_string())
-                .collect());
+            return Ok(DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect());
         }
     };
 
@@ -274,7 +306,10 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
     if origin == "*" || origin.eq_ignore_ascii_case("null") {
         return Err(ConfigError::InvalidValue {
             key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-            reason: format!("'{}' is not a valid origin — wildcards and 'null' are not permitted", origin),
+            reason: format!(
+                "'{}' is not a valid origin — wildcards and 'null' are not permitted",
+                origin
+            ),
         });
     }
 
@@ -349,7 +384,10 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
     if host.is_empty() {
         return Err(ConfigError::InvalidValue {
             key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-            reason: format!("'{}' is not a valid origin — host must not be empty", origin),
+            reason: format!(
+                "'{}' is not a valid origin — host must not be empty",
+                origin
+            ),
         });
     }
 
@@ -462,7 +500,10 @@ mod tests {
 
     #[test]
     fn config_rejects_non_numeric_port() {
-        let vars = HashMap::from([(String::from("PREDIFI_APP_PORT"), String::from("not-a-number"))]);
+        let vars = HashMap::from([(
+            String::from("PREDIFI_APP_PORT"),
+            String::from("not-a-number"),
+        )]);
         let error = Config::from_map(&vars).expect_err("port must be numeric");
 
         assert!(
@@ -480,8 +521,14 @@ mod tests {
     #[test]
     fn config_rejects_min_connections_larger_than_max() {
         let vars = HashMap::from([
-            (String::from("PREDIFI_DB_MIN_CONNECTIONS"), String::from("20")),
-            (String::from("PREDIFI_DB_MAX_CONNECTIONS"), String::from("10")),
+            (
+                String::from("PREDIFI_DB_MIN_CONNECTIONS"),
+                String::from("20"),
+            ),
+            (
+                String::from("PREDIFI_DB_MAX_CONNECTIONS"),
+                String::from("10"),
+            ),
         ]);
         let error = Config::from_map(&vars).expect_err("min > max must be rejected");
 
@@ -561,7 +608,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("wildcard must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -574,7 +627,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("null origin must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -587,7 +646,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("origin without scheme must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -600,7 +665,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("ftp scheme must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -613,7 +684,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("origin with path must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -626,7 +703,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("origin with query string must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -639,7 +722,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("origin with fragment must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -652,7 +741,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("port > 65535 must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -665,7 +760,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("empty origin list must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -724,10 +825,7 @@ mod tests {
     /// `InvalidNumber` display message includes the variable name and bad value.
     #[test]
     fn invalid_number_display_includes_key_and_value() {
-        let vars = HashMap::from([(
-            String::from("PREDIFI_APP_PORT"),
-            String::from("not-a-port"),
-        )]);
+        let vars = HashMap::from([(String::from("PREDIFI_APP_PORT"), String::from("not-a-port"))]);
         let error = Config::from_map(&vars).expect_err("non-numeric port must fail");
         let msg = error.to_string();
         assert!(
@@ -744,8 +842,14 @@ mod tests {
     #[test]
     fn invalid_value_display_includes_key_and_reason() {
         let vars = HashMap::from([
-            (String::from("PREDIFI_DB_MIN_CONNECTIONS"), String::from("50")),
-            (String::from("PREDIFI_DB_MAX_CONNECTIONS"), String::from("10")),
+            (
+                String::from("PREDIFI_DB_MIN_CONNECTIONS"),
+                String::from("50"),
+            ),
+            (
+                String::from("PREDIFI_DB_MAX_CONNECTIONS"),
+                String::from("10"),
+            ),
         ]);
         let error = Config::from_map(&vars).expect_err("min > max must fail");
         let msg = error.to_string();

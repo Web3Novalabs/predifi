@@ -85,13 +85,11 @@ fn parse_total_stake_from_rpc(body: &serde_json::Value) -> Option<i64> {
 
 /// Fix the DB `total_stake` for a pool by updating it to match on-chain state.
 async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result<(), sqlx::Error> {
-    sqlx::query!(
-        "UPDATE pools SET total_stake = $1 WHERE pool_id = $2",
-        correct_stake,
-        pool_id
-    )
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE pools SET total_stake = $1 WHERE pool_id = $2")
+        .bind(correct_stake)
+        .bind(pool_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -109,10 +107,18 @@ pub async fn run_full_sync(
 ) -> Result<Vec<PoolSyncResult>, sqlx::Error> {
     info!("starting full contract-DB state sync");
 
+    #[derive(sqlx::FromRow)]
+    struct PoolStakeRow {
+        pool_id: i64,
+        total_stake: i64,
+    }
+
     // Fetch all pool IDs and their current DB total_stake.
-    let rows = sqlx::query!("SELECT pool_id, total_stake FROM pools ORDER BY pool_id")
-        .fetch_all(db)
-        .await?;
+    let rows = sqlx::query_as::<_, PoolStakeRow>(
+        "SELECT pool_id, total_stake FROM pools ORDER BY pool_id",
+    )
+    .fetch_all(db)
+    .await?;
 
     let mut results = Vec::with_capacity(rows.len());
     let mut fixed_count = 0u32;

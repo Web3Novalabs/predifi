@@ -11,9 +11,8 @@
 //! - JSON serialization for complex types
 //! - Connection pooling via redis ConnectionManager
 
-use redis::{aio::ConnectionManager, AsyncCommands, RedisError};
+use redis::{aio::ConnectionManager, AsyncCommands};
 use serde::{de::DeserializeOwned, Serialize};
-use std::time::Duration;
 use tracing::{debug, error, warn};
 
 /// Default TTL for cached pool data (60 seconds)

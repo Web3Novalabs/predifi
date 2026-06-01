@@ -30,10 +30,7 @@ mod tests {
     /// variable for the full duration of the test.  Binding it to `_` would
     /// drop it immediately, stopping the container before any queries run.
     async fn setup() -> (RedisCache, testcontainers::ContainerAsync<Redis>) {
-        let container = Redis::default()
-            .start()
-            .await
-            .expect("redis container");
+        let container = Redis::default().start().await.expect("redis container");
         let port = container
             .get_host_port_ipv4(6379)
             .await

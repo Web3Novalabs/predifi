@@ -52,6 +52,12 @@ impl EventBus {
     }
 }
 
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Axum handler — upgrades the HTTP connection to WebSocket and streams events.
 pub async fn ws_handler(ws: WebSocketUpgrade, State(bus): State<EventBus>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, bus))
@@ -65,7 +71,7 @@ async fn handle_socket(mut socket: WebSocket, bus: EventBus) {
             result = rx.recv() => {
                 match result {
                     Ok(msg) => {
-                        if socket.send(Message::Text(msg.into())).await.is_err() {
+                        if socket.send(Message::Text(msg)).await.is_err() {
                             break; // client disconnected
                         }
                     }

@@ -5,7 +5,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::time::Duration;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::Config;
@@ -290,7 +289,11 @@ pub async fn get_pools(
             // Cache the response for 60 seconds
             state
                 .redis
-                .set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL)
+                .set(
+                    &cache_key,
+                    &json_response,
+                    crate::redis_cache::POOLS_CACHE_TTL,
+                )
                 .await;
 
             Json(json_response)
