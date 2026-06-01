@@ -6,14 +6,17 @@ function HeroSection() {
     // Added min-h to ensure it covers screen on mobile, and overflow adjustments
     <section className="relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible">
       {/* Background Pattern — decorative full-bleed raster image */}
-      <Image
-        src="/swirl-pattern.png"
-        alt=""
-        aria-hidden="true"
-        fill
-        className="object-cover pointer-events-none z-0"
-        priority
-      />
+      {/* Container with aspect ratio to prevent layout shift */}
+      <div className="absolute inset-0 w-full h-full overflow-hidden z-0">
+        <Image
+          src="/swirl-pattern.png"
+          alt=""
+          aria-hidden="true"
+          fill
+          className="object-cover pointer-events-none"
+          priority
+        />
+      </div>
 
       {/* Main content */}
       <div className="relative z-10 flex flex-col items-center max-w-4xl px-5">
