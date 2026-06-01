@@ -3056,7 +3056,10 @@ impl PredifiContract {
     ) {
         Self::require_not_paused(&env);
         user.require_auth();
-        assert!(amount > 0, "amount must be positive");
+        // Reject zero or negative stake amounts.
+        if amount <= 0 {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidAmount);
+        }
 
         // Validate: amount must meet the global protocol minimum stake
         let global_min_stake = Self::get_config(&env).min_stake;

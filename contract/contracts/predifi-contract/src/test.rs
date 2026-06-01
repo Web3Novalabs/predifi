@@ -6106,6 +6106,47 @@ fn test_create_pool_accepts_maximum_options_count() {
     client.place_prediction(&user, &pool_id, &100, &99, &None, &None);
 }
 
+/// Placing a prediction with a zero amount must be rejected with InvalidAmount (#42).
+#[test]
+#[should_panic(expected = "Error(Contract, #42)")]
+fn test_place_prediction_rejects_zero_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Zero amount test"),
+            metadata_url: String::from_str(&env, "ipfs://zero-amount"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+    // amount of 0 must be rejected
+    client.place_prediction(&user, &pool_id, &0, &0, &None, &None);
+}
+
 /// Placing a prediction with outcome >= options_count must be rejected.
 /// This tests the limit enforcement in update_outcome_stake.
 #[test]
