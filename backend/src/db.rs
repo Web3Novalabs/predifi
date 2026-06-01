@@ -803,7 +803,7 @@ pub async fn insert_referrals_bulk(
             .bind(event.referral_amount);
     }
 
-    query_builder.execute(&mut tx).await?;
+    query_builder.execute(&mut *tx).await?;
 
     tx.commit().await?;
     Ok(())

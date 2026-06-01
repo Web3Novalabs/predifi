@@ -11,10 +11,10 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use config::Config;
+use crate::config::Config;
 use http::HeaderValue;
-use metrics::{Metrics, SharedMetrics};
-use request_logger::LoggingLayer;
+use crate::metrics::{Metrics, SharedMetrics};
+use crate::request_logger::LoggingLayer;
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -56,7 +56,7 @@ fn build_cors(config: &Config) -> CorsLayer {
 }
 
 /// Health-check handler.
-async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Response {
+async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
 
     let mut all_healthy = true;
@@ -206,7 +206,7 @@ async fn root() -> Json<serde_json::Value> {
 }
 
 /// Metrics endpoint exposed to Prometheus.
-async fn metrics(State(state): State<routes::v1::AppState>) -> impl IntoResponse {
+async fn metrics(State(state): State<crate::routes::v1::AppState>) -> impl IntoResponse {
     match state.metrics.gather_text() {
         Ok(body) => (
             axum::http::StatusCode::OK,
@@ -243,14 +243,14 @@ async fn metrics_middleware(
 /// Build the Axum router with CORS, logging, and rate limiting middleware.
 pub fn build_router(
     config: Config,
-    cache: price_cache::PriceCache,
-    redis: redis_cache::RedisCache,
-    event_bus: ws::EventBus,
+    cache: crate::price_cache::PriceCache,
+    redis: crate::redis_cache::RedisCache,
+    event_bus: crate::ws::EventBus,
 ) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(5)
-            .burst_size(50)
+            .per_second(crate::constants::RATE_LIMIT_PER_SECOND)
+            .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
             .error_handler(|_| {
                 (
                     axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -267,7 +267,7 @@ pub fn build_router(
         std::process::exit(1);
     }));
 
-    let state = routes::v1::AppState {
+    let state = crate::routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
         redis: redis.clone(),
@@ -284,8 +284,8 @@ pub fn build_router(
         .with_state(state)
         .nest(
             "/api",
-            routes::router(
-                config,
+            crate::routes::router(
+                config.clone(),
                 cache,
                 redis,
                 None,
@@ -293,8 +293,8 @@ pub fn build_router(
                 event_bus,
             ),
         )
-        .merge(openapi::swagger_router())
-        .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
+        .merge(crate::openapi::swagger_router())
+        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
             config: governor_conf,
         })
@@ -305,15 +305,15 @@ pub fn build_router(
 /// Build the Axum router with a live database pool.
 fn build_router_with_db(
     config: Config,
-    cache: price_cache::PriceCache,
-    redis: redis_cache::RedisCache,
+    cache: crate::price_cache::PriceCache,
+    redis: crate::redis_cache::RedisCache,
     pool: sqlx::PgPool,
-    event_bus: ws::EventBus,
+    event_bus: crate::ws::EventBus,
 ) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(5)
-            .burst_size(50)
+            .per_second(crate::constants::RATE_LIMIT_PER_SECOND)
+            .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
             .error_handler(|_| {
                 (
                     axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -330,7 +330,7 @@ fn build_router_with_db(
         std::process::exit(1);
     }));
 
-    let state = routes::v1::AppState {
+    let state = crate::routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
         redis: redis.clone(),
@@ -347,8 +347,8 @@ fn build_router_with_db(
         .with_state(state)
         .nest(
             "/api",
-            routes::router_with_db(
-                config,
+            crate::routes::router_with_db(
+                config.clone(),
                 cache,
                 redis,
                 pool,
@@ -356,8 +356,8 @@ fn build_router_with_db(
                 event_bus,
             ),
         )
-        .merge(openapi::swagger_router())
-        .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
+        .merge(crate::openapi::swagger_router())
+        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
             config: governor_conf,
         })
@@ -371,25 +371,25 @@ fn build_router_with_db(
 /// creates the database pool, spawns background workers, initialises
 /// the Redis cache, and binds the TCP listener.
 pub async fn run(config: Config) {
-    let pool = db::create_pool(&config).unwrap_or_else(|error| {
+    let pool = crate::db::create_pool(&config).unwrap_or_else(|error| {
         error!(error = %error, "failed to initialize PostgreSQL pool");
         std::process::exit(1);
     });
 
-    let cache = price_cache::PriceCache::new();
-    price_cache::spawn_fetcher(cache.clone());
+    let cache = crate::price_cache::PriceCache::new();
+    crate::price_cache::spawn_fetcher(cache.clone());
 
-    let event_bus = ws::EventBus::new();
+    let event_bus = crate::ws::EventBus::new();
 
     // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
-    worker::stellar_listener::spawn(
+    crate::worker::stellar_listener::spawn(
         config.stellar_rpc_url.clone(),
         pool.clone(),
         event_bus.clone(),
     );
 
     // Initialize Redis cache
-    let redis = redis_cache::RedisCache::new(&config.redis_url).await;
+    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
