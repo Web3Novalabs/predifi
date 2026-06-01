@@ -3,7 +3,9 @@
 //! A minimal Axum HTTP server with CORS and request-logging middleware.
 
 pub mod config;
+pub mod constants;
 pub mod db;
+pub mod jwt;
 pub mod metrics;
 pub mod session;
 pub mod openapi;
@@ -19,10 +21,10 @@ pub mod ws;
 
 pub use server::build_router;
 
-use config::Config;
-use sentry::integrations::panic::register_panic_handler;
+use crate::config::Config;
 use sentry_tracing::layer as sentry_tracing_layer;
 use tracing::info;
+use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -42,14 +44,11 @@ async fn main() {
                 ..Default::default()
             },
         ));
-        register_panic_handler();
 
         tracing_subscriber::registry()
             .with(
-                tracing_subscriber::fmt()
-                    .with_env_filter(EnvFilter::new(config.log_level.clone()))
-                    .with_target(false)
-                    .compact(),
+                tracing_subscriber::fmt::layer()
+                    .with_filter(EnvFilter::new(config.log_level.clone())),
             )
             .with(sentry_tracing_layer())
             .init();

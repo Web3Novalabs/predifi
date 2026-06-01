@@ -1,15 +1,18 @@
 import React from "react";
+import Image from "next/image";
 
 export default function HeroAndIntroSection() {
   return (
     <>
       {/* HERO SECTION */}
       <section className="relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible px-5">
-        <img
+        <Image
           src="/swirl-pattern.png"
           alt=""
           aria-hidden="true"
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
+          fill
+          className="object-cover pointer-events-none z-0"
+          priority
         />
 
         <div className="relative z-10 flex flex-col items-center max-w-4xl">

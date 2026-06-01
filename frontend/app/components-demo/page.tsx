@@ -5,6 +5,7 @@ import { Send, Heart, Download } from "lucide-react";
 import {
   Button,
   Input,
+  SearchBar,
   Checkbox,
   Tooltip,
   ToastProvider,
@@ -14,6 +15,7 @@ import {
 function ComponentShowcase() {
   const [checkedState, setCheckedState] = useState(false);
   const [indeterminateState, setIndeterminateState] = useState(true);
+  const [searchResult, setSearchResult] = useState("");
   const { addToast } = useToast();
 
   const handleToastSuccess = () => {
@@ -135,6 +137,58 @@ function ComponentShowcase() {
               helperText="This is a helpful message"
               placeholder="Helper text"
             />
+          </div>
+        </section>
+
+        {/* SearchBar Component */}
+        <section className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-semibold mb-2">SearchBar Component</h2>
+            <p className="text-muted-foreground mb-4">
+              Debounced search input — <code>onSearch</code> fires only after
+              the user stops typing (default 300 ms delay).
+            </p>
+          </div>
+
+          <div className="space-y-6 max-w-xl">
+            {/* Default (300 ms debounce) */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Default (300 ms debounce)</p>
+              <SearchBar
+                placeholder="Search pools..."
+                onSearch={(query) => setSearchResult(query)}
+              />
+            </div>
+
+            {/* Custom delay */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Custom delay (500 ms)</p>
+              <SearchBar
+                placeholder="Search predictions..."
+                debounceDelay={500}
+                onSearch={(query) => setSearchResult(query)}
+              />
+            </div>
+
+            {/* Disabled state */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Disabled</p>
+              <SearchBar
+                placeholder="Search disabled..."
+                disabled
+                onSearch={() => {}}
+              />
+            </div>
+
+            {/* Live feedback */}
+            {searchResult && (
+              <p className="text-sm text-muted-foreground">
+                Last debounced query:{" "}
+                <span className="text-foreground font-medium">
+                  &quot;{searchResult}&quot;
+                </span>
+              </p>
+            )}
           </div>
         </section>
 

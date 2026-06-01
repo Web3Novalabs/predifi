@@ -174,6 +174,57 @@ impl Config {
 
 // ConfigError moved to the shared `predifi-errors` crate and re-exported when
 // that crate is used with the `std` feature. See `contracts/predifi-errors`.
+/// Error returned when a configuration value cannot be parsed or is logically invalid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigError {
+    /// An environment variable was set but its value could not be parsed as the
+    /// expected numeric type.
+    InvalidNumber {
+        /// Name of the environment variable.
+        key: &'static str,
+        /// The raw string value that failed to parse.
+        value: String,
+        /// Human-readable parse error from the standard library.
+        reason: String,
+    },
+    /// An environment variable was set to a syntactically valid string but the
+    /// value violates a semantic constraint (e.g. min > max, invalid URL).
+    InvalidValue {
+        /// Name of the environment variable.
+        key: &'static str,
+        /// Human-readable description of the constraint that was violated.
+        reason: String,
+    },
+    /// A required environment variable is absent and has no compiled-in default.
+    MissingRequired {
+        /// Name of the missing environment variable.
+        key: &'static str,
+        /// Human-readable description of what the variable is used for.
+        description: &'static str,
+    },
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidNumber { key, value, reason } => {
+                write!(f, "invalid value for {}='{}': {}", key, value, reason)
+            }
+            Self::InvalidValue { key, reason } => {
+                write!(f, "invalid value for {}: {}", key, reason)
+            }
+            Self::MissingRequired { key, description } => {
+                write!(
+                    f,
+                    "required environment variable '{}' is not set ({})",
+                    key, description
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
 
 /// Parse and strictly validate the `PREDIFI_CORS_ALLOWED_ORIGINS` environment variable.
 ///
@@ -371,6 +422,21 @@ fn to_number_error(key: &'static str, value: &str, err: ParseIntError) -> Config
         value: value.to_string(),
         reason: err.to_string(),
     }
+}
+
+/// Return the value of `key` from `vars`, or `Err(ConfigError::MissingRequired)` if absent.
+///
+/// Use this for environment variables that **must** be explicitly set in
+/// production deployments (i.e. variables with no safe compiled-in default).
+#[allow(dead_code)]
+fn get_required_string(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+    description: &'static str,
+) -> Result<String, ConfigError> {
+    vars.get(key)
+        .cloned()
+        .ok_or(ConfigError::MissingRequired { key, description })
 }
 
 #[cfg(test)]
@@ -604,6 +670,91 @@ mod tests {
         assert!(
             matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
+        );
+    }
+
+    // ── Specific error codes for config (issue #976) ──────────────────────────
+
+    /// `get_required_string` returns `MissingRequired` when the variable is absent.
+    #[test]
+    fn missing_required_error_when_variable_absent() {
+        let vars = HashMap::new();
+        let error = get_required_string(&vars, "PREDIFI_SECRET_KEY", "JWT signing secret")
+            .expect_err("absent required variable must produce an error");
+
+        assert!(
+            matches!(
+                error,
+                ConfigError::MissingRequired {
+                    key: "PREDIFI_SECRET_KEY",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    /// `get_required_string` succeeds when the variable is present.
+    #[test]
+    fn required_string_succeeds_when_variable_present() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_SECRET_KEY"),
+            String::from("supersecret"),
+        )]);
+        let value = get_required_string(&vars, "PREDIFI_SECRET_KEY", "JWT signing secret")
+            .expect("present required variable must succeed");
+        assert_eq!(value, "supersecret");
+    }
+
+    /// `MissingRequired` display message includes the variable name and description.
+    #[test]
+    fn missing_required_display_includes_key_and_description() {
+        let error = ConfigError::MissingRequired {
+            key: "PREDIFI_SECRET_KEY",
+            description: "JWT signing secret",
+        };
+        let msg = error.to_string();
+        assert!(
+            msg.contains("PREDIFI_SECRET_KEY"),
+            "error message must contain the variable name, got: {msg}"
+        );
+        assert!(
+            msg.contains("JWT signing secret"),
+            "error message must contain the description, got: {msg}"
+        );
+    }
+
+    /// `InvalidNumber` display message includes the variable name and bad value.
+    #[test]
+    fn invalid_number_display_includes_key_and_value() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_APP_PORT"),
+            String::from("not-a-port"),
+        )]);
+        let error = Config::from_map(&vars).expect_err("non-numeric port must fail");
+        let msg = error.to_string();
+        assert!(
+            msg.contains("PREDIFI_APP_PORT"),
+            "error message must contain the variable name, got: {msg}"
+        );
+        assert!(
+            msg.contains("not-a-port"),
+            "error message must contain the bad value, got: {msg}"
+        );
+    }
+
+    /// `InvalidValue` display message includes the variable name and reason.
+    #[test]
+    fn invalid_value_display_includes_key_and_reason() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_DB_MIN_CONNECTIONS"), String::from("50")),
+            (String::from("PREDIFI_DB_MAX_CONNECTIONS"), String::from("10")),
+        ]);
+        let error = Config::from_map(&vars).expect_err("min > max must fail");
+        let msg = error.to_string();
+        assert!(
+            msg.contains("PREDIFI_DB_MIN_CONNECTIONS"),
+            "error message must contain the variable name, got: {msg}"
         );
     }
 }
