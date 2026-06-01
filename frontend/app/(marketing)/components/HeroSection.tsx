@@ -4,15 +4,17 @@ import Image from "next/image";
 function HeroSection() {
   return (
     // Added min-h to ensure it covers screen on mobile, and overflow adjustments
-    <section className="relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible">
+    <section className="hero-critical relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible">
       {/* Background Pattern — decorative full-bleed raster image */}
       <Image
-        src="/swirl-pattern.png"
+        src="/swirl-pattern.webp"
         alt=""
         aria-hidden="true"
         fill
         className="object-cover pointer-events-none z-0"
         priority
+        loading="eager"
+        fetchPriority="high"
       />
 
       {/* Main content */}

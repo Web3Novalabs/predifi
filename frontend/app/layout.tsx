@@ -84,6 +84,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        {/* Preload critical hero images to improve LCP */}
+        <link rel="preload" as="image" href="/swirl-pattern.webp" />
+        <link rel="preload" as="image" href="/gradient.webp" />
+
+        {/* Inline minimal critical CSS for hero to paint immediately */}
+        <style>{`.hero-critical{min-height:calc(100vh - 40px);display:flex;flex-direction:column;align-items:center;text-align:center}`}</style>
+      </head>
       <body className={`antialiased text-sm ${dmMono.variable}`}>
         {children}
       </body>

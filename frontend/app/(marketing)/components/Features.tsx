@@ -60,6 +60,7 @@ function Features() {
                   height={400}
                   className="w-full max-w-[180px] md:max-w-[400px] h-auto object-contain"
                   alt={feature.title}
+                  loading="lazy"
                 />
               </div>
 
