@@ -262,7 +262,7 @@ impl AccessControl {
             .persistent()
             .set(&DataKey::Role(admin.clone(), Role::Admin), &());
 
-        AdminInitEvent { admin }.publish(&env);
+        AdminInitEvent { admin }.publish(env);
     }
 
     /// Gets the current admin address.
@@ -460,12 +460,12 @@ impl AccessControl {
     ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone());
-        if admin_caller != current_admin {
+        let current_admin = Self::get_admin(env);
+        if admin_caller != &current_admin {
             return Err(PrediFiError::Unauthorized);
         }
 
-        Self::apply_admin_transfer(env, current_admin.clone(), new_admin.clone());
+        Self::apply_admin_transfer(env, current_admin.clone(), &new_admin);
 
         AdminTransferredEvent {
             admin: current_admin,
@@ -518,7 +518,7 @@ impl AccessControl {
         }
 
         let current_admin = Self::get_admin(env);
-        Self::apply_admin_transfer(env, current_admin.clone(), new_admin.clone());
+        Self::apply_admin_transfer(env, current_admin.clone(), &new_admin);
 
         AdminTransferredEvent {
             admin: current_admin,
@@ -561,8 +561,7 @@ impl AccessControl {
             Role::Moderator,
             Role::Oracle,
             Role::User,
-        ]
-        {
+        ] {
             let key = DataKey::Role(user.clone(), role.clone());
             if env.storage().persistent().has(&key) {
                 env.storage().persistent().remove(&key);

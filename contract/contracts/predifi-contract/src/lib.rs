@@ -21,7 +21,7 @@ mod test_utils;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, log, symbol_short, token,
-    Address, BytesN, Env, IntoVal, String, Symbol, Vec,
+    Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
 };
 
 pub use constants::*;
@@ -1181,16 +1181,18 @@ impl PredifiContract {
         Err(PredifiError::InvalidData)
     }
 
-    fn validate_referral_code(code: &Symbol) -> Result<(), PredifiError> {
-        let code_str = code.as_str();
-        let len = code_str.len();
+    fn validate_referral_code(env: &Env, code: &Symbol) -> Result<(), PredifiError> {
+        let code_str = SymbolStr::try_from_val(env, &code.to_symbol_val())
+            .map_err(|_| PredifiError::InvalidData)?;
+        let code_bytes: &[u8] = code_str.as_ref();
+        let len = code_bytes.len();
 
-        if len < 6 || len > 12 {
+        if !(6..=12).contains(&len) {
             return Err(PredifiError::InvalidData);
         }
 
-        for ch in code_str.chars() {
-            if !matches!(ch, 'A'..='Z' | '0'..='9') {
+        for byte in code_bytes {
+            if !matches!(*byte, b'A'..=b'Z' | b'0'..=b'9') {
                 return Err(PredifiError::InvalidData);
             }
         }
@@ -1216,7 +1218,10 @@ impl PredifiContract {
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
-            (MarketState::Active, MarketState::Resolved | MarketState::Canceled)
+            (
+                MarketState::Active,
+                MarketState::Resolved | MarketState::Canceled
+            )
         )
     }
 
@@ -2407,7 +2412,7 @@ impl PredifiContract {
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
         if let Some(ref whitelist_key) = config.whitelist_key {
-            if let Err(e) = Self::validate_referral_code(whitelist_key) {
+            if let Err(e) = Self::validate_referral_code(&env, whitelist_key) {
                 soroban_sdk::panic_with_error!(&env, e);
             }
         }
@@ -2766,11 +2771,7 @@ impl PredifiContract {
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
-        let total_votes: u32 = env
-            .storage()
-            .temporary()
-            .get(&total_votes_key)
-            .unwrap_or(0);
+        let total_votes: u32 = env.storage().temporary().get(&total_votes_key).unwrap_or(0);
         let new_total_votes = total_votes + 1;
         env.storage()
             .temporary()
@@ -3077,7 +3078,7 @@ impl PredifiContract {
         }
 
         if let Some(ref invite_key) = invite_key {
-            if let Err(e) = Self::validate_referral_code(invite_key) {
+            if let Err(e) = Self::validate_referral_code(&env, invite_key) {
                 soroban_sdk::panic_with_error!(&env, e);
             }
         }
@@ -4536,11 +4537,7 @@ impl OracleCallback for PredifiContract {
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
-        let total_votes: u32 = env
-            .storage()
-            .temporary()
-            .get(&total_votes_key)
-            .unwrap_or(0);
+        let total_votes: u32 = env.storage().temporary().get(&total_votes_key).unwrap_or(0);
         let new_total_votes = total_votes + 1;
         env.storage()
             .temporary()
