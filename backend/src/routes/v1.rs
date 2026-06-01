@@ -280,32 +280,13 @@ pub async fn get_pools(
                 category: category.map(|s| s.to_string()),
                 sort_by: sort_by.to_string(),
             };
-            
+
             let json_response = json!(&response);
-            
+
             // Cache the response for 60 seconds
             state.redis.set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL).await;
-            
+
             Json(json_response)
-        },
-    match crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset).await {
-        Ok(pools) => {
-            let response = json!({
-                "pools": pools,
-                "limit": limit,
-                "offset": offset,
-                "status": status,
-                "category": category,
-                "sort_by": sort_by
-            });
-
-            // Cache the response for 60 seconds
-            state
-                .redis
-                .set(&cache_key, &response, crate::redis_cache::POOLS_CACHE_TTL)
-                .await;
-
-            Json(response)
         }
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
