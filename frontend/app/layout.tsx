@@ -6,7 +6,8 @@ const dmMono = DM_Mono({
   subsets: ["latin"],
   weight: ["300", "400", "500"],
   variable: "--font-dm-mono",
-   preload: false,
+  display: "swap",
+  preload: true,
 });
 
 export const metadata: Metadata = {

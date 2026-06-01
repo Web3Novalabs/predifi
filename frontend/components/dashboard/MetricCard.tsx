@@ -1,6 +1,7 @@
 import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 
 interface MetricCardProps {
     title: string;
@@ -9,6 +10,7 @@ interface MetricCardProps {
     change?: string;
     changeType?: "positive" | "negative" | "neutral";
     subtext?: string;
+    isLoading?: boolean;
 }
 
 export function MetricCard({
@@ -18,7 +20,23 @@ export function MetricCard({
     change,
     changeType = "neutral",
     subtext,
+    isLoading = false,
 }: MetricCardProps) {
+    if (isLoading) {
+        return (
+            <Card className="bg-[#121212] border-none text-white relative overflow-hidden">
+                <CardContent className="p-6 flex items-start gap-4">
+                    <Skeleton className="w-12 h-12 rounded-xl" />
+                    <div className="space-y-2 flex-1">
+                        <Skeleton className="h-3 w-24" />
+                        <Skeleton className="h-8 w-20" />
+                        <Skeleton className="h-5 w-16 rounded-full" />
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
+
     return (
         <Card className="bg-[#121212] border-none text-white relative overflow-hidden group">
             <CardContent className="p-6 flex items-start justify-between relative z-10">

@@ -1,5 +1,6 @@
 // Component exports
 export { Button, buttonVariants, type ButtonProps } from "./button";
+export { Skeleton } from "./skeleton";
 export { Input, type InputProps } from "./input";
 export { Toast, toastVariants, type ToastProps } from "./toast";
 export { ToastProvider, useToast } from "./toast-provider";
@@ -13,3 +14,4 @@ export {
   TooltipArrow,
   type TooltipProps,
 } from "./tooltip";
+export { default as SocialIcon, type SocialIconId } from "./SocialIcon";

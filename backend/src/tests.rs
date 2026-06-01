@@ -1119,3 +1119,86 @@ async fn api_v1_stats_returns_error_without_db() {
         "should report error when db is absent, got: {body}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Readiness Probe Tests (/ready)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// GET /ready must return HTTP 503 when Redis is disabled (not configured).
+///
+/// This is the primary acceptance criterion: the readiness probe must signal
+/// "not ready" when Redis is unavailable so orchestrators can withhold traffic.
+#[tokio::test]
+async fn ready_returns_503_when_redis_disabled() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/ready"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "readiness probe must return 503 when Redis is not configured"
+    );
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"not_ready\""),
+        "status should be 'not_ready' when Redis is unavailable, got: {body}"
+    );
+    assert!(
+        body.contains("\"redis\":\"not_configured\""),
+        "redis dependency should be 'not_configured', got: {body}"
+    );
+}
+
+/// GET /ready must include a `dependencies` object with a `redis` field.
+#[tokio::test]
+async fn ready_response_includes_redis_dependency() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/ready"))
+    .await
+    .expect("request failed");
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"dependencies\""),
+        "response should include a dependencies object, got: {body}"
+    );
+    assert!(
+        body.contains("\"redis\""),
+        "dependencies should include a redis field, got: {body}"
+    );
+}
+
+/// GET /ready must include an `errors` object describing why Redis is not ready.
+#[tokio::test]
+async fn ready_response_includes_error_details_when_not_ready() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/ready"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"errors\""),
+        "response should include an errors object, got: {body}"
+    );
+}

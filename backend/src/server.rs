@@ -153,6 +153,50 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
     }
 }
 
+/// Readiness probe handler — signals whether the service is ready to accept traffic.
+///
+/// Unlike the general `/health` liveness endpoint, this probe focuses on
+/// Redis connectivity, which is required for the caching layer to function.
+/// Kubernetes (and similar orchestrators) use readiness probes to decide
+/// whether to route traffic to a pod; returning `503` here will temporarily
+/// remove the instance from the load-balancer rotation until Redis recovers.
+///
+/// # Responses
+/// - `200 OK` — Redis is reachable and the service is ready.
+/// - `503 Service Unavailable` — Redis is not configured or unreachable.
+async fn ready(State(state): State<routes::v1::AppState>) -> axum::response::Response {
+    use axum::http::StatusCode;
+
+    let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
+        ("not_configured", Some("Redis is not configured".to_string()))
+    } else if !state.redis.ping().await {
+        (
+            "unreachable",
+            Some("Redis ping failed — connection may be lost".to_string()),
+        )
+    } else {
+        ("ok", None)
+    };
+
+    let ready = redis_status == "ok";
+
+    let body = json!({
+        "status": if ready { "ready" } else { "not_ready" },
+        "dependencies": {
+            "redis": redis_status,
+        },
+        "errors": {
+            "redis": redis_error,
+        }
+    });
+
+    if ready {
+        (StatusCode::OK, Json(body)).into_response()
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
+    }
+}
+
 /// Root handler — returns a welcome message.
 async fn root() -> Json<serde_json::Value> {
     Json(json!({
@@ -235,6 +279,7 @@ pub fn build_router(
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/metrics", get(metrics))
         .with_state(state)
         .nest(
@@ -297,6 +342,7 @@ fn build_router_with_db(
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/ready", get(ready))
         .route("/metrics", get(metrics))
         .with_state(state)
         .nest(

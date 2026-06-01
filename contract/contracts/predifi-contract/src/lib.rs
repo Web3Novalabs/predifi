@@ -1181,6 +1181,23 @@ impl PredifiContract {
         Err(PredifiError::InvalidData)
     }
 
+    fn validate_referral_code(code: &Symbol) -> Result<(), PredifiError> {
+        let code_str = code.as_str();
+        let len = code_str.len();
+
+        if len < 6 || len > 12 {
+            return Err(PredifiError::InvalidData);
+        }
+
+        for ch in code_str.chars() {
+            if !matches!(ch, 'A'..='Z' | '0'..='9') {
+                return Err(PredifiError::InvalidData);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Validate core protocol invariants for a pool.
     /// Panics if any invariant is broken to prevent corrupted state from causing
     /// index-out-of-bounds or other logic errors in downstream processing.
@@ -2389,6 +2406,12 @@ impl PredifiContract {
         );
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
+        if let Some(ref whitelist_key) = config.whitelist_key {
+            if let Err(e) = Self::validate_referral_code(whitelist_key) {
+                soroban_sdk::panic_with_error!(&env, e);
+            }
+        }
+
         // outcome_descriptions validation is now handled by validate_pool_invariants
         // called right after pool structure is initialized.
 
@@ -3048,6 +3071,12 @@ impl PredifiContract {
                 r != &env.current_contract_address(),
                 "referrer cannot be contract"
             );
+        }
+
+        if let Some(ref invite_key) = invite_key {
+            if let Err(e) = Self::validate_referral_code(invite_key) {
+                soroban_sdk::panic_with_error!(&env, e);
+            }
         }
 
         Self::enter_reentrancy_guard(&env);
