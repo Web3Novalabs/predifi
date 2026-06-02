@@ -1,6 +1,6 @@
 "use client";
 import { ChevronDown } from "lucide-react";
-import React, { useState, useCallback, memo } from "react";
+import React, { useState, useCallback, memo, useMemo } from "react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -151,16 +151,18 @@ function FAQ() {
         </h3>
 
         <div className="flex flex-col gap-4">
-          {faqData.map((item, index) => (
-            <AccordionItem
-              key={item.question}
-              index={index}
-              question={item.question}
-              answer={item.answer}
-              isOpen={openIndex === index}
-              onToggle={handleToggle}
-            />
-          ))}
+          {useMemo(() => (
+            faqData.map((item, index) => (
+              <AccordionItem
+                key={item.question}
+                index={index}
+                question={item.question}
+                answer={item.answer}
+                isOpen={openIndex === index}
+                onToggle={handleToggle}
+              />
+            ))
+          ), [openIndex, handleToggle])}
         </div>
       </div>
     </div>

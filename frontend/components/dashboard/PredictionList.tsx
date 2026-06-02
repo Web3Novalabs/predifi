@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useCallback, memo } from "react";
+import { FixedSizeList, type ListChildComponentProps } from "react-window";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
 import { ChefHat, ChevronRight, Users, Copy } from "lucide-react";
 
 // ---------------------------------------------------------------------------
@@ -42,12 +42,14 @@ const activePredictions: Prediction[] = [
   },
 ];
 
+/** Height of each PredictionCard row in pixels (including gap). */
+const ITEM_HEIGHT = 220;
+
+/** Maximum visible height of the virtualized list before scrolling kicks in. */
+const LIST_MAX_HEIGHT = 600;
+
 // ---------------------------------------------------------------------------
 // PredictionCard — memoized list item
-//
-// Extracted from the inline .map() so React.memo can skip re-renders when
-// the parent re-renders for reasons unrelated to this card's data (e.g. a
-// tab switch that doesn't change the card's props).
 // ---------------------------------------------------------------------------
 
 const PredictionCard = memo(function PredictionCard({
@@ -120,29 +122,51 @@ const PredictionCard = memo(function PredictionCard({
 PredictionCard.displayName = "PredictionCard";
 
 // ---------------------------------------------------------------------------
-// PredictionList — parent list component
+// VirtualRow — renderer passed to FixedSizeList
 //
-// Memoization strategy:
-//   - PredictionCard is wrapped with React.memo so cards don't re-render
-//     when only the active tab changes.
-//   - handleTabActive and handleTabPast are wrapped with useCallback so
-//     their references are stable across renders. Without useCallback, new
-//     inline arrow functions would be created on every render, defeating
-//     any downstream memo optimizations.
+// react-window calls this for every visible row, providing `index` and
+// `style`. The `style` (position/height) MUST be applied to the outermost
+// element so the list can correctly position each row.
+// ---------------------------------------------------------------------------
+
+function VirtualRow({ index, style, data }: ListChildComponentProps<Prediction[]>) {
+  return (
+    // Outer div carries react-window's absolute-position style.
+    // Inner div adds the gap between cards via padding-bottom.
+    <div style={style}>
+      <div className="pb-4">
+        <PredictionCard prediction={data[index]} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// PredictionList
 // ---------------------------------------------------------------------------
 
 export function PredictionList() {
   const [activeTab, setActiveTab] = useState<"active" | "past">("active");
 
-  /** Stable callback — switches to the "active" tab. */
-  const handleTabActive = useCallback(() => {
-    setActiveTab("active");
-  }, []);
+  const handleTabActive = useCallback(() => setActiveTab("active"), []);
+  const handleTabPast = useCallback(() => setActiveTab("past"), []);
 
-  /** Stable callback — switches to the "past" tab. */
-  const handleTabPast = useCallback(() => {
-    setActiveTab("past");
-  }, []);
+  /** Clamp list height so a small dataset doesn't leave empty space. */
+  const listHeight = Math.min(
+    activePredictions.length * ITEM_HEIGHT,
+    LIST_MAX_HEIGHT
+  );
+
+  /**
+   * Memoize the mapped cards so they are only re-calculated if the data changes.
+   * This saves a full array map and object creation on every render of the 
+   * parent PredictionList.
+   */
+  const renderedActivePredictions = useMemo(() => (
+    activePredictions.map((prediction) => (
+      <PredictionCard key={prediction.id} prediction={prediction} />
+    ))
+  ), []);
 
   return (
     <div className="space-y-6">
@@ -182,18 +206,24 @@ export function PredictionList() {
         </button>
       </div>
 
-      {/* List */}
-      <div className="space-y-4">
-        {activeTab === "active" ? (
-          activePredictions.map((prediction) => (
-            <PredictionCard key={prediction.id} prediction={prediction} />
-          ))
-        ) : (
-          <div className="text-center py-10 text-zinc-500">
-            No past predictions found
-          </div>
-        )}
-      </div>
+      {/* Virtualized list */}
+      {activeTab === "active" ? (
+        <FixedSizeList
+          height={listHeight}
+          itemCount={activePredictions.length}
+          itemSize={ITEM_HEIGHT}
+          width="100%"
+          itemData={activePredictions}
+          // Remove the default inline overflow so Tailwind/CSS controls scrolling
+          style={{ overflow: "auto" }}
+        >
+          {VirtualRow}
+        </FixedSizeList>
+      ) : (
+        <div className="text-center py-10 text-zinc-500">
+          No past predictions found
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,13 @@
 import React from "react";
 import Image from "next/image";
 
-function Footer() {
+/**
+ * Footer
+ *
+ * Static footer component rendered on marketing pages.
+ * Wrapped with React.memo to prevent unnecessary re-renders since it has no props or state.
+ */
+const Footer = React.memo(function Footer() {
   return (
     <div className="rounded-t-[40px] px-10 lg:px-20 py-10 lg:py-[50px] bg-[#FFFFFF0D]">
       <div className="pb-5 border-b-[#CBECEF] lg:flex-row flex-col-reverse gap-y-8 items-center border-b-[0.5px] flex justify-between lg:items-baseline">
@@ -20,6 +26,8 @@ function Footer() {
       </div>
     </div>
   );
-}
+});
+
+Footer.displayName = "Footer";
 
 export default Footer;

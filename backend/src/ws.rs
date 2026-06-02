@@ -23,6 +23,12 @@ pub struct EventBus {
     tx: broadcast::Sender<String>,
 }
 
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventBus {
     /// Create a new broadcast channel with a capacity of [`CHANNEL_CAPACITY`] messages.
     ///

@@ -1,6 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Enable CSS minification and optimization in production
+  compress: true,
+  // Optimize CSS loading
+  experimental: {
+    optimizeCss: true,
+  },
   images: {
     // Allow Next.js to optimise SVG files served from the /public directory.
     // The Content-Security-Policy header set below mitigates the XSS risk that

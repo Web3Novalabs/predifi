@@ -7,7 +7,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 use sqlx::PgPool;
-use tokio::time::{interval, Duration};
+use std::time::Duration;
+use tokio::time::interval;
 use tracing::{error, info, warn};
 
 const POLL_INTERVAL_SECS: u64 = 5;
@@ -111,14 +112,18 @@ async fn fetch_events(
 /// `rpc_url`   – Stellar RPC endpoint (e.g. `https://soroban-testnet.stellar.org`)
 /// `db`        – PostgreSQL connection pool used to persist the ledger cursor
 /// `event_bus` – broadcast channel; new predictions are published here
-pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
+/// `timeout`   – maximum time to wait for an RPC response
+pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
     tokio::spawn(async move {
-        run(rpc_url, db, event_bus).await;
+        run(rpc_url, db, event_bus, timeout).await;
     });
 }
 
-async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
-    let client = reqwest::Client::new();
+async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .expect("valid reqwest client");
     let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
 
     // Resume from the last persisted ledger, or start from ledger 1.
