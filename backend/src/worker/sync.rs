@@ -11,10 +11,14 @@
 //! sync::run_full_sync(&db, &config).await?;
 //! ```
 
+use std::time::Duration;
 use sqlx::PgPool;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
+
+/// Default timeout for Stellar RPC calls in the sync worker (seconds).
+const SYNC_RPC_TIMEOUT_SECS: u64 = 10;
 
 /// Result of a single pool sync operation.
 #[derive(Debug)]
@@ -47,7 +51,10 @@ async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(SYNC_RPC_TIMEOUT_SECS))
+        .build()
+        .expect("valid reqwest client");
     let response = client.post(&rpc_url).json(&payload).send().await.ok()?;
 
     let body: serde_json::Value = response.json().await.ok()?;
