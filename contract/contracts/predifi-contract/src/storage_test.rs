@@ -366,7 +366,9 @@ mod tests {
         env.as_contract(&contract_id, || {
             // Initially, no votes should exist
             assert!(
-                !env.storage().temporary().has(&DataKey::ResVote(1, Address::generate(&env))),
+                !env.storage()
+                    .temporary()
+                    .has(&DataKey::ResVote(1, Address::generate(&env))),
                 "ResVote must not exist before voting"
             );
             assert!(
@@ -380,7 +382,9 @@ mod tests {
 
             // These keys must NOT be in persistent or instance storage
             assert!(
-                !env.storage().persistent().has(&DataKey::ResVote(1, Address::generate(&env))),
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::ResVote(1, Address::generate(&env))),
                 "ResVote must not be in persistent storage"
             );
             assert!(

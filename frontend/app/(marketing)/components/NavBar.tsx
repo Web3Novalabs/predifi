@@ -25,7 +25,16 @@ function Navbar() {
       <div className="flex justify-between items-center p-5 md:px-[50px]">
         {/* LOGO — home is the most critical destination; prefetch eagerly */}
         <Link href="/" prefetch={true}>
-          <img src="/logo.svg" className="w-[80px] md:w-[100px]" alt="Logo" />
+          <Image
+            src="/logo.svg"
+            alt="Logo"
+            width={100}
+            height={100}
+            className="w-[80px] md:w-[100px]"
+            priority
+            loading="eager"
+            fetchPriority="high"
+          />
         </Link>
 
         {/* DESKTOP NAVIGATION (Hidden on mobile) */}
@@ -119,7 +128,7 @@ function Navbar() {
             Explore Pools
           </button>
         </div>
-      )}
+      </div>
     </nav>
   );
 }
