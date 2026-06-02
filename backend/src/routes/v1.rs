@@ -14,6 +14,7 @@ use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
+use std::sync::Arc;
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -146,7 +147,11 @@ async fn index() -> Json<serde_json::Value> {
 #[derive(Clone)]
 pub struct AppState {
     /// Validated runtime configuration (fees, URLs, timeouts, etc.).
-    pub config: Config,
+    ///
+    /// Wrapped in [`Arc`] so that cloning `AppState` (which Axum does on every
+    /// request) only bumps a reference count instead of deep-copying all the
+    /// heap-allocated strings inside `Config`.
+    pub config: Arc<Config>,
     /// In-memory oracle price cache refreshed every 60 seconds.
     pub cache: PriceCache,
     /// Redis cache client for hot-path response caching.
@@ -161,7 +166,7 @@ pub struct AppState {
 
 impl axum::extract::FromRef<AppState> for Config {
     fn from_ref(state: &AppState) -> Self {
-        state.config.clone()
+        (*state.config).clone()
     }
 }
 
@@ -543,7 +548,7 @@ pub fn router(
     event_bus: crate::ws::EventBus,
 ) -> Router {
     let state = AppState {
-        config,
+        config: Arc::new(config),
         cache,
         redis,
         db: pool,

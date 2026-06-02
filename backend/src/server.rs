@@ -277,7 +277,7 @@ pub fn build_router(
     }));
 
     let state = crate::routes::v1::AppState {
-        config: config.clone(),
+        config: Arc::new(config.clone()),
         cache: cache.clone(),
         redis: redis.clone(),
         db: None,
@@ -346,7 +346,7 @@ fn build_router_with_db(
     }));
 
     let state = crate::routes::v1::AppState {
-        config: config.clone(),
+        config: Arc::new(config.clone()),
         cache: cache.clone(),
         redis: redis.clone(),
         db: Some(pool.clone()),
