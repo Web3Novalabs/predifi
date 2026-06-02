@@ -1,5 +1,4 @@
-"use client";
-
+import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePools } from "@/lib/hooks/usePools";
@@ -13,60 +12,28 @@ interface PoolsListProps {
   isLoading?: boolean;
 }
 
-/** Compact, human-readable rendering of a stake amount. */
-function formatStake(totalStake: number): string {
-  return totalStake.toLocaleString();
-}
-
-/** A single row in the created-pools list. */
-function PoolRow({ pool }: { pool: Pool }) {
-  return (
-    <div className="flex items-center justify-between p-3 rounded-lg bg-zinc-900/50">
-      <div className="space-y-1 min-w-0">
-        <p className="text-sm font-medium text-white truncate">{pool.name}</p>
-        <p className="text-xs text-zinc-500">
-          {pool.category} · {formatStake(pool.total_stake)} {pool.token}
-        </p>
+export function PoolsList({ isLoading = false }: PoolsListProps) {
+  const skeletonItems = useMemo(() => 
+    Array.from({ length: 4 }).map((_, i) => (
+      <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-zinc-900/50">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-3 w-24" />
+        </div>
+        <Skeleton className="h-6 w-16 rounded-full" />
       </div>
-      <span className="shrink-0 text-xs font-medium px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 capitalize">
-        {pool.state}
-      </span>
-    </div>
+    )),
+    []
   );
-}
 
-/**
- * PoolsList — the dashboard's "Created Pools" card.
- *
- * Pool data is fetched through {@link usePools}, which caches the response via
- * SWR. Because pool metadata is largely static, repeated mounts (e.g. navigating
- * back to the dashboard) render instantly from cache instead of refetching.
- */
-export function PoolsList({ isLoading: isLoadingOverride }: PoolsListProps = {}) {
-  // "Created pools" are static metadata — newest active pools, cached by SWR.
-  const { pools, isLoading, isError, refresh } = usePools({
-    status: "active",
-    sort_by: "new",
-  });
-
-  const showSkeleton = isLoadingOverride ?? isLoading;
-
-  if (showSkeleton) {
+  if (isLoading) {
     return (
       <Card className="bg-[#121212] border-none text-white h-full min-h-[400px]">
         <CardHeader>
           <Skeleton className="h-5 w-32" />
         </CardHeader>
         <CardContent className="space-y-3">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-zinc-900/50">
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-40" />
-                <Skeleton className="h-3 w-24" />
-              </div>
-              <Skeleton className="h-6 w-16 rounded-full" />
-            </div>
-          ))}
+          {skeletonItems}
         </CardContent>
       </Card>
     );
