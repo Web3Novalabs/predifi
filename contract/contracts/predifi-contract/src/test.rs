@@ -343,7 +343,7 @@ fn test_create_pool_rejects_referral_code_too_short() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let now = env.ledger().timestamp();
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_pool(
             &creator,
             &(now + 3600u64),
@@ -369,7 +369,7 @@ fn test_create_pool_rejects_referral_code_too_short() {
                 ],
             },
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -382,7 +382,7 @@ fn test_create_pool_rejects_referral_code_too_long() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let now = env.ledger().timestamp();
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_pool(
             &creator,
             &(now + 3600u64),
@@ -408,7 +408,7 @@ fn test_create_pool_rejects_referral_code_too_long() {
                 ],
             },
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -421,7 +421,7 @@ fn test_create_pool_rejects_referral_code_lowercase() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let now = env.ledger().timestamp();
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_pool(
             &creator,
             &(now + 3600u64),
@@ -447,7 +447,7 @@ fn test_create_pool_rejects_referral_code_lowercase() {
                 ],
             },
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -460,7 +460,7 @@ fn test_create_pool_rejects_referral_code_special_characters() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let now = env.ledger().timestamp();
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_pool(
             &creator,
             &(now + 3600u64),
@@ -486,7 +486,7 @@ fn test_create_pool_rejects_referral_code_special_characters() {
                 ],
             },
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -527,7 +527,7 @@ fn test_place_prediction_rejects_invalid_invite_key() {
         },
     );
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.place_prediction(
             &user,
             &pool_id,
@@ -536,7 +536,7 @@ fn test_place_prediction_rejects_invalid_invite_key() {
             &None,
             &Some(Symbol::new(&env, "AbC123")),
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -4284,7 +4284,6 @@ fn test_pool_resolved_event_emitted_on_resolution() {
 
     assert!(found, "PoolResolvedEvent not found in emitted events");
 }
-
 
 #[test]
 fn test_mark_pool_ready() {
@@ -8080,7 +8079,7 @@ fn test_get_pool_config_private_pool_with_whitelist_key() {
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    let whitelist_key = symbol_short!("secret");
+    let whitelist_key = symbol_short!("SECRET");
     let config = PoolConfig {
         start_time: 0,
         description: String::from_str(&env, "Private pool"),
@@ -8212,7 +8211,7 @@ fn test_get_pool_config_multiple_pools_independent() {
             initial_liquidity: 50i128,
             required_resolutions: 1u32,
             private: true,
-            whitelist_key: Some(Symbol::new(&env, "secret")),
+            whitelist_key: Some(Symbol::new(&env, "SECRET")),
             outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Option 1"),
@@ -8367,7 +8366,7 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
 /// predictions, then verify that an additional prediction is rejected with
 /// `MaxTotalStakeExceeded`.
 #[test]
-#[should_panic(expected = "MaxTotalStakeExceeded")]
+#[should_panic(expected = "Error(Contract, #104)")]
 fn test_place_prediction_rejects_when_max_total_stake_exceeded() {
     let env = Env::default();
     env.mock_all_auths();
