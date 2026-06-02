@@ -126,10 +126,15 @@ async fn api_v1_fees_returns_config_values() {
     config.treasury_fee_bps = 400;
     config.referral_fee_bps = 6000;
 
-    let response = build_router(config, PriceCache::new())
-        .oneshot(get("/api/v1/fees"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/fees"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -421,7 +426,12 @@ async fn cors_respects_custom_origin_list() {
 /// Verify that the rate limiter returns 429 Too Many Requests after exceeding the limit.
 #[tokio::test]
 async fn rate_limiting_returns_429_after_burst() {
-    let app = build_router(Config::default_for_test(), PriceCache::new());
+    let app = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    );
 
     // The limit is 50 requests burst.
     // We fire 50 requests which should all be 200 OK.
@@ -634,10 +644,15 @@ async fn api_v1_health_returns_503_when_rpc_unreachable() {
     // Point RPC to an invalid/unreachable endpoint to simulate failure
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -664,10 +679,15 @@ async fn root_health_returns_503_when_rpc_unreachable() {
     // Point RPC to an invalid/unreachable endpoint to simulate failure
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -692,10 +712,15 @@ async fn health_503_response_includes_dependency_details() {
     let mut config = Config::default_for_test();
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -755,10 +780,15 @@ async fn root_health_returns_503_when_redis_unreachable() {
     // Create a mock Redis cache that always fails ping
     let redis = RedisCache::disabled();
 
-    let response = build_router(Config::default_for_test(), PriceCache::new(), redis)
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        redis,
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -783,10 +813,15 @@ async fn health_503_response_includes_redis_dependency_details() {
     // Create a mock Redis cache that always fails ping
     let redis = RedisCache::disabled();
 
-    let response = build_router(Config::default_for_test(), PriceCache::new(), redis)
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        redis,
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
