@@ -2146,6 +2146,7 @@ impl PredifiContract {
     /// automatically handled by Soroban's XDR codec — the removed fields are simply
     /// ignored on read, so no explicit data rewrite is required.
     pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "migrate_state")?;
 
@@ -4349,19 +4350,6 @@ impl PredifiContract {
         .publish(&env);
 
         removed
-    }
-
-    /// Automatically resolve a pool based on its configured price condition.
-    /// Anyone can trigger this once the pool's end time and resolution delay have passed.
-    pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env)?;
-
-        let condition_key = DataKey::PriceCondition(pool_id);
-        let (feed_pair, target_price, op, _tolerance): (Symbol, i128, u32, u32) = env
-            .storage()
-            .persistent()
-            .get(&DataKey::PriceCondition(pool_id))
-            .expect("Condition not found")
     }
 
     /// Load the current price and expiry timestamp for the configured feed.

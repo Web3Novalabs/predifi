@@ -22,7 +22,12 @@ chrono = { version = "0.4", features = ["serde"] }
 tower-http = { version = "0.6.8", features = ["cors"] }
 dotenvy = "0.15"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tracing-opentelemetry = "0.22"
+opentelemetry = { version = "0.21", features = ["trace"] }
+opentelemetry-jaeger = { version = "0.20", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.14", features = ["grpc-tonic"] }
+opentelemetry-semantic-conventions = "0.13"
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio-rustls",
     "postgres",
