@@ -1,7 +1,5 @@
 use axum::{
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -14,7 +12,6 @@ use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
-use std::sync::Arc;
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -25,31 +22,42 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
-/// Check database health with a simple query.
-async fn check_db_health(db: &Option<sqlx::PgPool>) -> (String, String) {
-    if let Some(pool) = db {
-        match sqlx::query("SELECT 1").execute(pool).await {
-            Ok(_) => ("ok".to_string(), String::new()),
-            Err(e) => ("unreachable".to_string(), e.to_string()),
+/// `GET /api/v1/health` health-check endpoint.
+pub async fn health(State(state): State<AppState>) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use std::time::Duration;
+
+    let mut all_healthy = true;
+    let mut db_status = "ok";
+    let mut db_error = String::new();
+
+    if let Some(db) = &state.db {
+        if let Err(e) = sqlx::query("SELECT 1").execute(db).await {
+            db_status = "unreachable";
+            db_error = e.to_string();
+            all_healthy = false;
         }
     } else {
-        ("not_configured".to_string(), String::new())
+        db_status = "not_configured";
     }
-}
 
-/// Check RPC health with retry logic and exponential backoff.
-async fn check_rpc_health(rpc_url: &str, timeout_secs: u64, retry_count: u8) -> (String, String) {
+    let mut rpc_status = "ok";
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .timeout(Duration::from_secs(state.config.rpc_health_timeout_secs))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
-    let max_attempts = retry_count as usize;
+    // Try RPC health check with retry logic
+    let mut rpc_attempts = 0;
+    let max_attempts = state.config.rpc_health_retry_count as usize;
     let mut last_error = String::new();
 
-    for attempt in 0..max_attempts {
+    while rpc_attempts < max_attempts {
+        rpc_attempts += 1;
+
         let rpc_req = client
-            .post(rpc_url)
+            .post(&state.config.stellar_rpc_url)
             .json(&serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -60,7 +68,8 @@ async fn check_rpc_health(rpc_url: &str, timeout_secs: u64, retry_count: u8) -> 
 
         match rpc_req {
             Ok(res) if res.status().is_success() => {
-                return ("ok".to_string(), String::new());
+                // Success - break out of retry loop
+                break;
             }
             Ok(res) => {
                 last_error = format!("HTTP {} response", res.status());
@@ -70,62 +79,32 @@ async fn check_rpc_health(rpc_url: &str, timeout_secs: u64, retry_count: u8) -> 
             }
         }
 
-        // Exponential backoff: 2^(attempt) seconds, capped at 5 seconds
-        if attempt < max_attempts - 1 {
-            let backoff_duration = std::cmp::min(2u64.pow(attempt as u32), 5);
+        // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
+        if rpc_attempts < max_attempts {
+            let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
             sleep(TokioDuration::from_secs(backoff_duration)).await;
         }
     }
 
-    ("unreachable".to_string(), last_error)
-}
-
-/// Check Redis health and availability.
-async fn check_redis_health(redis: &crate::redis_cache::RedisCache) -> (String, String) {
-    if !redis.is_available() {
-        return ("not_configured".to_string(), String::new());
-    }
-    if !redis.ping().await {
-        return ("unreachable".to_string(), "Redis ping failed".to_string());
-    }
-    ("ok".to_string(), String::new())
-}
-
-/// Check price cache health.
-fn check_price_cache_health(cache: &crate::price_cache::PriceCache) -> (String, String) {
-    if cache.snapshot().is_empty() {
-        return ("not_ready".to_string(), "price cache is empty".to_string());
-    }
-    ("ok".to_string(), String::new())
-}
-
-/// `GET /api/v1/health` health-check endpoint.
-pub async fn health(State(state): State<AppState>) -> axum::response::Response {
-    use axum::http::StatusCode;
-    use axum::response::IntoResponse;
-
-    let mut all_healthy = true;
-    let (db_status, db_error) = check_db_health(&state.db).await;
-    if db_status == "unreachable" {
+    if rpc_attempts >= max_attempts {
+        rpc_status = "unreachable";
         all_healthy = false;
     }
 
-    let (rpc_status, rpc_error) = check_rpc_health(
-        &state.config.stellar_rpc_url,
-        state.config.rpc_health_timeout_secs,
-        state.config.rpc_health_retry_count,
-    ).await;
-    if rpc_status == "unreachable" {
+    let mut redis_status = "ok";
+    let mut redis_error = String::new();
+    if !state.redis.is_available() {
+        redis_status = "not_configured";
+        all_healthy = false;
+    } else if !state.redis.ping().await {
+        redis_status = "unreachable";
+        redis_error = String::from("Redis ping failed");
         all_healthy = false;
     }
 
-    let (redis_status, redis_error) = check_redis_health(&state.redis).await;
-    if redis_status == "unreachable" || redis_status == "not_configured" {
-        all_healthy = false;
-    }
-
-    let (price_cache_status, price_cache_error) = check_price_cache_health(&state.cache);
-    if price_cache_status == "not_ready" {
+    let mut price_cache_status = "ok";
+    if state.cache.snapshot().is_empty() {
+        price_cache_status = "not_ready";
         all_healthy = false;
     }
 
@@ -140,9 +119,9 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
         },
         "errors": {
             "db": if db_status == "unreachable" { Some(db_error.clone()) } else { None },
-            "rpc": if rpc_status == "unreachable" { Some(rpc_error.clone()) } else { None },
+            "rpc": if rpc_status == "unreachable" { Some(last_error.clone()) } else { None },
             "redis": if redis_status == "unreachable" { Some(redis_error.clone()) } else { None },
-            "price_cache": if price_cache_status == "not_ready" { Some(price_cache_error.clone()) } else { None }
+            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None }
         }
     });
 
@@ -165,11 +144,7 @@ async fn index() -> Json<serde_json::Value> {
 #[derive(Clone)]
 pub struct AppState {
     /// Validated runtime configuration (fees, URLs, timeouts, etc.).
-    ///
-    /// Wrapped in [`Arc`] so that cloning `AppState` (which Axum does on every
-    /// request) only bumps a reference count instead of deep-copying all the
-    /// heap-allocated strings inside `Config`.
-    pub config: Arc<Config>,
+    pub config: Config,
     /// In-memory oracle price cache refreshed every 60 seconds.
     pub cache: PriceCache,
     /// Redis cache client for hot-path response caching.
@@ -184,7 +159,7 @@ pub struct AppState {
 
 impl axum::extract::FromRef<AppState> for Config {
     fn from_ref(state: &AppState) -> Self {
-        (*state.config).clone()
+        state.config.clone()
     }
 }
 
@@ -210,26 +185,6 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
     fn from_ref(state: &AppState) -> Self {
         state.event_bus.clone()
     }
-}
-
-// ── Pagination validation ─────────────────────────────────────────────────────
-
-/// Validate and resolve pagination parameters.
-///
-/// Rules:
-/// - `limit`: 1–100 inclusive (default 20). Returns error if outside range.
-/// - `offset`: ≥ 0 (default 0). Returns error if negative.
-fn validate_pagination(limit: Option<i64>, offset: Option<i64>) -> Result<(i64, i64), String> {
-    let limit = limit.unwrap_or(20);
-    let offset = offset.unwrap_or(0);
-
-    if limit < 1 || limit > 100 {
-        return Err("limit must be between 1 and 100".to_string());
-    }
-    if offset < 0 {
-        return Err("offset must be >= 0".to_string());
-    }
-    Ok((limit, offset))
 }
 
 // ── Task 2: Active Pools API ──────────────────────────────────────────────────
@@ -262,14 +217,15 @@ pub struct PoolsResponse {
 pub async fn get_pool_by_id_handler(
     State(state): State<AppState>,
     Path(pool_id): Path<i64>,
-) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
-    })?;
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
 
-    match crate::db::get_pool_with_odds(db, pool_id).await? {
-        Some(pool) => Ok(Json(json!(pool))),
-        None => Err(crate::errors::AppError::NotFound(format!("pool {}", pool_id))),
+    match crate::db::get_pool_with_odds(db, pool_id).await {
+        Ok(Some(pool)) => Json(json!(pool)),
+        Ok(None) => Json(json!({ "error": "pool not found" })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
 
@@ -277,15 +233,15 @@ pub async fn get_pool_by_id_handler(
 ///
 /// Returns total value locked, total bets placed, and total pools created.
 /// Responds with a database-unavailable error if no pool is configured.
-pub async fn get_stats(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
-    })?;
+pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
 
-    let stats = crate::db::get_protocol_stats(db).await?;
-    Ok(Json(json!(stats)))
+    match crate::db::get_protocol_stats(db).await {
+        Ok(stats) => Json(json!(stats)),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
 }
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
 ///
@@ -294,50 +250,56 @@ pub async fn get_stats(
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
-) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
+) -> Json<serde_json::Value> {
     let sort_by = params.sort_by.as_deref().unwrap_or("new");
     let category = params.category.as_deref();
     let status = params.status.as_deref().unwrap_or("active");
+    let limit = params.limit.unwrap_or(20).min(100);
+    let offset = params.offset.unwrap_or(0);
 
-    let (limit, offset) = validate_pagination(params.limit, params.offset)
-        .map_err(|e| crate::errors::AppError::BadRequest(e.to_string()))?;
-
-    let db = state.db.as_ref().ok_or_else(|| {
-        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
-    })?;
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
 
     // Try to get from Redis cache first
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        return Ok(Json(cached_response));
+        return Json(cached_response);
     }
 
     // Cache miss - fetch from database
-    let (pools, total) = tokio::try_join!(
+    match tokio::try_join!(
         crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset),
         crate::db::count_pools_with_filters(db, category, status)
-    )?;
+    ) {
+        Ok((pools, total)) => {
+            let response = PoolsResponse {
+                pools,
+                total,
+                limit,
+                offset,
+                status: status.to_string(),
+                category: category.map(|s| s.to_string()),
+                sort_by: sort_by.to_string(),
+            };
 
-    let response = PoolsResponse {
-        pools,
-        total,
-        limit,
-        offset,
-        status: status.to_string(),
-        category: category.map(|s| s.to_string()),
-        sort_by: sort_by.to_string(),
-    };
+            let json_response = json!(&response);
 
-    let json_response = json!(&response);
+            // Cache the response for 60 seconds
+            state
+                .redis
+                .set(
+                    &cache_key,
+                    &json_response,
+                    crate::redis_cache::POOLS_CACHE_TTL,
+                )
+                .await;
 
-    // Cache the response for 60 seconds
-    state
-        .redis
-        .set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL)
-        .await;
-
-    Ok(Json(json_response))
+            Json(json_response)
+        }
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
 }
 
 // ── Task 3: User Prediction History API ──────────────────────────────────────
@@ -356,21 +318,23 @@ pub async fn get_user_history(
     State(state): State<AppState>,
     Path(address): Path<String>,
     Query(params): Query<PaginationQuery>,
-) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
+) -> Json<serde_json::Value> {
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
-    })?;
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
 
-    let rows = crate::db::get_user_prediction_history(db, &address, limit, offset).await?;
-    Ok(Json(json!({
-        "address": address,
-        "predictions": rows,
-        "limit": limit,
-        "offset": offset,
-    })))
+    match crate::db::get_user_prediction_history(db, &address, limit, offset).await {
+        Ok(rows) => Json(json!({
+            "address": address,
+            "predictions": rows,
+            "limit": limit,
+            "offset": offset,
+        })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
 }
 
 /// `GET /api/v1/users/:address/predictions` — enhanced user predictions with current pool status.
@@ -378,22 +342,24 @@ pub async fn get_user_predictions(
     State(state): State<AppState>,
     Path(address): Path<String>,
     Query(params): Query<PaginationQuery>,
-) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
+) -> Json<serde_json::Value> {
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
-    })?;
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
 
-    let predictions = crate::db::get_user_predictions(db, &address, limit, offset).await?;
-    Ok(Json(json!({
-        "address": address,
-        "predictions": predictions,
-        "limit": limit,
-        "offset": offset,
-        "total_predictions": predictions.len(),
-    })))
+    match crate::db::get_user_predictions(db, &address, limit, offset).await {
+        Ok(predictions) => Json(json!({
+            "address": address,
+            "predictions": predictions,
+            "limit": limit,
+            "offset": offset,
+            "total_predictions": predictions.len(),
+        })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
 }
 
 /// Query parameters for the `GET /api/v1/leaderboard` endpoint.
@@ -411,33 +377,36 @@ pub struct LeaderboardQuery {
 pub async fn get_leaderboard(
     State(state): State<AppState>,
     Query(params): Query<LeaderboardQuery>,
-) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
+) -> Json<serde_json::Value> {
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
     let rank_by = params.rank_by.as_deref().unwrap_or("volume");
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
-    })?;
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
 
     match rank_by {
-        "winnings" => {
-            let users = crate::db::get_users_by_winnings(db, limit, offset).await?;
-            Ok(Json(json!({
+        "winnings" => match crate::db::get_users_by_winnings(db, limit, offset).await {
+            Ok(users) => Json(json!({
                 "leaderboard": users,
                 "rank_by": "winnings",
                 "limit": limit,
                 "offset": offset,
-            })))
-        }
+            })),
+            Err(e) => Json(json!({ "error": e.to_string() })),
+        },
         _ => {
-            let users = crate::db::get_users_by_betting_volume(db, limit, offset).await?;
-            Ok(Json(json!({
-                "leaderboard": users,
-                "rank_by": "volume",
-                "limit": limit,
-                "offset": offset,
-            })))
+            // Default to volume ranking
+            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
+                Ok(users) => Json(json!({
+                    "leaderboard": users,
+                    "rank_by": "volume",
+                    "limit": limit,
+                    "offset": offset,
+                })),
+                Err(e) => Json(json!({ "error": e.to_string() })),
+            }
         }
     }
 }
@@ -464,10 +433,10 @@ pub struct PoolCreatedPayload {
 pub async fn ingest_pool_created(
     State(state): State<AppState>,
     Json(payload): Json<PoolCreatedPayload>,
-) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
-    })?;
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
 
     let event = PoolCreatedEvent {
         pool_id: payload.pool_id,
@@ -478,8 +447,10 @@ pub async fn ingest_pool_created(
         description: payload.description,
     };
 
-    crate::db::insert_pool_from_event(db, &event).await?;
-    Ok(Json(json!({ "status": "ok", "pool_id": event.pool_id })))
+    match crate::db::insert_pool_from_event(db, &event).await {
+        Ok(()) => Json(json!({ "status": "ok", "pool_id": event.pool_id })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
 }
 
 /// Request body for the prediction-placed event webhook.
@@ -495,10 +466,10 @@ pub struct PredictionPlacedPayload {
 pub async fn ingest_prediction_placed(
     State(state): State<AppState>,
     Json(payload): Json<PredictionPlacedPayload>,
-) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
-    })?;
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
 
     let event = PredictionPlacedEvent {
         pool_id: payload.pool_id,
@@ -507,15 +478,19 @@ pub async fn ingest_prediction_placed(
         outcome: payload.outcome,
     };
 
-    crate::db::insert_prediction_from_event(db, &event).await?;
-    state.event_bus.send(&json!({
-        "type": "prediction_placed",
-        "pool_id": event.pool_id,
-        "user_address": event.user_address,
-        "outcome": event.outcome,
-        "amount": event.amount,
-    }));
-    Ok(Json(json!({ "status": "ok", "pool_id": event.pool_id })))
+    match crate::db::insert_prediction_from_event(db, &event).await {
+        Ok(()) => {
+            state.event_bus.send(&json!({
+                "type": "prediction_placed",
+                "pool_id": event.pool_id,
+                "user_address": event.user_address,
+                "outcome": event.outcome,
+                "amount": event.amount,
+            }));
+            Json(json!({ "status": "ok", "pool_id": event.pool_id }))
+        }
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
 }
 
 /// Build the version 1 API router.
@@ -528,7 +503,7 @@ pub fn router(
     event_bus: crate::ws::EventBus,
 ) -> Router {
     let state = AppState {
-        config: Arc::new(config),
+        config,
         cache,
         redis,
         db: pool,
@@ -578,15 +553,11 @@ async fn referrals_handler(
     use axum::response::IntoResponse;
 
     match state.db {
-        Some(pool) => match crate::referrals::get_referrals(
-            axum::extract::Path(address),
-            State(pool),
-        )
-        .await
-        {
-            Ok((status, body)) => (status, body).into_response(),
-            Err(e) => e.into_response(),
-        },
+        Some(pool) => {
+            let (status, body) =
+                crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await;
+            (status, body).into_response()
+        }
         None => {
             ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
                 .into_response()
@@ -604,15 +575,14 @@ async fn user_referral_earnings_handler(
     use axum::response::IntoResponse;
 
     match state.db {
-        Some(pool) => match crate::referrals::get_user_referral_earnings(
-            axum::extract::Path(address),
-            State(pool),
-        )
-        .await
-        {
-            Ok((status, body)) => (status, body).into_response(),
-            Err(e) => e.into_response(),
-        },
+        Some(pool) => {
+            let (status, body) = crate::referrals::get_user_referral_earnings(
+                axum::extract::Path(address),
+                State(pool),
+            )
+            .await;
+            (status, body).into_response()
+        }
         None => {
             ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
                 .into_response()

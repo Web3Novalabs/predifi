@@ -37,8 +37,10 @@ mod tests {
     async fn migrations_apply_and_revert() {
         let (pool, _container) = start_postgres().await;
 
-        // Apply migrations embedded at compile time from the ./migrations directory
-        let migrator = sqlx::migrate!("./migrations");
+        // Load migrations from the backend/migrations directory at runtime.
+        let migrator = sqlx::migrate::Migrator::new(std::path::Path::new("migrations"))
+            .await
+            .expect("load migrator");
         migrator.run(&pool).await.expect("apply migrations");
 
         // Confirm a known table exists (pools)
@@ -51,12 +53,8 @@ mod tests {
 
         assert!(exists.0, "expected 'pools' table to exist after migrations");
 
-        /*
-        // Revert migrations (undo all applied migrations)
-        migrator
-            .revert(&pool)
-            .await
-            .expect("revert migrations");
+        // Revert migrations (undo all applied migrations).
+        migrator.undo(&pool, 0).await.expect("undo migrations");
 
         // Confirm the table no longer exists
         let exists_after: (bool,) = sqlx::query_as(
@@ -66,7 +64,9 @@ mod tests {
         .await
         .expect("check pools exists after revert");
 
-        assert!(!exists_after.0, "expected 'pools' table to be removed after revert");
-        */
+        assert!(
+            !exists_after.0,
+            "expected 'pools' table to be removed after revert"
+        );
     }
 }

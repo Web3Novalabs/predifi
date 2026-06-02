@@ -1,23 +1,96 @@
-use std::str::FromStr;
-use std::time::Duration;
+use std::{future::Future, time::Duration};
 
 use chrono::{DateTime, Utc};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::{ConnectOptions, PgPool};
+use sqlx::{postgres::PgPoolOptions, PgPool};
+use tokio::time::sleep;
+use tracing::{info, warn};
 
 use crate::config::Config;
-use crate::errors::AppError;
 
 /// Create a PostgreSQL connection pool using conservative defaults.
 ///
-/// This uses lazy connection mode so local development can start the server
-/// without requiring an active database until a query is executed.
-pub fn create_pool(config: &Config) -> Result<PgPool, AppError> {
-    PgPoolOptions::new()
-        .max_connections(config.db_max_connections)
-        .min_connections(config.db_min_connections)
-        .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
-        .connect_lazy_with(options))
+/// This uses a retry loop on startup with exponential backoff, so transient
+/// database downtime (e.g. container still starting) does not crash the service
+/// immediately.
+pub async fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
+    let connect = || async {
+        let future = PgPoolOptions::new()
+            .max_connections(config.db_max_connections)
+            .min_connections(config.db_min_connections)
+            .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
+            .connect(&config.database_url);
+
+        match tokio::time::timeout(Duration::from_secs(config.db_acquire_timeout_secs), future)
+            .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(sqlx::Error::PoolTimedOut),
+        }
+    };
+
+    retry_with_backoff(
+        config.db_connect_max_attempts,
+        config.db_connect_base_delay_ms,
+        config.db_connect_max_delay_ms,
+        "postgres",
+        connect,
+    )
+    .await
+}
+
+fn backoff_delay_ms(attempt: u32, base_delay_ms: u64, max_delay_ms: u64) -> u64 {
+    let exponent = attempt.saturating_sub(1).min(31);
+    let delay = base_delay_ms.saturating_mul(1u64 << exponent);
+    delay.min(max_delay_ms)
+}
+
+async fn retry_with_backoff<T, E, Fut, F>(
+    max_attempts: u32,
+    base_delay_ms: u64,
+    max_delay_ms: u64,
+    target: &'static str,
+    mut op: F,
+) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let max_attempts = max_attempts.max(1);
+
+    for attempt in 1..=max_attempts {
+        match op().await {
+            Ok(value) => {
+                if attempt > 1 {
+                    info!(
+                        target,
+                        attempts = attempt,
+                        "connection established after retries"
+                    );
+                }
+                return Ok(value);
+            }
+            Err(error) if attempt < max_attempts => {
+                let delay_ms = backoff_delay_ms(attempt, base_delay_ms, max_delay_ms);
+                warn!(
+                    target,
+                    attempt,
+                    max_attempts,
+                    delay_ms,
+                    error = %error,
+                    "startup connection attempt failed; retrying"
+                );
+                if delay_ms > 0 {
+                    sleep(Duration::from_millis(delay_ms)).await;
+                }
+            }
+            Err(error) => {
+                return Err(error);
+            }
+        }
+    }
+
+    unreachable!("loop covers attempt range")
 }
 
 /// A single row returned by the user prediction history query.
@@ -28,7 +101,7 @@ pub struct PredictionHistoryRow {
     pub pool_result: Option<String>,
     pub outcome: i32,
     pub amount: i64,
-    pub created_at: DateTime<Utc>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Enhanced prediction information with current pool status.
@@ -57,9 +130,8 @@ pub async fn get_user_prediction_history(
     address: &str,
     limit: i64,
     offset: i64,
-) -> Result<Vec<PredictionHistoryRow>, AppError> {
-    sqlx::query_as!(
-        PredictionHistoryRow,
+) -> Result<Vec<PredictionHistoryRow>, sqlx::Error> {
+    sqlx::query_as::<_, PredictionHistoryRow>(
         r#"
         SELECT
             p.pool_id,
@@ -74,10 +146,10 @@ pub async fn get_user_prediction_history(
         ORDER BY p.created_at DESC
         LIMIT $2 OFFSET $3
         "#,
-        address,
-        limit,
-        offset
     )
+    .bind(address)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await
 }
@@ -107,7 +179,7 @@ pub async fn get_user_predictions(
     address: &str,
     limit: i64,
     offset: i64,
-) -> Result<Vec<UserPrediction>, AppError> {
+) -> Result<Vec<UserPrediction>, sqlx::Error> {
     let sql = r#"
         SELECT
             p.id as prediction_id,
@@ -168,6 +240,56 @@ pub async fn get_user_predictions(
         .collect();
 
     Ok(predictions)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    #[tokio::test]
+    async fn retry_with_backoff_succeeds_after_transient_failures() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+        let result: Result<&'static str, &'static str> =
+            retry_with_backoff(5, 0, 0, "test", || async {
+                let current = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                if current < 3 {
+                    Err("nope")
+                } else {
+                    Ok("ok")
+                }
+            })
+            .await;
+
+        assert_eq!(result, Ok("ok"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn retry_with_backoff_gives_up_after_max_attempts() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
+        let result: Result<(), &'static str> = retry_with_backoff(3, 0, 0, "test", || async {
+            attempts_clone.fetch_add(1, Ordering::SeqCst);
+            Err("still down")
+        })
+        .await;
+
+        assert_eq!(result, Err("still down"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn backoff_delay_is_exponential_and_capped() {
+        assert_eq!(backoff_delay_ms(1, 200, 5_000), 200);
+        assert_eq!(backoff_delay_ms(2, 200, 5_000), 400);
+        assert_eq!(backoff_delay_ms(3, 200, 5_000), 800);
+        assert_eq!(backoff_delay_ms(10, 200, 5_000), 5_000);
+    }
 }
 
 /// A single row returned by the active pools query.
@@ -249,7 +371,7 @@ pub async fn get_active_pools(
     category: Option<&str>,
     limit: i64,
     offset: i64,
-) -> Result<Vec<PoolRow>, AppError> {
+) -> Result<Vec<PoolRow>, sqlx::Error> {
     get_pools_with_filters(pool, sort_by, category, "active", limit, offset).await
 }
 
@@ -264,7 +386,7 @@ pub async fn get_pools_with_filters(
     status: &str,
     limit: i64,
     offset: i64,
-) -> Result<Vec<PoolRow>, AppError> {
+) -> Result<Vec<PoolRow>, sqlx::Error> {
     // Build ORDER BY clause from sort_by parameter.
     let order_clause = match sort_by {
         "popular" => "total_stake DESC",
@@ -306,7 +428,7 @@ pub async fn count_pools_with_filters(
     pool: &PgPool,
     category: Option<&str>,
     status: &str,
-) -> Result<i64, AppError> {
+) -> Result<i64, sqlx::Error> {
     // Validate status parameter to prevent SQL injection
     let valid_status = match status {
         "active" | "closed" | "settled" => status,
@@ -333,7 +455,7 @@ pub async fn count_pools_with_filters(
 pub async fn get_pool_by_id(
     pool: &PgPool,
     pool_id: i64,
-) -> Result<Option<PoolDetails>, AppError> {
+) -> Result<Option<PoolDetails>, sqlx::Error> {
     let sql = r#"
         SELECT pool_id, name, category, total_stake, end_time, created_at, 
                state, creator, token, result
@@ -358,7 +480,7 @@ struct OutcomeStakeRow {
 pub async fn get_pool_outcome_stakes(
     pool: &PgPool,
     pool_id: i64,
-) -> Result<Vec<(i32, i64)>, AppError> {
+) -> Result<Vec<(i32, i64)>, sqlx::Error> {
     let sql = r#"
         SELECT outcome, COALESCE(SUM(amount), 0) as total_stake
         FROM predictions
@@ -414,7 +536,7 @@ pub fn calculate_odds(outcome_stakes: &[(i32, i64)], total_stake: i64) -> Vec<Ou
 pub async fn get_pool_with_odds(
     pool: &PgPool,
     pool_id: i64,
-) -> Result<Option<PoolWithOdds>, AppError> {
+) -> Result<Option<PoolWithOdds>, sqlx::Error> {
     // Fetch pool details
     let pool_details = match get_pool_by_id(pool, pool_id).await? {
         Some(details) => details,
@@ -461,7 +583,7 @@ pub async fn get_users_by_betting_volume(
     pool: &PgPool,
     limit: i64,
     offset: i64,
-) -> Result<Vec<UserBettingVolume>, AppError> {
+) -> Result<Vec<UserBettingVolume>, sqlx::Error> {
     let sql = r#"
         SELECT 
             user_address,
@@ -510,7 +632,7 @@ pub async fn get_users_by_winnings(
     pool: &PgPool,
     limit: i64,
     offset: i64,
-) -> Result<Vec<UserWinnings>, AppError> {
+) -> Result<Vec<UserWinnings>, sqlx::Error> {
     let sql = r#"
         WITH winning_predictions AS (
             SELECT 
@@ -593,25 +715,21 @@ pub async fn resolve_pool_in_db(
     pool: &PgPool,
     pool_id: u64,
     winning_outcome: i32,
-) -> Result<(), AppError> {
-    sqlx::query!(
-        "UPDATE pools SET state = 'settled', result = $1 WHERE pool_id = $2",
-        winning_outcome.to_string(),
-        pool_id as i64,
-    )
-    .execute(pool)
-    .await?;
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE pools SET state = 'settled', result = $1 WHERE pool_id = $2")
+        .bind(winning_outcome.to_string())
+        .bind(pool_id as i64)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
 /// Mark a pool as closed (cancelled on-chain).
-pub async fn cancel_pool_in_db(pool: &PgPool, pool_id: u64) -> Result<(), AppError> {
-    sqlx::query!(
-        "UPDATE pools SET state = 'closed' WHERE pool_id = $1",
-        pool_id as i64,
-    )
-    .execute(pool)
-    .await?;
+pub async fn cancel_pool_in_db(pool: &PgPool, pool_id: u64) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE pools SET state = 'closed' WHERE pool_id = $1")
+        .bind(pool_id as i64)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -619,20 +737,20 @@ pub async fn cancel_pool_in_db(pool: &PgPool, pool_id: u64) -> Result<(), AppErr
 pub async fn insert_pool_from_event(
     pool: &PgPool,
     event: &PoolCreatedEvent,
-) -> Result<(), AppError> {
-    sqlx::query!(
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
         r#"
         INSERT INTO pools (pool_id, name, category, total_stake, end_time, state, creator, token, created_at)
         VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW())
         ON CONFLICT (pool_id) DO NOTHING
         "#,
-        event.pool_id as i64,
-        event.description,
-        event.category,
-        event.end_time as f64,
-        event.creator,
-        event.token,
     )
+    .bind(event.pool_id as i64)
+    .bind(&event.description)
+    .bind(&event.category)
+    .bind(event.end_time as f64)
+    .bind(&event.creator)
+    .bind(&event.token)
     .execute(pool)
     .await?;
     Ok(())
@@ -642,7 +760,7 @@ pub async fn insert_pool_from_event(
 pub async fn insert_prediction_from_event(
     pool: &PgPool,
     event: &PredictionPlacedEvent,
-) -> Result<(), AppError> {
+) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
 
     sqlx::query(
@@ -681,23 +799,22 @@ pub struct ReferralEarningRow {
 pub async fn get_referral_earnings(
     pool: &PgPool,
     address: &str,
-) -> Result<Vec<ReferralEarningRow>, AppError> {
-    sqlx::query_as!(
-        ReferralEarningRow,
+) -> Result<Vec<ReferralEarningRow>, sqlx::Error> {
+    sqlx::query_as::<_, ReferralEarningRow>(
         r#"
         SELECT
             r.pool_id,
             pl.name          AS pool_name,
-            SUM(r.amount)    AS "total_earned!: i64",
-            COUNT(r.id)      AS "referral_count!: i64"
+            COALESCE(SUM(r.amount), 0) AS total_earned,
+            COUNT(r.id)               AS referral_count
         FROM referrals r
         JOIN pools pl ON pl.pool_id = r.pool_id
         WHERE r.referrer = $1
         GROUP BY r.pool_id, pl.name
         ORDER BY SUM(r.amount) DESC
         "#,
-        address
     )
+    .bind(address)
     .fetch_all(pool)
     .await
 }
@@ -714,12 +831,11 @@ pub struct ProtocolStats {
 }
 
 /// Fetch protocol-wide aggregate statistics in a single query.
-pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, AppError> {
-    sqlx::query_as!(
-        ProtocolStats,
+pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, sqlx::Error> {
+    sqlx::query_as::<_, ProtocolStats>(
         r#"
         SELECT
-            COALESCE(SUM(total_stake), 0) AS total_value_locked,
+            COALESCE(SUM(total_stake), 0)       AS total_value_locked,
             (SELECT COUNT(*) FROM predictions)  AS total_bets,
             COUNT(*)                            AS total_pools
         FROM pools
@@ -765,7 +881,7 @@ pub struct ReferralPaidEvent {
 pub async fn insert_referrals_bulk(
     pool: &PgPool,
     events: &[ReferralPaidEvent],
-) -> Result<(), AppError> {
+) -> Result<(), sqlx::Error> {
     if events.is_empty() {
         return Ok(());
     }
@@ -816,8 +932,8 @@ pub async fn insert_referrals_bulk(
 pub async fn insert_referral_from_event(
     pool: &PgPool,
     event: &ReferralPaidEvent,
-) -> Result<(), AppError> {
-    sqlx::query!(
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
         r#"
         INSERT INTO referrals (referrer, user_address, pool_id, amount)
         VALUES ($1, $2, $3, $4)
@@ -833,17 +949,4 @@ pub async fn insert_referral_from_event(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::Config;
-
-    #[tokio::test]
-    async fn creates_pool_from_valid_config() {
-        let mut config = Config::default_for_test();
-        config.database_url = String::from("postgres://postgres:postgres@localhost:5432/predifi");
-
-        let pool = create_pool(&config).expect("pool should initialize in lazy mode");
-        assert!(!pool.is_closed(), "new pool should start open");
-    }
-}
+// Tests live near the top-level helpers (see `retry_with_backoff` tests).
