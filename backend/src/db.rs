@@ -1,7 +1,9 @@
+use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::PgPool;
 
 use crate::config::Config;
 
@@ -10,11 +12,15 @@ use crate::config::Config;
 /// This uses lazy connection mode so local development can start the server
 /// without requiring an active database until a query is executed.
 pub fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
+    let options = PgConnectOptions::from_str(&config.database_url)?
+        .log_statements(tracing::log::LevelFilter::Debug)
+        .log_slow_statements(tracing::log::LevelFilter::Warn, Duration::from_millis(200));
+
     PgPoolOptions::new()
         .max_connections(config.db_max_connections)
         .min_connections(config.db_min_connections)
         .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
-        .connect_lazy(&config.database_url)
+        .connect_lazy_with(options)
 }
 
 /// A single row returned by the user prediction history query.
