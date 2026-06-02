@@ -218,15 +218,14 @@ pub struct PoolsResponse {
 pub async fn get_pool_by_id_handler(
     State(state): State<AppState>,
     Path(pool_id): Path<i64>,
-) -> Json<serde_json::Value> {
-    let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
-    };
+) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
+    })?;
 
-    match crate::db::get_pool_with_odds(db, pool_id).await {
-        Ok(Some(pool)) => Json(json!(pool)),
-        Ok(None) => Json(json!({ "error": "pool not found" })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+    match crate::db::get_pool_with_odds(db, pool_id).await? {
+        Some(pool) => Ok(Json(json!(pool))),
+        None => Err(crate::errors::AppError::NotFound(format!("pool {}", pool_id))),
     }
 }
 
@@ -234,15 +233,15 @@ pub async fn get_pool_by_id_handler(
 ///
 /// Returns total value locked, total bets placed, and total pools created.
 /// Responds with a database-unavailable error if no pool is configured.
-pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
-    };
+pub async fn get_stats(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
+    })?;
 
-    match crate::db::get_protocol_stats(db).await {
-        Ok(stats) => Json(json!(stats)),
-        Err(e) => Json(json!({ "error": e.to_string() })),
-    }
+    let stats = crate::db::get_protocol_stats(db).await?;
+    Ok(Json(json!(stats)))
 }
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
 ///
@@ -251,16 +250,16 @@ pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value>
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
     let sort_by = params.sort_by.as_deref().unwrap_or("new");
     let category = params.category.as_deref();
     let status = params.status.as_deref().unwrap_or("active");
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
-    let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
-    };
+    let db = state.db.as_ref().ok_or_else(|| {
+        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
+    })?;
 
     // Try to get from Redis cache first
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
@@ -270,33 +269,31 @@ pub async fn get_pools(
     }
 
     // Cache miss - fetch from database
-    match tokio::try_join!(
+    let (pools, total) = tokio::try_join!(
         crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset),
         crate::db::count_pools_with_filters(db, category, status)
-    ) {
-        Ok((pools, total)) => {
-            let response = PoolsResponse {
-                pools,
-                total,
-                limit,
-                offset,
-                status: status.to_string(),
-                category: category.map(|s| s.to_string()),
-                sort_by: sort_by.to_string(),
-            };
+    )?;
 
-            let json_response = json!(&response);
+    let response = PoolsResponse {
+        pools,
+        total,
+        limit,
+        offset,
+        status: status.to_string(),
+        category: category.map(|s| s.to_string()),
+        sort_by: sort_by.to_string(),
+    };
 
-            // Cache the response for 60 seconds
-            state
-                .redis
-                .set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL)
-                .await;
+    let json_response = json!(&response);
 
-            Json(json_response)
-        }
-        Err(e) => Json(json!({ "error": e.to_string() })),
-    }
+    // Cache the response for 60 seconds
+    state
+        .redis
+        .set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL)
+        .await;
+
+    Ok(Json(json_response))
+}
 }
 
 // ── Task 3: User Prediction History API ──────────────────────────────────────
@@ -315,23 +312,21 @@ pub async fn get_user_history(
     State(state): State<AppState>,
     Path(address): Path<String>,
     Query(params): Query<PaginationQuery>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
-    let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
-    };
+    let db = state.db.as_ref().ok_or_else(|| {
+        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
+    })?;
 
-    match crate::db::get_user_prediction_history(db, &address, limit, offset).await {
-        Ok(rows) => Json(json!({
-            "address": address,
-            "predictions": rows,
-            "limit": limit,
-            "offset": offset,
-        })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
-    }
+    let rows = crate::db::get_user_prediction_history(db, &address, limit, offset).await?;
+    Ok(Json(json!({
+        "address": address,
+        "predictions": rows,
+        "limit": limit,
+        "offset": offset,
+    })))
 }
 
 /// `GET /api/v1/users/:address/predictions` — enhanced user predictions with current pool status.
@@ -339,24 +334,22 @@ pub async fn get_user_predictions(
     State(state): State<AppState>,
     Path(address): Path<String>,
     Query(params): Query<PaginationQuery>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
-    let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
-    };
+    let db = state.db.as_ref().ok_or_else(|| {
+        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
+    })?;
 
-    match crate::db::get_user_predictions(db, &address, limit, offset).await {
-        Ok(predictions) => Json(json!({
-            "address": address,
-            "predictions": predictions,
-            "limit": limit,
-            "offset": offset,
-            "total_predictions": predictions.len(),
-        })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
-    }
+    let predictions = crate::db::get_user_predictions(db, &address, limit, offset).await?;
+    Ok(Json(json!({
+        "address": address,
+        "predictions": predictions,
+        "limit": limit,
+        "offset": offset,
+        "total_predictions": predictions.len(),
+    })))
 }
 
 /// Query parameters for the `GET /api/v1/leaderboard` endpoint.
@@ -374,36 +367,33 @@ pub struct LeaderboardQuery {
 pub async fn get_leaderboard(
     State(state): State<AppState>,
     Query(params): Query<LeaderboardQuery>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
     let rank_by = params.rank_by.as_deref().unwrap_or("volume");
 
-    let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
-    };
+    let db = state.db.as_ref().ok_or_else(|| {
+        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
+    })?;
 
     match rank_by {
-        "winnings" => match crate::db::get_users_by_winnings(db, limit, offset).await {
-            Ok(users) => Json(json!({
+        "winnings" => {
+            let users = crate::db::get_users_by_winnings(db, limit, offset).await?;
+            Ok(Json(json!({
                 "leaderboard": users,
                 "rank_by": "winnings",
                 "limit": limit,
                 "offset": offset,
-            })),
-            Err(e) => Json(json!({ "error": e.to_string() })),
-        },
+            })))
+        }
         _ => {
-            // Default to volume ranking
-            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
-                Ok(users) => Json(json!({
-                    "leaderboard": users,
-                    "rank_by": "volume",
-                    "limit": limit,
-                    "offset": offset,
-                })),
-                Err(e) => Json(json!({ "error": e.to_string() })),
-            }
+            let users = crate::db::get_users_by_betting_volume(db, limit, offset).await?;
+            Ok(Json(json!({
+                "leaderboard": users,
+                "rank_by": "volume",
+                "limit": limit,
+                "offset": offset,
+            })))
         }
     }
 }
@@ -430,10 +420,10 @@ pub struct PoolCreatedPayload {
 pub async fn ingest_pool_created(
     State(state): State<AppState>,
     Json(payload): Json<PoolCreatedPayload>,
-) -> Json<serde_json::Value> {
-    let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
-    };
+) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
+    })?;
 
     let event = PoolCreatedEvent {
         pool_id: payload.pool_id,
@@ -444,10 +434,8 @@ pub async fn ingest_pool_created(
         description: payload.description,
     };
 
-    match crate::db::insert_pool_from_event(db, &event).await {
-        Ok(()) => Json(json!({ "status": "ok", "pool_id": event.pool_id })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
-    }
+    crate::db::insert_pool_from_event(db, &event).await?;
+    Ok(Json(json!({ "status": "ok", "pool_id": event.pool_id })))
 }
 
 /// Request body for the prediction-placed event webhook.
@@ -463,10 +451,10 @@ pub struct PredictionPlacedPayload {
 pub async fn ingest_prediction_placed(
     State(state): State<AppState>,
     Json(payload): Json<PredictionPlacedPayload>,
-) -> Json<serde_json::Value> {
-    let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
-    };
+) -> Result<Json<serde_json::Value>, crate::errors::AppError> {
+    let db = state.db.as_ref().ok_or_else(|| {
+        crate::errors::AppError::ServiceUnavailable("database not available".to_string())
+    })?;
 
     let event = PredictionPlacedEvent {
         pool_id: payload.pool_id,
@@ -475,19 +463,15 @@ pub async fn ingest_prediction_placed(
         outcome: payload.outcome,
     };
 
-    match crate::db::insert_prediction_from_event(db, &event).await {
-        Ok(()) => {
-            state.event_bus.send(&json!({
-                "type": "prediction_placed",
-                "pool_id": event.pool_id,
-                "user_address": event.user_address,
-                "outcome": event.outcome,
-                "amount": event.amount,
-            }));
-            Json(json!({ "status": "ok", "pool_id": event.pool_id }))
-        }
-        Err(e) => Json(json!({ "error": e.to_string() })),
-    }
+    crate::db::insert_prediction_from_event(db, &event).await?;
+    state.event_bus.send(&json!({
+        "type": "prediction_placed",
+        "pool_id": event.pool_id,
+        "user_address": event.user_address,
+        "outcome": event.outcome,
+        "amount": event.amount,
+    }));
+    Ok(Json(json!({ "status": "ok", "pool_id": event.pool_id })))
 }
 
 /// Build the version 1 API router.
