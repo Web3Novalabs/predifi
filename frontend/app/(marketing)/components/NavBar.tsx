@@ -65,17 +65,9 @@ function Navbar() {
         </button>
       </div>
 
-      {/* MOBILE DROPDOWN MENU — with fixed height container to prevent layout shift */}
-      <div
-        className={`md:hidden overflow-hidden absolute top-full left-0 w-full bg-black border-t border-[#EBFDFF20] flex flex-col items-center transition-all duration-200 ${
-          isOpen ? "shadow-2xl" : ""
-        }`}
-        style={{
-          maxHeight: isOpen ? "500px" : "0px",
-          opacity: isOpen ? 1 : 0,
-        }}
-      >
-        <div className="w-full flex flex-col items-center py-8 space-y-6">
+      {/* MOBILE DROPDOWN MENU */}
+      {isOpen && (
+        <div className="md:hidden absolute top-full left-0 w-full bg-black border-t border-[#EBFDFF20] flex flex-col items-center py-8 space-y-6 shadow-2xl animate-in slide-in-from-top-5 fade-in duration-200">
           {/*
            * Mobile links also get prefetch={true}. Although the mobile menu is
            * hidden until the hamburger is tapped, the links are rendered in the
