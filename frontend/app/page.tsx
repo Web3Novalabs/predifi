@@ -21,6 +21,7 @@
 
 import dynamic from "next/dynamic";
 import { Suspense } from "react";
+import Image from "next/image";
 import NavBar from "./(marketing)/components/NavBar";
 import HeroSection from "./(marketing)/components/HeroSection";
 
@@ -36,7 +37,6 @@ import HeroSection from "./(marketing)/components/HeroSection";
 const PredictionProtocol = dynamic(
   () => import("./(marketing)/components/PredictionProtocol"),
   {
-    ssr: false,
     loading: () => (
       <div
         className="h-[500px] w-full animate-pulse bg-white/5 rounded-2xl"
@@ -84,7 +84,6 @@ const InstinctsToSignals = dynamic(
 const FAQ = dynamic(
   () => import("./(marketing)/components/FAQ"),
   {
-    ssr: false,
     loading: () => (
       <div
         className="h-[400px] w-full animate-pulse bg-white/5 rounded-2xl"
@@ -125,12 +124,14 @@ export default function Home() {
         <div className="relative space-y-10 lg:space-y-[150px] pt-[80px] lg:pt-[180px]">
           {/* Decorative background gradient — loaded eagerly as it is above the fold */}
           <Image
-            src="/gradient.png"
+            src="/gradient.webp"
             alt=""
             aria-hidden="true"
             fill
             className="absolute top-0 left-0 w-full pointer-events-none z-0 object-cover"
             priority
+            loading="eager"
+            fetchPriority="high"
           />
           <Suspense
             fallback={

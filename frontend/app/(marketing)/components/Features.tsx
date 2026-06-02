@@ -60,14 +60,14 @@ const Features = React.memo(function Features() {
             >
               {/* IMAGE — with aspect ratio container to prevent layout shift */}
               <div className="flex-shrink-0">
-                <div className="relative w-full max-w-[180px] md:max-w-[400px] aspect-square">
-                  <Image
-                    src={feature.image}
-                    fill
-                    className="w-full h-auto object-contain"
-                    alt={feature.title}
-                  />
-                </div>
+                <Image
+                  src={feature.image}
+                  width={400}
+                  height={400}
+                  className="w-full max-w-[180px] md:max-w-[400px] h-auto object-contain"
+                  alt={feature.title}
+                  loading="lazy"
+                />
               </div>
 
               {/* CONTENT */}
