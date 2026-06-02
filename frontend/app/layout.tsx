@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { DM_Mono } from "next/font/google";
 import "./globals.css";
+import { SWRProvider } from "@/components/providers/SWRProvider";
 
 const dmMono = DM_Mono({
   subsets: ["latin"],
@@ -93,7 +94,7 @@ export default function RootLayout({
         <style>{`.hero-critical{min-height:calc(100vh - 40px);display:flex;flex-direction:column;align-items:center;text-align:center}`}</style>
       </head>
       <body className={`antialiased text-sm ${dmMono.variable}`}>
-        {children}
+        <SWRProvider>{children}</SWRProvider>
       </body>
     </html>
   );

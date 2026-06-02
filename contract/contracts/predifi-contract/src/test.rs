@@ -343,7 +343,7 @@ fn test_create_pool_rejects_referral_code_too_short() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let now = env.ledger().timestamp();
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_pool(
             &creator,
             &(now + 3600u64),
@@ -369,7 +369,7 @@ fn test_create_pool_rejects_referral_code_too_short() {
                 ],
             },
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -382,7 +382,7 @@ fn test_create_pool_rejects_referral_code_too_long() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let now = env.ledger().timestamp();
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_pool(
             &creator,
             &(now + 3600u64),
@@ -408,7 +408,7 @@ fn test_create_pool_rejects_referral_code_too_long() {
                 ],
             },
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -421,7 +421,7 @@ fn test_create_pool_rejects_referral_code_lowercase() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let now = env.ledger().timestamp();
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_pool(
             &creator,
             &(now + 3600u64),
@@ -447,7 +447,7 @@ fn test_create_pool_rejects_referral_code_lowercase() {
                 ],
             },
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -460,7 +460,7 @@ fn test_create_pool_rejects_referral_code_special_characters() {
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
     let now = env.ledger().timestamp();
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.create_pool(
             &creator,
             &(now + 3600u64),
@@ -486,7 +486,7 @@ fn test_create_pool_rejects_referral_code_special_characters() {
                 ],
             },
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -527,7 +527,7 @@ fn test_place_prediction_rejects_invalid_invite_key() {
         },
     );
 
-    let result = std::panic::catch_unwind(|| {
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.place_prediction(
             &user,
             &pool_id,
@@ -536,7 +536,7 @@ fn test_place_prediction_rejects_invalid_invite_key() {
             &None,
             &Some(Symbol::new(&env, "AbC123")),
         );
-    });
+    }));
 
     assert!(result.is_err());
 }
@@ -4285,7 +4285,6 @@ fn test_pool_resolved_event_emitted_on_resolution() {
     assert!(found, "PoolResolvedEvent not found in emitted events");
 }
 
-
 #[test]
 fn test_mark_pool_ready() {
     let env = Env::default();
@@ -5764,6 +5763,108 @@ fn test_resolution_then_new_pool_state_isolation() {
 
 // ── Boundary values in all validation logic ───────────────────────────────────
 
+fn repeated_outcome_descriptions(env: &Env, count: u32) -> soroban_sdk::Vec<String> {
+    let mut outcomes = soroban_sdk::Vec::new(env);
+    for _ in 0..count {
+        outcomes.push_back(String::from_str(env, "Outcome"));
+    }
+    outcomes
+}
+
+/// The lowest valid values for pool creation parameters must be accepted.
+#[test]
+fn test_create_pool_accepts_minimum_boundary_parameters() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &DEFAULT_MIN_POOL_DURATION,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, ""),
+            metadata_url: String::from_str(&env, ""),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, 2),
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.end_time, DEFAULT_MIN_POOL_DURATION);
+    assert_eq!(pool.options_count, 2);
+    assert_eq!(pool.min_stake, 1);
+    assert_eq!(pool.max_stake, 0);
+    assert_eq!(pool.min_total_stake, 1);
+    assert_eq!(pool.max_total_stake, 0);
+    assert_eq!(pool.initial_liquidity, 0);
+    assert_eq!(pool.required_resolutions, 1);
+    assert_eq!(pool.total_stake, 0);
+    assert_eq!(pool.outcome_descriptions.len(), 2);
+}
+
+/// The highest valid pool duration, option count, metadata sizes, stake caps,
+/// and initial liquidity ceiling must be accepted together.
+#[test]
+fn test_create_pool_accepts_maximum_boundary_parameters() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    token_admin_client.mint(&creator, &MAX_INITIAL_LIQUIDITY);
+
+    let max_description_bytes = [b'D'; 256];
+    let max_metadata_bytes = [b'M'; 512];
+    let max_description = core::str::from_utf8(&max_description_bytes).unwrap();
+    let max_metadata = core::str::from_utf8(&max_metadata_bytes).unwrap();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &MAX_POOL_DURATION,
+        &token_address,
+        &MAX_OPTIONS_COUNT,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, max_description),
+            metadata_url: String::from_str(&env, max_metadata),
+            min_stake: MAX_INITIAL_LIQUIDITY,
+            max_stake: MAX_INITIAL_LIQUIDITY,
+            max_total_stake: MAX_INITIAL_LIQUIDITY,
+            min_total_stake: MAX_INITIAL_LIQUIDITY,
+            initial_liquidity: MAX_INITIAL_LIQUIDITY,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, MAX_OPTIONS_COUNT),
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.end_time, MAX_POOL_DURATION);
+    assert_eq!(pool.options_count, MAX_OPTIONS_COUNT);
+    assert_eq!(pool.description.len(), 256);
+    assert_eq!(pool.metadata_url.len(), 512);
+    assert_eq!(pool.min_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.max_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.min_total_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.max_total_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.initial_liquidity, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.total_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.outcome_descriptions.len(), MAX_OPTIONS_COUNT);
+}
+
 /// min_stake == 0 must be rejected.
 #[test]
 #[should_panic(expected = "min_stake must be greater than zero")]
@@ -5796,6 +5897,102 @@ fn test_create_pool_rejects_zero_min_stake() {
                 String::from_str(&env, "Outcome 0"),
                 String::from_str(&env, "Outcome 1"),
             ],
+        },
+    );
+}
+
+/// required_resolutions == 0 must be rejected.
+#[test]
+#[should_panic(expected = "required_resolutions must be at least 1")]
+fn test_create_pool_rejects_zero_required_resolutions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Zero required resolutions"),
+            metadata_url: String::from_str(&env, "ipfs://zero-required-resolutions"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 0u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, 2),
+        },
+    );
+}
+
+/// Negative max_total_stake values must be rejected; zero remains the unlimited sentinel.
+#[test]
+#[should_panic(expected = "max_total_stake must be >= 0")]
+fn test_create_pool_rejects_negative_max_total_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Negative max total stake"),
+            metadata_url: String::from_str(&env, "ipfs://negative-max-total"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: -1i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, 2),
+        },
+    );
+}
+
+/// Initial liquidity one unit above MAX_INITIAL_LIQUIDITY must be rejected.
+#[test]
+#[should_panic(expected = "initial_liquidity exceeds maximum allowed value")]
+fn test_create_pool_rejects_initial_liquidity_above_maximum() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Excess initial liquidity"),
+            metadata_url: String::from_str(&env, "ipfs://excess-liquidity"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: MAX_INITIAL_LIQUIDITY + 1,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, 2),
         },
     );
 }
@@ -8080,7 +8277,7 @@ fn test_get_pool_config_private_pool_with_whitelist_key() {
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    let whitelist_key = symbol_short!("secret");
+    let whitelist_key = symbol_short!("SECRET");
     let config = PoolConfig {
         start_time: 0,
         description: String::from_str(&env, "Private pool"),
@@ -8212,7 +8409,7 @@ fn test_get_pool_config_multiple_pools_independent() {
             initial_liquidity: 50i128,
             required_resolutions: 1u32,
             private: true,
-            whitelist_key: Some(Symbol::new(&env, "secret")),
+            whitelist_key: Some(Symbol::new(&env, "SECRET")),
             outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Option 1"),
@@ -8367,7 +8564,7 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
 /// predictions, then verify that an additional prediction is rejected with
 /// `MaxTotalStakeExceeded`.
 #[test]
-#[should_panic(expected = "MaxTotalStakeExceeded")]
+#[should_panic(expected = "Error(Contract, #104)")]
 fn test_place_prediction_rejects_when_max_total_stake_exceeded() {
     let env = Env::default();
     env.mock_all_auths();

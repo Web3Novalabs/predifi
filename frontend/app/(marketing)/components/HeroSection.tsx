@@ -1,7 +1,34 @@
 import React from "react";
 import Image from "next/image";
 
-function HeroSection() {
+/**
+ * Stat
+ *
+ * Static stat component for displaying metrics.
+ * Wrapped with React.memo to prevent unnecessary re-renders since it only depends on props.
+ */
+const Stat = React.memo(function Stat({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="w-full md:w-[219px] text-center space-y-1 md:space-y-[5px]">
+      <h3 className="text-[32px] md:text-[28px] font-semibold bg-[linear-gradient(180deg,#F2FFFD_-18.66%,#009886_136.06%)] bg-clip-text text-transparent">
+        {value}
+      </h3>
+      <p className="text-[#B3CECB] text-sm md:text-sm font-medium tracking-wide">
+        {label}
+      </p>
+    </div>
+  );
+});
+
+Stat.displayName = "Stat";
+
+/**
+ * HeroSection
+ *
+ * Static hero section component rendered on marketing pages.
+ * Wrapped with React.memo to prevent unnecessary re-renders since it has no props or state.
+ */
+const HeroSection = React.memo(function HeroSection() {
   return (
     // Added min-h to ensure it covers screen on mobile, and overflow adjustments
     <section className="hero-critical relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible">
@@ -53,19 +80,8 @@ function HeroSection() {
       </div>
     </section>
   );
-}
+});
+
+HeroSection.displayName = "HeroSection";
 
 export default HeroSection;
-
-function Stat({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="w-full md:w-[219px] text-center space-y-1 md:space-y-[5px]">
-      <h3 className="text-[32px] md:text-[28px] font-semibold bg-[linear-gradient(180deg,#F2FFFD_-18.66%,#009886_136.06%)] bg-clip-text text-transparent">
-        {value}
-      </h3>
-      <p className="text-[#B3CECB] text-sm md:text-sm font-medium tracking-wide">
-        {label}
-      </p>
-    </div>
-  );
-}
