@@ -534,11 +534,15 @@ async fn referrals_handler(
     use axum::response::IntoResponse;
 
     match state.db {
-        Some(pool) => {
-            let (status, body) =
-                crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await;
-            (status, body).into_response()
-        }
+        Some(pool) => match crate::referrals::get_referrals(
+            axum::extract::Path(address),
+            State(pool),
+        )
+        .await
+        {
+            Ok((status, body)) => (status, body).into_response(),
+            Err(e) => e.into_response(),
+        },
         None => {
             ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
                 .into_response()
@@ -556,14 +560,15 @@ async fn user_referral_earnings_handler(
     use axum::response::IntoResponse;
 
     match state.db {
-        Some(pool) => {
-            let (status, body) = crate::referrals::get_user_referral_earnings(
-                axum::extract::Path(address),
-                State(pool),
-            )
-            .await;
-            (status, body).into_response()
-        }
+        Some(pool) => match crate::referrals::get_user_referral_earnings(
+            axum::extract::Path(address),
+            State(pool),
+        )
+        .await
+        {
+            Ok((status, body)) => (status, body).into_response(),
+            Err(e) => e.into_response(),
+        },
         None => {
             ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
                 .into_response()
