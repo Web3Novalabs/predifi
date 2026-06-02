@@ -433,9 +433,8 @@ async fn rate_limiting_returns_429_after_burst() {
         crate::ws::EventBus::new(),
     );
 
-    // The limit is 50 requests burst.
-    // We fire 50 requests which should all be 200 OK.
-    for _ in 0..50 {
+    // Fire RATE_LIMIT_BURST_SIZE requests which should all be 200 OK.
+    for _ in 0..crate::constants::RATE_LIMIT_BURST_SIZE {
         let response = app
             .clone()
             .oneshot(get("/health"))
@@ -444,10 +443,19 @@ async fn rate_limiting_returns_429_after_burst() {
         assert_eq!(response.status(), StatusCode::OK);
     }
 
-    // The 51st request should be rate limited.
+    // The next request should be rate limited (429) with a JSON error body.
     let response = app.oneshot(get("/health")).await.expect("request failed");
-
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"error\""),
+        "rate limit response should contain 'error' field, got: {body}"
+    );
+    assert!(
+        body.contains("Too many requests"),
+        "rate limit response should contain human-readable message, got: {body}"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
