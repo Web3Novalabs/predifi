@@ -44,7 +44,8 @@ pub struct Config {
     pub db_acquire_timeout_secs: u64,
     /// Per-attempt timeout in seconds for the Stellar RPC health check (default `2`).
     pub rpc_health_timeout_secs: u64,
-    /// Number of times to retry the Stellar RPC health check before reporting failure (default `3`).
+    /// Number of times to retry the Stellar RPC health check before reporting failure
+    /// (default `3`).
     pub rpc_health_retry_count: u8,
     /// Tracing log level passed to `RUST_LOG` / `EnvFilter` (default `"info"`).
     pub log_level: String,
@@ -80,8 +81,10 @@ impl Config {
         let host = get_string(vars, "PREDIFI_APP_HOST", DEFAULT_HOST);
         let port = get_u16(vars, "PREDIFI_APP_PORT", DEFAULT_PORT)?;
         let database_url = get_string(vars, "PREDIFI_DATABASE_URL", DEFAULT_DATABASE_URL);
-        let db_max_connections = get_u32(vars, "PREDIFI_DB_MAX_CONNECTIONS", DEFAULT_DB_MAX_CONNECTIONS)?;
-        let db_min_connections = get_u32(vars, "PREDIFI_DB_MIN_CONNECTIONS", DEFAULT_DB_MIN_CONNECTIONS)?;
+        let db_max_connections =
+            get_u32(vars, "PREDIFI_DB_MAX_CONNECTIONS", DEFAULT_DB_MAX_CONNECTIONS)?;
+        let db_min_connections =
+            get_u32(vars, "PREDIFI_DB_MIN_CONNECTIONS", DEFAULT_DB_MIN_CONNECTIONS)?;
         let db_acquire_timeout_secs = get_u64(
             vars,
             "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
@@ -274,7 +277,10 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
     if origin == "*" || origin.eq_ignore_ascii_case("null") {
         return Err(ConfigError::InvalidValue {
             key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-            reason: format!("'{}' is not a valid origin — wildcards and 'null' are not permitted", origin),
+            reason: format!(
+                "'{}' is not a valid origin — wildcards and 'null' are not permitted",
+                origin
+            ),
         });
     }
 
@@ -462,7 +468,10 @@ mod tests {
 
     #[test]
     fn config_rejects_non_numeric_port() {
-        let vars = HashMap::from([(String::from("PREDIFI_APP_PORT"), String::from("not-a-number"))]);
+        let vars = HashMap::from([(
+            String::from("PREDIFI_APP_PORT"),
+            String::from("not-a-number"),
+        )]);
         let error = Config::from_map(&vars).expect_err("port must be numeric");
 
         assert!(
