@@ -1,11 +1,12 @@
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::time::Duration;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::Config;
@@ -13,6 +14,7 @@ use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
+use std::sync::Arc;
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -145,7 +147,11 @@ async fn index() -> Json<serde_json::Value> {
 #[derive(Clone)]
 pub struct AppState {
     /// Validated runtime configuration (fees, URLs, timeouts, etc.).
-    pub config: Config,
+    ///
+    /// Wrapped in [`Arc`] so that cloning `AppState` (which Axum does on every
+    /// request) only bumps a reference count instead of deep-copying all the
+    /// heap-allocated strings inside `Config`.
+    pub config: Arc<Config>,
     /// In-memory oracle price cache refreshed every 60 seconds.
     pub cache: PriceCache,
     /// Redis cache client for hot-path response caching.
@@ -160,7 +166,7 @@ pub struct AppState {
 
 impl axum::extract::FromRef<AppState> for Config {
     fn from_ref(state: &AppState) -> Self {
-        state.config.clone()
+        (*state.config).clone()
     }
 }
 
@@ -186,6 +192,34 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
     fn from_ref(state: &AppState) -> Self {
         state.event_bus.clone()
     }
+}
+
+// ── Pagination validation ─────────────────────────────────────────────────────
+
+/// Validate and resolve pagination parameters.
+///
+/// Rules:
+/// - `limit`: 1–100 inclusive (default 20). Returns 400 if outside range.
+/// - `offset`: ≥ 0 (default 0). Returns 400 if negative.
+fn validate_pagination(limit: Option<i64>, offset: Option<i64>) -> Result<(i64, i64), Response> {
+    let limit = limit.unwrap_or(20);
+    let offset = offset.unwrap_or(0);
+
+    if limit < 1 || limit > 100 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "limit must be between 1 and 100" })),
+        )
+            .into_response());
+    }
+    if offset < 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "offset must be >= 0" })),
+        )
+            .into_response());
+    }
+    Ok((limit, offset))
 }
 
 // ── Task 2: Active Pools API ──────────────────────────────────────────────────
@@ -254,8 +288,11 @@ pub async fn get_pools(
     let sort_by = params.sort_by.as_deref().unwrap_or("new");
     let category = params.category.as_deref();
     let status = params.status.as_deref().unwrap_or("active");
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+
+    let (limit, offset) = match validate_pagination(params.limit, params.offset) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
 
     let db = state.db.as_ref().ok_or_else(|| {
         crate::errors::AppError::ServiceUnavailable("database not available".to_string())
@@ -265,7 +302,7 @@ pub async fn get_pools(
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        return Json(cached_response);
+        return Json(cached_response).into_response();
     }
 
     // Cache miss - fetch from database
@@ -484,7 +521,7 @@ pub fn router(
     event_bus: crate::ws::EventBus,
 ) -> Router {
     let state = AppState {
-        config,
+        config: Arc::new(config),
         cache,
         redis,
         db: pool,

@@ -37,28 +37,41 @@ async fn main() {
         std::process::exit(1);
     });
 
-    if let Some(dsn) = config.sentry_dsn.as_ref() {
-        let _guard = sentry::init((
-            dsn.as_str(),
-            sentry::ClientOptions {
-                release: Some(env!("CARGO_PKG_VERSION").into()),
-                ..Default::default()
-            },
-        ));
+    let filter = EnvFilter::new(config.log_level.clone());
+    let use_json = config.app_env == "production";
 
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .with_filter(EnvFilter::new(config.log_level.clone())),
-            )
-            .with(sentry_tracing_layer())
-            .init();
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+
+    let registry = tracing_subscriber::registry().with(filter);
+
+    if use_json {
+        let registry = registry.with(fmt_layer.json());
+        if let Some(dsn) = config.sentry_dsn.as_ref() {
+            let _guard = sentry::init((
+                dsn.as_str(),
+                sentry::ClientOptions {
+                    release: Some(env!("CARGO_PKG_VERSION").into()),
+                    ..Default::default()
+                },
+            ));
+            registry.with(sentry_tracing_layer()).init();
+        } else {
+            registry.init();
+        }
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::new(config.log_level.clone()))
-            .with_target(false)
-            .compact()
-            .init();
+        let registry = registry.with(fmt_layer.compact());
+        if let Some(dsn) = config.sentry_dsn.as_ref() {
+            let _guard = sentry::init((
+                dsn.as_str(),
+                sentry::ClientOptions {
+                    release: Some(env!("CARGO_PKG_VERSION").into()),
+                    ..Default::default()
+                },
+            ));
+            registry.with(sentry_tracing_layer()).init();
+        } else {
+            registry.init();
+        }
     }
 
     info!("starting predifi-backend server");

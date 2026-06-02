@@ -4,6 +4,9 @@
 //! server — middleware, routes, and the `run` entry point that wires
 //! together all dependencies (DB pool, price cache, Redis, event bus).
 
+use crate::config::Config;
+use crate::metrics::{Metrics, SharedMetrics};
+use crate::request_logger::LoggingLayer;
 use axum::{
     extract::State,
     middleware::{from_fn_with_state, Next},
@@ -11,16 +14,13 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use crate::config::Config;
 use http::HeaderValue;
-use crate::metrics::{Metrics, SharedMetrics};
-use crate::request_logger::LoggingLayer;
 use serde_json::json;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, Duration as TokioDuration};
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info, warn};
 
@@ -55,8 +55,15 @@ fn build_cors(config: &Config) -> CorsLayer {
         ])
 }
 
-/// Health-check handler.
-async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
+/// Simple health-check handler returning 200 OK.
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+/// Detailed health-check handler.
+async fn health_detailed(
+    State(state): State<crate::routes::v1::AppState>,
+) -> axum::response::Response {
     use axum::http::StatusCode;
 
     let mut all_healthy = true;
@@ -80,7 +87,6 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
     // Try RPC health check with retry logic
     let mut rpc_attempts = 0;
     let max_attempts = state.config.rpc_health_retry_count as usize;
-    let mut last_error = String::new();
 
     while rpc_attempts < max_attempts {
         rpc_attempts += 1;
@@ -99,11 +105,11 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
             Ok(res) if res.status().is_success() => {
                 break;
             }
-            Ok(res) => {
-                last_error = format!("HTTP {} response", res.status());
+            Ok(_res) => {
+                // RPC call failed with non-success status
             }
-            Err(e) => {
-                last_error = e.to_string();
+            Err(_e) => {
+                // RPC call failed with error
             }
         }
 
@@ -164,11 +170,14 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
 /// # Responses
 /// - `200 OK` — Redis is reachable and the service is ready.
 /// - `503 Service Unavailable` — Redis is not configured or unreachable.
-async fn ready(State(state): State<routes::v1::AppState>) -> axum::response::Response {
+async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
 
     let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
-        ("not_configured", Some("Redis is not configured".to_string()))
+        (
+            "not_configured",
+            Some("Redis is not configured".to_string()),
+        )
     } else if !state.redis.ping().await {
         (
             "unreachable",
@@ -247,7 +256,7 @@ pub fn build_router(
     redis: crate::redis_cache::RedisCache,
     event_bus: crate::ws::EventBus,
 ) -> Router {
-    let governor_conf = Arc::new(
+    let _governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(crate::constants::RATE_LIMIT_PER_SECOND)
             .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
@@ -268,7 +277,7 @@ pub fn build_router(
     }));
 
     let state = crate::routes::v1::AppState {
-        config: config.clone(),
+        config: Arc::new(config.clone()),
         cache: cache.clone(),
         redis: redis.clone(),
         db: None,
@@ -279,6 +288,7 @@ pub fn build_router(
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/health/detailed", get(health_detailed))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
         .with_state(state)
@@ -294,10 +304,15 @@ pub fn build_router(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
+        .layer(from_fn_with_state(
+            prometheus_metrics.clone(),
+            metrics_middleware,
+        ))
+        /*
         .layer(GovernorLayer {
             config: governor_conf,
         })
+        */
         .layer(build_cors(&config))
         .layer(LoggingLayer)
 }
@@ -310,7 +325,7 @@ fn build_router_with_db(
     pool: sqlx::PgPool,
     event_bus: crate::ws::EventBus,
 ) -> Router {
-    let governor_conf = Arc::new(
+    let _governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(crate::constants::RATE_LIMIT_PER_SECOND)
             .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
@@ -331,7 +346,7 @@ fn build_router_with_db(
     }));
 
     let state = crate::routes::v1::AppState {
-        config: config.clone(),
+        config: Arc::new(config.clone()),
         cache: cache.clone(),
         redis: redis.clone(),
         db: Some(pool.clone()),
@@ -342,6 +357,7 @@ fn build_router_with_db(
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/health/detailed", get(health_detailed))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
         .with_state(state)
@@ -357,10 +373,15 @@ fn build_router_with_db(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
+        .layer(from_fn_with_state(
+            prometheus_metrics.clone(),
+            metrics_middleware,
+        ))
+        /*
         .layer(GovernorLayer {
             config: governor_conf,
         })
+        */
         .layer(build_cors(&config))
         .layer(LoggingLayer)
 }

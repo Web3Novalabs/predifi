@@ -1,7 +1,9 @@
+use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{ConnectOptions, PgPool};
 
 use crate::config::Config;
 use crate::errors::AppError;
@@ -15,7 +17,7 @@ pub fn create_pool(config: &Config) -> Result<PgPool, AppError> {
         .max_connections(config.db_max_connections)
         .min_connections(config.db_min_connections)
         .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
-        .connect_lazy(&config.database_url)
+        .connect_lazy_with(options))
 }
 
 /// A single row returned by the user prediction history query.
@@ -26,7 +28,7 @@ pub struct PredictionHistoryRow {
     pub pool_result: Option<String>,
     pub outcome: i32,
     pub amount: i64,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Enhanced prediction information with current pool status.
@@ -643,26 +645,24 @@ pub async fn insert_prediction_from_event(
 ) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO predictions (pool_id, user_address, outcome, amount)
         VALUES ($1, $2, $3, $4)
         "#,
-        event.pool_id as i64,
-        event.user_address,
-        event.outcome,
-        event.amount,
     )
-    .execute(&mut tx)
+    .bind(event.pool_id as i64)
+    .bind(&event.user_address)
+    .bind(event.outcome)
+    .bind(event.amount)
+    .execute(&mut *tx)
     .await?;
 
-    sqlx::query!(
-        "UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2",
-        event.amount,
-        event.pool_id as i64,
-    )
-    .execute(&mut tx)
-    .await?;
+    sqlx::query("UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2")
+        .bind(event.amount)
+        .bind(event.pool_id as i64)
+        .execute(&mut *tx)
+        .await?;
 
     tx.commit().await?;
     Ok(())
@@ -719,11 +719,11 @@ pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, AppError
         ProtocolStats,
         r#"
         SELECT
-            COALESCE(SUM(total_stake), 0) AS "total_value_locked!: i64",
-            (SELECT COUNT(*) FROM predictions)  AS "total_bets!: i64",
-            COUNT(*)                            AS "total_pools!: i64"
+            COALESCE(SUM(total_stake), 0) AS total_value_locked,
+            (SELECT COUNT(*) FROM predictions)  AS total_bets,
+            COUNT(*)                            AS total_pools
         FROM pools
-        "#
+        "#,
     )
     .fetch_one(pool)
     .await
@@ -781,7 +781,7 @@ pub async fn insert_referrals_bulk(
     let mut values = Vec::new();
     let mut param_index = 1i32;
 
-    for event in events {
+    for _event in events {
         values.push(format!(
             "(${}, ${}, ${}, ${})",
             param_index,
@@ -823,11 +823,11 @@ pub async fn insert_referral_from_event(
         VALUES ($1, $2, $3, $4)
         ON CONFLICT DO NOTHING
         "#,
-        event.referrer,
-        event.referred_user,
-        event.pool_id as i64,
-        event.referral_amount,
     )
+    .bind(&event.referrer)
+    .bind(&event.referred_user)
+    .bind(event.pool_id as i64)
+    .bind(event.referral_amount)
     .execute(pool)
     .await?;
     Ok(())
