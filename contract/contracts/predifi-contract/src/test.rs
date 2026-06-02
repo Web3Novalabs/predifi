@@ -299,6 +299,249 @@ fn test_increase_max_total_stake_auth_only_happens_at_entry_point() {
 }
 
 #[test]
+fn test_create_pool_accepts_valid_referral_code() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(now + 3600u64),
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: now,
+            description: String::from_str(&env, "Valid referral code pool"),
+            metadata_url: String::from_str(&env, "ipfs://valid"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: Some(Symbol::new(&env, "ABC123")),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    assert_eq!(pool_id, 0u64);
+}
+
+#[test]
+fn test_create_pool_rejects_referral_code_too_short() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.create_pool(
+            &creator,
+            &(now + 3600u64),
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now,
+                description: String::from_str(&env, "Too short code pool"),
+                metadata_url: String::from_str(&env, "ipfs://short"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: true,
+                whitelist_key: Some(Symbol::new(&env, "A1B2")),
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_create_pool_rejects_referral_code_too_long() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.create_pool(
+            &creator,
+            &(now + 3600u64),
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now,
+                description: String::from_str(&env, "Too long code pool"),
+                metadata_url: String::from_str(&env, "ipfs://long"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: true,
+                whitelist_key: Some(Symbol::new(&env, "ABCDEFGHIJKLM")),
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_create_pool_rejects_referral_code_lowercase() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.create_pool(
+            &creator,
+            &(now + 3600u64),
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now,
+                description: String::from_str(&env, "Lowercase code pool"),
+                metadata_url: String::from_str(&env, "ipfs://lower"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: true,
+                whitelist_key: Some(Symbol::new(&env, "AbC123")),
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_create_pool_rejects_referral_code_special_characters() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.create_pool(
+            &creator,
+            &(now + 3600u64),
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now,
+                description: String::from_str(&env, "Special char code pool"),
+                metadata_url: String::from_str(&env, "ipfs://special"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: true,
+                whitelist_key: Some(Symbol::new(&env, "ABC12!")),
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_place_prediction_rejects_invalid_invite_key() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let now = env.ledger().timestamp();
+    let pool_id = client.create_pool(
+        &creator,
+        &(now + 3600u64),
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: now,
+            description: String::from_str(&env, "Invalid invite key pool"),
+            metadata_url: String::from_str(&env, "ipfs://invalid-invite"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: Some(Symbol::new(&env, "ABC123")),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.place_prediction(
+            &user,
+            &pool_id,
+            &100,
+            &1u32,
+            &None,
+            &Some(Symbol::new(&env, "AbC123")),
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_resolve_pool_auth_only_happens_at_entry_point() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4042,7 +4285,6 @@ fn test_pool_resolved_event_emitted_on_resolution() {
     assert!(found, "PoolResolvedEvent not found in emitted events");
 }
 
-
 #[test]
 fn test_mark_pool_ready() {
     let env = Env::default();
@@ -5861,6 +6103,47 @@ fn test_create_pool_accepts_maximum_options_count() {
     token_admin_client.mint(&user, &1000);
     // outcome index 99 is the last valid index and must be accepted.
     client.place_prediction(&user, &pool_id, &100, &99, &None, &None);
+}
+
+/// Placing a prediction with a zero amount must be rejected with InvalidAmount (#42).
+#[test]
+#[should_panic(expected = "Error(Contract, #42)")]
+fn test_place_prediction_rejects_zero_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Zero amount test"),
+            metadata_url: String::from_str(&env, "ipfs://zero-amount"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+    // amount of 0 must be rejected
+    client.place_prediction(&user, &pool_id, &0, &0, &None, &None);
 }
 
 /// Placing a prediction with outcome >= options_count must be rejected.
@@ -7796,7 +8079,7 @@ fn test_get_pool_config_private_pool_with_whitelist_key() {
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    let whitelist_key = symbol_short!("secret");
+    let whitelist_key = symbol_short!("SECRET");
     let config = PoolConfig {
         start_time: 0,
         description: String::from_str(&env, "Private pool"),
@@ -7928,7 +8211,7 @@ fn test_get_pool_config_multiple_pools_independent() {
             initial_liquidity: 50i128,
             required_resolutions: 1u32,
             private: true,
-            whitelist_key: Some(Symbol::new(&env, "secret")),
+            whitelist_key: Some(Symbol::new(&env, "SECRET")),
             outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Option 1"),
@@ -8083,7 +8366,7 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
 /// predictions, then verify that an additional prediction is rejected with
 /// `MaxTotalStakeExceeded`.
 #[test]
-#[should_panic(expected = "MaxTotalStakeExceeded")]
+#[should_panic(expected = "Error(Contract, #104)")]
 fn test_place_prediction_rejects_when_max_total_stake_exceeded() {
     let env = Env::default();
     env.mock_all_auths();

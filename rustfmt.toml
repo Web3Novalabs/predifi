@@ -1,0 +1,18 @@
+# Standardized rustfmt configuration for the repository
+# Keep options conservative and compatible with rustfmt stable
+max_width = 100
+hard_tabs = false
+tab_spaces = 4
+edition = "2021"
+
+# Imports
+reorder_imports = true
+merge_imports = true
+
+# Documentation and comments
+normalize_doc_attributes = true
+format_code_in_doc_comments = true
+wrap_comments = true
+
+# Ensure Unix newlines
+newline_style = "unix"

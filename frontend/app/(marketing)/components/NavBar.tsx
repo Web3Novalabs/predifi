@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import Image from "next/image";
 import React, { useState } from "react";
 import { Menu, X } from "lucide-react";
 
@@ -118,7 +119,7 @@ function Navbar() {
             Explore Pools
           </button>
         </div>
-      )}
+      </div>
     </nav>
   );
 }

@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import { DM_Mono } from "next/font/google";
 import "./globals.css";
+import { SWRProvider } from "@/components/providers/SWRProvider";
 
 const dmMono = DM_Mono({
   subsets: ["latin"],
   weight: ["300", "400", "500"],
   variable: "--font-dm-mono",
-   preload: false,
+  display: "swap",
+  preload: true,
 });
 
 export const metadata: Metadata = {
@@ -84,7 +86,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`antialiased text-sm ${dmMono.variable}`}>
-        {children}
+        <SWRProvider>{children}</SWRProvider>
       </body>
     </html>
   );

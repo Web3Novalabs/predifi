@@ -99,13 +99,22 @@ export default function Waitlist() {
               </div>
             </div>
 
-            {status === "error" && (
-              <div className="rounded-lg bg-red-900/20 border border-red-800 p-3">
-                <p className="text-sm text-red-400 text-center">
-                  {errorMessage}
-                </p>
-              </div>
-            )}
+            {/* Error message container — fixed height to prevent layout shift */}
+            <div
+              style={{
+                minHeight: "44px", // Reserve space for error message
+                transition: "opacity 0.2s ease-out",
+                opacity: status === "error" ? 1 : 0,
+              }}
+            >
+              {status === "error" && (
+                <div className="rounded-lg bg-red-900/20 border border-red-800 p-3">
+                  <p className="text-sm text-red-400 text-center">
+                    {errorMessage}
+                  </p>
+                </div>
+              )}
+            </div>
 
             <button
               type="submit"
