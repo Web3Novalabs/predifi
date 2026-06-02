@@ -52,6 +52,8 @@ pub struct Config {
     pub rpc_timeout_secs: u64,
     /// Tracing log level passed to `RUST_LOG` / `EnvFilter` (default `"info"`).
     pub log_level: String,
+    /// Runtime environment, e.g. "production", "development", "test" (default "development").
+    pub app_env: String,
     /// Protocol treasury fee in basis points (default `300` = 3 %).
     pub treasury_fee_bps: u32,
     /// Referral share of the protocol fee in basis points (default `5000` = 50 % of the fee).
@@ -107,6 +109,7 @@ impl Config {
             DEFAULT_RPC_TIMEOUT_SECS,
         )?;
         let log_level = get_string(vars, "RUST_LOG", DEFAULT_LOG_LEVEL);
+        let app_env = get_string(vars, "PREDIFI_APP_ENV", "development");
         let treasury_fee_bps = get_u32(vars, "PREDIFI_TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "PREDIFI_REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
@@ -137,6 +140,7 @@ impl Config {
             rpc_health_retry_count,
             rpc_timeout_secs,
             log_level,
+            app_env,
             treasury_fee_bps,
             referral_fee_bps,
             stellar_rpc_url,
@@ -169,6 +173,7 @@ impl Config {
             rpc_health_retry_count: 3,
             rpc_timeout_secs: 10,
             log_level: String::from("debug"),
+            app_env: String::from("test"),
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
