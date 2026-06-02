@@ -3,6 +3,7 @@
 import { useState, useCallback, memo } from "react";
 import { FixedSizeList, type ListChildComponentProps } from "react-window";
 import { cn } from "@/lib/utils";
+import { formatUtcDateTime } from "@/lib/date";
 import { Card, CardContent } from "@/components/ui/card";
 import { ChefHat, ChevronRight, Users, Copy } from "lucide-react";
 
@@ -31,7 +32,7 @@ const activePredictions: Prediction[] = [
   {
     id: "1",
     title: "125,000 or above",
-    date: "18-04-2025 21:43",
+    date: "2025-04-18T21:43:00Z",
     potentialPayout: "179.52 strk",
     stake: "100 strk",
     odd: "2.54",
@@ -64,7 +65,9 @@ const PredictionCard = memo(function PredictionCard({
         <div className="p-4 flex items-center justify-between border-b border-white/5">
           <div>
             <h4 className="font-bold text-base">{prediction.title}</h4>
-            <p className="text-zinc-500 text-xs mt-1">{prediction.date}</p>
+            <p className="text-zinc-500 text-xs mt-1">
+              {formatUtcDateTime(prediction.date)}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-emerald-400 text-xs font-bold">
@@ -156,17 +159,6 @@ export function PredictionList() {
     activePredictions.length * ITEM_HEIGHT,
     LIST_MAX_HEIGHT
   );
-
-  /**
-   * Memoize the mapped cards so they are only re-calculated if the data changes.
-   * This saves a full array map and object creation on every render of the 
-   * parent PredictionList.
-   */
-  const renderedActivePredictions = useMemo(() => (
-    activePredictions.map((prediction) => (
-      <PredictionCard key={prediction.id} prediction={prediction} />
-    ))
-  ), []);
 
   return (
     <div className="space-y-6">
