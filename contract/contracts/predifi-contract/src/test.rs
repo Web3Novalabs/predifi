@@ -1967,7 +1967,6 @@ fn test_non_admin_cannot_pause() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1983,11 +1982,11 @@ fn test_paused_blocks_set_fee_bps() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.set_fee_bps(&admin, &100u32);
+    let result = client.try_set_fee_bps(&admin, &100u32);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_set_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2003,11 +2002,11 @@ fn test_paused_blocks_set_treasury() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.set_treasury(&admin, &Address::generate(&env));
+    let result = client.try_set_treasury(&admin, &Address::generate(&env));
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_create_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2026,7 +2025,7 @@ fn test_paused_blocks_create_pool() {
 
     let creator = Address::generate(&env);
     client.pause(&admin);
-    client.create_pool(
+    let result = client.try_create_pool(
         &creator,
         &100000u64,
         &token,
@@ -2055,10 +2054,10 @@ fn test_paused_blocks_create_pool() {
             ],
         },
     );
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_place_prediction() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2075,11 +2074,11 @@ fn test_paused_blocks_place_prediction() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.place_prediction(&user, &0u64, &10, &1, &None, &None);
+    let result = client.try_place_prediction(&user, &0u64, &10, &1, &None, &None);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_resolve_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2097,11 +2096,11 @@ fn test_paused_blocks_resolve_pool() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.resolve_pool(&operator, &0u64, &1u32);
+    let result = client.try_resolve_pool(&operator, &0u64, &1u32);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_claim_winnings() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2118,7 +2117,8 @@ fn test_paused_blocks_claim_winnings() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.claim_winnings(&user, &0u64);
+    let result = client.try_claim_winnings(&user, &0u64);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
@@ -5129,7 +5129,6 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -5145,8 +5144,58 @@ fn test_paused_blocks_withdraw_treasury() {
     // Pause contract
     client.pause(&admin);
 
-    // Try to withdraw while paused - should panic
-    client.withdraw_treasury(&admin, &token_address, &1000, &treasury);
+    // Try to withdraw while paused — must return ContractPaused error
+    let result = client.try_withdraw_treasury(&admin, &token_address, &1000, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_update_referrer() {
+    // Verify that update_referrer returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let result = client.try_update_referrer(&creator, &0u64, &Some(Address::generate(&env)));
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_mark_pool_ready() {
+    // Verify that mark_pool_ready returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let result = client.try_mark_pool_ready(&0u64);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_batch_claim_winnings() {
+    // Verify that batch_claim_winnings returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let pool_ids = soroban_sdk::vec![&env, 0u64];
+    let result = client.try_batch_claim_winnings(&creator, &pool_ids);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
