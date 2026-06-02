@@ -39,8 +39,7 @@ async fn main() {
     let filter = EnvFilter::new(config.log_level.clone());
     let use_json = config.app_env == "production";
 
-    let fmt_layer = tracing_subscriber::fmt::layer()
-        .with_target(false);
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
 
     let registry = tracing_subscriber::registry().with(filter);
 
