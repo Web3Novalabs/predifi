@@ -767,4 +767,273 @@ mod tests {
             "error message must contain the variable name, got: {msg}"
         );
     }
+
+    // ── String field overrides ────────────────────────────────────────────────
+
+    #[test]
+    fn config_reads_host_from_env() {
+        let vars = HashMap::from([(String::from("PREDIFI_APP_HOST"), String::from("127.0.0.1"))]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.host, "127.0.0.1");
+    }
+
+    #[test]
+    fn config_reads_database_url_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DATABASE_URL"),
+            String::from("postgres://user:pass@db:5432/mydb"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.database_url, "postgres://user:pass@db:5432/mydb");
+    }
+
+    #[test]
+    fn config_reads_stellar_rpc_url_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_STELLAR_RPC_URL"),
+            String::from("https://my-rpc.example.com"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.stellar_rpc_url, "https://my-rpc.example.com");
+    }
+
+    #[test]
+    fn config_reads_redis_url_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_REDIS_URL"),
+            String::from("redis://redis-host:6380"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.redis_url, "redis://redis-host:6380");
+    }
+
+    #[test]
+    fn config_reads_log_level_from_env() {
+        let vars = HashMap::from([(String::from("RUST_LOG"), String::from("warn"))]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.log_level, "warn");
+    }
+
+    // ── Numeric field overrides and invalid-input rejection ───────────────────
+
+    #[test]
+    fn config_reads_port_from_env() {
+        let vars = HashMap::from([(String::from("PREDIFI_APP_PORT"), String::from("8080"))]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.port, 8080);
+    }
+
+    #[test]
+    fn config_reads_db_max_connections_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_MAX_CONNECTIONS"),
+            String::from("25"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.db_max_connections, 25);
+    }
+
+    #[test]
+    fn config_rejects_non_numeric_db_max_connections() {
+        let vars =
+            HashMap::from([(String::from("PREDIFI_DB_MAX_CONNECTIONS"), String::from("x"))]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_DB_MAX_CONNECTIONS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_reads_db_acquire_timeout_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_ACQUIRE_TIMEOUT_SECS"),
+            String::from("60"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.db_acquire_timeout_secs, 60);
+    }
+
+    #[test]
+    fn config_rejects_non_numeric_db_acquire_timeout() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_ACQUIRE_TIMEOUT_SECS"),
+            String::from("never"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_reads_rpc_health_timeout_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_RPC_HEALTH_TIMEOUT_SECS"),
+            String::from("5"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.rpc_health_timeout_secs, 5);
+    }
+
+    #[test]
+    fn config_rejects_non_numeric_rpc_health_timeout() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_RPC_HEALTH_TIMEOUT_SECS"),
+            String::from("fast"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_RPC_HEALTH_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_reads_rpc_health_retry_count_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_RPC_HEALTH_RETRY_COUNT"),
+            String::from("5"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.rpc_health_retry_count, 5);
+    }
+
+    #[test]
+    fn config_rejects_rpc_health_retry_count_overflow() {
+        // u8 max is 255; 300 overflows
+        let vars = HashMap::from([(
+            String::from("PREDIFI_RPC_HEALTH_RETRY_COUNT"),
+            String::from("300"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_RPC_HEALTH_RETRY_COUNT",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_reads_rpc_timeout_secs_from_env() {
+        let vars = HashMap::from([(String::from("RPC_TIMEOUT_SECS"), String::from("30"))]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.rpc_timeout_secs, 30);
+    }
+
+    #[test]
+    fn config_rejects_non_numeric_rpc_timeout() {
+        let vars =
+            HashMap::from([(String::from("RPC_TIMEOUT_SECS"), String::from("inf"))]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "RPC_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_reads_treasury_fee_bps_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_TREASURY_FEE_BPS"),
+            String::from("500"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.treasury_fee_bps, 500);
+    }
+
+    #[test]
+    fn config_rejects_non_numeric_treasury_fee_bps() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_TREASURY_FEE_BPS"),
+            String::from("high"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_TREASURY_FEE_BPS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_reads_referral_fee_bps_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_REFERRAL_FEE_BPS"),
+            String::from("3000"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.referral_fee_bps, 3000);
+    }
+
+    #[test]
+    fn config_rejects_non_numeric_referral_fee_bps() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_REFERRAL_FEE_BPS"),
+            String::from("lots"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_REFERRAL_FEE_BPS",
+                ..
+            })
+        ));
+    }
+
+    // ── Optional fields ───────────────────────────────────────────────────────
+
+    #[test]
+    fn sentry_dsn_is_none_when_absent() {
+        let vars = HashMap::new();
+        let config = Config::from_map(&vars).unwrap();
+        assert!(config.sentry_dsn.is_none());
+    }
+
+    #[test]
+    fn sentry_dsn_is_some_when_set() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_SENTRY_DSN"),
+            String::from("https://abc@sentry.io/123"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.sentry_dsn.as_deref(), Some("https://abc@sentry.io/123"));
+    }
+
+    // ── bind_address ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn bind_address_combines_host_and_port() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_APP_HOST"), String::from("0.0.0.0")),
+            (String::from("PREDIFI_APP_PORT"), String::from("9000")),
+        ]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.bind_address(), "0.0.0.0:9000");
+    }
+
+    // ── CORS: additional edge cases ───────────────────────────────────────────
+
+    #[test]
+    fn cors_accepts_trailing_slash_on_root() {
+        // A bare trailing slash (scheme://host/) is permitted — it is equivalent
+        // to scheme://host and browsers may normalise to this form.
+        let vars = HashMap::from([(
+            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("https://example.com/"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.cors_allowed_origins, vec!["https://example.com/"]);
+    }
 }
