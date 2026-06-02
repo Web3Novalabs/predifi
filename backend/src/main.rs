@@ -17,6 +17,7 @@ pub mod request_logger;
 pub mod response;
 pub mod routes;
 pub mod server;
+pub mod telemetry;
 pub mod worker;
 pub mod ws;
 
@@ -61,39 +62,31 @@ pub fn build_cors(config: &Config) -> CorsLayer {
 
 use axum::extract::State;
 
-/// Health-check handler.
-async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Response {
-    use axum::http::StatusCode;
-    use std::time::Duration;
-
-    let mut all_healthy = true;
-    let mut db_status = "ok";
-
-    if let Some(db) = &state.db {
-        if sqlx::query("SELECT 1").execute(db).await.is_err() {
-            db_status = "unreachable";
-            all_healthy = false;
+/// Check database health with a simple query.
+async fn check_db_health(db: &Option<sqlx::PgPool>) -> (String, String) {
+    if let Some(pool) = db {
+        match sqlx::query("SELECT 1").execute(pool).await {
+            Ok(_) => ("ok".to_string(), String::new()),
+            Err(e) => ("unreachable".to_string(), e.to_string()),
         }
     } else {
-        db_status = "not_configured";
+        ("not_configured".to_string(), String::new())
     }
+}
 
-    let mut rpc_status = "ok";
+/// Check RPC health with retry logic and exponential backoff.
+async fn check_rpc_health(rpc_url: &str, timeout_secs: u64, retry_count: u8) -> (String, String) {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(state.config.rpc_health_timeout_secs))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
-    // Try RPC health check with retry logic
-    let mut rpc_attempts = 0;
-    let max_attempts = state.config.rpc_health_retry_count as usize;
+    let max_attempts = retry_count as usize;
     let mut last_error = String::new();
-    
-    while rpc_attempts < max_attempts {
-        rpc_attempts += 1;
-        
+
+    for attempt in 0..max_attempts {
         let rpc_req = client
-            .post(&state.config.stellar_rpc_url)
+            .post(rpc_url)
             .json(&serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -104,8 +97,7 @@ async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Re
 
         match rpc_req {
             Ok(res) if res.status().is_success() => {
-                // Success - break out of retry loop
-                break;
+                return ("ok".to_string(), String::new());
             }
             Ok(res) => {
                 last_error = format!("HTTP {} response", res.status());
@@ -114,31 +106,62 @@ async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Re
                 last_error = e.to_string();
             }
         }
-        
-        // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
-        if rpc_attempts < max_attempts {
-            let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
+
+        // Exponential backoff: 2^(attempt) seconds, capped at 5 seconds
+        if attempt < max_attempts - 1 {
+            let backoff_duration = std::cmp::min(2u64.pow(attempt as u32), 5);
             sleep(TokioDuration::from_secs(backoff_duration)).await;
         }
     }
-    
-    if rpc_attempts >= max_attempts {
-        rpc_status = "unreachable";
+
+    ("unreachable".to_string(), last_error)
+}
+
+/// Health-check handler.
+async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Response {
+    use axum::http::StatusCode;
+
+    let mut all_healthy = true;
+    let (db_status, db_error) = check_db_health(&state.db).await;
+    if db_status == "unreachable" {
         all_healthy = false;
     }
 
-    let mut redis_status = "ok";
-    if !state.redis.is_available() {
-        redis_status = "not_configured";
-        all_healthy = false;
-    } else if !state.redis.ping().await {
-        redis_status = "unreachable";
+    let (rpc_status, rpc_error) = check_rpc_health(
+        &state.config.stellar_rpc_url,
+        state.config.rpc_health_timeout_secs,
+        state.config.rpc_health_retry_count,
+    ).await;
+    if rpc_status == "unreachable" {
         all_healthy = false;
     }
 
-    let mut price_cache_status = "ok";
-    if state.cache.snapshot().is_empty() {
-        price_cache_status = "not_ready";
+/// Check Redis health and availability.
+async fn check_redis_health(redis: &redis_cache::RedisCache) -> (String, String) {
+    if !redis.is_available() {
+        return ("not_configured".to_string(), String::new());
+    }
+    if !redis.ping().await {
+        return ("unreachable".to_string(), "Redis ping failed".to_string());
+    }
+    ("ok".to_string(), String::new())
+}
+
+/// Check price cache health.
+fn check_price_cache_health(cache: &price_cache::PriceCache) -> (String, String) {
+    if cache.snapshot().is_empty() {
+        return ("not_ready".to_string(), "price cache is empty".to_string());
+    }
+    ("ok".to_string(), String::new())
+}
+
+    let (redis_status, redis_error) = check_redis_health(&state.redis).await;
+    if redis_status == "unreachable" || redis_status == "not_configured" {
+        all_healthy = false;
+    }
+
+    let (price_cache_status, price_cache_error) = check_price_cache_health(&state.cache);
+    if price_cache_status == "not_ready" {
         all_healthy = false;
     }
 
@@ -237,7 +260,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis
     );
 
     let state = routes::v1::AppState {
-        config: config.clone(),
+        config: Arc::new(config.clone()),
         cache: cache.clone(),
         redis: redis.clone(),
         db: None,
@@ -291,7 +314,7 @@ pub fn build_router_with_db(
     );
 
     let state = routes::v1::AppState {
-        config: config.clone(),
+        config: Arc::new(config.clone()),
         cache: cache.clone(),
         redis: redis.clone(),
         db: Some(pool.clone()),
@@ -326,9 +349,19 @@ async fn main() {
     let filter = EnvFilter::new(config.log_level.clone());
     let use_json = config.app_env == "production";
 
+    // Initialize OpenTelemetry tracing if enabled
+    let tracer = telemetry::init_telemetry_from_env();
+
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
 
     let registry = tracing_subscriber::registry().with(filter);
+
+    let registry = if let Some(tracer) = tracer {
+        let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        registry.with(telemetry_layer)
+    } else {
+        registry
+    };
 
     if use_json {
         let registry = registry.with(fmt_layer.json());

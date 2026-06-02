@@ -25,42 +25,31 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
-/// `GET /api/v1/health` health-check endpoint.
-pub async fn health(State(state): State<AppState>) -> axum::response::Response {
-    use axum::http::StatusCode;
-    use axum::response::IntoResponse;
-    use std::time::Duration;
-
-    let mut all_healthy = true;
-    let mut db_status = "ok";
-    let mut db_error = String::new();
-
-    if let Some(db) = &state.db {
-        if let Err(e) = sqlx::query("SELECT 1").execute(db).await {
-            db_status = "unreachable";
-            db_error = e.to_string();
-            all_healthy = false;
+/// Check database health with a simple query.
+async fn check_db_health(db: &Option<sqlx::PgPool>) -> (String, String) {
+    if let Some(pool) = db {
+        match sqlx::query("SELECT 1").execute(pool).await {
+            Ok(_) => ("ok".to_string(), String::new()),
+            Err(e) => ("unreachable".to_string(), e.to_string()),
         }
     } else {
-        db_status = "not_configured";
+        ("not_configured".to_string(), String::new())
     }
+}
 
-    let mut rpc_status = "ok";
+/// Check RPC health with retry logic and exponential backoff.
+async fn check_rpc_health(rpc_url: &str, timeout_secs: u64, retry_count: u8) -> (String, String) {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(state.config.rpc_health_timeout_secs))
+        .timeout(std::time::Duration::from_secs(timeout_secs))
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
-    // Try RPC health check with retry logic
-    let mut rpc_attempts = 0;
-    let max_attempts = state.config.rpc_health_retry_count as usize;
+    let max_attempts = retry_count as usize;
     let mut last_error = String::new();
 
-    while rpc_attempts < max_attempts {
-        rpc_attempts += 1;
-
+    for attempt in 0..max_attempts {
         let rpc_req = client
-            .post(&state.config.stellar_rpc_url)
+            .post(rpc_url)
             .json(&serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -71,8 +60,7 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
 
         match rpc_req {
             Ok(res) if res.status().is_success() => {
-                // Success - break out of retry loop
-                break;
+                return ("ok".to_string(), String::new());
             }
             Ok(res) => {
                 last_error = format!("HTTP {} response", res.status());
@@ -82,32 +70,62 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
             }
         }
 
-        // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
-        if rpc_attempts < max_attempts {
-            let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
+        // Exponential backoff: 2^(attempt) seconds, capped at 5 seconds
+        if attempt < max_attempts - 1 {
+            let backoff_duration = std::cmp::min(2u64.pow(attempt as u32), 5);
             sleep(TokioDuration::from_secs(backoff_duration)).await;
         }
     }
 
-    if rpc_attempts >= max_attempts {
-        rpc_status = "unreachable";
+    ("unreachable".to_string(), last_error)
+}
+
+/// Check Redis health and availability.
+async fn check_redis_health(redis: &crate::redis_cache::RedisCache) -> (String, String) {
+    if !redis.is_available() {
+        return ("not_configured".to_string(), String::new());
+    }
+    if !redis.ping().await {
+        return ("unreachable".to_string(), "Redis ping failed".to_string());
+    }
+    ("ok".to_string(), String::new())
+}
+
+/// Check price cache health.
+fn check_price_cache_health(cache: &crate::price_cache::PriceCache) -> (String, String) {
+    if cache.snapshot().is_empty() {
+        return ("not_ready".to_string(), "price cache is empty".to_string());
+    }
+    ("ok".to_string(), String::new())
+}
+
+/// `GET /api/v1/health` health-check endpoint.
+pub async fn health(State(state): State<AppState>) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let mut all_healthy = true;
+    let (db_status, db_error) = check_db_health(&state.db).await;
+    if db_status == "unreachable" {
         all_healthy = false;
     }
 
-    let mut redis_status = "ok";
-    let mut redis_error = String::new();
-    if !state.redis.is_available() {
-        redis_status = "not_configured";
-        all_healthy = false;
-    } else if !state.redis.ping().await {
-        redis_status = "unreachable";
-        redis_error = String::from("Redis ping failed");
+    let (rpc_status, rpc_error) = check_rpc_health(
+        &state.config.stellar_rpc_url,
+        state.config.rpc_health_timeout_secs,
+        state.config.rpc_health_retry_count,
+    ).await;
+    if rpc_status == "unreachable" {
         all_healthy = false;
     }
 
-    let mut price_cache_status = "ok";
-    if state.cache.snapshot().is_empty() {
-        price_cache_status = "not_ready";
+    let (redis_status, redis_error) = check_redis_health(&state.redis).await;
+    if redis_status == "unreachable" || redis_status == "not_configured" {
+        all_healthy = false;
+    }
+
+    let (price_cache_status, price_cache_error) = check_price_cache_health(&state.cache);
+    if price_cache_status == "not_ready" {
         all_healthy = false;
     }
 
@@ -122,9 +140,9 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
         },
         "errors": {
             "db": if db_status == "unreachable" { Some(db_error.clone()) } else { None },
-            "rpc": if rpc_status == "unreachable" { Some(last_error.clone()) } else { None },
+            "rpc": if rpc_status == "unreachable" { Some(rpc_error.clone()) } else { None },
             "redis": if redis_status == "unreachable" { Some(redis_error.clone()) } else { None },
-            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None }
+            "price_cache": if price_cache_status == "not_ready" { Some(price_cache_error.clone()) } else { None }
         }
     });
 
@@ -199,25 +217,17 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
 /// Validate and resolve pagination parameters.
 ///
 /// Rules:
-/// - `limit`: 1–100 inclusive (default 20). Returns 400 if outside range.
-/// - `offset`: ≥ 0 (default 0). Returns 400 if negative.
-fn validate_pagination(limit: Option<i64>, offset: Option<i64>) -> Result<(i64, i64), Response> {
+/// - `limit`: 1–100 inclusive (default 20). Returns error if outside range.
+/// - `offset`: ≥ 0 (default 0). Returns error if negative.
+fn validate_pagination(limit: Option<i64>, offset: Option<i64>) -> Result<(i64, i64), String> {
     let limit = limit.unwrap_or(20);
     let offset = offset.unwrap_or(0);
 
     if limit < 1 || limit > 100 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "limit must be between 1 and 100" })),
-        )
-            .into_response());
+        return Err("limit must be between 1 and 100".to_string());
     }
     if offset < 0 {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "offset must be >= 0" })),
-        )
-            .into_response());
+        return Err("offset must be >= 0".to_string());
     }
     Ok((limit, offset))
 }
@@ -289,10 +299,8 @@ pub async fn get_pools(
     let category = params.category.as_deref();
     let status = params.status.as_deref().unwrap_or("active");
 
-    let (limit, offset) = match validate_pagination(params.limit, params.offset) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
+    let (limit, offset) = validate_pagination(params.limit, params.offset)
+        .map_err(|e| crate::errors::AppError::BadRequest(e.to_string()))?;
 
     let db = state.db.as_ref().ok_or_else(|| {
         crate::errors::AppError::ServiceUnavailable("database not available".to_string())
@@ -302,7 +310,7 @@ pub async fn get_pools(
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        return Json(cached_response).into_response();
+        return Ok(Json(cached_response));
     }
 
     // Cache miss - fetch from database
@@ -330,7 +338,6 @@ pub async fn get_pools(
         .await;
 
     Ok(Json(json_response))
-}
 }
 
 // ── Task 3: User Prediction History API ──────────────────────────────────────
