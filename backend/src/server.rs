@@ -55,8 +55,13 @@ fn build_cors(config: &Config) -> CorsLayer {
         ])
 }
 
-/// Health-check handler.
-async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
+/// Simple health-check handler returning 200 OK.
+async fn health() -> Json<serde_json::Value> {
+    Json(json!({ "status": "ok" }))
+}
+
+/// Detailed health-check handler.
+async fn health_detailed(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
 
     let mut all_healthy = true;
@@ -279,6 +284,7 @@ pub fn build_router(
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/health/detailed", get(health_detailed))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
         .with_state(state)
@@ -342,6 +348,7 @@ fn build_router_with_db(
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/health/detailed", get(health_detailed))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
         .with_state(state)
