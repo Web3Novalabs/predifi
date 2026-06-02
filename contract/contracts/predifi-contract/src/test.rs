@@ -5129,6 +5129,26 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
 }
 
 #[test]
+fn test_paused_blocks_migrate_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    client.pause(&admin);
+    let result = client.try_migrate_state(&admin);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
 fn test_paused_blocks_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();

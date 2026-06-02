@@ -2146,6 +2146,7 @@ impl PredifiContract {
     /// automatically handled by Soroban's XDR codec — the removed fields are simply
     /// ignored on read, so no explicit data rewrite is required.
     pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "migrate_state")?;
 
