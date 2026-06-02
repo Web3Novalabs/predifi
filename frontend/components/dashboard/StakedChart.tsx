@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Bar, BarChart, ResponsiveContainer, XAxis, Tooltip, Cell } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChevronDown } from "lucide-react";
@@ -41,6 +42,8 @@ interface StakedChartProps {
 }
 
 export function StakedChart({ isLoading = false }: StakedChartProps) {
+    const skeletonHeights = useMemo(() => [55, 70, 55, 45, 90, 25, 75, 40, 70, 100, 70, 85], []);
+
     if (isLoading) {
         return (
             <Card className="bg-[#121212] border-none text-white h-full">
@@ -52,7 +55,7 @@ export function StakedChart({ isLoading = false }: StakedChartProps) {
                     </div>
                 </CardHeader>
                 <CardContent className="h-[240px] mt-4 flex items-end gap-2 px-6">
-                    {[55, 70, 55, 45, 90, 25, 75, 40, 70, 100, 70, 85].map((h, i) => (
+                    {skeletonHeights.map((h, i) => (
                         <Skeleton
                             key={i}
                             className="flex-1 rounded-t-sm"
@@ -63,6 +66,16 @@ export function StakedChart({ isLoading = false }: StakedChartProps) {
             </Card>
         );
     }
+
+    const chartCells = useMemo(() => 
+        data.map((entry, index) => (
+            <Cell
+                key={`cell-${index}`}
+                fill={entry.active ? '#37B7C3' : '#262626'}
+                className="transition-all duration-300 hover:opacity-80"
+            />
+        )),
+    []);
 
     return (
         <Card className="bg-[#121212] border-none text-white h-full">
@@ -90,13 +103,7 @@ export function StakedChart({ isLoading = false }: StakedChartProps) {
                         />
                         <Tooltip content={<CustomTooltip />} cursor={{ fill: 'transparent' }} />
                         <Bar dataKey="value" radius={[4, 4, 4, 4]}>
-                            {data.map((entry, index) => (
-                                <Cell
-                                    key={`cell-${index}`}
-                                    fill={entry.active ? '#37B7C3' : '#262626'}
-                                    className="transition-all duration-300 hover:opacity-80"
-                                />
-                            ))}
+                            {chartCells}
                         </Bar>
                     </BarChart>
                 </ResponsiveContainer>

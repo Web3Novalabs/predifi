@@ -28,8 +28,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((toast) => toast.id !== id));
   }, []);
 
+  const contextValue = React.useMemo(
+    () => ({ toasts, addToast, removeToast }),
+    [toasts, addToast, removeToast]
+  );
+
   return (
-    <ToastContext.Provider value={{ toasts, addToast, removeToast }}>
+    <ToastContext.Provider value={contextValue}>
       {children}
       <div
         className="fixed top-4 right-4 z-50 flex flex-col gap-2 w-full max-w-md pointer-events-none"

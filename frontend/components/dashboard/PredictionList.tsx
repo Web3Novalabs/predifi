@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, memo } from "react";
+import { useState, useCallback, useMemo, memo } from "react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -144,6 +144,17 @@ export function PredictionList() {
     setActiveTab("past");
   }, []);
 
+  /**
+   * Memoize the mapped cards so they are only re-calculated if the data changes.
+   * This saves a full array map and object creation on every render of the 
+   * parent PredictionList.
+   */
+  const renderedActivePredictions = useMemo(() => (
+    activePredictions.map((prediction) => (
+      <PredictionCard key={prediction.id} prediction={prediction} />
+    ))
+  ), []);
+
   return (
     <div className="space-y-6">
       {/* Tab bar */}
@@ -185,9 +196,7 @@ export function PredictionList() {
       {/* List */}
       <div className="space-y-4">
         {activeTab === "active" ? (
-          activePredictions.map((prediction) => (
-            <PredictionCard key={prediction.id} prediction={prediction} />
-          ))
+          renderedActivePredictions
         ) : (
           <div className="text-center py-10 text-zinc-500">
             No past predictions found
