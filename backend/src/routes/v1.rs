@@ -1,5 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -188,6 +190,34 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
     }
 }
 
+// ── Pagination validation ─────────────────────────────────────────────────────
+
+/// Validate and resolve pagination parameters.
+///
+/// Rules:
+/// - `limit`: 1–100 inclusive (default 20). Returns 400 if outside range.
+/// - `offset`: ≥ 0 (default 0). Returns 400 if negative.
+fn validate_pagination(limit: Option<i64>, offset: Option<i64>) -> Result<(i64, i64), Response> {
+    let limit = limit.unwrap_or(20);
+    let offset = offset.unwrap_or(0);
+
+    if limit < 1 || limit > 100 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "limit must be between 1 and 100" })),
+        )
+            .into_response());
+    }
+    if offset < 0 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "offset must be >= 0" })),
+        )
+            .into_response());
+    }
+    Ok((limit, offset))
+}
+
 // ── Task 2: Active Pools API ──────────────────────────────────────────────────
 
 /// Query parameters for the `GET /api/v1/pools` endpoint.
@@ -251,22 +281,25 @@ pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value>
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
-) -> Json<serde_json::Value> {
+) -> Response {
     let sort_by = params.sort_by.as_deref().unwrap_or("new");
     let category = params.category.as_deref();
     let status = params.status.as_deref().unwrap_or("active");
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+
+    let (limit, offset) = match validate_pagination(params.limit, params.offset) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
 
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return Json(json!({ "error": "database not available" })).into_response();
     };
 
     // Try to get from Redis cache first
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        return Json(cached_response);
+        return Json(cached_response).into_response();
     }
 
     // Cache miss - fetch from database
@@ -293,9 +326,9 @@ pub async fn get_pools(
                 .set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL)
                 .await;
 
-            Json(json_response)
+            Json(json_response).into_response()
         }
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
 }
 
@@ -315,12 +348,14 @@ pub async fn get_user_history(
     State(state): State<AppState>,
     Path(address): Path<String>,
     Query(params): Query<PaginationQuery>,
-) -> Json<serde_json::Value> {
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+) -> Response {
+    let (limit, offset) = match validate_pagination(params.limit, params.offset) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
 
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return Json(json!({ "error": "database not available" })).into_response();
     };
 
     match crate::db::get_user_prediction_history(db, &address, limit, offset).await {
@@ -329,8 +364,9 @@ pub async fn get_user_history(
             "predictions": rows,
             "limit": limit,
             "offset": offset,
-        })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        }))
+        .into_response(),
+        Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
 }
 
@@ -339,12 +375,14 @@ pub async fn get_user_predictions(
     State(state): State<AppState>,
     Path(address): Path<String>,
     Query(params): Query<PaginationQuery>,
-) -> Json<serde_json::Value> {
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+) -> Response {
+    let (limit, offset) = match validate_pagination(params.limit, params.offset) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
 
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return Json(json!({ "error": "database not available" })).into_response();
     };
 
     match crate::db::get_user_predictions(db, &address, limit, offset).await {
@@ -354,8 +392,9 @@ pub async fn get_user_predictions(
             "limit": limit,
             "offset": offset,
             "total_predictions": predictions.len(),
-        })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        }))
+        .into_response(),
+        Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
     }
 }
 
@@ -374,13 +413,15 @@ pub struct LeaderboardQuery {
 pub async fn get_leaderboard(
     State(state): State<AppState>,
     Query(params): Query<LeaderboardQuery>,
-) -> Json<serde_json::Value> {
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+) -> Response {
+    let (limit, offset) = match validate_pagination(params.limit, params.offset) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
     let rank_by = params.rank_by.as_deref().unwrap_or("volume");
 
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return Json(json!({ "error": "database not available" })).into_response();
     };
 
     match rank_by {
@@ -390,21 +431,20 @@ pub async fn get_leaderboard(
                 "rank_by": "winnings",
                 "limit": limit,
                 "offset": offset,
-            })),
-            Err(e) => Json(json!({ "error": e.to_string() })),
+            }))
+            .into_response(),
+            Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
         },
-        _ => {
-            // Default to volume ranking
-            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
-                Ok(users) => Json(json!({
-                    "leaderboard": users,
-                    "rank_by": "volume",
-                    "limit": limit,
-                    "offset": offset,
-                })),
-                Err(e) => Json(json!({ "error": e.to_string() })),
-            }
-        }
+        _ => match crate::db::get_users_by_betting_volume(db, limit, offset).await {
+            Ok(users) => Json(json!({
+                "leaderboard": users,
+                "rank_by": "volume",
+                "limit": limit,
+                "offset": offset,
+            }))
+            .into_response(),
+            Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
+        },
     }
 }
 
