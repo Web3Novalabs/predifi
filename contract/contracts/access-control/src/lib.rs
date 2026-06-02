@@ -127,12 +127,14 @@ pub enum Role {
 }
 
 #[contractevent(topics = ["admin_init"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminInitEvent {
     pub admin: Address,
 }
 
 #[contractevent(topics = ["role_assigned"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleAssignedEvent {
     pub admin: Address,
@@ -141,6 +143,7 @@ pub struct RoleAssignedEvent {
 }
 
 #[contractevent(topics = ["role_revoked"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleRevokedEvent {
     pub admin: Address,
@@ -149,6 +152,7 @@ pub struct RoleRevokedEvent {
 }
 
 #[contractevent(topics = ["role_transferred"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleTransferredEvent {
     pub admin: Address,
@@ -158,6 +162,7 @@ pub struct RoleTransferredEvent {
 }
 
 #[contractevent(topics = ["admin_transferred"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminTransferredEvent {
     pub admin: Address,
@@ -165,6 +170,7 @@ pub struct AdminTransferredEvent {
 }
 
 #[contractevent(topics = ["admin_transfer_proposed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AdminTransferProposedEvent {
     pub admin: Address,
@@ -172,6 +178,7 @@ pub struct AdminTransferProposedEvent {
 }
 
 #[contractevent(topics = ["all_roles_revoked"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AllRolesRevokedEvent {
     pub admin: Address,
@@ -221,15 +228,15 @@ pub enum PoolCategory {
 pub enum DataKey {
     /// Admin address: Admin -> Address
     Admin,
-    /// Proposed admin address awaiting acceptance: ProposedAdmin -> Address
+    /// Proposed admin address awaiting acceptance: `ProposedAdmin` -> Address
     ProposedAdmin,
-    /// Role assignment: Role(user_address, role) -> ()
+    /// Role assignment: `Role(user_address, role)` -> ()
     Role(Address, Role),
-    /// Pool data: Pool(pool_id) -> Pool
+    /// Pool data: `Pool(pool_id)` -> Pool
     Pool(u64),
-    /// Pool counter: PoolCount -> u64
+    /// Pool counter: `PoolCount` -> u64
     PoolCount,
-    /// Count of addresses currently holding the Operator role: OperatorCount -> u32
+    /// Count of addresses currently holding the Operator role: `OperatorCount` -> u32
     OperatorCount,
 }
 
@@ -253,7 +260,7 @@ impl AccessControl {
     /// 3. Use `assign_role` to grant `Operator` / `Oracle` roles as needed.
     /// 4. Pass this contract's address to `predifi_contract::init` as the
     ///    `access_control` argument so the main contract can verify permissions.
-    pub fn init(env: Env, admin: Address) {
+    pub fn init(env: &Env, admin: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             soroban_sdk::panic_with_error!(&env, PrediFiError::AlreadyInitializedOrConfigNotSet);
         }
@@ -262,29 +269,40 @@ impl AccessControl {
             .persistent()
             .set(&DataKey::Role(admin.clone(), Role::Admin), &());
 
-        AdminInitEvent { admin }.publish(&env);
+        AdminInitEvent { admin }.publish(env);
     }
 
-    pub fn get_admin(env: Env) -> Address {
+    /// Gets the current admin address.
+    ///
+    /// # Panics
+    /// Panics with "NotInitialized" if the contract has not been initialized.
+    #[must_use]
+    pub fn get_admin(env: &Env) -> Address {
         env.storage()
             .instance()
             .get(&DataKey::Admin)
             .expect("NotInitialized")
     }
 
-    pub fn get_proposed_admin(env: Env) -> Option<Address> {
+    /// Gets the proposed admin address if one exists.
+    #[must_use]
+    pub fn get_proposed_admin(env: &Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::ProposedAdmin)
     }
 
+    /// Assigns a role to a user.
+    ///
+    /// # Errors
+    /// Returns `Unauthorized` if the caller is not the current admin.
     pub fn assign_role(
-        env: Env,
+        env: &Env,
         admin_caller: Address,
         user: Address,
         role: Role,
     ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone());
+        let current_admin = Self::get_admin(env);
         if admin_caller != current_admin {
             return Err(PrediFiError::Unauthorized);
         }
@@ -311,19 +329,24 @@ impl AccessControl {
             user,
             role,
         }
-        .publish(&env);
+        .publish(env);
         Ok(())
     }
 
+    /// Revokes a role from a user.
+    ///
+    /// # Errors
+    /// Returns `Unauthorized` if the caller is not the current admin.
+    /// Returns `InsufficientPermissions` if the user does not have the specified role.
     pub fn revoke_role(
-        env: Env,
+        env: &Env,
         admin_caller: Address,
         user: Address,
         role: Role,
     ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone());
+        let current_admin = Self::get_admin(env);
         if admin_caller != current_admin {
             return Err(PrediFiError::Unauthorized);
         }
@@ -358,16 +381,23 @@ impl AccessControl {
             user,
             role,
         }
-        .publish(&env);
+        .publish(env);
         Ok(())
     }
 
-    pub fn has_role(env: Env, user: Address, role: Role) -> bool {
+    /// Checks if a user has a specific role.
+    #[must_use]
+    pub fn has_role(env: &Env, user: Address, role: Role) -> bool {
         env.storage().persistent().has(&DataKey::Role(user, role))
     }
 
+    /// Transfers a role from one user to another.
+    ///
+    /// # Errors
+    /// Returns `Unauthorized` if the caller is not the current admin.
+    /// Returns `InsufficientPermissions` if the source user does not have the specified role.
     pub fn transfer_role(
-        env: Env,
+        env: &Env,
         admin_caller: Address,
         from: Address,
         to: Address,
@@ -375,7 +405,7 @@ impl AccessControl {
     ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone());
+        let current_admin = Self::get_admin(env);
         if admin_caller != current_admin {
             return Err(PrediFiError::Unauthorized);
         }
@@ -422,41 +452,49 @@ impl AccessControl {
             to,
             role,
         }
-        .publish(&env);
+        .publish(env);
         Ok(())
     }
 
+    /// Transfers admin role to a new admin (legacy one-step transfer).
+    ///
+    /// # Errors
+    /// Returns `Unauthorized` if the caller is not the current admin.
     pub fn transfer_admin(
-        env: Env,
-        admin_caller: Address,
+        env: &Env,
+        admin_caller: &Address,
         new_admin: Address,
     ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone());
-        if admin_caller != current_admin {
+        let current_admin = Self::get_admin(env);
+        if admin_caller != &current_admin {
             return Err(PrediFiError::Unauthorized);
         }
 
-        Self::apply_admin_transfer(&env, current_admin.clone(), new_admin.clone());
+        Self::apply_admin_transfer(env, current_admin.clone(), &new_admin);
 
         AdminTransferredEvent {
             admin: current_admin,
             new_admin,
         }
-        .publish(&env);
+        .publish(env);
 
         Ok(())
     }
 
+    /// Proposes a new admin (two-step transfer, step 1).
+    ///
+    /// # Errors
+    /// Returns `Unauthorized` if the caller is not the current admin.
     pub fn propose_new_admin(
-        env: Env,
+        env: &Env,
         current_admin: Address,
         new_admin: Address,
     ) -> Result<(), PrediFiError> {
         current_admin.require_auth();
 
-        let stored_admin = Self::get_admin(env.clone());
+        let stored_admin = Self::get_admin(env);
         if current_admin != stored_admin {
             return Err(PrediFiError::Unauthorized);
         }
@@ -469,12 +507,16 @@ impl AccessControl {
             admin: current_admin,
             proposed_admin: new_admin,
         }
-        .publish(&env);
+        .publish(env);
 
         Ok(())
     }
 
-    pub fn accept_admin_role(env: Env, new_admin: Address) -> Result<(), PrediFiError> {
+    /// Accepts the admin role (two-step transfer, step 2).
+    ///
+    /// # Errors
+    /// Returns `Unauthorized` if the caller is not the proposed admin.
+    pub fn accept_admin_role(env: &Env, new_admin: Address) -> Result<(), PrediFiError> {
         new_admin.require_auth();
 
         let proposed_admin: Option<Address> = env.storage().instance().get(&DataKey::ProposedAdmin);
@@ -482,47 +524,51 @@ impl AccessControl {
             return Err(PrediFiError::Unauthorized);
         }
 
-        let current_admin = Self::get_admin(env.clone());
-        Self::apply_admin_transfer(&env, current_admin.clone(), new_admin.clone());
+        let current_admin = Self::get_admin(env);
+        Self::apply_admin_transfer(env, current_admin.clone(), &new_admin);
 
         AdminTransferredEvent {
             admin: current_admin,
             new_admin,
         }
-        .publish(&env);
+        .publish(env);
 
         Ok(())
     }
 
-    pub fn is_admin(env: Env, user: Address) -> bool {
+    /// Checks if a user is the current admin.
+    #[must_use]
+    pub fn is_admin(env: &Env, user: &Address) -> bool {
         let stored: Option<Address> = env.storage().instance().get(&DataKey::Admin);
         match stored {
-            Some(admin) => admin == user,
+            Some(admin) => admin == *user,
             None => false,
         }
     }
 
+    /// Revokes all roles from a user.
+    ///
+    /// # Errors
+    /// Returns `Unauthorized` if the caller is not the current admin.
     pub fn revoke_all_roles(
-        env: Env,
+        env: &Env,
         admin_caller: Address,
         user: Address,
     ) -> Result<(), PrediFiError> {
         admin_caller.require_auth();
 
-        let current_admin = Self::get_admin(env.clone());
+        let current_admin = Self::get_admin(env);
         if admin_caller != current_admin {
             return Err(PrediFiError::Unauthorized);
         }
 
-        for role in [
+        for role in &[
             Role::Admin,
             Role::Operator,
             Role::Moderator,
             Role::Oracle,
             Role::User,
-        ]
-        .iter()
-        {
+        ] {
             let key = DataKey::Role(user.clone(), role.clone());
             if env.storage().persistent().has(&key) {
                 env.storage().persistent().remove(&key);
@@ -546,12 +592,14 @@ impl AccessControl {
             admin: admin_caller,
             user,
         }
-        .publish(&env);
+        .publish(env);
 
         Ok(())
     }
 
-    pub fn has_any_role(env: Env, user: Address, roles: soroban_sdk::Vec<Role>) -> bool {
+    /// Checks if a user has any of the specified roles.
+    #[must_use]
+    pub fn has_any_role(env: &Env, user: &Address, roles: &soroban_sdk::Vec<Role>) -> bool {
         for role in roles.iter() {
             if env
                 .storage()
@@ -569,15 +617,16 @@ impl AccessControl {
     /// This is used by the predifi-contract to validate that `required_resolutions`
     /// does not exceed the number of active operators (which would make the pool
     /// permanently unresolvable).
-    pub fn get_operator_count(env: Env) -> u32 {
+    #[must_use]
+    pub fn get_operator_count(env: &Env) -> u32 {
         env.storage()
             .instance()
             .get(&DataKey::OperatorCount)
             .unwrap_or(0)
     }
 
-    fn apply_admin_transfer(env: &Env, current_admin: Address, new_admin: Address) {
-        env.storage().instance().set(&DataKey::Admin, &new_admin);
+    fn apply_admin_transfer(env: &Env, current_admin: Address, new_admin: &Address) {
+        env.storage().instance().set(&DataKey::Admin, new_admin);
         env.storage().instance().remove(&DataKey::ProposedAdmin);
 
         env.storage()

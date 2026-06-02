@@ -113,7 +113,7 @@ fn setup(
 /// Convenience: build a minimal two-outcome `PoolConfig`.
 fn two_outcome_config(env: &Env) -> PoolConfig {
     PoolConfig {
-            start_time: 0,
+        start_time: 0,
         description: String::from_str(env, "Edge case pool"),
         metadata_url: String::from_str(env, "ipfs://edge"),
         min_stake: 1i128,
@@ -140,7 +140,7 @@ fn two_outcome_config(env: &Env) -> PoolConfig {
 ///
 /// The contract asserts `end_time > current_time`, so equality is invalid.
 #[test]
-#[should_panic]
+#[should_panic(expected = "end_time must be in the future")]
 fn test_create_pool_end_time_equals_current_time_is_rejected() {
     let env = Env::default();
     let (client, token_client, _, _) = setup(&env);
@@ -162,7 +162,7 @@ fn test_create_pool_end_time_equals_current_time_is_rejected() {
 /// Creating a pool with `end_time == current_time + min_pool_duration - 1`
 /// (one second short of the minimum) must also be rejected.
 #[test]
-#[should_panic]
+#[should_panic(expected = "end_time must be at least min_pool_duration in the future")]
 fn test_create_pool_end_time_below_min_duration_is_rejected() {
     let env = Env::default();
     let (client, token_client, _, _) = setup(&env);
@@ -185,7 +185,7 @@ fn test_create_pool_end_time_below_min_duration_is_rejected() {
 /// Placing a prediction at the exact moment `current_time == pool.end_time`
 /// must be rejected — the betting window is half-open `[creation, end_time)`.
 #[test]
-#[should_panic]
+#[should_panic(expected = "Pool has ended")]
 fn test_place_prediction_at_exact_end_time_is_rejected() {
     let env = Env::default();
     let (client, token_client, token_admin_client, _) = setup(&env);

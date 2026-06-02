@@ -36,6 +36,7 @@ use axum::{
 };
 use serde::Serialize;
 use sqlx::PgPool;
+use crate::errors::AppError;
 
 use crate::db::ReferralEarningRow;
 use crate::response::ApiResponse;
@@ -59,7 +60,7 @@ pub struct ReferralStats {
 pub async fn get_referrals(
     Path(address): Path<String>,
     State(pool): State<PgPool>,
-) -> (StatusCode, Json<ApiResponse<ReferralStats>>) {
+) -> Result<(StatusCode, Json<ApiResponse<ReferralStats>>), AppError> {
     #[derive(sqlx::FromRow)]
     struct Row {
         total_volume: i64,
@@ -79,19 +80,19 @@ pub async fn get_referrals(
     .fetch_one(&pool)
     .await;
 
-    match result {
-        Ok(row) if row.unique_users == 0 => ApiResponse::error(
+    match result.await {
+        Ok(row) if row.unique_users == 0 => Ok(ApiResponse::error(
             StatusCode::NOT_FOUND,
             format!("no referrals found for {address}"),
-        ),
-        Ok(row) => ApiResponse::success(ReferralStats {
+        )),
+        Ok(row) => Ok(ApiResponse::success(ReferralStats {
             referrer: address,
             total_volume: row.total_volume,
             unique_users: row.unique_users,
-        }),
+        })),
         Err(err) => {
             tracing::error!(error = %err, "referrals query failed");
-            ApiResponse::error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            Err(AppError::from(err))
         }
     }
 }
@@ -111,23 +112,23 @@ pub struct ReferralEarningsResponse {
 pub async fn get_user_referral_earnings(
     Path(address): Path<String>,
     State(pool): State<PgPool>,
-) -> (StatusCode, Json<ApiResponse<ReferralEarningsResponse>>) {
+) -> Result<(StatusCode, Json<ApiResponse<ReferralEarningsResponse>>), AppError> {
     match crate::db::get_referral_earnings(&pool, &address).await {
-        Ok(rows) if rows.is_empty() => ApiResponse::error(
+        Ok(rows) if rows.is_empty() => Ok(ApiResponse::error(
             StatusCode::NOT_FOUND,
             format!("no referral earnings found for {address}"),
-        ),
+        )),
         Ok(rows) => {
             let total_earned = rows.iter().map(|r| r.total_earned).sum();
-            ApiResponse::success(ReferralEarningsResponse {
+            Ok(ApiResponse::success(ReferralEarningsResponse {
                 referrer: address,
                 total_earned,
                 pools: rows,
-            })
+            }))
         }
         Err(err) => {
             tracing::error!(error = %err, "referral earnings query failed");
-            ApiResponse::error(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            Err(AppError::from(err))
         }
     }
 }

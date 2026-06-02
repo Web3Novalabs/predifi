@@ -1,20 +1,32 @@
 "use client";
 import { ChevronDown } from "lucide-react";
-import React, { useState } from "react";
+import React, { useState, useCallback, memo, useMemo } from "react";
 
-// 1. Define the shape of your data
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
 interface FAQItem {
   question: string;
   answer: string;
 }
 
-// 2. Define the props for the child component
 interface AccordionItemProps {
+  index: number;
   question: string;
   answer: string;
   isOpen: boolean;
-  onClick: () => void;
+  /**
+   * Stable parent-level toggle handler. Receives the item index so the child
+   * does not need its own closure over a changing value.
+   * Parent wraps this with useCallback so React.memo can bail out correctly.
+   */
+  onToggle: (index: number) => void;
 }
+
+// ---------------------------------------------------------------------------
+// Data (module-level constant — never recreated)
+// ---------------------------------------------------------------------------
 
 const faqData: FAQItem[] = [
   {
@@ -39,23 +51,47 @@ const faqData: FAQItem[] = [
   },
 ];
 
-function AccordionItem({
+// ---------------------------------------------------------------------------
+// AccordionItem — memoized child component
+//
+// Wrapped with React.memo so it only re-renders when its own props change.
+//
+// Without memo, every FAQ state update (openIndex change) would re-render
+// all four items even though only one actually changed.
+//
+// The parent passes `onToggle` (a stable useCallback reference) and `index`
+// as a plain number. The child creates its own stable `handleClick` with
+// useCallback so the button's onClick reference is also stable between renders.
+// ---------------------------------------------------------------------------
+
+const AccordionItem = memo(function AccordionItem({
+  index,
   question,
   answer,
   isOpen,
-  onClick,
+  onToggle,
 }: AccordionItemProps) {
+  /**
+   * Stable click handler scoped to this item.
+   * useCallback here is valid — it is called at the top level of the component,
+   * not inside a loop. `onToggle` is stable (parent useCallback), and `index`
+   * is a primitive that never changes for a given list position.
+   */
+  const handleClick = useCallback(() => {
+    onToggle(index);
+  }, [onToggle, index]);
+
   return (
     <div className="border border-[#FFFFFF1A] rounded-[12px] overflow-hidden transition-all duration-300">
       <button
-        onClick={onClick}
+        onClick={handleClick}
         className="w-full flex items-center justify-between p-4 text-left focus:outline-none group"
       >
         <span className="text-sm md:text-[18px] font-medium text-[#FFFFFFCC] group-hover:text-white transition-colors">
           {question}
         </span>
 
-        {/* Chevron Icon */}
+        {/* Chevron rotates when the item is open */}
         <ChevronDown
           className={`w-5 h-5 text-[#FFFFFF80] transition-transform duration-300 ${
             isOpen ? "rotate-180" : "rotate-0"
@@ -63,7 +99,7 @@ function AccordionItem({
         />
       </button>
 
-      {/* Answer Section with smooth transition */}
+      {/* Answer — CSS grid trick for smooth height transition */}
       <div
         className={`grid transition-[grid-template-rows] duration-300 ease-out ${
           isOpen ? "grid-rows-[1fr] pb-6" : "grid-rows-[0fr]"
@@ -77,15 +113,35 @@ function AccordionItem({
       </div>
     </div>
   );
-}
+});
+
+AccordionItem.displayName = "AccordionItem";
+
+// ---------------------------------------------------------------------------
+// FAQ — parent list component
+//
+// Memoization strategy:
+//   - AccordionItem is wrapped with React.memo (above).
+//   - handleToggle is wrapped with useCallback so its reference is stable
+//     across re-renders. Without useCallback, a new function would be created
+//     on every render, defeating React.memo's shallow-equality check and
+//     causing all items to re-render on every click.
+//   - The child receives `onToggle` + `index` (a primitive) instead of a
+//     pre-bound `() => handleToggle(index)` arrow function. This avoids
+//     creating new inline closures inside .map() which would also defeat memo.
+// ---------------------------------------------------------------------------
 
 function FAQ() {
-  // Explicitly typing state as number or null
   const [openIndex, setOpenIndex] = useState<number | null>(null);
 
-  const handleToggle = (index: number) => {
-    setOpenIndex(openIndex === index ? null : index);
-  };
+  /**
+   * Stable toggle handler — memoized so AccordionItem's React.memo check
+   * is not defeated by a new function reference on every render.
+   * Uses the functional updater form so it has no dependency on `openIndex`.
+   */
+  const handleToggle = useCallback((index: number) => {
+    setOpenIndex((prev) => (prev === index ? null : index));
+  }, []); // setOpenIndex is stable — no deps needed
 
   return (
     <div className="py-[100px] px-5 md:px-[75px]">
@@ -95,15 +151,18 @@ function FAQ() {
         </h3>
 
         <div className="flex flex-col gap-4">
-          {faqData.map((item, index) => (
-            <AccordionItem
-              key={index}
-              question={item.question}
-              answer={item.answer}
-              isOpen={openIndex === index}
-              onClick={() => handleToggle(index)}
-            />
-          ))}
+          {useMemo(() => (
+            faqData.map((item, index) => (
+              <AccordionItem
+                key={item.question}
+                index={index}
+                question={item.question}
+                answer={item.answer}
+                isOpen={openIndex === index}
+                onToggle={handleToggle}
+              />
+            ))
+          ), [openIndex, handleToggle])}
         </div>
       </div>
     </div>

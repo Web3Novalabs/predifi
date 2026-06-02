@@ -1,4 +1,5 @@
-use std::{collections::HashMap, env, fmt, num::ParseIntError};
+use std::{collections::HashMap, env, num::ParseIntError};
+use predifi_errors::ConfigError;
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 3000;
@@ -8,6 +9,7 @@ const DEFAULT_DB_MIN_CONNECTIONS: u32 = 1;
 const DEFAULT_DB_ACQUIRE_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_RPC_HEALTH_TIMEOUT_SECS: u64 = 2;
 const DEFAULT_RPC_HEALTH_RETRY_COUNT: u8 = 3;
+const DEFAULT_RPC_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
@@ -23,19 +25,38 @@ pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
+    /// IP address the HTTP server binds to (default `0.0.0.0`).
     pub host: String,
+    /// TCP port the HTTP server listens on (default `3000`).
     pub port: u16,
+    /// PostgreSQL connection string (default points to a local `predifi` DB).
     pub database_url: String,
+    /// Maximum number of connections in the SQLx pool (default `10`).
     pub db_max_connections: u32,
+    /// Minimum number of idle connections kept alive in the pool (default `1`).
     pub db_min_connections: u32,
+    /// Seconds to wait when acquiring a connection from the pool (default `30`).
     pub db_acquire_timeout_secs: u64,
+    /// Per-attempt timeout in seconds for the Stellar RPC health check (default `2`).
     pub rpc_health_timeout_secs: u64,
+    /// Number of times to retry the Stellar RPC health check before reporting failure
+    /// (default `3`).
     pub rpc_health_retry_count: u8,
+    /// Timeout in seconds for general Stellar RPC calls (default `10`).
+    pub rpc_timeout_secs: u64,
+    /// Tracing log level passed to `RUST_LOG` / `EnvFilter` (default `"info"`).
     pub log_level: String,
+    /// Runtime environment, e.g. "production", "development", "test" (default "development").
+    pub app_env: String,
+    /// Protocol treasury fee in basis points (default `300` = 3 %).
     pub treasury_fee_bps: u32,
+    /// Referral share of the protocol fee in basis points (default `5000` = 50 % of the fee).
     pub referral_fee_bps: u32,
+    /// Stellar Soroban RPC endpoint URL (default: testnet).
     pub stellar_rpc_url: String,
+    /// Optional Sentry DSN for error reporting. `None` disables Sentry.
     pub sentry_dsn: Option<String>,
+    /// Redis connection URL (default `redis://localhost:6379`).
     pub redis_url: String,
     /// Validated list of origins permitted by the CORS policy.
     ///
@@ -56,41 +77,52 @@ impl Config {
     }
 
     fn from_map(vars: &HashMap<String, String>) -> Result<Self, ConfigError> {
-        let host = get_string(vars, "APP_HOST", DEFAULT_HOST);
-        let port = get_u16(vars, "APP_PORT", DEFAULT_PORT)?;
-        let database_url = get_string(vars, "DATABASE_URL", DEFAULT_DATABASE_URL);
-        let db_max_connections = get_u32(vars, "DB_MAX_CONNECTIONS", DEFAULT_DB_MAX_CONNECTIONS)?;
-        let db_min_connections = get_u32(vars, "DB_MIN_CONNECTIONS", DEFAULT_DB_MIN_CONNECTIONS)?;
+        let host = get_string(vars, "PREDIFI_APP_HOST", DEFAULT_HOST);
+        let port = get_u16(vars, "PREDIFI_APP_PORT", DEFAULT_PORT)?;
+        let database_url = get_string(vars, "PREDIFI_DATABASE_URL", DEFAULT_DATABASE_URL);
+        let db_max_connections =
+            get_u32(vars, "PREDIFI_DB_MAX_CONNECTIONS", DEFAULT_DB_MAX_CONNECTIONS)?;
+        let db_min_connections =
+            get_u32(vars, "PREDIFI_DB_MIN_CONNECTIONS", DEFAULT_DB_MIN_CONNECTIONS)?;
         let db_acquire_timeout_secs = get_u64(
             vars,
-            "DB_ACQUIRE_TIMEOUT_SECS",
+            "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
             DEFAULT_DB_ACQUIRE_TIMEOUT_SECS,
         )?;
         let rpc_health_timeout_secs = get_u64(
             vars,
-            "RPC_HEALTH_TIMEOUT_SECS",
+            "PREDIFI_RPC_HEALTH_TIMEOUT_SECS",
             DEFAULT_RPC_HEALTH_TIMEOUT_SECS,
         )?;
         let rpc_health_retry_count = get_u8(
             vars,
-            "RPC_HEALTH_RETRY_COUNT",
+            "PREDIFI_RPC_HEALTH_RETRY_COUNT",
             DEFAULT_RPC_HEALTH_RETRY_COUNT,
         )?;
+        let rpc_timeout_secs = get_u64(
+            vars,
+            "RPC_TIMEOUT_SECS",
+            DEFAULT_RPC_TIMEOUT_SECS,
+        )?;
         let log_level = get_string(vars, "RUST_LOG", DEFAULT_LOG_LEVEL);
-        let treasury_fee_bps = get_u32(vars, "TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
-        let referral_fee_bps = get_u32(vars, "REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
-        let stellar_rpc_url = get_string(vars, "STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
-        let sentry_dsn = vars.get("SENTRY_DSN").cloned();
-        let redis_url = get_string(vars, "REDIS_URL", DEFAULT_REDIS_URL);
+        let app_env = get_string(vars, "PREDIFI_APP_ENV", "development");
+        let treasury_fee_bps = get_u32(vars, "PREDIFI_TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
+        let referral_fee_bps = get_u32(vars, "PREDIFI_REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
+        let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
+        let sentry_dsn = vars.get("PREDIFI_SENTRY_DSN").cloned();
+        let redis_url = get_string(vars, "PREDIFI_REDIS_URL", DEFAULT_REDIS_URL);
+
+        // Parse and strictly validate CORS origins.
+        let cors_allowed_origins = parse_cors_origins(vars)?;
 
         // Parse and strictly validate CORS origins.
         let cors_allowed_origins = parse_cors_origins(vars)?;
 
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
-                key: "DB_MIN_CONNECTIONS",
+                key: "PREDIFI_DB_MIN_CONNECTIONS",
                 reason: format!(
-                    "must be <= DB_MAX_CONNECTIONS ({}), got {}",
+                    "must be <= PREDIFI_DB_MAX_CONNECTIONS ({}), got {}",
                     db_max_connections, db_min_connections
                 ),
             });
@@ -105,7 +137,9 @@ impl Config {
             db_acquire_timeout_secs,
             rpc_health_timeout_secs,
             rpc_health_retry_count,
+            rpc_timeout_secs,
             log_level,
+            app_env,
             treasury_fee_bps,
             referral_fee_bps,
             stellar_rpc_url,
@@ -115,10 +149,16 @@ impl Config {
         })
     }
 
+    /// Return the `host:port` string used to bind the TCP listener.
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
 
+    /// Build a minimal [`Config`] suitable for unit tests.
+    ///
+    /// Uses `127.0.0.1:0` (OS-assigned port), an in-memory-style Postgres URL,
+    /// and the compiled-in fee defaults so tests do not depend on environment
+    /// variables.
     #[cfg(test)]
     pub fn default_for_test() -> Self {
         Self {
@@ -130,7 +170,9 @@ impl Config {
             db_acquire_timeout_secs: 1,
             rpc_health_timeout_secs: 2,
             rpc_health_retry_count: 3,
+            rpc_timeout_secs: 10,
             log_level: String::from("debug"),
+            app_env: String::from("test"),
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
@@ -144,16 +186,35 @@ impl Config {
     }
 }
 
+// ConfigError moved to the shared `predifi-errors` crate and re-exported when
+// that crate is used with the `std` feature. See `contracts/predifi-errors`.
+/// Error returned when a configuration value cannot be parsed or is logically invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
+    /// An environment variable was set but its value could not be parsed as the
+    /// expected numeric type.
     InvalidNumber {
+        /// Name of the environment variable.
         key: &'static str,
+        /// The raw string value that failed to parse.
         value: String,
+        /// Human-readable parse error from the standard library.
         reason: String,
     },
+    /// An environment variable was set to a syntactically valid string but the
+    /// value violates a semantic constraint (e.g. min > max, invalid URL).
     InvalidValue {
+        /// Name of the environment variable.
         key: &'static str,
+        /// Human-readable description of the constraint that was violated.
         reason: String,
+    },
+    /// A required environment variable is absent and has no compiled-in default.
+    MissingRequired {
+        /// Name of the missing environment variable.
+        key: &'static str,
+        /// Human-readable description of what the variable is used for.
+        description: &'static str,
     },
 }
 
@@ -165,6 +226,13 @@ impl fmt::Display for ConfigError {
             }
             Self::InvalidValue { key, reason } => {
                 write!(f, "invalid value for {}: {}", key, reason)
+            }
+            Self::MissingRequired { key, description } => {
+                write!(
+                    f,
+                    "required environment variable '{}' is not set ({})",
+                    key, description
+                )
             }
         }
     }
@@ -370,6 +438,21 @@ fn to_number_error(key: &'static str, value: &str, err: ParseIntError) -> Config
     }
 }
 
+/// Return the value of `key` from `vars`, or `Err(ConfigError::MissingRequired)` if absent.
+///
+/// Use this for environment variables that **must** be explicitly set in
+/// production deployments (i.e. variables with no safe compiled-in default).
+#[allow(dead_code)]
+fn get_required_string(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+    description: &'static str,
+) -> Result<String, ConfigError> {
+    vars.get(key)
+        .cloned()
+        .ok_or(ConfigError::MissingRequired { key, description })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,14 +479,17 @@ mod tests {
 
     #[test]
     fn config_rejects_non_numeric_port() {
-        let vars = HashMap::from([(String::from("APP_PORT"), String::from("not-a-number"))]);
+        let vars = HashMap::from([(
+            String::from("PREDIFI_APP_PORT"),
+            String::from("not-a-number"),
+        )]);
         let error = Config::from_map(&vars).expect_err("port must be numeric");
 
         assert!(
             matches!(
                 error,
                 ConfigError::InvalidNumber {
-                    key: "APP_PORT",
+                    key: "PREDIFI_APP_PORT",
                     ..
                 }
             ),
@@ -414,8 +500,14 @@ mod tests {
     #[test]
     fn config_rejects_min_connections_larger_than_max() {
         let vars = HashMap::from([
-            (String::from("DB_MIN_CONNECTIONS"), String::from("20")),
-            (String::from("DB_MAX_CONNECTIONS"), String::from("10")),
+            (
+                String::from("PREDIFI_DB_MIN_CONNECTIONS"),
+                String::from("20"),
+            ),
+            (
+                String::from("PREDIFI_DB_MAX_CONNECTIONS"),
+                String::from("10"),
+            ),
         ]);
         let error = Config::from_map(&vars).expect_err("min > max must be rejected");
 
@@ -423,7 +515,7 @@ mod tests {
             matches!(
                 error,
                 ConfigError::InvalidValue {
-                    key: "DB_MIN_CONNECTIONS",
+                    key: "PREDIFI_DB_MIN_CONNECTIONS",
                     ..
                 }
             ),

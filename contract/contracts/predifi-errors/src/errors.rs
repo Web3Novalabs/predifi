@@ -1,8 +1,8 @@
-//! # PrediFi Error Code Reference
+//! # `PrediFi` Error Code Reference
 //!
-//! This module defines all error codes emitted by PrediFi smart contracts.
+//! This module defines all error codes emitted by `PrediFi` smart contracts.
 //! Error codes are designed to be machine-readable so that off-chain monitoring
-//! tools (Grafana, SIEM, PagerDuty) can automatically route alerts.
+//! tools (Grafana, SIEM, `PagerDuty`) can automatically route alerts.
 //!
 //! ## Alert Severity Tiers
 //!
@@ -45,7 +45,7 @@
 
 use soroban_sdk::contracterror;
 
-/// Global error enum for PrediFi smart contracts.
+/// Global error enum for `PrediFi` smart contracts.
 /// The error type covers all cases across Predifi contracts.
 /// Gap-based numbering allows future error codes to be added without
 /// renumbering existing ones or breaking client-side mappings.
@@ -160,19 +160,21 @@ pub enum PrediFiError {
     RateLimitOrSuspiciousActivity = 190,
 
     // -- Pool Configuration (200) ----------------------------------------------
-    /// required_resolutions exceeds the number of active operators; pool can never be resolved.
+    /// `required_resolutions` exceeds the number of active operators; pool can never be resolved.
     RequiredResolutionsExceedOperators = 200,
 }
 
 impl PrediFiError {
     /// Returns the numeric error code for this error.
     /// Useful for frontend error handling and logging.
+    #[must_use]
     pub const fn code(&self) -> u32 {
         *self as u32
     }
 
     /// Returns the error category as a string.
     /// Useful for grouping errors in logs and analytics.
+    #[must_use]
     pub const fn category(&self) -> &'static str {
         match self {
             Self::NotInitialized | Self::AlreadyInitializedOrConfigNotSet => "initialization",
@@ -210,6 +212,7 @@ impl PrediFiError {
     ///
     /// These labels are useful when explorer output only shows numeric
     /// contract error codes and off-chain tools need a deterministic mapping.
+    #[must_use]
     pub const fn label(&self) -> &'static str {
         match self {
             Self::NotInitialized => "INIT_NOT_INITIALIZED",
@@ -260,6 +263,7 @@ impl PrediFiError {
 
     /// Returns whether this error is recoverable by the user.
     /// Non-recoverable errors typically indicate system issues or bugs.
+    #[must_use]
     pub const fn is_recoverable(&self) -> bool {
         match self {
             // Non-recoverable: system/contract issues
@@ -275,6 +279,7 @@ impl PrediFiError {
             _ => true,
         }
     }
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             // Initialization & Configuration
@@ -805,8 +810,16 @@ mod tests {
         ];
         for v in variants {
             assert!(!v.label().is_empty(), "label empty for code {}", v.code());
-            assert!(!v.as_str().is_empty(), "message empty for code {}", v.code());
-            assert!(!v.category().is_empty(), "category empty for code {}", v.code());
+            assert!(
+                !v.as_str().is_empty(),
+                "message empty for code {}",
+                v.code()
+            );
+            assert!(
+                !v.category().is_empty(),
+                "category empty for code {}",
+                v.code()
+            );
         }
     }
 }

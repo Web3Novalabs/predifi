@@ -11,17 +11,26 @@
 //! sync::run_full_sync(&db, &config).await?;
 //! ```
 
+use std::time::Duration;
 use sqlx::PgPool;
+use crate::errors::AppError;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
 
+/// Default timeout for Stellar RPC calls in the sync worker (seconds).
+const SYNC_RPC_TIMEOUT_SECS: u64 = 10;
+
 /// Result of a single pool sync operation.
 #[derive(Debug)]
 pub struct PoolSyncResult {
+    /// On-chain pool identifier.
     pub pool_id: i64,
+    /// `total_stake` value read from the database before the sync.
     pub db_stake: i64,
+    /// `total_stake` value returned by the Soroban contract.
     pub contract_stake: i64,
+    /// `true` if the database row was updated to match the contract.
     pub fixed: bool,
 }
 
@@ -43,7 +52,10 @@ async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(SYNC_RPC_TIMEOUT_SECS))
+        .build()
+        .expect("valid reqwest client");
     let response = client.post(&rpc_url).json(&payload).send().await.ok()?;
 
     let body: serde_json::Value = response.json().await.ok()?;
@@ -80,7 +92,7 @@ fn parse_total_stake_from_rpc(body: &serde_json::Value) -> Option<i64> {
 }
 
 /// Fix the DB `total_stake` for a pool by updating it to match on-chain state.
-async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result<(), sqlx::Error> {
+async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result<(), AppError> {
     sqlx::query!(
         "UPDATE pools SET total_stake = $1 WHERE pool_id = $2",
         correct_stake,
@@ -102,7 +114,7 @@ async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result
 pub async fn run_full_sync(
     db: &PgPool,
     config: &Config,
-) -> Result<Vec<PoolSyncResult>, sqlx::Error> {
+) -> Result<Vec<PoolSyncResult>, AppError> {
     info!("starting full contract-DB state sync");
 
     // Fetch all pool IDs and their current DB total_stake.

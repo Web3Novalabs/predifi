@@ -18,13 +18,16 @@
         "next": "15.1.0",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
+        "react-window": "1.8.10",
         "recharts": "^3.7.0",
+        "swr": "^2.4.1",
         "tailwind-merge": "^2.3.0"
     },
     "devDependencies": {
         "@types/node": "^20",
         "@types/react": "^19",
         "@types/react-dom": "^19",
+        "@types/react-window": "1.8.8",
         "autoprefixer": "^10.4.19",
         "eslint": "^9.39.2",
         "eslint-config-next": "16.1.6",

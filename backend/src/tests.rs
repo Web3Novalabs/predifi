@@ -27,10 +27,15 @@ async fn body_string(body: axum::body::Body) -> String {
 /// GET / must return HTTP 200.
 #[tokio::test]
 async fn root_returns_200() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 }
@@ -38,10 +43,15 @@ async fn root_returns_200() {
 /// GET /health must return HTTP 200 with `{"status":"ok"}` in the body.
 #[tokio::test]
 async fn health_returns_200_with_ok_body() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -55,10 +65,15 @@ async fn health_returns_200_with_ok_body() {
 /// GET /api/v1/health must return HTTP 200 from the nested v1 router.
 #[tokio::test]
 async fn api_v1_health_returns_200_with_versioned_body() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -72,10 +87,15 @@ async fn api_v1_health_returns_200_with_versioned_body() {
 /// GET /api/v1 must return HTTP 200 from the version discovery route.
 #[tokio::test]
 async fn api_v1_index_returns_200() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 }
@@ -83,10 +103,15 @@ async fn api_v1_index_returns_200() {
 /// GET /metrics must return HTTP 200 and expose Prometheus text format.
 #[tokio::test]
 async fn metrics_endpoint_returns_200() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/metrics"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/metrics"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_string(response.into_body()).await;
@@ -101,10 +126,15 @@ async fn api_v1_fees_returns_config_values() {
     config.treasury_fee_bps = 400;
     config.referral_fee_bps = 6000;
 
-    let response = build_router(config, PriceCache::new())
-        .oneshot(get("/api/v1/fees"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/fees"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -122,10 +152,15 @@ async fn api_v1_fees_returns_config_values() {
 /// GET /nonexistent must return HTTP 404 (Axum's built-in fallback).
 #[tokio::test]
 async fn unknown_route_returns_404() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/nonexistent"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/nonexistent"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
@@ -133,10 +168,15 @@ async fn unknown_route_returns_404() {
 /// Verify the middleware does not alter the status code of a 200 response.
 #[tokio::test]
 async fn middleware_does_not_alter_200_status() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -148,10 +188,15 @@ async fn middleware_does_not_alter_200_status() {
 /// Verify the middleware does not alter the status code of a 404 response.
 #[tokio::test]
 async fn middleware_does_not_alter_404_status() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/no-such-path"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/no-such-path"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -171,10 +216,15 @@ async fn middleware_handles_multiple_requests_sequentially() {
     ];
 
     for (path, expected_status) in paths_and_expected {
-        let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-            .oneshot(get(path))
-            .await
-            .expect("request failed");
+        let response = build_router(
+            Config::default_for_test(),
+            PriceCache::new(),
+            RedisCache::disabled(),
+            crate::ws::EventBus::new(),
+        )
+        .oneshot(get(path))
+        .await
+        .expect("request failed");
 
         assert_eq!(
             response.status(),
@@ -187,17 +237,22 @@ async fn middleware_handles_multiple_requests_sequentially() {
 /// CORS headers must be present when a request comes from an allowed origin.
 #[tokio::test]
 async fn cors_allows_allowed_origin() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(
-            Request::builder()
-                .method(Method::GET)
-                .uri("/health")
-                .header(header::ORIGIN, "http://localhost:5173")
-                .body(axum::body::Body::empty())
-                .expect("failed to build request"),
-        )
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(
+        Request::builder()
+            .method(Method::GET)
+            .uri("/health")
+            .header(header::ORIGIN, "http://localhost:5173")
+            .body(axum::body::Body::empty())
+            .expect("failed to build request"),
+    )
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -216,18 +271,23 @@ async fn cors_allows_allowed_origin() {
 /// Preflight OPTIONS request must return 200 for allowed origins.
 #[tokio::test]
 async fn cors_handles_preflight_request() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(
-            Request::builder()
-                .method(Method::OPTIONS)
-                .uri("/health")
-                .header(header::ORIGIN, "http://localhost:5173")
-                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
-                .body(axum::body::Body::empty())
-                .expect("failed to build request"),
-        )
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(
+        Request::builder()
+            .method(Method::OPTIONS)
+            .uri("/health")
+            .header(header::ORIGIN, "http://localhost:5173")
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+            .body(axum::body::Body::empty())
+            .expect("failed to build request"),
+    )
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 }
@@ -366,7 +426,12 @@ async fn cors_respects_custom_origin_list() {
 /// Verify that the rate limiter returns 429 Too Many Requests after exceeding the limit.
 #[tokio::test]
 async fn rate_limiting_returns_429_after_burst() {
-    let app = build_router(Config::default_for_test(), PriceCache::new());
+    let app = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    );
 
     // The limit is 50 requests burst.
     // We fire 50 requests which should all be 200 OK.
@@ -392,10 +457,15 @@ async fn rate_limiting_returns_429_after_burst() {
 /// Test that /api/v1/health returns 200 with dependency status when everything is OK.
 #[tokio::test]
 async fn api_v1_health_returns_200_with_dependency_status() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -425,10 +495,15 @@ async fn api_v1_health_returns_200_with_dependency_status() {
 /// Test that /health returns 200 with dependency status when everything is OK.
 #[tokio::test]
 async fn root_health_returns_200_with_dependency_status() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -450,10 +525,15 @@ async fn root_health_returns_200_with_dependency_status() {
 /// Test that /api/v1/health reports db as 'not_configured' when no database is provided.
 #[tokio::test]
 async fn api_v1_health_reports_db_not_configured_without_pool() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -467,10 +547,15 @@ async fn api_v1_health_reports_db_not_configured_without_pool() {
 /// Test that /health reports db as 'not_configured' when no database is provided.
 #[tokio::test]
 async fn root_health_reports_db_not_configured_without_pool() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -484,10 +569,15 @@ async fn root_health_reports_db_not_configured_without_pool() {
 /// Test that /api/v1/health returns the "ok" status when healthy.
 #[tokio::test]
 async fn api_v1_health_status_is_ok_when_healthy() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -501,10 +591,15 @@ async fn api_v1_health_status_is_ok_when_healthy() {
 /// Test that /health returns the "ok" status when healthy.
 #[tokio::test]
 async fn root_health_status_is_ok_when_healthy() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -518,10 +613,15 @@ async fn root_health_status_is_ok_when_healthy() {
 /// Test that health endpoint includes the version from Cargo.toml.
 #[tokio::test]
 async fn health_includes_cargo_version() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -544,10 +644,15 @@ async fn api_v1_health_returns_503_when_rpc_unreachable() {
     // Point RPC to an invalid/unreachable endpoint to simulate failure
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -574,10 +679,15 @@ async fn root_health_returns_503_when_rpc_unreachable() {
     // Point RPC to an invalid/unreachable endpoint to simulate failure
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -602,10 +712,15 @@ async fn health_503_response_includes_dependency_details() {
     let mut config = Config::default_for_test();
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -631,10 +746,15 @@ async fn api_v1_health_returns_503_when_redis_unreachable() {
     // Create a mock Redis cache that always fails ping
     let redis = RedisCache::disabled();
 
-    let response = build_router(Config::default_for_test(), PriceCache::new(), redis, crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        redis,
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -660,10 +780,15 @@ async fn root_health_returns_503_when_redis_unreachable() {
     // Create a mock Redis cache that always fails ping
     let redis = RedisCache::disabled();
 
-    let response = build_router(Config::default_for_test(), PriceCache::new(), redis)
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        redis,
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -688,10 +813,15 @@ async fn health_503_response_includes_redis_dependency_details() {
     // Create a mock Redis cache that always fails ping
     let redis = RedisCache::disabled();
 
-    let response = build_router(Config::default_for_test(), PriceCache::new(), redis)
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        redis,
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -713,10 +843,15 @@ async fn api_v1_health_returns_503_when_price_cache_not_ready() {
     // Create a price cache that is empty
     let cache = PriceCache::new();
 
-    let response = build_router(Config::default_for_test(), cache, RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        cache,
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -742,10 +877,15 @@ async fn root_health_returns_503_when_price_cache_not_ready() {
     // Create a price cache that is empty
     let cache = PriceCache::new();
 
-    let response = build_router(Config::default_for_test(), cache, RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        cache,
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -770,10 +910,15 @@ async fn health_503_response_includes_price_cache_dependency_details() {
     // Create a price cache that is empty
     let cache = PriceCache::new();
 
-    let response = build_router(Config::default_for_test(), cache, RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        cache,
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -794,10 +939,15 @@ async fn api_v1_health_includes_error_details() {
     // Create a mock Redis cache that always fails ping
     let redis = RedisCache::disabled();
 
-    let response = build_router(Config::default_for_test(), PriceCache::new(), redis, crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        redis,
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -815,10 +965,15 @@ async fn api_v1_health_includes_error_details() {
 /// GET /api/v1/users/:address/referrals without a DB returns 503.
 #[tokio::test]
 async fn user_referrals_without_db_returns_503() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/users/GABC123/referrals"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/users/GABC123/referrals"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -863,10 +1018,15 @@ async fn test_odds_calculation() {
 /// Test pool details endpoint returns error when database is not available.
 #[tokio::test]
 async fn api_v1_pool_details_returns_error_without_db() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/pools/1"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/pools/1"))
+    .await
+    .expect("request failed");
 
     // Note: This will likely return 429 due to rate limiting in tests
     // In a real environment with DB, it would return 200 with error message
@@ -879,12 +1039,17 @@ async fn api_v1_pool_details_returns_error_without_db() {
 /// Test user predictions endpoint returns error when database is not available.
 #[tokio::test]
 async fn api_v1_user_predictions_returns_error_without_db() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get(
-            "/api/v1/users/GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/predictions",
-        ))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get(
+        "/api/v1/users/GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/predictions",
+    ))
+    .await
+    .expect("request failed");
 
     // Note: This will likely return 429 due to rate limiting in tests
     // In a real environment with DB, it would return 200 with error message
@@ -911,10 +1076,15 @@ async fn api_v1_user_predictions_handles_pagination() {
 /// Test leaderboard endpoint returns error when database is not available.
 #[tokio::test]
 async fn api_v1_leaderboard_returns_error_without_db() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/leaderboard"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/leaderboard"))
+    .await
+    .expect("request failed");
 
     // Note: This will likely return 429 due to rate limiting in tests
     // In a real environment with DB, it would return 200 with error message
@@ -927,12 +1097,17 @@ async fn api_v1_leaderboard_returns_error_without_db() {
 /// Test leaderboard endpoint with different ranking parameters.
 #[tokio::test]
 async fn api_v1_leaderboard_handles_ranking_parameters() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get(
-            "/api/v1/leaderboard?rank_by=winnings&limit=10&offset=5",
-        ))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get(
+        "/api/v1/leaderboard?rank_by=winnings&limit=10&offset=5",
+    ))
+    .await
+    .expect("request failed");
 
     let body = body_string(response.into_body()).await;
 
@@ -943,10 +1118,15 @@ async fn api_v1_leaderboard_handles_ranking_parameters() {
 /// Test leaderboard endpoint with volume ranking (default).
 #[tokio::test]
 async fn api_v1_leaderboard_defaults_to_volume_ranking() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/leaderboard?limit=5"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/leaderboard?limit=5"))
+    .await
+    .expect("request failed");
 
     let body = body_string(response.into_body()).await;
 
@@ -957,10 +1137,15 @@ async fn api_v1_leaderboard_defaults_to_volume_ranking() {
 /// GET /api/v1/stats returns an error JSON when no database is configured.
 #[tokio::test]
 async fn api_v1_stats_returns_error_without_db() {
-    let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/stats"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/stats"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_string(response.into_body()).await;
@@ -968,4 +1153,179 @@ async fn api_v1_stats_returns_error_without_db() {
         body.contains("\"error\""),
         "should report error when db is absent, got: {body}"
     );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Readiness Probe Tests (/ready)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// GET /ready must return HTTP 503 when Redis is disabled (not configured).
+///
+/// This is the primary acceptance criterion: the readiness probe must signal
+/// "not ready" when Redis is unavailable so orchestrators can withhold traffic.
+#[tokio::test]
+async fn ready_returns_503_when_redis_disabled() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/ready"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "readiness probe must return 503 when Redis is not configured"
+    );
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"not_ready\""),
+        "status should be 'not_ready' when Redis is unavailable, got: {body}"
+    );
+    assert!(
+        body.contains("\"redis\":\"not_configured\""),
+        "redis dependency should be 'not_configured', got: {body}"
+    );
+}
+
+/// GET /ready must include a `dependencies` object with a `redis` field.
+#[tokio::test]
+async fn ready_response_includes_redis_dependency() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/ready"))
+    .await
+    .expect("request failed");
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"dependencies\""),
+        "response should include a dependencies object, got: {body}"
+    );
+    assert!(
+        body.contains("\"redis\""),
+        "dependencies should include a redis field, got: {body}"
+    );
+}
+
+/// GET /ready must include an `errors` object describing why Redis is not ready.
+#[tokio::test]
+async fn ready_response_includes_error_details_when_not_ready() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/ready"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"errors\""),
+        "response should include an errors object, got: {body}"
+    );
+}
+
+// ── Issue #974: Pagination validation tests ───────────────────────────────────
+
+/// Helper: build a GET request and return (status, body) for a given path.
+async fn pagination_request(path: &str) -> (StatusCode, String) {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get(path))
+    .await
+    .expect("request failed");
+    let status = response.status();
+    let body = body_string(response.into_body()).await;
+    (status, body)
+}
+
+#[tokio::test]
+async fn pagination_limit_zero_returns_400() {
+    let (status, body) = pagination_request("/api/v1/pools?limit=0").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("limit"), "body: {body}");
+}
+
+#[tokio::test]
+async fn pagination_limit_over_100_returns_400() {
+    let (status, body) = pagination_request("/api/v1/pools?limit=101").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("limit"), "body: {body}");
+}
+
+#[tokio::test]
+async fn pagination_negative_limit_returns_400() {
+    let (status, body) = pagination_request("/api/v1/pools?limit=-1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("limit"), "body: {body}");
+}
+
+#[tokio::test]
+async fn pagination_negative_offset_returns_400() {
+    let (status, body) = pagination_request("/api/v1/pools?offset=-1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("offset"), "body: {body}");
+}
+
+#[tokio::test]
+async fn pagination_valid_boundary_limit_1_accepted() {
+    let (status, _) = pagination_request("/api/v1/pools?limit=1").await;
+    assert_ne!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pagination_valid_boundary_limit_100_accepted() {
+    let (status, _) = pagination_request("/api/v1/pools?limit=100").await;
+    assert_ne!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pagination_valid_offset_0_accepted() {
+    let (status, _) = pagination_request("/api/v1/pools?offset=0").await;
+    assert_ne!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn leaderboard_limit_over_100_returns_400() {
+    let (status, body) = pagination_request("/api/v1/leaderboard?limit=200").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+}
+
+#[tokio::test]
+async fn leaderboard_negative_offset_returns_400() {
+    let (status, body) = pagination_request("/api/v1/leaderboard?offset=-5").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+}
+
+#[tokio::test]
+async fn user_history_limit_over_100_returns_400() {
+    let addr = "GABC123";
+    let (status, body) =
+        pagination_request(&format!("/api/v1/users/{addr}/history?limit=101")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+}
+
+#[tokio::test]
+async fn user_predictions_negative_offset_returns_400() {
+    let addr = "GABC123";
+    let (status, body) =
+        pagination_request(&format!("/api/v1/users/{addr}/predictions?offset=-1")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
 }

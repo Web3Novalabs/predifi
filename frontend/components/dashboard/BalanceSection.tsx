@@ -1,8 +1,33 @@
 import { ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 
-export function BalanceSection() {
+interface BalanceSectionProps {
+    isLoading?: boolean;
+}
+
+export function BalanceSection({ isLoading = false }: BalanceSectionProps) {
+    if (isLoading) {
+        return (
+            <Card className="bg-[#121212] border-none text-white h-full relative overflow-hidden">
+                <CardHeader>
+                    <Skeleton className="h-4 w-24" />
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    <div className="space-y-3">
+                        <Skeleton className="h-12 w-48" />
+                        <Skeleton className="h-9 w-40 rounded-full" />
+                    </div>
+                    <div className="flex gap-4">
+                        <Skeleton className="h-12 w-36 rounded-xl" />
+                        <Skeleton className="h-12 w-36 rounded-xl" />
+                    </div>
+                </CardContent>
+            </Card>
+        );
+    }
+
     return (
         <Card className="bg-[#121212] border-none text-white h-full relative overflow-hidden">
             <CardHeader>
@@ -23,7 +48,6 @@ export function BalanceSection() {
                         <ArrowUpRight className="ml-2 w-4 h-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                     </Button>
                     <Button className="bg-primary hover:bg-primary text-black border-transparent hover:border-transparent min-w-[140px] rounded-xl h-12 text-base font-medium group bg-[#37B7C3] hover:opacity-90">
-
                         Claim
                         <ArrowUpRight className="ml-2 w-4 h-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                     </Button>

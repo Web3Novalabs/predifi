@@ -178,7 +178,7 @@ mod tests {
             );
 
             // Must NOT be stored under OutStake with magic pool_id
-            let magic_key = DataKey::OutStake(999999, 0);
+            let magic_key = DataKey::OutStake(999_999, 0);
             assert!(
                 !env.storage().persistent().has(&magic_key),
                 "Price feed must not be stored under DataKey::OutStake with magic id"
@@ -352,6 +352,48 @@ mod tests {
             assert!(
                 !env.storage().instance().has(&DataKey::RentGuard),
                 "RentGuard must not be in instance storage"
+            );
+        });
+    }
+
+    /// Resolution voting keys must be in temporary storage only.
+    #[test]
+    fn test_resolution_voting_keys_in_temporary_storage() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (_, contract_id, _) = setup(&env);
+
+        env.as_contract(&contract_id, || {
+            // Initially, no votes should exist
+            assert!(
+                !env.storage()
+                    .temporary()
+                    .has(&DataKey::ResVote(1, Address::generate(&env))),
+                "ResVote must not exist before voting"
+            );
+            assert!(
+                !env.storage().temporary().has(&DataKey::ResVoteCt(1, 0)),
+                "ResVoteCt must not exist before voting"
+            );
+            assert!(
+                !env.storage().temporary().has(&DataKey::ResTotal(1)),
+                "ResTotal must not exist before voting"
+            );
+
+            // These keys must NOT be in persistent or instance storage
+            assert!(
+                !env.storage()
+                    .persistent()
+                    .has(&DataKey::ResVote(1, Address::generate(&env))),
+                "ResVote must not be in persistent storage"
+            );
+            assert!(
+                !env.storage().instance().has(&DataKey::ResVoteCt(1, 0)),
+                "ResVoteCt must not be in instance storage"
+            );
+            assert!(
+                !env.storage().instance().has(&DataKey::ResTotal(1)),
+                "ResTotal must not be in instance storage"
             );
         });
     }
@@ -533,7 +575,7 @@ mod tests {
                 &2u32,
                 &symbol_short!("Tech"),
                 &PoolConfig {
-            start_time: 0,
+                    start_time: 0,
                     description: String::from_str(&env, "Test pool"),
                     metadata_url: String::from_str(&env, "ipfs://test"),
                     min_stake: 1i128,

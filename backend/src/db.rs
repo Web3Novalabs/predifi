@@ -1,20 +1,23 @@
+use std::str::FromStr;
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{ConnectOptions, PgPool};
 
 use crate::config::Config;
+use crate::errors::AppError;
 
 /// Create a PostgreSQL connection pool using conservative defaults.
 ///
 /// This uses lazy connection mode so local development can start the server
 /// without requiring an active database until a query is executed.
-pub fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
+pub fn create_pool(config: &Config) -> Result<PgPool, AppError> {
     PgPoolOptions::new()
         .max_connections(config.db_max_connections)
         .min_connections(config.db_min_connections)
         .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
-        .connect_lazy(&config.database_url)
+        .connect_lazy_with(options))
 }
 
 /// A single row returned by the user prediction history query.
@@ -25,7 +28,7 @@ pub struct PredictionHistoryRow {
     pub pool_result: Option<String>,
     pub outcome: i32,
     pub amount: i64,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Enhanced prediction information with current pool status.
@@ -54,7 +57,7 @@ pub async fn get_user_prediction_history(
     address: &str,
     limit: i64,
     offset: i64,
-) -> Result<Vec<PredictionHistoryRow>, sqlx::Error> {
+) -> Result<Vec<PredictionHistoryRow>, AppError> {
     sqlx::query_as!(
         PredictionHistoryRow,
         r#"
@@ -104,7 +107,7 @@ pub async fn get_user_predictions(
     address: &str,
     limit: i64,
     offset: i64,
-) -> Result<Vec<UserPrediction>, sqlx::Error> {
+) -> Result<Vec<UserPrediction>, AppError> {
     let sql = r#"
         SELECT
             p.id as prediction_id,
@@ -246,7 +249,7 @@ pub async fn get_active_pools(
     category: Option<&str>,
     limit: i64,
     offset: i64,
-) -> Result<Vec<PoolRow>, sqlx::Error> {
+) -> Result<Vec<PoolRow>, AppError> {
     get_pools_with_filters(pool, sort_by, category, "active", limit, offset).await
 }
 
@@ -261,7 +264,7 @@ pub async fn get_pools_with_filters(
     status: &str,
     limit: i64,
     offset: i64,
-) -> Result<Vec<PoolRow>, sqlx::Error> {
+) -> Result<Vec<PoolRow>, AppError> {
     // Build ORDER BY clause from sort_by parameter.
     let order_clause = match sort_by {
         "popular" => "total_stake DESC",
@@ -298,11 +301,39 @@ pub async fn get_pools_with_filters(
         .await
 }
 
+/// Count total number of pools matching the filters.
+pub async fn count_pools_with_filters(
+    pool: &PgPool,
+    category: Option<&str>,
+    status: &str,
+) -> Result<i64, AppError> {
+    // Validate status parameter to prevent SQL injection
+    let valid_status = match status {
+        "active" | "closed" | "settled" => status,
+        _ => "active", // default to active for invalid status
+    };
+
+    let sql = r#"
+        SELECT COUNT(*)
+        FROM pools
+        WHERE state = $1
+          AND ($2::text IS NULL OR category = $2)
+        "#;
+
+    let count: (i64,) = sqlx::query_as(sql)
+        .bind(valid_status)
+        .bind(category)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(count.0)
+}
+
 /// Fetch detailed information for a specific pool by ID.
 pub async fn get_pool_by_id(
     pool: &PgPool,
     pool_id: i64,
-) -> Result<Option<PoolDetails>, sqlx::Error> {
+) -> Result<Option<PoolDetails>, AppError> {
     let sql = r#"
         SELECT pool_id, name, category, total_stake, end_time, created_at, 
                state, creator, token, result
@@ -327,7 +358,7 @@ struct OutcomeStakeRow {
 pub async fn get_pool_outcome_stakes(
     pool: &PgPool,
     pool_id: i64,
-) -> Result<Vec<(i32, i64)>, sqlx::Error> {
+) -> Result<Vec<(i32, i64)>, AppError> {
     let sql = r#"
         SELECT outcome, COALESCE(SUM(amount), 0) as total_stake
         FROM predictions
@@ -383,7 +414,7 @@ pub fn calculate_odds(outcome_stakes: &[(i32, i64)], total_stake: i64) -> Vec<Ou
 pub async fn get_pool_with_odds(
     pool: &PgPool,
     pool_id: i64,
-) -> Result<Option<PoolWithOdds>, sqlx::Error> {
+) -> Result<Option<PoolWithOdds>, AppError> {
     // Fetch pool details
     let pool_details = match get_pool_by_id(pool, pool_id).await? {
         Some(details) => details,
@@ -430,7 +461,7 @@ pub async fn get_users_by_betting_volume(
     pool: &PgPool,
     limit: i64,
     offset: i64,
-) -> Result<Vec<UserBettingVolume>, sqlx::Error> {
+) -> Result<Vec<UserBettingVolume>, AppError> {
     let sql = r#"
         SELECT 
             user_address,
@@ -479,7 +510,7 @@ pub async fn get_users_by_winnings(
     pool: &PgPool,
     limit: i64,
     offset: i64,
-) -> Result<Vec<UserWinnings>, sqlx::Error> {
+) -> Result<Vec<UserWinnings>, AppError> {
     let sql = r#"
         WITH winning_predictions AS (
             SELECT 
@@ -562,7 +593,7 @@ pub async fn resolve_pool_in_db(
     pool: &PgPool,
     pool_id: u64,
     winning_outcome: i32,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), AppError> {
     sqlx::query!(
         "UPDATE pools SET state = 'settled', result = $1 WHERE pool_id = $2",
         winning_outcome.to_string(),
@@ -574,7 +605,7 @@ pub async fn resolve_pool_in_db(
 }
 
 /// Mark a pool as closed (cancelled on-chain).
-pub async fn cancel_pool_in_db(pool: &PgPool, pool_id: u64) -> Result<(), sqlx::Error> {
+pub async fn cancel_pool_in_db(pool: &PgPool, pool_id: u64) -> Result<(), AppError> {
     sqlx::query!(
         "UPDATE pools SET state = 'closed' WHERE pool_id = $1",
         pool_id as i64,
@@ -588,7 +619,7 @@ pub async fn cancel_pool_in_db(pool: &PgPool, pool_id: u64) -> Result<(), sqlx::
 pub async fn insert_pool_from_event(
     pool: &PgPool,
     event: &PoolCreatedEvent,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), AppError> {
     sqlx::query!(
         r#"
         INSERT INTO pools (pool_id, name, category, total_stake, end_time, state, creator, token, created_at)
@@ -611,29 +642,27 @@ pub async fn insert_pool_from_event(
 pub async fn insert_prediction_from_event(
     pool: &PgPool,
     event: &PredictionPlacedEvent,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), AppError> {
     let mut tx = pool.begin().await?;
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO predictions (pool_id, user_address, outcome, amount)
         VALUES ($1, $2, $3, $4)
         "#,
-        event.pool_id as i64,
-        event.user_address,
-        event.outcome,
-        event.amount,
     )
-    .execute(&mut tx)
+    .bind(event.pool_id as i64)
+    .bind(&event.user_address)
+    .bind(event.outcome)
+    .bind(event.amount)
+    .execute(&mut *tx)
     .await?;
 
-    sqlx::query!(
-        "UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2",
-        event.amount,
-        event.pool_id as i64,
-    )
-    .execute(&mut tx)
-    .await?;
+    sqlx::query("UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2")
+        .bind(event.amount)
+        .bind(event.pool_id as i64)
+        .execute(&mut *tx)
+        .await?;
 
     tx.commit().await?;
     Ok(())
@@ -652,7 +681,7 @@ pub struct ReferralEarningRow {
 pub async fn get_referral_earnings(
     pool: &PgPool,
     address: &str,
-) -> Result<Vec<ReferralEarningRow>, sqlx::Error> {
+) -> Result<Vec<ReferralEarningRow>, AppError> {
     sqlx::query_as!(
         ReferralEarningRow,
         r#"
@@ -685,43 +714,16 @@ pub struct ProtocolStats {
 }
 
 /// Fetch protocol-wide aggregate statistics in a single query.
-pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, sqlx::Error> {
+pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, AppError> {
     sqlx::query_as!(
         ProtocolStats,
         r#"
         SELECT
-            COALESCE(SUM(total_stake), 0) AS "total_value_locked!: i64",
-            (SELECT COUNT(*) FROM predictions)  AS "total_bets!: i64",
-            COUNT(*)                            AS "total_pools!: i64"
+            COALESCE(SUM(total_stake), 0) AS total_value_locked,
+            (SELECT COUNT(*) FROM predictions)  AS total_bets,
+            COUNT(*)                            AS total_pools
         FROM pools
-        "#
-    )
-    .fetch_one(pool)
-    .await
-}
-
-/// Protocol-wide aggregate statistics.
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-pub struct ProtocolStats {
-    /// Sum of `total_stake` across all pools (TVL proxy).
-    pub total_value_locked: i64,
-    /// Total number of prediction records (bets placed).
-    pub total_bets: i64,
-    /// Total number of pools ever created.
-    pub total_pools: i64,
-}
-
-/// Fetch protocol-wide aggregate statistics in a single query.
-pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, sqlx::Error> {
-    sqlx::query_as!(
-        ProtocolStats,
-        r#"
-        SELECT
-            COALESCE(SUM(total_stake), 0) AS "total_value_locked!: i64",
-            (SELECT COUNT(*) FROM predictions)  AS "total_bets!: i64",
-            COUNT(*)                            AS "total_pools!: i64"
-        FROM pools
-        "#
+        "#,
     )
     .fetch_one(pool)
     .await
@@ -744,6 +746,91 @@ pub struct PredictionPlacedEvent {
     pub user_address: String,
     pub outcome: i32,
     pub amount: i64,
+}
+
+/// Decoded data from a `referral_paid` contract event.
+#[derive(Debug)]
+pub struct ReferralPaidEvent {
+    pub pool_id: u64,
+    pub referrer: String,
+    pub referred_user: String,
+    pub referral_amount: i64,
+}
+
+/// Insert multiple referral records using bulk insert for optimal performance.
+///
+/// This function uses PostgreSQL's `INSERT INTO ... VALUES (...), (...), ...` syntax
+/// to insert all referral records in a single database round-trip, significantly
+/// improving performance over individual inserts when processing multiple events.
+pub async fn insert_referrals_bulk(
+    pool: &PgPool,
+    events: &[ReferralPaidEvent],
+) -> Result<(), AppError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let mut tx = pool.begin().await?;
+
+    // Build bulk insert query with dynamic values
+    let query = r#"
+        INSERT INTO referrals (referrer, user_address, pool_id, amount)
+        VALUES 
+    "#;
+
+    let mut values = Vec::new();
+    let mut param_index = 1i32;
+
+    for _event in events {
+        values.push(format!(
+            "(${}, ${}, ${}, ${})",
+            param_index,
+            param_index + 1,
+            param_index + 2,
+            param_index + 3
+        ));
+        param_index += 4;
+    }
+
+    let full_query = format!("{} {}", query, values.join(", "));
+
+    let mut query_builder = sqlx::query(&full_query);
+
+    for event in events {
+        query_builder = query_builder
+            .bind(&event.referrer)
+            .bind(&event.referred_user)
+            .bind(event.pool_id as i64)
+            .bind(event.referral_amount);
+    }
+
+    query_builder.execute(&mut *tx).await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Insert a single referral record.
+///
+/// For inserting multiple referrals, use `insert_referrals_bulk` instead for better performance.
+pub async fn insert_referral_from_event(
+    pool: &PgPool,
+    event: &ReferralPaidEvent,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        r#"
+        INSERT INTO referrals (referrer, user_address, pool_id, amount)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(&event.referrer)
+    .bind(&event.referred_user)
+    .bind(event.pool_id as i64)
+    .bind(event.referral_amount)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

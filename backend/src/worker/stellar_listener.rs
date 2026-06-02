@@ -7,7 +7,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 use sqlx::PgPool;
-use tokio::time::{interval, Duration};
+use std::time::Duration;
+use tokio::time::interval;
 use tracing::{error, info, warn};
 
 const POLL_INTERVAL_SECS: u64 = 5;
@@ -27,16 +28,23 @@ struct GetEventsResult {
     latest_ledger: u64,
 }
 
+/// A single event returned by the Stellar RPC `getEvents` call.
 #[derive(Debug, Deserialize)]
 pub struct StellarEvent {
+    /// Event type string, e.g. `"contract"` or `"system"`.
     #[serde(rename = "type")]
     pub event_type: String,
+    /// Ledger sequence number in which this event was emitted.
     #[serde(rename = "ledger")]
     pub ledger: u64,
+    /// Soroban contract address that emitted the event, if applicable.
     #[serde(rename = "contractId")]
     pub contract_id: Option<String>,
+    /// Unique event identifier assigned by the RPC node.
     pub id: String,
+    /// XDR-encoded topic values decoded as strings by the RPC node.
     pub topics: Option<Vec<String>>,
+    /// Arbitrary JSON payload decoded from the event's XDR data field.
     pub data: Option<Value>,
 }
 
@@ -104,14 +112,18 @@ async fn fetch_events(
 /// `rpc_url`   – Stellar RPC endpoint (e.g. `https://soroban-testnet.stellar.org`)
 /// `db`        – PostgreSQL connection pool used to persist the ledger cursor
 /// `event_bus` – broadcast channel; new predictions are published here
-pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
+/// `timeout`   – maximum time to wait for an RPC response
+pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
     tokio::spawn(async move {
-        run(rpc_url, db, event_bus).await;
+        run(rpc_url, db, event_bus, timeout).await;
     });
 }
 
-async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
-    let client = reqwest::Client::new();
+async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .expect("valid reqwest client");
     let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
 
     // Resume from the last persisted ledger, or start from ledger 1.
@@ -131,6 +143,9 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
                         events = count,
                         "stellar events received"
                     );
+                    // Collect referral events for bulk insert to minimise DB round-trips.
+                    let mut referral_events: Vec<crate::db::ReferralPaidEvent> = Vec::new();
+
                     for event in &result.events {
                         info!(
                             id = %event.id,
@@ -159,7 +174,9 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
                                     );
                                 }
                             } else if topic_matches("prediction_placed") {
-                                if let Err(e) = handle_prediction_placed_event(&db, event, &event_bus).await {
+                                if let Err(e) =
+                                    handle_prediction_placed_event(&db, event, &event_bus).await
+                                {
                                     error!(
                                         id = %event.id,
                                         ledger = event.ledger,
@@ -185,7 +202,30 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
                                         "failed to process pool_canceled event"
                                     );
                                 }
+                            } else if topic_matches("referral_paid") {
+                                match parse_referral_paid_event(event) {
+                                    Ok(ev) => referral_events.push(ev),
+                                    Err(e) => error!(
+                                        id = %event.id,
+                                        ledger = event.ledger,
+                                        error = %e,
+                                        "failed to parse referral_paid event"
+                                    ),
+                                }
                             }
+                        }
+                    }
+
+                    // Bulk-insert all collected referral events in a single query.
+                    if !referral_events.is_empty() {
+                        if let Err(e) =
+                            crate::db::insert_referrals_bulk(&db, &referral_events).await
+                        {
+                            error!(
+                                error = %e,
+                                count = referral_events.len(),
+                                "failed to bulk insert referral events"
+                            );
                         }
                     }
                 }
@@ -209,14 +249,14 @@ async fn handle_pool_created_event(db: &PgPool, event: &StellarEvent) -> Result<
         .as_ref()
         .ok_or_else(|| "missing event data".to_string())?;
 
-    let pool_id = extract_u64(data, "pool_id")
-        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
-    let creator = extract_string(data, "creator")
-        .ok_or_else(|| "missing or invalid creator".to_string())?;
-    let end_time = extract_u64(data, "end_time")
-        .ok_or_else(|| "missing or invalid end_time".to_string())?;
-    let token = extract_string(data, "token")
-        .ok_or_else(|| "missing or invalid token".to_string())?;
+    let pool_id =
+        extract_u64(data, "pool_id").ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let creator =
+        extract_string(data, "creator").ok_or_else(|| "missing or invalid creator".to_string())?;
+    let end_time =
+        extract_u64(data, "end_time").ok_or_else(|| "missing or invalid end_time".to_string())?;
+    let token =
+        extract_string(data, "token").ok_or_else(|| "missing or invalid token".to_string())?;
     let category = extract_string(data, "category").unwrap_or_default();
     // The on-chain event carries metadata_url; use it as the pool name/description.
     let description = extract_string(data, "description")
@@ -285,10 +325,10 @@ async fn handle_pool_resolved_event(db: &PgPool, event: &StellarEvent) -> Result
         .as_ref()
         .ok_or_else(|| "missing event data".to_string())?;
 
-    let pool_id = extract_u64(data, "pool_id")
-        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
-    let outcome = extract_i32(data, "outcome")
-        .ok_or_else(|| "missing or invalid outcome".to_string())?;
+    let pool_id =
+        extract_u64(data, "pool_id").ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let outcome =
+        extract_i32(data, "outcome").ok_or_else(|| "missing or invalid outcome".to_string())?;
 
     crate::db::resolve_pool_in_db(db, pool_id, outcome)
         .await
@@ -301,12 +341,41 @@ async fn handle_pool_canceled_event(db: &PgPool, event: &StellarEvent) -> Result
         .as_ref()
         .ok_or_else(|| "missing event data".to_string())?;
 
-    let pool_id = extract_u64(data, "pool_id")
-        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let pool_id =
+        extract_u64(data, "pool_id").ok_or_else(|| "missing or invalid pool_id".to_string())?;
 
     crate::db::cancel_pool_in_db(db, pool_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Parse a `referral_paid` event into a [`ReferralPaidEvent`] without touching the database.
+///
+/// This is used in conjunction with `insert_referrals_bulk` so that multiple referral
+/// events from a single poll cycle are inserted in one batch.
+fn parse_referral_paid_event(event: &StellarEvent) -> Result<crate::db::ReferralPaidEvent, String> {
+    let data = event
+        .data
+        .as_ref()
+        .ok_or_else(|| "missing event data".to_string())?;
+
+    let pool_id =
+        extract_u64(data, "pool_id").ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let referrer = extract_string(data, "referrer")
+        .ok_or_else(|| "missing or invalid referrer".to_string())?;
+    let referred_user = extract_string(data, "referred_user")
+        .or_else(|| extract_string(data, "user"))
+        .ok_or_else(|| "missing or invalid referred_user".to_string())?;
+    let referral_amount = extract_i64(data, "referral_amount")
+        .or_else(|| extract_i64(data, "amount"))
+        .ok_or_else(|| "missing or invalid referral_amount".to_string())?;
+
+    Ok(crate::db::ReferralPaidEvent {
+        pool_id,
+        referrer,
+        referred_user,
+        referral_amount,
+    })
 }
 
 fn extract_string(data: &Value, key: &str) -> Option<String> {
@@ -324,9 +393,10 @@ fn extract_string_value(value: &Value) -> Option<String> {
 
 fn extract_i128(value: &Value) -> Option<i128> {
     match value {
-        Value::Number(number) => number.as_i64().map(|v| v as i128).or_else(|| {
-            number.as_u64().and_then(|v| i128::try_from(v).ok())
-        }),
+        Value::Number(number) => number
+            .as_i64()
+            .map(|v| v as i128)
+            .or_else(|| number.as_u64().map(i128::from)),
         Value::String(s) => s.parse().ok(),
         Value::Object(map) if map.len() == 1 => map.values().next().and_then(extract_i128),
         _ => None,
@@ -410,7 +480,10 @@ mod tests {
         assert_eq!(extract_string(&data, "category"), Some("Sports".into()));
         // description absent → falls back to metadata_url
         assert_eq!(extract_string(&data, "description"), None);
-        assert_eq!(extract_string(&data, "metadata_url"), Some("ipfs://Qm123".into()));
+        assert_eq!(
+            extract_string(&data, "metadata_url"),
+            Some("ipfs://Qm123".into())
+        );
     }
 
     /// Missing required fields must produce None so the handler returns an error.

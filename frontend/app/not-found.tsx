@@ -15,8 +15,14 @@ export default function NotFound() {
         <p className="text-sm md:text-base text-zinc-600 dark:text-zinc-400 mb-8 max-w-md mx-auto">
           Oops! The page you&apos;re looking for doesn&apos;t exist. It might have been moved or deleted.
         </p>
+        {/*
+         * prefetch={true} ensures the home route is eagerly prefetched so
+         * clicking "Go Home" from the 404 page feels instant, even though
+         * Next.js 15 defaults to lazy prefetching.
+         */}
         <Link
           href="/"
+          prefetch={true}
           className="inline-block px-6 py-3 bg-[#259BA5] dark:bg-zinc-100 text-white dark:text-black rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors duration-200"
         >
           Go Home

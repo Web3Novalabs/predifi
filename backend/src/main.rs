@@ -3,8 +3,12 @@
 //! A minimal Axum HTTP server with CORS and request-logging middleware.
 
 pub mod config;
+pub mod constants;
+pub mod errors;
 pub mod db;
+pub mod jwt;
 pub mod metrics;
+pub mod session;
 pub mod openapi;
 pub mod price_cache;
 pub mod redis_cache;
@@ -12,24 +16,16 @@ pub mod referrals;
 pub mod request_logger;
 pub mod response;
 pub mod routes;
+pub mod server;
 pub mod worker;
 pub mod ws;
 
-use axum::{extract::State, middleware::{from_fn_with_state, Next}, response::IntoResponse, routing::get, Json, Router};
-use config::Config;
-use http::HeaderValue;
-use metrics::{Metrics, SharedMetrics};
-use request_logger::LoggingLayer;
-use serde_json::json;
-use sentry::integrations::panic::register_panic_handler;
+pub use server::build_router;
+
+use crate::config::Config;
 use sentry_tracing::layer as sentry_tracing_layer;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::{sleep, Duration as TokioDuration};
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
-use tower_http::cors::{AllowOrigin, CorsLayer};
-use tracing::{error, info};
+use tracing::info;
+use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 /// Build the CORS middleware layer from the validated origin list in `config`.
@@ -327,79 +323,53 @@ async fn main() {
         std::process::exit(1);
     });
 
-    if let Some(dsn) = config.sentry_dsn.as_ref() {
-        let _guard = sentry::init((
-            dsn.as_str(),
-            sentry::ClientOptions {
-                release: Some(env!("CARGO_PKG_VERSION").into()),
-                ..Default::default()
-            },
-        ));
-        register_panic_handler();
+    let filter = EnvFilter::new(config.log_level.clone());
+    let use_json = config.app_env == "production";
 
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt()
-                    .with_env_filter(EnvFilter::new(config.log_level.clone()))
-                    .with_target(false)
-                    .compact(),
-            )
-            .with(sentry_tracing_layer())
-            .init();
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+
+    let registry = tracing_subscriber::registry().with(filter);
+
+    if use_json {
+        let registry = registry.with(fmt_layer.json());
+        if let Some(dsn) = config.sentry_dsn.as_ref() {
+            let _guard = sentry::init((
+                dsn.as_str(),
+                sentry::ClientOptions {
+                    release: Some(env!("CARGO_PKG_VERSION").into()),
+                    ..Default::default()
+                },
+            ));
+            registry.with(sentry_tracing_layer()).init();
+        } else {
+            registry.init();
+        }
     } else {
-        tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::new(config.log_level.clone()))
-            .with_target(false)
-            .compact()
-            .init();
+        let registry = registry.with(fmt_layer.compact());
+        if let Some(dsn) = config.sentry_dsn.as_ref() {
+            let _guard = sentry::init((
+                dsn.as_str(),
+                sentry::ClientOptions {
+                    release: Some(env!("CARGO_PKG_VERSION").into()),
+                    ..Default::default()
+                },
+            ));
+            registry.with(sentry_tracing_layer()).init();
+        } else {
+            registry.init();
+        }
     }
 
-    let pool = db::create_pool(&config).unwrap_or_else(|error| {
-        error!(error = %error, "failed to initialize PostgreSQL pool");
-        std::process::exit(1);
-    });
+    info!("starting predifi-backend server");
 
-    let cache = price_cache::PriceCache::new();
-    price_cache::spawn_fetcher(cache.clone());
-
-    let event_bus = ws::EventBus::new();
-
-    // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
-    worker::stellar_listener::spawn(config.stellar_rpc_url.clone(), pool.clone(), event_bus.clone());
-
-    // Initialize Redis cache
-    let redis = redis_cache::RedisCache::new(&config.redis_url).await;
-    if redis.is_available() {
-        info!("Redis cache initialized and available");
-    } else {
-        warn!("Redis cache unavailable - running without caching");
-    }
-
-    let app = build_router_with_db(config.clone(), cache, redis, pool, event_bus);
-
-    let bind_addr = config.bind_address();
-
-    let listener = tokio::net::TcpListener::bind(&bind_addr)
-        .await
-        .unwrap_or_else(|error| {
-            error!(address = %bind_addr, error = %error, "failed to bind TCP listener");
-            std::process::exit(1);
-        });
-
-    info!(address = %bind_addr, "backend server listening");
-
-    if let Err(error) = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
-    {
-        error!(error = %error, "server error");
-        std::process::exit(1);
-    }
+    server::run(config).await;
 }
 
 #[cfg(test)]
+mod test_support;
+#[cfg(test)]
 mod db_integration_tests;
+#[cfg(test)]
+mod redis_integration_tests;
 #[cfg(test)]
 mod tests;
