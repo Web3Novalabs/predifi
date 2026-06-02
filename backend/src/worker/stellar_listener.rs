@@ -7,7 +7,8 @@
 use serde::Deserialize;
 use serde_json::Value;
 use sqlx::PgPool;
-use tokio::time::{interval, Duration};
+use std::time::Duration;
+use tokio::time::interval;
 use tracing::{error, info, warn};
 
 const POLL_INTERVAL_SECS: u64 = 5;
@@ -111,14 +112,18 @@ async fn fetch_events(
 /// `rpc_url`   – Stellar RPC endpoint (e.g. `https://soroban-testnet.stellar.org`)
 /// `db`        – PostgreSQL connection pool used to persist the ledger cursor
 /// `event_bus` – broadcast channel; new predictions are published here
-pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
+/// `timeout`   – maximum time to wait for an RPC response
+pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
     tokio::spawn(async move {
-        run(rpc_url, db, event_bus).await;
+        run(rpc_url, db, event_bus, timeout).await;
     });
 }
 
-async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
-    let client = reqwest::Client::new();
+async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .expect("valid reqwest client");
     let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
 
     // Resume from the last persisted ledger, or start from ledger 1.
@@ -213,7 +218,9 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus) {
 
                     // Bulk-insert all collected referral events in a single query.
                     if !referral_events.is_empty() {
-                        if let Err(e) = crate::db::insert_referrals_bulk(&db, &referral_events).await {
+                        if let Err(e) =
+                            crate::db::insert_referrals_bulk(&db, &referral_events).await
+                        {
                             error!(
                                 error = %e,
                                 count = referral_events.len(),
@@ -352,8 +359,8 @@ fn parse_referral_paid_event(event: &StellarEvent) -> Result<crate::db::Referral
         .as_ref()
         .ok_or_else(|| "missing event data".to_string())?;
 
-    let pool_id = extract_u64(data, "pool_id")
-        .ok_or_else(|| "missing or invalid pool_id".to_string())?;
+    let pool_id =
+        extract_u64(data, "pool_id").ok_or_else(|| "missing or invalid pool_id".to_string())?;
     let referrer = extract_string(data, "referrer")
         .ok_or_else(|| "missing or invalid referrer".to_string())?;
     let referred_user = extract_string(data, "referred_user")
@@ -389,7 +396,7 @@ fn extract_i128(value: &Value) -> Option<i128> {
         Value::Number(number) => number
             .as_i64()
             .map(|v| v as i128)
-            .or_else(|| number.as_u64().and_then(|v| i128::try_from(v).ok())),
+            .or_else(|| number.as_u64().map(i128::from)),
         Value::String(s) => s.parse().ok(),
         Value::Object(map) if map.len() == 1 => map.values().next().and_then(extract_i128),
         _ => None,

@@ -1,4 +1,5 @@
-use std::{collections::HashMap, env, fmt, num::ParseIntError};
+use std::{collections::HashMap, env, num::ParseIntError};
+use predifi_errors::ConfigError;
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 3000;
@@ -8,6 +9,7 @@ const DEFAULT_DB_MIN_CONNECTIONS: u32 = 1;
 const DEFAULT_DB_ACQUIRE_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_RPC_HEALTH_TIMEOUT_SECS: u64 = 2;
 const DEFAULT_RPC_HEALTH_RETRY_COUNT: u8 = 3;
+const DEFAULT_RPC_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
@@ -47,8 +49,12 @@ pub struct Config {
     /// Number of times to retry the Stellar RPC health check before reporting failure
     /// (default `3`).
     pub rpc_health_retry_count: u8,
+    /// Timeout in seconds for general Stellar RPC calls (default `10`).
+    pub rpc_timeout_secs: u64,
     /// Tracing log level passed to `RUST_LOG` / `EnvFilter` (default `"info"`).
     pub log_level: String,
+    /// Runtime environment, e.g. "production", "development", "test" (default "development").
+    pub app_env: String,
     /// Protocol treasury fee in basis points (default `300` = 3 %).
     pub treasury_fee_bps: u32,
     /// Referral share of the protocol fee in basis points (default `5000` = 50 % of the fee).
@@ -100,7 +106,13 @@ impl Config {
             "PREDIFI_RPC_HEALTH_RETRY_COUNT",
             DEFAULT_RPC_HEALTH_RETRY_COUNT,
         )?;
+        let rpc_timeout_secs = get_u64(
+            vars,
+            "RPC_TIMEOUT_SECS",
+            DEFAULT_RPC_TIMEOUT_SECS,
+        )?;
         let log_level = get_string(vars, "RUST_LOG", DEFAULT_LOG_LEVEL);
+        let app_env = get_string(vars, "PREDIFI_APP_ENV", "development");
         let treasury_fee_bps = get_u32(vars, "PREDIFI_TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "PREDIFI_REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
@@ -129,7 +141,9 @@ impl Config {
             db_acquire_timeout_secs,
             rpc_health_timeout_secs,
             rpc_health_retry_count,
+            rpc_timeout_secs,
             log_level,
+            app_env,
             treasury_fee_bps,
             referral_fee_bps,
             stellar_rpc_url,
@@ -160,20 +174,21 @@ impl Config {
             db_acquire_timeout_secs: 1,
             rpc_health_timeout_secs: 2,
             rpc_health_retry_count: 3,
+            rpc_timeout_secs: 10,
             log_level: String::from("debug"),
+            app_env: String::from("test"),
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
-            cors_allowed_origins: DEFAULT_CORS_ORIGINS
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
 
+// ConfigError moved to the shared `predifi-errors` crate and re-exported when
+// that crate is used with the `std` feature. See `contracts/predifi-errors`.
 /// Error returned when a configuration value cannot be parsed or is logically invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {
@@ -239,10 +254,7 @@ fn parse_cors_origins(vars: &HashMap<String, String>) -> Result<Vec<String>, Con
     let raw = match vars.get("PREDIFI_CORS_ALLOWED_ORIGINS") {
         Some(v) => v.clone(),
         None => {
-            return Ok(DEFAULT_CORS_ORIGINS
-                .iter()
-                .map(|s| s.to_string())
-                .collect());
+            return Ok(DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect());
         }
     };
 
@@ -355,7 +367,10 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
     if host.is_empty() {
         return Err(ConfigError::InvalidValue {
             key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-            reason: format!("'{}' is not a valid origin — host must not be empty", origin),
+            reason: format!(
+                "'{}' is not a valid origin — host must not be empty",
+                origin
+            ),
         });
     }
 
@@ -489,8 +504,14 @@ mod tests {
     #[test]
     fn config_rejects_min_connections_larger_than_max() {
         let vars = HashMap::from([
-            (String::from("PREDIFI_DB_MIN_CONNECTIONS"), String::from("20")),
-            (String::from("PREDIFI_DB_MAX_CONNECTIONS"), String::from("10")),
+            (
+                String::from("PREDIFI_DB_MIN_CONNECTIONS"),
+                String::from("20"),
+            ),
+            (
+                String::from("PREDIFI_DB_MAX_CONNECTIONS"),
+                String::from("10"),
+            ),
         ]);
         let error = Config::from_map(&vars).expect_err("min > max must be rejected");
 
@@ -570,7 +591,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("wildcard must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -583,7 +610,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("null origin must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -596,7 +629,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("origin without scheme must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -609,7 +648,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("ftp scheme must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -622,7 +667,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("origin with path must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -635,7 +686,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("origin with query string must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -648,7 +705,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("origin with fragment must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -661,7 +724,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("port > 65535 must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -674,7 +743,13 @@ mod tests {
         )]);
         let error = Config::from_map(&vars).expect_err("empty origin list must be rejected");
         assert!(
-            matches!(error, ConfigError::InvalidValue { key: "PREDIFI_CORS_ALLOWED_ORIGINS", .. }),
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                    ..
+                }
+            ),
             "unexpected error: {error}"
         );
     }
@@ -733,10 +808,7 @@ mod tests {
     /// `InvalidNumber` display message includes the variable name and bad value.
     #[test]
     fn invalid_number_display_includes_key_and_value() {
-        let vars = HashMap::from([(
-            String::from("PREDIFI_APP_PORT"),
-            String::from("not-a-port"),
-        )]);
+        let vars = HashMap::from([(String::from("PREDIFI_APP_PORT"), String::from("not-a-port"))]);
         let error = Config::from_map(&vars).expect_err("non-numeric port must fail");
         let msg = error.to_string();
         assert!(
@@ -753,8 +825,14 @@ mod tests {
     #[test]
     fn invalid_value_display_includes_key_and_reason() {
         let vars = HashMap::from([
-            (String::from("PREDIFI_DB_MIN_CONNECTIONS"), String::from("50")),
-            (String::from("PREDIFI_DB_MAX_CONNECTIONS"), String::from("10")),
+            (
+                String::from("PREDIFI_DB_MIN_CONNECTIONS"),
+                String::from("50"),
+            ),
+            (
+                String::from("PREDIFI_DB_MAX_CONNECTIONS"),
+                String::from("10"),
+            ),
         ]);
         let error = Config::from_map(&vars).expect_err("min > max must fail");
         let msg = error.to_string();
