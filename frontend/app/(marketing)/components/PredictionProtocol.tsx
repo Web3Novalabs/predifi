@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useRef, useCallback, memo } from "react";
+import React, { useState, useRef, useCallback, memo, useMemo } from "react";
 
 // ---------------------------------------------------------------------------
 // Data (module-level constant — never recreated)
@@ -170,6 +170,36 @@ function PredictionProtocol() {
     touchEndX.current = null;
   }, []);
 
+  /**
+   * Memoized mobile pagination dots. Only re-calculates if activeTab changes.
+   */
+  const dotButtons = useMemo(() => (
+    steps.map((_, index) => (
+      <DotButton
+        key={index}
+        index={index}
+        isActive={activeTab === index}
+        onSelect={handleSelect}
+      />
+    ))
+  ), [activeTab, handleSelect]);
+
+  /**
+   * Memoized desktop step buttons. Only re-calculates if activeTab changes.
+   */
+  const stepButtons = useMemo(() => (
+    steps.map((step, index) => (
+      <StepButton
+        key={index}
+        index={index}
+        title={step.title}
+        description={step.description}
+        isActive={activeTab === index}
+        onSelect={handleSelect}
+      />
+    ))
+  ), [activeTab, handleSelect]);
+
   return (
     <div className="px-5 overflow-hidden">
       <h1 className="max-w-[558px] text-center mb-[40px] md:mb-[52px] text-white text-[28px] md:text-[48px] leading-[120%] -tracking-[9%] font-medium mx-auto">
@@ -201,14 +231,7 @@ function PredictionProtocol() {
         <div className="order-2 md:order-1 flex flex-col items-center md:items-start gap-y-6 md:gap-y-10 max-w-[700px] w-full">
           {/* MOBILE: Pagination dots */}
           <div className="flex md:hidden gap-3 mb-2">
-            {steps.map((_, index) => (
-              <DotButton
-                key={index}
-                index={index}
-                isActive={activeTab === index}
-                onSelect={handleSelect}
-              />
-            ))}
+            {dotButtons}
           </div>
 
           {/* MOBILE: Active step text */}
@@ -223,16 +246,7 @@ function PredictionProtocol() {
 
           {/* DESKTOP: Step buttons list */}
           <div className="hidden md:flex flex-col gap-y-10">
-            {steps.map((step, index) => (
-              <StepButton
-                key={index}
-                index={index}
-                title={step.title}
-                description={step.description}
-                isActive={activeTab === index}
-                onSelect={handleSelect}
-              />
-            ))}
+            {stepButtons}
           </div>
         </div>
       </div>

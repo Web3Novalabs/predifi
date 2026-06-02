@@ -157,6 +157,17 @@ export function PredictionList() {
     LIST_MAX_HEIGHT
   );
 
+  /**
+   * Memoize the mapped cards so they are only re-calculated if the data changes.
+   * This saves a full array map and object creation on every render of the 
+   * parent PredictionList.
+   */
+  const renderedActivePredictions = useMemo(() => (
+    activePredictions.map((prediction) => (
+      <PredictionCard key={prediction.id} prediction={prediction} />
+    ))
+  ), []);
+
   return (
     <div className="space-y-6">
       {/* Tab bar */}

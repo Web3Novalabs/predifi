@@ -7,6 +7,7 @@ pub mod constants;
 pub mod db;
 pub mod jwt;
 pub mod metrics;
+pub mod session;
 pub mod openapi;
 pub mod price_cache;
 pub mod redis_cache;
@@ -64,6 +65,8 @@ async fn main() {
     server::run(config).await;
 }
 
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod db_integration_tests;
 #[cfg(test)]
