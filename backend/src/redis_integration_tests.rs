@@ -1,12 +1,12 @@
 //! Integration tests for Redis cache expiration using testcontainers-rs.
 //!
-//! Each test spins up a throwaway Redis container, creates a [`RedisCache`]
-//! connected to it, and verifies that cached items actually expire after the
-//! configured TTL.
+//! Each test spins up a throwaway Redis container via the shared fixture
+//! module, creates a [`RedisCache`] connected to it, and verifies that cached
+//! items actually expire after the configured TTL.
 //!
 //! # Resource lifecycle
 //!
-//! `setup()` returns both the [`RedisCache`] **and** the container handle.
+//! `setup_redis()` returns both the [`RedisCache`] **and** the container handle.
 //! Tests must bind the container to a named variable (not `_`) so that it
 //! stays alive for the entire test body.  At the end of each test the
 //! container is dropped, which stops the Docker container and releases the
@@ -16,43 +16,13 @@
 mod tests {
     use std::time::Duration;
 
-    use testcontainers::runners::AsyncRunner;
-    use testcontainers_modules::redis::Redis;
-
-    use crate::redis_cache::RedisCache;
-
-    /// Boot a Redis container and return a [`RedisCache`] connected to it
-    /// together with the container handle.
-    ///
-    /// # Important
-    ///
-    /// The caller **must** keep the returned `ContainerAsync` bound to a named
-    /// variable for the full duration of the test.  Binding it to `_` would
-    /// drop it immediately, stopping the container before any queries run.
-    async fn setup() -> (RedisCache, testcontainers::ContainerAsync<Redis>) {
-        let container = Redis::default()
-            .start()
-            .await
-            .expect("redis container");
-        let port = container
-            .get_host_port_ipv4(6379)
-            .await
-            .expect("redis port");
-        let url = format!("redis://127.0.0.1:{port}");
-
-        let cache = RedisCache::new(&url).await;
-
-        // Wait briefly for the connection to be fully established.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-
-        (cache, container)
-    }
+    use crate::test_support;
 
     /// A value stored with a 1-second TTL should be retrievable immediately
     /// but become inaccessible after the TTL has elapsed.
     #[tokio::test]
     async fn cached_item_expires_after_short_ttl() {
-        let (cache, container) = setup().await;
+        let (cache, container) = test_support::setup_redis().await;
 
         assert!(cache.is_available(), "Redis should be available");
 
@@ -83,7 +53,7 @@ mod tests {
     /// Multiple cached items with different TTLs should expire independently.
     #[tokio::test]
     async fn items_with_different_ttls_expire_independently() {
-        let (cache, container) = setup().await;
+        let (cache, container) = test_support::setup_redis().await;
 
         assert!(cache.is_available(), "Redis should be available");
 
@@ -128,7 +98,7 @@ mod tests {
     /// A zero TTL should cause the item to expire immediately.
     #[tokio::test]
     async fn zero_ttl_expires_immediately() {
-        let (cache, container) = setup().await;
+        let (cache, container) = test_support::setup_redis().await;
 
         assert!(cache.is_available(), "Redis should be available");
 
@@ -151,7 +121,7 @@ mod tests {
     /// and does NOT prematurely expire before its TTL.
     #[tokio::test]
     async fn cached_item_persists_within_ttl_window() {
-        let (cache, container) = setup().await;
+        let (cache, container) = test_support::setup_redis().await;
 
         assert!(cache.is_available(), "Redis should be available");
 
@@ -187,7 +157,7 @@ mod tests {
             volume: i64,
         }
 
-        let (cache, container) = setup().await;
+        let (cache, container) = test_support::setup_redis().await;
 
         assert!(cache.is_available(), "Redis should be available");
 

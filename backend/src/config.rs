@@ -1,4 +1,5 @@
-use std::{collections::HashMap, env, fmt, num::ParseIntError};
+use std::{collections::HashMap, env, num::ParseIntError};
+use predifi_errors::ConfigError;
 
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_PORT: u16 = 3000;
@@ -171,6 +172,8 @@ impl Config {
     }
 }
 
+// ConfigError moved to the shared `predifi-errors` crate and re-exported when
+// that crate is used with the `std` feature. See `contracts/predifi-errors`.
 /// Error returned when a configuration value cannot be parsed or is logically invalid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigError {

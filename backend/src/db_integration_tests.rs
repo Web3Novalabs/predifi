@@ -1,11 +1,13 @@
 //! Integration tests for the database layer using testcontainers-rs.
 //!
-//! Each test spins up a throwaway Postgres container, runs all migrations,
-//! and exercises the real SQL queries — no pre-configured database required.
+//! Each test spins up a throwaway Postgres container via the shared fixture
+//! module, runs all migrations, and exercises the real SQL queries — no
+//! pre-configured database required.
 //!
 //! # Resource lifecycle
 //!
-//! `setup()` returns both the connection pool **and** the container handle.
+//! `setup_postgres()` returns both the connection pool **and** the container
+//! handle.
 //! Tests must bind the container to a named variable (not `_`) so that it
 //! stays alive for the entire test body.  At the end of each test the
 //! container is dropped, which stops the Docker container and releases the
@@ -15,63 +17,31 @@
 
 #[cfg(test)]
 mod tests {
-    use sqlx::{postgres::PgPoolOptions, PgPool, Row};
-    use testcontainers::runners::AsyncRunner;
-    use testcontainers_modules::postgres::Postgres;
+    use sqlx::Row;
 
-    /// Boot a Postgres container, run all migrations, and return the pool
-    /// together with the container handle.
-    ///
-    /// # Important
-    ///
-    /// The caller **must** keep the returned `ContainerAsync` bound to a named
-    /// variable for the full duration of the test.  Binding it to `_` would
-    /// drop it immediately, stopping the container before any queries run.
-    ///
-    /// Always close the pool before dropping the container:
-    ///
-    /// ```rust,ignore
-    /// let (pool, container) = setup().await;
-    /// // … run queries …
-    /// pool.close().await;
-    /// drop(container); // container stops here
-    /// ```
-    async fn setup() -> (PgPool, testcontainers::ContainerAsync<Postgres>) {
-        let container = Postgres::default()
-            .start()
-            .await
-            .expect("postgres container");
-        let port = container
-            .get_host_port_ipv4(5432)
-            .await
-            .expect("postgres port");
-        let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
+    use crate::test_support;
 
-        let pool = PgPoolOptions::new()
-            .max_connections(2)
-            .connect(&url)
-            .await
-            .expect("connect to test postgres");
+    #[tokio::test]
+    async fn migrations_run_cleanly() {
+        let (pool, container) = test_support::setup_postgres().await;
 
         sqlx::migrate!("./migrations")
             .run(&pool)
             .await
             .expect("migrations");
 
-        (pool, container)
-    }
-
-    #[tokio::test]
-    async fn migrations_run_cleanly() {
-        let (pool, container) = setup().await;
-        // If setup() completes without panic the migrations are valid.
         pool.close().await;
         drop(container);
     }
 
     #[tokio::test]
     async fn insert_and_query_pool() {
-        let (pool, container) = setup().await;
+        let (pool, container) = test_support::setup_postgres().await;
+
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
 
         sqlx::query(
             "INSERT INTO pools (metadata_url, start_time, end_time) \
@@ -96,7 +66,12 @@ mod tests {
 
     #[tokio::test]
     async fn insert_and_query_prediction() {
-        let (pool, container) = setup().await;
+        let (pool, container) = test_support::setup_postgres().await;
+
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
 
         let pool_id: i64 = sqlx::query(
             "INSERT INTO pools (metadata_url, start_time, end_time) \
@@ -135,7 +110,12 @@ mod tests {
 
     #[tokio::test]
     async fn pool_status_defaults_to_open() {
-        let (pool, container) = setup().await;
+        let (pool, container) = test_support::setup_postgres().await;
+
+        sqlx::migrate!("./migrations")
+            .run(&pool)
+            .await
+            .expect("migrations");
 
         sqlx::query(
             "INSERT INTO pools (metadata_url, start_time, end_time) \
