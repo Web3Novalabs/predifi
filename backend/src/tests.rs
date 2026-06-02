@@ -126,10 +126,15 @@ async fn api_v1_fees_returns_config_values() {
     config.treasury_fee_bps = 400;
     config.referral_fee_bps = 6000;
 
-    let response = build_router(config, PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/fees"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/fees"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -647,10 +652,15 @@ async fn api_v1_health_returns_503_when_rpc_unreachable() {
     // Point RPC to an invalid/unreachable endpoint to simulate failure
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/api/v1/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -677,10 +687,15 @@ async fn root_health_returns_503_when_rpc_unreachable() {
     // Point RPC to an invalid/unreachable endpoint to simulate failure
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -705,10 +720,15 @@ async fn health_503_response_includes_dependency_details() {
     let mut config = Config::default_for_test();
     config.stellar_rpc_url = String::from("http://localhost:1/invalid");
 
-    let response = build_router(config, PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -768,10 +788,15 @@ async fn root_health_returns_503_when_redis_unreachable() {
     // Create a mock Redis cache that always fails ping
     let redis = RedisCache::disabled();
 
-    let response = build_router(Config::default_for_test(), PriceCache::new(), redis, crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        redis,
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(
         response.status(),
@@ -796,10 +821,15 @@ async fn health_503_response_includes_redis_dependency_details() {
     // Create a mock Redis cache that always fails ping
     let redis = RedisCache::disabled();
 
-    let response = build_router(Config::default_for_test(), PriceCache::new(), redis, crate::ws::EventBus::new())
-        .oneshot(get("/health"))
-        .await
-        .expect("request failed");
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        redis,
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -1214,4 +1244,96 @@ async fn ready_response_includes_error_details_when_not_ready() {
         body.contains("\"errors\""),
         "response should include an errors object, got: {body}"
     );
+}
+
+// ── Issue #974: Pagination validation tests ───────────────────────────────────
+
+/// Helper: build a GET request and return (status, body) for a given path.
+async fn pagination_request(path: &str) -> (StatusCode, String) {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get(path))
+    .await
+    .expect("request failed");
+    let status = response.status();
+    let body = body_string(response.into_body()).await;
+    (status, body)
+}
+
+#[tokio::test]
+async fn pagination_limit_zero_returns_400() {
+    let (status, body) = pagination_request("/api/v1/pools?limit=0").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("limit"), "body: {body}");
+}
+
+#[tokio::test]
+async fn pagination_limit_over_100_returns_400() {
+    let (status, body) = pagination_request("/api/v1/pools?limit=101").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("limit"), "body: {body}");
+}
+
+#[tokio::test]
+async fn pagination_negative_limit_returns_400() {
+    let (status, body) = pagination_request("/api/v1/pools?limit=-1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("limit"), "body: {body}");
+}
+
+#[tokio::test]
+async fn pagination_negative_offset_returns_400() {
+    let (status, body) = pagination_request("/api/v1/pools?offset=-1").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    assert!(body.contains("offset"), "body: {body}");
+}
+
+#[tokio::test]
+async fn pagination_valid_boundary_limit_1_accepted() {
+    let (status, _) = pagination_request("/api/v1/pools?limit=1").await;
+    assert_ne!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pagination_valid_boundary_limit_100_accepted() {
+    let (status, _) = pagination_request("/api/v1/pools?limit=100").await;
+    assert_ne!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn pagination_valid_offset_0_accepted() {
+    let (status, _) = pagination_request("/api/v1/pools?offset=0").await;
+    assert_ne!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn leaderboard_limit_over_100_returns_400() {
+    let (status, body) = pagination_request("/api/v1/leaderboard?limit=200").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+}
+
+#[tokio::test]
+async fn leaderboard_negative_offset_returns_400() {
+    let (status, body) = pagination_request("/api/v1/leaderboard?offset=-5").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+}
+
+#[tokio::test]
+async fn user_history_limit_over_100_returns_400() {
+    let addr = "GABC123";
+    let (status, body) =
+        pagination_request(&format!("/api/v1/users/{addr}/history?limit=101")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+}
+
+#[tokio::test]
+async fn user_predictions_negative_offset_returns_400() {
+    let addr = "GABC123";
+    let (status, body) =
+        pagination_request(&format!("/api/v1/users/{addr}/predictions?offset=-1")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
 }

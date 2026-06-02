@@ -13,6 +13,7 @@
 
 use std::time::Duration;
 use sqlx::PgPool;
+use crate::errors::AppError;
 use tracing::{error, info, warn};
 
 use crate::config::Config;
@@ -91,7 +92,7 @@ fn parse_total_stake_from_rpc(body: &serde_json::Value) -> Option<i64> {
 }
 
 /// Fix the DB `total_stake` for a pool by updating it to match on-chain state.
-async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result<(), sqlx::Error> {
+async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result<(), AppError> {
     sqlx::query!(
         "UPDATE pools SET total_stake = $1 WHERE pool_id = $2",
         correct_stake,
@@ -113,7 +114,7 @@ async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result
 pub async fn run_full_sync(
     db: &PgPool,
     config: &Config,
-) -> Result<Vec<PoolSyncResult>, sqlx::Error> {
+) -> Result<Vec<PoolSyncResult>, AppError> {
     info!("starting full contract-DB state sync");
 
     // Fetch all pool IDs and their current DB total_stake.

@@ -42,8 +42,14 @@ impl Metrics {
         )?;
         app_info.set(1.0);
 
-        let memory_used_bytes = Gauge::with_opts(Opts::new("app_memory_used_bytes", "Memory used by the backend in bytes."))?;
-        let memory_total_bytes = Gauge::with_opts(Opts::new("app_memory_total_bytes", "Total system memory in bytes."))?;
+        let memory_used_bytes = Gauge::with_opts(Opts::new(
+            "app_memory_used_bytes",
+            "Memory used by the backend in bytes.",
+        ))?;
+        let memory_total_bytes = Gauge::with_opts(Opts::new(
+            "app_memory_total_bytes",
+            "Total system memory in bytes.",
+        ))?;
 
         registry.register(Box::new(http_requests_total.clone()))?;
         registry.register(Box::new(app_up.clone()))?;
@@ -103,10 +109,7 @@ mod tests {
             names.contains(&"app_http_requests_total"),
             "app_http_requests_total must be registered"
         );
-        assert!(
-            names.contains(&"app_up"),
-            "app_up must be registered"
-        );
+        assert!(names.contains(&"app_up"), "app_up must be registered");
         assert!(
             names.contains(&"app_build_info"),
             "app_build_info must be registered"
