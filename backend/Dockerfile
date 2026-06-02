@@ -55,8 +55,8 @@ COPY --from=builder --chown=predifi:predifi /app/target/release/predifi-backend 
 USER predifi
 
 # Environment configuration
-ENV APP_HOST=0.0.0.0
-ENV APP_PORT=3000
+ENV PREDIFI_APP_HOST=0.0.0.0
+ENV PREDIFI_APP_PORT=3000
 ENV RUST_LOG=info
 
 # Health check

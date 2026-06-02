@@ -1,7 +1,7 @@
 //! Redis caching layer for hot data
 //!
 //! Implements issue #714: Redis Caching for Hot Data
-//! 
+//!
 //! This module provides a caching layer for frequently accessed API responses
 //! to reduce database load. Uses Redis with configurable TTL values.
 //!
@@ -25,7 +25,11 @@ pub const POOL_DETAILS_CACHE_TTL: u64 = 30;
 /// Default TTL for user predictions (45 seconds)
 pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 
-/// Redis cache client wrapper
+/// Thread-safe Redis cache client with graceful fail-open behaviour.
+///
+/// All operations silently no-op when Redis is unavailable so the application
+/// continues to function without caching rather than returning errors to users.
+/// Use [`RedisCache::disabled`] to create an always-no-op instance for tests.
 #[derive(Clone)]
 pub struct RedisCache {
     manager: Option<ConnectionManager>,
@@ -77,8 +81,8 @@ impl RedisCache {
         let manager = self.manager.as_ref()?;
         let mut conn = manager.clone();
 
-        match conn.get::<_, String>(key).await {
-            Ok(data) => match serde_json::from_str::<T>(&data) {
+        match conn.get::<_, Option<String>>(key).await {
+            Ok(Some(data)) => match serde_json::from_str::<T>(&data) {
                 Ok(value) => {
                     debug!("Cache hit: {}", key);
                     Some(value)
@@ -88,7 +92,7 @@ impl RedisCache {
                     None
                 }
             },
-            Err(RedisError::Nil) => {
+            Ok(None) => {
                 debug!("Cache miss: {}", key);
                 None
             }
@@ -118,10 +122,7 @@ impl RedisCache {
             }
         };
 
-        if let Err(err) = conn
-            .set_ex::<_, _, ()>(key, data, ttl_secs)
-            .await
-        {
+        if let Err(err) = conn.set_ex::<_, _, ()>(key, data, ttl_secs).await {
             error!("Redis SET error for {}: {}", key, err);
         } else {
             debug!("Cached: {} (TTL: {}s)", key, ttl_secs);
@@ -174,7 +175,11 @@ impl RedisCache {
         if let Err(err) = conn.del::<_, ()>(&keys).await {
             error!("Redis DEL error for pattern {}: {}", pattern, err);
         } else {
-            debug!("Invalidated {} cache entries matching: {}", keys.len(), pattern);
+            debug!(
+                "Invalidated {} cache entries matching: {}",
+                keys.len(),
+                pattern
+            );
         }
     }
 
@@ -187,26 +192,35 @@ impl RedisCache {
 
         let mut conn = manager.clone();
         redis::cmd("PING")
-            .query_async::<_, String>(&mut conn)
+            .query_async::<String>(&mut conn)
             .await
             .is_ok()
     }
 }
 
-/// Generate cache key for pools list
-pub fn pools_cache_key(sort_by: &str, category: Option<&str>, status: &str, limit: i64, offset: i64) -> String {
+/// Generate a cache key for a pools list query.
+///
+/// The key encodes all query parameters so that different filter/sort/page
+/// combinations are stored independently in Redis.
+pub fn pools_cache_key(
+    sort_by: &str,
+    category: Option<&str>,
+    status: &str,
+    limit: i64,
+    offset: i64,
+) -> String {
     match category {
         Some(cat) => format!("pools:{}:{}:{}:{}:{}", sort_by, cat, status, limit, offset),
         None => format!("pools:{}:all:{}:{}:{}", sort_by, status, limit, offset),
     }
 }
 
-/// Generate cache key for pool details
+/// Generate a cache key for a single pool's detail page.
 pub fn pool_details_cache_key(pool_id: i64) -> String {
     format!("pool:{}:details", pool_id)
 }
 
-/// Generate cache key for user predictions
+/// Generate a cache key for a user's paginated predictions list.
 pub fn user_predictions_cache_key(address: &str, limit: i64, offset: i64) -> String {
     format!("user:{}:predictions:{}:{}", address, limit, offset)
 }

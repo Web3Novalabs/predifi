@@ -2,7 +2,7 @@
 
 ## Overview
 
-The predifi-backend implements deep health monitoring through two health check endpoints that verify connectivity to critical dependencies before returning a success status. This ensures load balancers and orchestrators can reliably detect when the service is degraded.
+The predifi-backend implements deep health monitoring through three endpoints that verify connectivity to critical dependencies. This ensures load balancers and orchestrators can reliably detect when the service is degraded or not yet ready to serve traffic.
 
 ## Acceptance Criteria
 
@@ -10,6 +10,7 @@ The predifi-backend implements deep health monitoring through two health check e
 
 - Database connectivity verified before returning 200
 - RPC connectivity verified before returning 200
+- Redis connectivity verified before returning 200
 - Returns HTTP 503 (Service Unavailable) if any dependency fails
 
 ✅ **Returns 200 with detailed dependency status when healthy**
@@ -17,7 +18,59 @@ The predifi-backend implements deep health monitoring through two health check e
 - Includes individual status for each dependency
 - Clearly indicates which dependencies are operational
 
+✅ **Dedicated Redis readiness probe**
+
+- `GET /ready` reports Redis connectivity independently
+- Returns 503 when Redis is not configured or unreachable
+- Suitable for Kubernetes `readinessProbe` configuration
+
 ## Endpoints
+
+### `GET /ready`
+
+Readiness probe endpoint focused exclusively on Redis connectivity. Use this as the Kubernetes `readinessProbe` — returning 503 removes the pod from the load-balancer rotation until Redis recovers.
+
+**Response (200 OK — service is ready):**
+
+```json
+{
+  "status": "ready",
+  "dependencies": {
+    "redis": "ok"
+  },
+  "errors": {
+    "redis": null
+  }
+}
+```
+
+**Response (503 Service Unavailable — Redis unreachable):**
+
+```json
+{
+  "status": "not_ready",
+  "dependencies": {
+    "redis": "unreachable"
+  },
+  "errors": {
+    "redis": "Redis ping failed — connection may be lost"
+  }
+}
+```
+
+**Response (503 Service Unavailable — Redis not configured):**
+
+```json
+{
+  "status": "not_ready",
+  "dependencies": {
+    "redis": "not_configured"
+  },
+  "errors": {
+    "redis": "Redis is not configured"
+  }
+}
+```
 
 ### `GET /health`
 
@@ -81,7 +134,13 @@ Versioned health check endpoint for API consumers.
 }
 ```
 
-## Dependency Status Values
+### Dependency Status Values
+
+### Redis (`redis`) — readiness probe
+
+- **`"ok"`** — Redis is reachable; `PING` command returned `PONG`
+- **`"unreachable"`** — Redis connection exists but ping failed (connection dropped)
+- **`"not_configured"`** — Redis was not initialised (no `PREDIFI_REDIS_URL` or connection failed at startup)
 
 ### Database (`db`)
 
@@ -94,13 +153,14 @@ Versioned health check endpoint for API consumers.
 - **`"ok"`** — Stellar RPC endpoint is operational; `getHealth` RPC call returned HTTP 2xx
 - **`"unreachable"`** — RPC endpoint is unreachable (connection timeout, HTTP error, or network issue)
 
-## Implementation Details
+### Implementation Details
 
 ### Location
 
-- **Root health endpoint:** [src/main.rs](../backend/src/main.rs) — `health()` handler
+- **Readiness probe:** [src/server.rs](../backend/src/server.rs) — `ready()` handler
+- **Root health endpoint:** [src/server.rs](../backend/src/server.rs) — `health()` handler
 - **V1 health endpoint:** [src/routes/v1.rs](../backend/src/routes/v1.rs) — `health()` handler
-- **Tests:** [src/tests.rs](../backend/src/tests.rs) — Advanced Health Check Tests section
+- **Tests:** [src/tests.rs](../backend/src/tests.rs) — Readiness Probe Tests section
 
 ### Dependency Checks
 
@@ -198,7 +258,7 @@ The health check uses the following environment variables:
 ### Docker / Kubernetes
 
 ```yaml
-# Kubernetes liveness probe
+# Kubernetes liveness probe — checks all dependencies
 livenessProbe:
   httpGet:
     path: /health
@@ -208,10 +268,10 @@ livenessProbe:
   timeoutSeconds: 3
   failureThreshold: 3
 
-# Kubernetes readiness probe
+# Kubernetes readiness probe — checks Redis connectivity
 readinessProbe:
   httpGet:
-    path: /api/v1/health
+    path: /ready
     port: 3000
   initialDelaySeconds: 5
   periodSeconds: 3
@@ -222,6 +282,9 @@ readinessProbe:
 ### curl
 
 ```bash
+# Check readiness (Redis probe)
+curl -v http://localhost:3000/ready
+
 # Check root health
 curl -v http://localhost:3000/health
 
@@ -231,8 +294,8 @@ curl -v http://localhost:3000/api/v1/health
 # Parse JSON response
 curl -s http://localhost:3000/health | jq '.dependencies'
 
-# Exit with non-zero status if unhealthy
-curl -f http://localhost:3000/health > /dev/null || echo "Service is unhealthy"
+# Exit with non-zero status if not ready
+curl -f http://localhost:3000/ready > /dev/null || echo "Service is not ready"
 ```
 
 ### Monitoring / Alerting

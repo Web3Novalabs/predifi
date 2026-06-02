@@ -31,10 +31,12 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
 
     let mut all_healthy = true;
     let mut db_status = "ok";
+    let mut db_error = String::new();
 
     if let Some(db) = &state.db {
-        if sqlx::query("SELECT 1").execute(db).await.is_err() {
+        if let Err(e) = sqlx::query("SELECT 1").execute(db).await {
             db_status = "unreachable";
+            db_error = e.to_string();
             all_healthy = false;
         }
     } else {
@@ -51,10 +53,10 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
     let mut rpc_attempts = 0;
     let max_attempts = state.config.rpc_health_retry_count as usize;
     let mut last_error = String::new();
-    
+
     while rpc_attempts < max_attempts {
         rpc_attempts += 1;
-        
+
         let rpc_req = client
             .post(&state.config.stellar_rpc_url)
             .json(&serde_json::json!({
@@ -77,25 +79,27 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
                 last_error = e.to_string();
             }
         }
-        
+
         // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
         if rpc_attempts < max_attempts {
             let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
             sleep(TokioDuration::from_secs(backoff_duration)).await;
         }
     }
-    
+
     if rpc_attempts >= max_attempts {
         rpc_status = "unreachable";
         all_healthy = false;
     }
 
     let mut redis_status = "ok";
+    let mut redis_error = String::new();
     if !state.redis.is_available() {
         redis_status = "not_configured";
         all_healthy = false;
     } else if !state.redis.ping().await {
         redis_status = "unreachable";
+        redis_error = String::from("Redis ping failed");
         all_healthy = false;
     }
 
@@ -140,12 +144,17 @@ async fn index() -> Json<serde_json::Value> {
 /// Shared state for all v1 routes.
 #[derive(Clone)]
 pub struct AppState {
+    /// Validated runtime configuration (fees, URLs, timeouts, etc.).
     pub config: Config,
+    /// In-memory oracle price cache refreshed every 60 seconds.
     pub cache: PriceCache,
+    /// Redis cache client for hot-path response caching.
     pub redis: RedisCache,
     /// Optional DB pool — absent in unit tests that don't need a database.
     pub db: Option<sqlx::PgPool>,
+    /// Shared Prometheus metrics registry.
     pub metrics: SharedMetrics,
+    /// Broadcast channel for pushing live prediction events to WebSocket clients.
     pub event_bus: crate::ws::EventBus,
 }
 
@@ -181,6 +190,7 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
 
 // ── Task 2: Active Pools API ──────────────────────────────────────────────────
 
+/// Query parameters for the `GET /api/v1/pools` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct PoolsQuery {
     /// Sort order: "popular" | "ending_soon" | "new" (default)
@@ -191,6 +201,17 @@ pub struct PoolsQuery {
     pub status: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PoolsResponse {
+    pub pools: Vec<crate::db::PoolRow>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+    pub status: String,
+    pub category: Option<String>,
+    pub sort_by: String,
 }
 
 /// `GET /api/v1/pools/:id` — get detailed pool information with real-time odds.
@@ -209,6 +230,10 @@ pub async fn get_pool_by_id_handler(
     }
 }
 
+/// `GET /api/v1/stats` — protocol-wide aggregate statistics.
+///
+/// Returns total value locked, total bets placed, and total pools created.
+/// Responds with a database-unavailable error if no pool is configured.
 pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
     let Some(db) = &state.db else {
         return Json(json!({ "error": "database not available" }));
@@ -219,6 +244,10 @@ pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value>
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
+/// `GET /api/v1/pools` — paginated list of pools with optional filters.
+///
+/// Checks the Redis cache first; falls back to the database on a cache miss
+/// and stores the result for [`POOLS_CACHE_TTL`](crate::redis_cache::POOLS_CACHE_TTL) seconds.
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
@@ -235,37 +264,49 @@ pub async fn get_pools(
 
     // Try to get from Redis cache first
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
-    
+
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
         return Json(cached_response);
     }
 
     // Cache miss - fetch from database
-    match crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset).await {
-        Ok(pools) => {
-            let response = json!({
-                "pools": pools,
-                "limit": limit,
-                "offset": offset,
-                "status": status,
-                "category": category,
-                "sort_by": sort_by
-            });
-            
+    match tokio::try_join!(
+        crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset),
+        crate::db::count_pools_with_filters(db, category, status)
+    ) {
+        Ok((pools, total)) => {
+            let response = PoolsResponse {
+                pools,
+                total,
+                limit,
+                offset,
+                status: status.to_string(),
+                category: category.map(|s| s.to_string()),
+                sort_by: sort_by.to_string(),
+            };
+
+            let json_response = json!(&response);
+
             // Cache the response for 60 seconds
-            state.redis.set(&cache_key, &response, crate::redis_cache::POOLS_CACHE_TTL).await;
-            
-            Json(response)
-        },
+            state
+                .redis
+                .set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL)
+                .await;
+
+            Json(json_response)
+        }
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
 
 // ── Task 3: User Prediction History API ──────────────────────────────────────
 
+/// Generic pagination query parameters used by history and prediction endpoints.
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {
+    /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<i64>,
+    /// Zero-based offset for pagination (default 0).
     pub offset: Option<i64>,
 }
 
@@ -318,9 +359,12 @@ pub async fn get_user_predictions(
     }
 }
 
+/// Query parameters for the `GET /api/v1/leaderboard` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct LeaderboardQuery {
+    /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<i64>,
+    /// Zero-based offset for pagination (default 0).
     pub offset: Option<i64>,
     /// Ranking type: "volume" | "winnings" (default: "volume")
     pub rank_by: Option<String>,
@@ -474,7 +518,10 @@ pub fn router(
         .route("/fees", get(get_fees))
         .route("/prices", get(crate::price_cache::get_prices))
         .route("/referrals/{address}", get(referrals_handler))
-        .route("/users/{address}/referrals", get(user_referral_earnings_handler))
+        .route(
+            "/users/{address}/referrals",
+            get(user_referral_earnings_handler),
+        )
         .route("/users/{address}/history", get(get_user_history))
         .route("/users/{address}/predictions", get(get_user_predictions))
         .route("/indexer/pool-created", post(ingest_pool_created))

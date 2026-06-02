@@ -24,6 +24,10 @@ pub struct EventBus {
 }
 
 impl EventBus {
+    /// Create a new broadcast channel with a capacity of [`CHANNEL_CAPACITY`] messages.
+    ///
+    /// Lagging receivers (slow clients) will have messages dropped rather than
+    /// blocking the sender.
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
         Self { tx }
@@ -37,16 +41,19 @@ impl EventBus {
         }
     }
 
+    /// Subscribe to the broadcast channel.
+    ///
+    /// Each call returns an independent [`broadcast::Receiver`] that will
+    /// receive every message published after the subscription is created.
+    /// Receivers that fall more than [`CHANNEL_CAPACITY`] messages behind
+    /// will receive a [`broadcast::error::RecvError::Lagged`] error.
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
         self.tx.subscribe()
     }
 }
 
 /// Axum handler — upgrades the HTTP connection to WebSocket and streams events.
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(bus): State<EventBus>,
-) -> impl IntoResponse {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(bus): State<EventBus>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, bus))
 }
 

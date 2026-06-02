@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import { DM_Mono } from "next/font/google";
 import "./globals.css";
+import { SWRProvider } from "@/components/providers/SWRProvider";
 
 const dmMono = DM_Mono({
   subsets: ["latin"],
   weight: ["300", "400", "500"],
   variable: "--font-dm-mono",
-   preload: false,
+  display: "swap",
+  preload: true,
 });
 
 export const metadata: Metadata = {
@@ -83,8 +85,16 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        {/* Preload critical hero images to improve LCP */}
+        <link rel="preload" as="image" href="/swirl-pattern.webp" />
+        <link rel="preload" as="image" href="/gradient.webp" />
+
+        {/* Inline minimal critical CSS for hero to paint immediately */}
+        <style>{`.hero-critical{min-height:calc(100vh - 40px);display:flex;flex-direction:column;align-items:center;text-align:center}`}</style>
+      </head>
       <body className={`antialiased text-sm ${dmMono.variable}`}>
-        {children}
+        <SWRProvider>{children}</SWRProvider>
       </body>
     </html>
   );

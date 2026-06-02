@@ -45,18 +45,39 @@ pub struct AssetPrice {
 pub struct PriceCache(Arc<RwLock<HashMap<String, f64>>>);
 
 impl PriceCache {
+    /// Create an empty price cache.
+    ///
+    /// The cache starts with no entries.  Call [`update`](Self::update) to
+    /// populate it, or rely on [`spawn_fetcher`] to refresh it periodically
+    /// from CoinGecko.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Overwrite the cache with a fresh snapshot.
+    /// Overwrite the cache with a fresh snapshot from an external source.
+    ///
+    /// This acquires a write lock on the internal [`RwLock`], so it is safe to
+    /// call from any thread (e.g. from a background fetcher task).  The
+    /// previous contents are discarded.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic.  If the lock is poisoned the update is silently skipped.
     pub fn update(&self, prices: HashMap<String, f64>) {
         if let Ok(mut guard) = self.0.write() {
             *guard = prices;
         }
     }
 
-    /// Read a snapshot of all cached prices.
+    /// Return a copy of all currently cached prices.
+    ///
+    /// Acquires a read lock on the internal [`RwLock`], so the returned map
+    /// reflects a consistent point-in-time view.  If the cache has never been
+    /// populated the map will be empty.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic.  If the lock is poisoned an empty map is returned.
     pub fn snapshot(&self) -> HashMap<String, f64> {
         self.0.read().map(|g| g.clone()).unwrap_or_default()
     }
@@ -67,7 +88,17 @@ impl PriceCache {
 /// CoinGecko IDs for the assets we track.
 const ASSETS: &[(&str, &str)] = &[("BTC", "bitcoin"), ("ETH", "ethereum"), ("XLM", "stellar")];
 
-/// Spawn a background task that refreshes the cache every 60 seconds.
+/// Spawn a background Tokio task that refreshes the cache from CoinGecko
+/// every 60 seconds.
+///
+/// On success the cache is atomically overwritten with the latest prices.
+/// On failure (network error, rate limit, etc.) the previous data is
+/// retained and the error is logged — the cache never goes backwards.
+///
+/// # Panics
+///
+/// Panics if the reqwest HTTP client cannot be built (this should never
+/// happen in practice).
 pub fn spawn_fetcher(cache: PriceCache) {
     tokio::spawn(async move {
         let client = reqwest::Client::builder()
@@ -178,6 +209,7 @@ mod tests {
     #[tokio::test]
     async fn get_prices_returns_503_when_empty() {
         use axum::{body::Body, http::Request};
+        use http_body_util::BodyExt;
         use tower::ServiceExt;
 
         let cache = PriceCache::new();
@@ -196,6 +228,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        // Consume the body so the underlying stream is closed before the test exits.
+        let _ = response.into_body().collect().await.unwrap();
     }
 
     #[tokio::test]
@@ -224,6 +258,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        // Consume the full body before the test exits.
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("BTC"));

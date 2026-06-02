@@ -21,7 +21,7 @@ mod test_utils;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, log, symbol_short, token,
-    Address, BytesN, Env, IntoVal, String, Symbol, Vec,
+    Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
 };
 
 pub use constants::*;
@@ -575,12 +575,15 @@ pub enum DataKey {
     /// Category pool index: `CatPoolIx(category, index)` -> `u64` (pool_id)
     CatPoolIx(Symbol, u32),
 
-    // ── Resolution voting ────────────────────────────────────────────────────
-    /// Tracks if an oracle/operator has already voted: `ResVote(pool_id, voter_address)` -> `()`
+    // ── Resolution voting (TEMPORARY STORAGE) ────────────────────────────────
+    /// Tracks if an oracle/operator has already voted (temporary): `ResVote(pool_id, voter_address)` -> `()`
+    /// Stored in temporary storage as it's only needed during resolution process.
     ResVote(u64, Address),
-    /// Vote count for a specific outcome: `ResVoteCt(pool_id, outcome)` -> `u32`
+    /// Vote count for a specific outcome (temporary): `ResVoteCt(pool_id, outcome)` -> `u32`
+    /// Stored in temporary storage as it's only needed during resolution process.
     ResVoteCt(u64, u32),
-    /// Total number of votes cast for a pool: `ResTotal(pool_id)` -> `u32`
+    /// Total number of votes cast for a pool (temporary): `ResTotal(pool_id)` -> `u32`
+    /// Stored in temporary storage as it's only needed during resolution process.
     ResTotal(u64),
 
     // ── Referrals ────────────────────────────────────────────────────────────
@@ -647,6 +650,7 @@ pub struct Prediction {
 // ── Events ───────────────────────────────────────────────────────────────────
 
 #[contractevent(topics = ["init"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitEvent {
     pub access_control: Address,
@@ -658,18 +662,21 @@ pub struct InitEvent {
 }
 
 #[contractevent(topics = ["pause"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PauseEvent {
     pub admin: Address,
 }
 
 #[contractevent(topics = ["unpause"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnpauseEvent {
     pub admin: Address,
 }
 
 #[contractevent(topics = ["fee_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeUpdateEvent {
     pub admin: Address,
@@ -677,6 +684,7 @@ pub struct FeeUpdateEvent {
 }
 
 #[contractevent(topics = ["max_predictions_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MaxPredictionsUpdateEvent {
     pub admin: Address,
@@ -684,6 +692,7 @@ pub struct MaxPredictionsUpdateEvent {
 }
 
 #[contractevent(topics = ["prediction_cooldown_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PredictionCooldownUpdateEvent {
     pub admin: Address,
@@ -691,6 +700,7 @@ pub struct PredictionCooldownUpdateEvent {
 }
 
 #[contractevent(topics = ["fee_tiers_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeTiersUpdateEvent {
     pub admin: Address,
@@ -698,6 +708,7 @@ pub struct FeeTiersUpdateEvent {
 }
 
 #[contractevent(topics = ["treasury_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreasuryUpdateEvent {
     pub admin: Address,
@@ -705,12 +716,14 @@ pub struct TreasuryUpdateEvent {
 }
 
 #[contractevent(topics = ["resolution_delay_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolutionDelayUpdateEvent {
     pub admin: Address,
     pub delay: u64,
 }
 #[contractevent(topics = ["min_pool_duration_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MinPoolDurationUpdateEvent {
     pub admin: Address,
@@ -718,6 +731,7 @@ pub struct MinPoolDurationUpdateEvent {
 }
 
 #[contractevent(topics = ["min_stake_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MinStakeUpdateEvent {
     pub admin: Address,
@@ -725,6 +739,7 @@ pub struct MinStakeUpdateEvent {
 }
 
 #[contractevent(topics = ["pool_ready"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolReadyForResolutionEvent {
     pub pool_id: u64,
@@ -755,6 +770,7 @@ pub struct StakingClosedEvent {
 }
 
 #[contractevent(topics = ["pool_created"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolCreatedEvent {
     pub pool_id: u64,
@@ -771,6 +787,7 @@ pub struct PoolCreatedEvent {
 }
 
 #[contractevent(topics = ["initial_liquidity_provided"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitialLiquidityProvidedEvent {
     pub pool_id: u64,
@@ -779,6 +796,7 @@ pub struct InitialLiquidityProvidedEvent {
 }
 
 #[contractevent(topics = ["pool_resolved"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolResolvedEvent {
     pub pool_id: u64,
@@ -787,6 +805,7 @@ pub struct PoolResolvedEvent {
 }
 
 #[contractevent(topics = ["oracle_resolved"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleResolvedEvent {
     pub pool_id: u64,
@@ -796,6 +815,7 @@ pub struct OracleResolvedEvent {
 }
 
 #[contractevent(topics = ["pool_canceled"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolCanceledEvent {
     pub pool_id: u64,
@@ -805,6 +825,7 @@ pub struct PoolCanceledEvent {
 }
 
 #[contractevent(topics = ["pool_disputed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolDisputedEvent {
     pub pool_id: u64,
@@ -813,6 +834,7 @@ pub struct PoolDisputedEvent {
 }
 
 #[contractevent(topics = ["stake_limits_updated"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StakeLimitsUpdatedEvent {
     pub pool_id: u64,
@@ -822,6 +844,7 @@ pub struct StakeLimitsUpdatedEvent {
 }
 
 #[contractevent(topics = ["pool_description_updated"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolDescriptionUpdatedEvent {
     pub pool_id: u64,
@@ -830,6 +853,7 @@ pub struct PoolDescriptionUpdatedEvent {
 }
 
 #[contractevent(topics = ["prediction_placed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PredictionPlacedEvent {
     pub pool_id: u64,
@@ -839,6 +863,7 @@ pub struct PredictionPlacedEvent {
 }
 
 #[contractevent(topics = ["winnings_claimed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WinningsClaimedEvent {
     pub pool_id: u64,
@@ -847,6 +872,7 @@ pub struct WinningsClaimedEvent {
 }
 
 #[contractevent(topics = ["reward_claimed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RewardClaimedEvent {
     pub pool_id: u64,
@@ -856,6 +882,7 @@ pub struct RewardClaimedEvent {
 }
 
 #[contractevent(topics = ["referral_paid"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReferralPaidEvent {
     pub pool_id: u64,
@@ -873,6 +900,7 @@ pub struct ReferralPaidEvent {
 /// does not hold the Operator role.  Indicates a potential attack or
 /// misconfigured access-control contract.
 #[contractevent(topics = ["unauthorized_resolution"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnauthorizedResolveAttemptEvent {
     /// The address that attempted to resolve without authorization.
@@ -887,6 +915,7 @@ pub struct UnauthorizedResolveAttemptEvent {
 /// `set_treasury`, `pause`, `unpause`) is called by an address that does not
 /// hold the Admin role.
 #[contractevent(topics = ["unauthorized_admin_op"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnauthorizedAdminAttemptEvent {
     /// The address that attempted the restricted operation.
@@ -901,6 +930,7 @@ pub struct UnauthorizedAdminAttemptEvent {
 /// already been claimed for the same (user, pool) pair.  Repeated attempts may
 /// indicate a re-entrancy probe or a front-end bug worth investigating.
 #[contractevent(topics = ["double_claim_attempt"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SuspiciousDoubleClaimEvent {
     /// The address that attempted to double-claim.
@@ -915,6 +945,7 @@ pub struct SuspiciousDoubleClaimEvent {
 /// successfully paused.  Having a dedicated alert topic makes it easy to set
 /// a zero-tolerance PagerDuty rule that fires on any pause.
 #[contractevent(topics = ["contract_paused_alert"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractPausedAlertEvent {
     /// The admin that triggered the pause.
@@ -927,6 +958,7 @@ pub struct ContractPausedAlertEvent {
 /// meets or exceeds `HIGH_VALUE_THRESHOLD`.  Useful for liquidity monitoring
 /// and detecting unusual betting patterns.
 #[contractevent(topics = ["high_value_prediction"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HighValuePredictionEvent {
     pub pool_id: u64,
@@ -941,6 +973,7 @@ pub struct HighValuePredictionEvent {
 /// context so monitors can calculate implied payouts and flag anomalies
 /// (e.g., winning_stake == 0 meaning no winners).
 #[contractevent(topics = ["pool_resolved_diag"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolResolvedDiagEvent {
     pub pool_id: u64,
@@ -957,6 +990,7 @@ pub struct PoolResolvedDiagEvent {
 /// Useful for markets with many outcomes (e.g., 32+ teams tournament) where
 /// emitting individual events per outcome would be impractical.
 #[contractevent(topics = ["outcome_stakes_updated"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutcomeStakesUpdatedEvent {
     pub pool_id: u64,
@@ -967,6 +1001,7 @@ pub struct OutcomeStakesUpdatedEvent {
 }
 
 #[contractevent(topics = ["token_whitelist_added"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenWhitelistAddedEvent {
     pub admin: Address,
@@ -974,6 +1009,7 @@ pub struct TokenWhitelistAddedEvent {
 }
 
 #[contractevent(topics = ["token_whitelist_removed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenWhitelistRemovedEvent {
     pub admin: Address,
@@ -984,6 +1020,7 @@ pub struct TokenWhitelistRemovedEvent {
 /// has been removed from the whitelist since the pool was created.
 /// Useful for off-chain monitors to detect affected pools and alert users.
 #[contractevent(topics = ["prediction_blocked_delisted"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PredictionBlockedDelistedEvent {
     pub pool_id: u64,
@@ -993,6 +1030,7 @@ pub struct PredictionBlockedDelistedEvent {
 }
 
 #[contractevent(topics = ["oracle_whitelist_added"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleWhitelistAddedEvent {
     pub admin: Address,
@@ -1000,6 +1038,7 @@ pub struct OracleWhitelistAddedEvent {
 }
 
 #[contractevent(topics = ["oracle_whitelist_removed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleWhitelistRemovedEvent {
     pub admin: Address,
@@ -1007,6 +1046,7 @@ pub struct OracleWhitelistRemovedEvent {
 }
 
 #[contractevent(topics = ["added_to_whitelist"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AddedToWhitelistEvent {
     pub pool_id: u64,
@@ -1016,6 +1056,7 @@ pub struct AddedToWhitelistEvent {
 }
 
 #[contractevent(topics = ["removed_from_whitelist"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemovedFromWhitelistEvent {
     pub pool_id: u64,
@@ -1025,6 +1066,7 @@ pub struct RemovedFromWhitelistEvent {
 }
 
 #[contractevent(topics = ["treasury_withdrawn"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreasuryWithdrawnEvent {
     pub admin: Address,
@@ -1035,6 +1077,7 @@ pub struct TreasuryWithdrawnEvent {
     pub timestamp: u64,
 }
 #[contractevent(topics = ["emergency_withdraw"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmergencyWithdrawEvent {
     pub admin: Address,
@@ -1043,6 +1086,7 @@ pub struct EmergencyWithdrawEvent {
     pub amount: i128,
 }
 #[contractevent(topics = ["refund_claimed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefundClaimedEvent {
     pub pool_id: u64,
@@ -1051,6 +1095,7 @@ pub struct RefundClaimedEvent {
 }
 
 #[contractevent(topics = ["upgrade"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UpgradeEvent {
     pub admin: Address,
@@ -1058,6 +1103,7 @@ pub struct UpgradeEvent {
 }
 
 #[contractevent(topics = ["contract_upgraded"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractUpgradedEvent {
     pub old_version: u32,
@@ -1066,6 +1112,7 @@ pub struct ContractUpgradedEvent {
 }
 
 #[contractevent(topics = ["oracle_init"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleInitEvent {
     pub admin: Address,
@@ -1075,6 +1122,7 @@ pub struct OracleInitEvent {
 }
 
 #[contractevent(topics = ["price_feed_updated"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceFeedUpdatedEvent {
     pub oracle: Address,
@@ -1086,6 +1134,7 @@ pub struct PriceFeedUpdatedEvent {
 }
 
 #[contractevent(topics = ["price_condition_set"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceConditionSetEvent {
     pub pool_id: u64,
@@ -1096,6 +1145,7 @@ pub struct PriceConditionSetEvent {
 }
 
 #[contractevent(topics = ["price_resolved"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceResolvedEvent {
     pub pool_id: u64,
@@ -1110,6 +1160,7 @@ pub struct PriceResolvedEvent {
 /// `feeds_removed` is the count of `DataKey::PriceFeed` entries deleted.
 /// `timestamp` is the ledger time at which the cleanup ran.
 #[contractevent(topics = ["price_feeds_cleaned"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceFeedsCleanedEvent {
     pub feeds_removed: u32,
@@ -1117,6 +1168,7 @@ pub struct PriceFeedsCleanedEvent {
 }
 
 #[contractevent(topics = ["resolution_conflict"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolutionConflictEvent {
     pub pool_id: u64,
@@ -1126,6 +1178,7 @@ pub struct ResolutionConflictEvent {
 }
 
 #[contractevent(topics = ["resolution_vote_cast"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolutionVoteCastEvent {
     pub pool_id: u64,
@@ -1183,6 +1236,25 @@ impl PredifiContract {
         Err(PredifiError::InvalidData)
     }
 
+    fn validate_referral_code(env: &Env, code: &Symbol) -> Result<(), PredifiError> {
+        let code_str = SymbolStr::try_from_val(env, &code.to_symbol_val())
+            .map_err(|_| PredifiError::InvalidData)?;
+        let code_bytes: &[u8] = code_str.as_ref();
+        let len = code_bytes.len();
+
+        if !(6..=12).contains(&len) {
+            return Err(PredifiError::InvalidData);
+        }
+
+        for byte in code_bytes {
+            if !matches!(*byte, b'A'..=b'Z' | b'0'..=b'9') {
+                return Err(PredifiError::InvalidData);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Validate core protocol invariants for a pool.
     /// Panics if any invariant is broken to prevent corrupted state from causing
     /// index-out-of-bounds or other logic errors in downstream processing.
@@ -1201,8 +1273,10 @@ impl PredifiContract {
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
-            (MarketState::Active, MarketState::Resolved)
-                | (MarketState::Active, MarketState::Canceled)
+            (
+                MarketState::Active,
+                MarketState::Resolved | MarketState::Canceled
+            )
         )
     }
 
@@ -1301,6 +1375,12 @@ impl PredifiContract {
     fn extend_persistent(env: &Env, key: &DataKey) {
         env.storage()
             .persistent()
+            .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
+    fn extend_temporary(env: &Env, key: &DataKey) {
+        env.storage()
+            .temporary()
             .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
     }
 
@@ -2391,6 +2471,12 @@ impl PredifiContract {
         );
         assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
 
+        if let Some(ref whitelist_key) = config.whitelist_key {
+            if let Err(e) = Self::validate_referral_code(&env, whitelist_key) {
+                soroban_sdk::panic_with_error!(&env, e);
+            }
+        }
+
         // outcome_descriptions validation is now handled by validate_pool_invariants
         // called right after pool structure is initialized.
 
@@ -2728,7 +2814,7 @@ impl PredifiContract {
 
         // Check if this operator has already voted for this pool
         let vote_key = DataKey::ResVote(pool_id, operator.clone());
-        if env.storage().persistent().has(&vote_key) {
+        if env.storage().temporary().has(&vote_key) {
             log!(
                 &env,
                 "resolve_pool rejected: operator already voted",
@@ -2739,35 +2825,31 @@ impl PredifiContract {
             return Err(PredifiError::OracleAlreadyVoted); // Reusing error code for operators
         }
 
-        // Record the operator's vote
-        env.storage().persistent().set(&vote_key, &outcome);
-        Self::extend_persistent(&env, &vote_key);
+        // Record the operator's vote in temporary storage
+        env.storage().temporary().set(&vote_key, &outcome);
+        Self::extend_temporary(&env, &vote_key);
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
-        let total_votes: u32 = env
-            .storage()
-            .persistent()
-            .get(&total_votes_key)
-            .unwrap_or(0);
+        let total_votes: u32 = env.storage().temporary().get(&total_votes_key).unwrap_or(0);
         let new_total_votes = total_votes + 1;
         env.storage()
-            .persistent()
+            .temporary()
             .set(&total_votes_key, &new_total_votes);
-        Self::extend_persistent(&env, &total_votes_key);
+        Self::extend_temporary(&env, &total_votes_key);
 
         // Increment specific outcome vote count
         let outcome_votes_key = DataKey::ResVoteCt(pool_id, outcome);
         let outcome_votes: u32 = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&outcome_votes_key)
             .unwrap_or(0);
         let new_outcome_votes = outcome_votes + 1;
         env.storage()
-            .persistent()
+            .temporary()
             .set(&outcome_votes_key, &new_outcome_votes);
-        Self::extend_persistent(&env, &outcome_votes_key);
+        Self::extend_temporary(&env, &outcome_votes_key);
 
         // Emit a ResolutionVoteCastEvent for observability
         ResolutionVoteCastEvent {
@@ -2786,7 +2868,7 @@ impl PredifiContract {
                     continue;
                 }
                 let other_key = DataKey::ResVoteCt(pool_id, i);
-                if env.storage().persistent().has(&other_key) {
+                if env.storage().temporary().has(&other_key) {
                     ResolutionConflictEvent {
                         pool_id,
                         oracle: operator.clone(),
@@ -3036,7 +3118,10 @@ impl PredifiContract {
     ) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         user.require_auth();
-        assert!(amount > 0, "amount must be positive");
+        // Reject zero or negative stake amounts.
+        if amount <= 0 {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidAmount);
+        }
 
         // Validate: amount must meet the global protocol minimum stake
         let global_min_stake = Self::get_config(&env).min_stake;
@@ -3051,6 +3136,12 @@ impl PredifiContract {
                 r != &env.current_contract_address(),
                 "referrer cannot be contract"
             );
+        }
+
+        if let Some(ref invite_key) = invite_key {
+            if let Err(e) = Self::validate_referral_code(&env, invite_key) {
+                soroban_sdk::panic_with_error!(&env, e);
+            }
         }
 
         Self::enter_reentrancy_guard(&env);
@@ -4269,24 +4360,37 @@ impl PredifiContract {
         let (feed_pair, target_price, op, _tolerance): (Symbol, i128, u32, u32) = env
             .storage()
             .persistent()
-            .get(&condition_key)
-            .expect("Condition not found");
+            .get(&DataKey::PriceCondition(pool_id))
+            .expect("Condition not found")
+    }
 
-        let feed_key = DataKey::PriceFeed(feed_pair);
-        let (price, _conf, _ts, expires_at): (i128, i128, u64, u64) = env
+    /// Load the current price and expiry timestamp for the configured feed.
+    ///
+    /// This intentionally preserves the previous missing-feed behavior:
+    /// callers panic with "Feed not found" when the feed has not been updated.
+    fn load_price_feed_for_resolution(env: &Env, feed_pair: Symbol) -> (i128, u64) {
+        let (price, _confidence, _timestamp, expires_at): (i128, i128, u64, u64) = env
             .storage()
             .persistent()
-            .get(&feed_key)
+            .get(&DataKey::PriceFeed(feed_pair))
             .expect("Feed not found");
 
+        (price, expires_at)
+    }
+
+    fn require_fresh_price_feed(env: &Env, expires_at: u64) -> Result<(), PredifiError> {
         if env.ledger().timestamp() > expires_at {
             return Err(PredifiError::InvalidPoolState);
         }
 
-        // Logic matched to price_feed_integration_test.rs:
-        // ComparisonOp: 0=LT, 1=GT
-        // Outcome: 0=No, 1=Yes
-        let outcome = if op == 1 {
+        Ok(())
+    }
+
+    /// Convert the evaluated price condition into the pool outcome convention.
+    ///
+    /// ComparisonOp: 0=LT, 1=GT. Outcome: 0=No, 1=Yes.
+    fn price_resolution_outcome(price: i128, target_price: i128, comparison_op: u32) -> u32 {
+        if comparison_op == 1 {
             if price > target_price {
                 1
             } else {
@@ -4296,10 +4400,16 @@ impl PredifiContract {
             0
         } else {
             1
-        };
+        }
+    }
 
+    /// Load the pool and validate all non-outcome preconditions for price resolution.
+    fn load_resolvable_price_pool(
+        env: &Env,
+        pool_id: u64,
+    ) -> Result<(DataKey, Pool), PredifiError> {
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
+        let pool: Pool = env
             .storage()
             .persistent()
             .get(&pool_key)
@@ -4312,28 +4422,35 @@ impl PredifiContract {
         }
 
         let current_time = env.ledger().timestamp();
-        let config = Self::get_config(&env);
+        let config = Self::get_config(env);
 
         if current_time < pool.end_time.saturating_add(config.resolution_delay) {
             return Err(PredifiError::ResolutionDelayNotMet);
         }
 
-        // Validate: outcome must be within the valid options range
-        if outcome >= pool.options_count {
+        Ok((pool_key, pool))
+    }
+
+    fn validate_price_resolution_outcome(
+        env: &Env,
+        pool_id: u64,
+        outcome: u32,
+        options_count: u32,
+    ) -> Result<(), PredifiError> {
+        if outcome >= options_count {
             log!(
-                &env,
+                env,
                 "resolve_pool_from_price rejected: outcome is out of bounds",
                 pool_id,
                 outcome,
-                pool.options_count
+                options_count
             );
             return Err(PredifiError::InvalidOutcome);
         }
 
-        // Validate: outcome cannot be the sentinel value
         if outcome == UNRESOLVED_OUTCOME {
             log!(
-                &env,
+                env,
                 "resolve_pool_from_price rejected: outcome cannot be sentinel value",
                 pool_id,
                 outcome
@@ -4341,20 +4458,45 @@ impl PredifiContract {
             return Err(PredifiError::InvalidOutcome);
         }
 
-        // Apply resolution
+        Ok(())
+    }
+
+    fn persist_price_resolution(
+        env: &Env,
+        pool_key: &DataKey,
+        pool_id: u64,
+        mut pool: Pool,
+        outcome: u32,
+    ) {
         pool.state = MarketState::Resolved;
         pool.outcome = outcome;
-        pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
+        pool.fee_bps = Self::calculate_dynamic_fee(env, &pool);
 
-        env.storage().persistent().set(&pool_key, &pool);
-        Self::bump_ttl(&env, &pool_key);
+        env.storage().persistent().set(pool_key, &pool);
+        Self::bump_ttl(env, pool_key);
 
         PoolResolvedEvent {
             pool_id,
-            operator: env.current_contract_address(), // System resolved
+            operator: env.current_contract_address(),
             outcome,
         }
-        .publish(&env);
+        .publish(env);
+    }
+
+    /// Automatically resolve a pool based on its configured price condition.
+    /// Anyone can trigger this once the pool's end time and resolution delay have passed.
+    pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+
+        let (feed_pair, target_price, comparison_op, _tolerance_bps) =
+            Self::load_price_resolution_condition(&env, pool_id);
+        let (price, expires_at) = Self::load_price_feed_for_resolution(&env, feed_pair);
+        Self::require_fresh_price_feed(&env, expires_at)?;
+
+        let outcome = Self::price_resolution_outcome(price, target_price, comparison_op);
+        let (pool_key, pool) = Self::load_resolvable_price_pool(&env, pool_id)?;
+        Self::validate_price_resolution_outcome(&env, pool_id, outcome, pool.options_count)?;
+        Self::persist_price_resolution(&env, &pool_key, pool_id, pool, outcome);
 
         Ok(())
     }
@@ -4500,39 +4642,35 @@ impl OracleCallback for PredifiContract {
         // --- Multi-oracle Voting Logic ---
 
         let vote_key = DataKey::ResVote(pool_id, oracle.clone());
-        if env.storage().persistent().has(&vote_key) {
+        if env.storage().temporary().has(&vote_key) {
             return Err(PredifiError::OracleAlreadyVoted);
         }
 
-        // Record the oracle's vote
-        env.storage().persistent().set(&vote_key, &outcome);
-        Self::extend_persistent(&env, &vote_key);
+        // Record the oracle's vote in temporary storage
+        env.storage().temporary().set(&vote_key, &outcome);
+        Self::extend_temporary(&env, &vote_key);
 
         // Increment total number of votes cast for this pool
         let total_votes_key = DataKey::ResTotal(pool_id);
-        let total_votes: u32 = env
-            .storage()
-            .persistent()
-            .get(&total_votes_key)
-            .unwrap_or(0);
+        let total_votes: u32 = env.storage().temporary().get(&total_votes_key).unwrap_or(0);
         let new_total_votes = total_votes + 1;
         env.storage()
-            .persistent()
+            .temporary()
             .set(&total_votes_key, &new_total_votes);
-        Self::extend_persistent(&env, &total_votes_key);
+        Self::extend_temporary(&env, &total_votes_key);
 
         // Increment specific outcome vote count
         let outcome_votes_key = DataKey::ResVoteCt(pool_id, outcome);
         let outcome_votes: u32 = env
             .storage()
-            .persistent()
+            .temporary()
             .get(&outcome_votes_key)
             .unwrap_or(0);
         let new_outcome_votes = outcome_votes + 1;
         env.storage()
-            .persistent()
+            .temporary()
             .set(&outcome_votes_key, &new_outcome_votes);
-        Self::extend_persistent(&env, &outcome_votes_key);
+        Self::extend_temporary(&env, &outcome_votes_key);
 
         // Detect conflicts: if there are ANY votes for a different outcome
         if new_total_votes > new_outcome_votes {
@@ -4542,7 +4680,7 @@ impl OracleCallback for PredifiContract {
                     continue;
                 }
                 let other_key = DataKey::ResVoteCt(pool_id, i);
-                if env.storage().persistent().has(&other_key) {
+                if env.storage().temporary().has(&other_key) {
                     ResolutionConflictEvent {
                         pool_id,
                         oracle: oracle.clone(),
