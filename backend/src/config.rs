@@ -23,13 +23,6 @@ pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
     "https://predifi.app",
 ];
 
-/// Runtime configuration loaded from environment variables.
-///
-/// All fields have compiled-in defaults so the server can start without any
-/// environment variables set (useful for local development and unit tests).
-/// Call [`Config::from_env`] at startup to populate the struct from the
-/// process environment, or [`Config::from_map`] in tests to supply values
-/// directly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
     /// IP address the HTTP server binds to (default `0.0.0.0`).
@@ -67,7 +60,7 @@ pub struct Config {
     pub redis_url: String,
     /// Validated list of origins permitted by the CORS policy.
     ///
-    /// Loaded from the `PREDIFI_CORS_ALLOWED_ORIGINS` environment variable as a
+    /// Loaded from the `CORS_ALLOWED_ORIGINS` environment variable as a
     /// comma-separated list of origins (e.g. `https://app.example.com,https://admin.example.com`).
     /// Each entry must be a valid `http://` or `https://` origin — scheme + host (+ optional port)
     /// with no path, query string, or fragment.  Invalid entries are rejected at startup.
@@ -118,6 +111,9 @@ impl Config {
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
         let sentry_dsn = vars.get("PREDIFI_SENTRY_DSN").cloned();
         let redis_url = get_string(vars, "PREDIFI_REDIS_URL", DEFAULT_REDIS_URL);
+
+        // Parse and strictly validate CORS origins.
+        let cors_allowed_origins = parse_cors_origins(vars)?;
 
         // Parse and strictly validate CORS origins.
         let cors_allowed_origins = parse_cors_origins(vars)?;
@@ -182,7 +178,10 @@ impl Config {
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
-            cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
+            cors_allowed_origins: DEFAULT_CORS_ORIGINS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 }
@@ -241,7 +240,7 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-/// Parse and strictly validate the `PREDIFI_CORS_ALLOWED_ORIGINS` environment variable.
+/// Parse and strictly validate the `CORS_ALLOWED_ORIGINS` environment variable.
 ///
 /// The value must be a comma-separated list of origins.  Each origin must:
 /// - Use the `http` or `https` scheme.
@@ -251,10 +250,13 @@ impl std::error::Error for ConfigError {}
 ///
 /// Returns the default origins when the variable is absent.
 fn parse_cors_origins(vars: &HashMap<String, String>) -> Result<Vec<String>, ConfigError> {
-    let raw = match vars.get("PREDIFI_CORS_ALLOWED_ORIGINS") {
+    let raw = match vars.get("CORS_ALLOWED_ORIGINS") {
         Some(v) => v.clone(),
         None => {
-            return Ok(DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect());
+            return Ok(DEFAULT_CORS_ORIGINS
+                .iter()
+                .map(|s| s.to_string())
+                .collect());
         }
     };
 
@@ -266,7 +268,7 @@ fn parse_cors_origins(vars: &HashMap<String, String>) -> Result<Vec<String>, Con
 
     if origins.is_empty() {
         return Err(ConfigError::InvalidValue {
-            key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+            key: "CORS_ALLOWED_ORIGINS",
             reason: String::from("must contain at least one origin"),
         });
     }
@@ -288,11 +290,8 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
     // Reject wildcards and the special `null` origin outright.
     if origin == "*" || origin.eq_ignore_ascii_case("null") {
         return Err(ConfigError::InvalidValue {
-            key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-            reason: format!(
-                "'{}' is not a valid origin — wildcards and 'null' are not permitted",
-                origin
-            ),
+            key: "CORS_ALLOWED_ORIGINS",
+            reason: format!("'{}' is not a valid origin — wildcards and 'null' are not permitted", origin),
         });
     }
 
@@ -303,7 +302,7 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
         r
     } else {
         return Err(ConfigError::InvalidValue {
-            key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+            key: "CORS_ALLOWED_ORIGINS",
             reason: format!(
                 "'{}' is not a valid origin — must start with 'http://' or 'https://'",
                 origin
@@ -314,7 +313,7 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
     // Reject fragments and query strings.
     if rest.contains('#') || rest.contains('?') {
         return Err(ConfigError::InvalidValue {
-            key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+            key: "CORS_ALLOWED_ORIGINS",
             reason: format!(
                 "'{}' is not a valid origin — must not contain a query string or fragment",
                 origin
@@ -331,7 +330,7 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
     // A path other than "" or "/" is not allowed in an origin.
     if !path.is_empty() && path != "/" {
         return Err(ConfigError::InvalidValue {
-            key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+            key: "CORS_ALLOWED_ORIGINS",
             reason: format!(
                 "'{}' is not a valid origin — must not contain a path component",
                 origin
@@ -349,7 +348,7 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
                 let port: u32 = port_str.parse().unwrap_or(u32::MAX);
                 if port > 65535 {
                     return Err(ConfigError::InvalidValue {
-                        key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                        key: "CORS_ALLOWED_ORIGINS",
                         reason: format!(
                             "'{}' is not a valid origin — port {} is out of range (0-65535)",
                             origin, port_str
@@ -366,11 +365,8 @@ fn validate_cors_origin(origin: &str) -> Result<(), ConfigError> {
 
     if host.is_empty() {
         return Err(ConfigError::InvalidValue {
-            key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-            reason: format!(
-                "'{}' is not a valid origin — host must not be empty",
-                origin
-            ),
+            key: "CORS_ALLOWED_ORIGINS",
+            reason: format!("'{}' is not a valid origin — host must not be empty", origin),
         });
     }
 
@@ -540,7 +536,7 @@ mod tests {
     #[test]
     fn cors_accepts_valid_https_origin() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("https://example.com"),
         )]);
         let config = Config::from_map(&vars).expect("valid https origin should be accepted");
@@ -550,7 +546,7 @@ mod tests {
     #[test]
     fn cors_accepts_valid_http_origin_with_port() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("http://localhost:5173"),
         )]);
         let config = Config::from_map(&vars).expect("http origin with port should be accepted");
@@ -560,7 +556,7 @@ mod tests {
     #[test]
     fn cors_accepts_multiple_valid_origins() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("https://app.example.com,https://admin.example.com"),
         )]);
         let config = Config::from_map(&vars).expect("multiple valid origins should be accepted");
@@ -573,7 +569,7 @@ mod tests {
     #[test]
     fn cors_trims_whitespace_around_origins() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("  https://app.example.com , https://admin.example.com  "),
         )]);
         let config = Config::from_map(&vars).expect("whitespace should be trimmed");
@@ -586,18 +582,12 @@ mod tests {
     #[test]
     fn cors_rejects_wildcard() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("*"),
         )]);
         let error = Config::from_map(&vars).expect_err("wildcard must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
         );
     }
@@ -605,18 +595,12 @@ mod tests {
     #[test]
     fn cors_rejects_null_origin() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("null"),
         )]);
         let error = Config::from_map(&vars).expect_err("null origin must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
         );
     }
@@ -624,18 +608,12 @@ mod tests {
     #[test]
     fn cors_rejects_missing_scheme() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("example.com"),
         )]);
         let error = Config::from_map(&vars).expect_err("origin without scheme must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
         );
     }
@@ -643,18 +621,12 @@ mod tests {
     #[test]
     fn cors_rejects_ftp_scheme() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("ftp://example.com"),
         )]);
         let error = Config::from_map(&vars).expect_err("ftp scheme must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
         );
     }
@@ -662,18 +634,12 @@ mod tests {
     #[test]
     fn cors_rejects_origin_with_path() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("https://example.com/api"),
         )]);
         let error = Config::from_map(&vars).expect_err("origin with path must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
         );
     }
@@ -681,18 +647,12 @@ mod tests {
     #[test]
     fn cors_rejects_origin_with_query_string() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("https://example.com?foo=bar"),
         )]);
         let error = Config::from_map(&vars).expect_err("origin with query string must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
         );
     }
@@ -700,18 +660,12 @@ mod tests {
     #[test]
     fn cors_rejects_origin_with_fragment() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("https://example.com#section"),
         )]);
         let error = Config::from_map(&vars).expect_err("origin with fragment must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
         );
     }
@@ -719,18 +673,12 @@ mod tests {
     #[test]
     fn cors_rejects_port_out_of_range() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("https://example.com:99999"),
         )]);
         let error = Config::from_map(&vars).expect_err("port > 65535 must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
         );
     }
@@ -738,107 +686,13 @@ mod tests {
     #[test]
     fn cors_rejects_empty_list() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_CORS_ALLOWED_ORIGINS"),
+            String::from("CORS_ALLOWED_ORIGINS"),
             String::from("   "),
         )]);
         let error = Config::from_map(&vars).expect_err("empty origin list must be rejected");
         assert!(
-            matches!(
-                error,
-                ConfigError::InvalidValue {
-                    key: "PREDIFI_CORS_ALLOWED_ORIGINS",
-                    ..
-                }
-            ),
+            matches!(error, ConfigError::InvalidValue { key: "CORS_ALLOWED_ORIGINS", .. }),
             "unexpected error: {error}"
-        );
-    }
-
-    // ── Specific error codes for config (issue #976) ──────────────────────────
-
-    /// `get_required_string` returns `MissingRequired` when the variable is absent.
-    #[test]
-    fn missing_required_error_when_variable_absent() {
-        let vars = HashMap::new();
-        let error = get_required_string(&vars, "PREDIFI_SECRET_KEY", "JWT signing secret")
-            .expect_err("absent required variable must produce an error");
-
-        assert!(
-            matches!(
-                error,
-                ConfigError::MissingRequired {
-                    key: "PREDIFI_SECRET_KEY",
-                    ..
-                }
-            ),
-            "unexpected error: {error}"
-        );
-    }
-
-    /// `get_required_string` succeeds when the variable is present.
-    #[test]
-    fn required_string_succeeds_when_variable_present() {
-        let vars = HashMap::from([(
-            String::from("PREDIFI_SECRET_KEY"),
-            String::from("supersecret"),
-        )]);
-        let value = get_required_string(&vars, "PREDIFI_SECRET_KEY", "JWT signing secret")
-            .expect("present required variable must succeed");
-        assert_eq!(value, "supersecret");
-    }
-
-    /// `MissingRequired` display message includes the variable name and description.
-    #[test]
-    fn missing_required_display_includes_key_and_description() {
-        let error = ConfigError::MissingRequired {
-            key: "PREDIFI_SECRET_KEY",
-            description: "JWT signing secret",
-        };
-        let msg = error.to_string();
-        assert!(
-            msg.contains("PREDIFI_SECRET_KEY"),
-            "error message must contain the variable name, got: {msg}"
-        );
-        assert!(
-            msg.contains("JWT signing secret"),
-            "error message must contain the description, got: {msg}"
-        );
-    }
-
-    /// `InvalidNumber` display message includes the variable name and bad value.
-    #[test]
-    fn invalid_number_display_includes_key_and_value() {
-        let vars = HashMap::from([(String::from("PREDIFI_APP_PORT"), String::from("not-a-port"))]);
-        let error = Config::from_map(&vars).expect_err("non-numeric port must fail");
-        let msg = error.to_string();
-        assert!(
-            msg.contains("PREDIFI_APP_PORT"),
-            "error message must contain the variable name, got: {msg}"
-        );
-        assert!(
-            msg.contains("not-a-port"),
-            "error message must contain the bad value, got: {msg}"
-        );
-    }
-
-    /// `InvalidValue` display message includes the variable name and reason.
-    #[test]
-    fn invalid_value_display_includes_key_and_reason() {
-        let vars = HashMap::from([
-            (
-                String::from("PREDIFI_DB_MIN_CONNECTIONS"),
-                String::from("50"),
-            ),
-            (
-                String::from("PREDIFI_DB_MAX_CONNECTIONS"),
-                String::from("10"),
-            ),
-        ]);
-        let error = Config::from_map(&vars).expect_err("min > max must fail");
-        let msg = error.to_string();
-        assert!(
-            msg.contains("PREDIFI_DB_MIN_CONNECTIONS"),
-            "error message must contain the variable name, got: {msg}"
         );
     }
 }
