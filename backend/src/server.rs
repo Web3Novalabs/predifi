@@ -249,12 +249,20 @@ pub fn build_router(
 ) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(crate::constants::RATE_LIMIT_PER_SECOND)
+            // Allow RATE_LIMIT_BURST_SIZE requests per RATE_LIMIT_PERIOD_SECS window per IP.
+            // One token is replenished every (period / burst) seconds.
+            .per_second(
+                crate::constants::RATE_LIMIT_PERIOD_SECS / crate::constants::RATE_LIMIT_BURST_SIZE as u64,
+            )
             .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
             .error_handler(|_| {
+                // Return a JSON 429 response matching the standard ApiResponse error envelope.
                 (
                     axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    "Too Many Requests",
+                    axum::Json(serde_json::json!({
+                        "status": "error",
+                        "error": "Too many requests, please try again later."
+                    })),
                 )
                     .into_response()
             })
@@ -312,12 +320,20 @@ fn build_router_with_db(
 ) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(crate::constants::RATE_LIMIT_PER_SECOND)
+            // Allow RATE_LIMIT_BURST_SIZE requests per RATE_LIMIT_PERIOD_SECS window per IP.
+            // One token is replenished every (period / burst) seconds.
+            .per_second(
+                crate::constants::RATE_LIMIT_PERIOD_SECS / crate::constants::RATE_LIMIT_BURST_SIZE as u64,
+            )
             .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
             .error_handler(|_| {
+                // Return a JSON 429 response matching the standard ApiResponse error envelope.
                 (
                     axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    "Too Many Requests",
+                    axum::Json(serde_json::json!({
+                        "status": "error",
+                        "error": "Too many requests, please try again later."
+                    })),
                 )
                     .into_response()
             })

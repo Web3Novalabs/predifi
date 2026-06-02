@@ -5,11 +5,50 @@
 
 // ── Rate limiting ─────────────────────────────────────────────────────────────
 
-/// Number of requests allowed per second per IP before rate limiting kicks in.
-pub const RATE_LIMIT_PER_SECOND: u64 = 5;
+/// Maximum burst size for the IP-based rate limiter.
+///
+/// This is the number of requests a single IP address can make within the
+/// replenishment window (see [`RATE_LIMIT_PERIOD_SECS`]) before receiving a
+/// **429 Too Many Requests** response.
+///
+/// ## Configuration
+///
+/// - **Limit:** 100 requests
+/// - **Window:** 15 minutes (900 seconds)
+/// - **Rate:** Approximately 1 token replenished every 9 seconds
+///
+/// The rate limiter uses a **token-bucket algorithm**. Each successful request
+/// consumes one token; tokens are replenished at a constant rate derived from
+/// `period / burst`. Once the bucket is empty, subsequent requests are rejected
+/// with `HTTP 429` until tokens are replenished.
+///
+/// ## Use Case
+///
+/// This conservative default protects public endpoints from brute-force attacks,
+/// credential stuffing, DDoS attempts, and accidental API abuse, without
+/// significantly impacting legitimate users.
+pub const RATE_LIMIT_BURST_SIZE: u32 = 100;
 
-/// Maximum burst size for the token-bucket rate limiter.
-pub const RATE_LIMIT_BURST_SIZE: u32 = 50;
+/// Replenishment period for the token-bucket rate limiter (15 minutes in seconds).
+///
+/// This defines the time window over which [`RATE_LIMIT_BURST_SIZE`] tokens are
+/// made available. The replenishment rate is calculated as:
+///
+/// ```text
+/// tokens_per_second = RATE_LIMIT_PERIOD_SECS / RATE_LIMIT_BURST_SIZE
+///                   = 900 / 100
+///                   = 1 token every 9 seconds
+/// ```
+///
+/// ## Rationale
+///
+/// A 15-minute window strikes a balance between:
+/// - **Allowing legitimate bursts** (e.g., a user rapidly navigating the UI)
+/// - **Preventing sustained abuse** (e.g., scrapers or DDoS traffic)
+///
+/// The window is long enough to prevent false positives from legitimate users
+/// while short enough to quickly mitigate attacks.
+pub const RATE_LIMIT_PERIOD_SECS: u64 = 900;
 
 // ── Pagination ────────────────────────────────────────────────────────────────
 
