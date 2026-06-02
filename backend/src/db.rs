@@ -31,7 +31,7 @@ pub struct PredictionHistoryRow {
     pub pool_result: Option<String>,
     pub outcome: i32,
     pub amount: i64,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 /// Enhanced prediction information with current pool status.
