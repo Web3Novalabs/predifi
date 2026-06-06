@@ -34,6 +34,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration as TokioDuration;
 use tokio::time::sleep;
+#[cfg(not(test))]
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;

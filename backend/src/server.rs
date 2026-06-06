@@ -20,6 +20,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, Duration as TokioDuration};
+#[cfg(not(test))]
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info, warn};
