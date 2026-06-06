@@ -2122,7 +2122,7 @@ fn test_paused_blocks_claim_winnings() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_max_predictions_per_user() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2134,7 +2134,7 @@ fn test_paused_blocks_set_max_predictions_per_user() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_prediction_cooldown() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2146,7 +2146,7 @@ fn test_paused_blocks_set_prediction_cooldown() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_resolution_delay() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2158,7 +2158,7 @@ fn test_paused_blocks_set_resolution_delay() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_min_pool_duration() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2170,7 +2170,7 @@ fn test_paused_blocks_set_min_pool_duration() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_min_stake() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2182,7 +2182,7 @@ fn test_paused_blocks_set_min_stake() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_referral_cut_bps() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2194,7 +2194,7 @@ fn test_paused_blocks_set_referral_cut_bps() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_referral_rate() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2206,7 +2206,7 @@ fn test_paused_blocks_set_referral_rate() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_add_token_to_whitelist() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2218,7 +2218,7 @@ fn test_paused_blocks_add_token_to_whitelist() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_remove_token_from_whitelist() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2230,7 +2230,7 @@ fn test_paused_blocks_remove_token_from_whitelist() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_add_oracle() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2242,7 +2242,7 @@ fn test_paused_blocks_add_oracle() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_remove_oracle() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2254,7 +2254,7 @@ fn test_paused_blocks_remove_oracle() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_increase_max_total_stake() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2266,7 +2266,7 @@ fn test_paused_blocks_increase_max_total_stake() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_update_pool_description() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2278,7 +2278,7 @@ fn test_paused_blocks_update_pool_description() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_cancel_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2290,7 +2290,7 @@ fn test_paused_blocks_cancel_pool() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_claim_refund() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2303,7 +2303,7 @@ fn test_paused_blocks_claim_refund() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_stake_limits() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2317,7 +2317,7 @@ fn test_paused_blocks_set_stake_limits() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_add_to_whitelist() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2329,7 +2329,7 @@ fn test_paused_blocks_add_to_whitelist() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_remove_from_whitelist() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2341,7 +2341,7 @@ fn test_paused_blocks_remove_from_whitelist() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_init_oracle() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2353,7 +2353,7 @@ fn test_paused_blocks_init_oracle() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_price_condition() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2374,7 +2374,7 @@ fn test_paused_blocks_set_price_condition() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_update_price_feed() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2393,7 +2393,7 @@ fn test_paused_blocks_update_price_feed() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_resolve_pool_from_price() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2405,7 +2405,7 @@ fn test_paused_blocks_resolve_pool_from_price() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_set_fee_tiers() {
     let env = Env::default();
     env.mock_all_auths();
@@ -2417,7 +2417,7 @@ fn test_paused_blocks_set_fee_tiers() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+#[should_panic(expected = "Error(Contract, #83)")]
 fn test_paused_blocks_flag_disputed_pool() {
     let env = Env::default();
     env.mock_all_auths();
