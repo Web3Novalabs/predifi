@@ -431,7 +431,7 @@ async fn rate_limiting_returns_429_after_burst() {
         PriceCache::new(),
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
-        crate::constants::RATE_LIMIT_PER_SECOND,
+        crate::constants::RATE_LIMIT_PERIOD_SECS,
         crate::constants::RATE_LIMIT_BURST_SIZE,
     );
 

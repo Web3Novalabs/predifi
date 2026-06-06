@@ -14,6 +14,8 @@ pub enum AppError {
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AppError::ServiceUnavailable(msg) => write!(f, "service unavailable: {}", msg),
+
             AppError::NotFound(msg) => write!(f, "not found: {}", msg),
             AppError::Conflict(msg) => write!(f, "conflict: {}", msg),
             AppError::InvalidInput(msg) => write!(f, "invalid input: {}", msg),
@@ -33,11 +35,17 @@ impl From<sqlx::Error> for AppError {
                 if let Some(code) = db_err.code() {
                     match code {
                         // unique_violation
-                        "23505" => AppError::Conflict(db_err.message().to_string()),
+                        std::borrow::Cow::Borrowed("23505") => {
+                            AppError::Conflict(db_err.message().to_string())
+                        }
                         // foreign_key_violation
-                        "23503" => AppError::Conflict(db_err.message().to_string()),
+                        std::borrow::Cow::Borrowed("23503") => {
+                            AppError::Conflict(db_err.message().to_string())
+                        }
                         // not_null_violation
-                        "23502" => AppError::InvalidInput(db_err.message().to_string()),
+                        std::borrow::Cow::Borrowed("23502") => {
+                            AppError::InvalidInput(db_err.message().to_string())
+                        }
                         _ => AppError::Internal(db_err.message().to_string()),
                     }
                 } else {
@@ -51,15 +59,25 @@ impl From<sqlx::Error> for AppError {
 
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        use axum::http::StatusCode;
         use crate::response::ApiResponse;
+        use axum::http::StatusCode;
 
         match self {
-            AppError::NotFound(msg) => ApiResponse::<()>::error(StatusCode::NOT_FOUND, msg).into_response(),
-            AppError::Conflict(msg) => ApiResponse::<()>::error(StatusCode::CONFLICT, msg).into_response(),
-            AppError::InvalidInput(msg) => ApiResponse::<()>::error(StatusCode::BAD_REQUEST, msg).into_response(),
-            AppError::ServiceUnavailable(msg) => ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, msg).into_response(),
-            AppError::Internal(msg) => ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, msg).into_response(),
+            AppError::NotFound(msg) => {
+                ApiResponse::<()>::error(StatusCode::NOT_FOUND, msg).into_response()
+            }
+            AppError::Conflict(msg) => {
+                ApiResponse::<()>::error(StatusCode::CONFLICT, msg).into_response()
+            }
+            AppError::InvalidInput(msg) => {
+                ApiResponse::<()>::error(StatusCode::BAD_REQUEST, msg).into_response()
+            }
+            AppError::ServiceUnavailable(msg) => {
+                ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, msg).into_response()
+            }
+            AppError::Internal(msg) => {
+                ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+            }
         }
     }
 }

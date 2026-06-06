@@ -34,7 +34,7 @@ import { MetricCard } from "@/components/dashboard/MetricCard";
 const BalanceSection = dynamic(
   () =>
     import("@/components/dashboard/BalanceSection").then(
-      (mod) => mod.BalanceSection
+      (mod) => mod.BalanceSection,
     ),
   {
     loading: () => (
@@ -43,28 +43,24 @@ const BalanceSection = dynamic(
         aria-hidden="true"
       />
     ),
-  }
+  },
 );
 
 /**
  * StakedChart — recharts BarChart; the recharts library is sizeable so
  * deferring it meaningfully reduces the initial JS bundle.
- * It is a "use client" component, so ssr:false avoids a hydration mismatch.
  */
 const StakedChart = dynamic(
   () =>
-    import("@/components/dashboard/StakedChart").then(
-      (mod) => mod.StakedChart
-    ),
+    import("@/components/dashboard/StakedChart").then((mod) => mod.StakedChart),
   {
-    ssr: false,
     loading: () => (
       <div
         className="h-[320px] w-full animate-pulse bg-zinc-800/50 rounded-xl"
         aria-hidden="true"
       />
     ),
-  }
+  },
 );
 
 /**
@@ -73,25 +69,23 @@ const StakedChart = dynamic(
 const PredictionList = dynamic(
   () =>
     import("@/components/dashboard/PredictionList").then(
-      (mod) => mod.PredictionList
+      (mod) => mod.PredictionList,
     ),
   {
-    ssr: false,
     loading: () => (
       <div
         className="h-[300px] w-full animate-pulse bg-zinc-800/50 rounded-xl"
         aria-hidden="true"
       />
     ),
-  }
+  },
 );
 
 /**
  * PoolsList — below the charts section; deferred alongside PredictionList.
  */
 const PoolsList = dynamic(
-  () =>
-    import("@/components/dashboard/PoolsList").then((mod) => mod.PoolsList),
+  () => import("@/components/dashboard/PoolsList").then((mod) => mod.PoolsList),
   {
     loading: () => (
       <div
@@ -99,7 +93,7 @@ const PoolsList = dynamic(
         aria-hidden="true"
       />
     ),
-  }
+  },
 );
 
 // ---------------------------------------------------------------------------

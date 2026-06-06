@@ -40,10 +40,7 @@ pub async fn setup_postgres() -> (PgPool, testcontainers::ContainerAsync<Postgre
 /// A short delay gives the connection manager time to fully initialize before
 /// the tests begin issuing commands.
 pub async fn setup_redis() -> (RedisCache, testcontainers::ContainerAsync<Redis>) {
-    let container = Redis::default()
-        .start()
-        .await
-        .expect("redis container");
+    let container = Redis::default().start().await.expect("redis container");
     let port = container
         .get_host_port_ipv4(6379)
         .await

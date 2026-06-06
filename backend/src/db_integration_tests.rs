@@ -47,11 +47,11 @@ mod tests {
             .expect("postgres port");
         let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
-    use crate::test_support;
-
-    #[tokio::test]
-    async fn migrations_run_cleanly() {
-        let (pool, container) = test_support::setup_postgres().await;
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&url)
+            .await
+            .expect("connect to postgres");
 
         sqlx::migrate!("./migrations")
             .run(&pool)

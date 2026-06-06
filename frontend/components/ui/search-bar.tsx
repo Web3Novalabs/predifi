@@ -55,15 +55,8 @@ export function SearchBar({
   // Internal state for the raw (non-debounced) input value.
   // When `controlledValue` is provided we use it as the source of truth.
   const [inputValue, setInputValue] = React.useState<string>(
-    controlledValue ?? ""
+    controlledValue ?? "",
   );
-
-  // Keep internal state in sync when the controlled value changes externally.
-  React.useEffect(() => {
-    if (controlledValue !== undefined) {
-      setInputValue(controlledValue);
-    }
-  }, [controlledValue]);
 
   // The debounced value — only updates after the user pauses typing.
   const debouncedValue = useDebounce(inputValue, debounceDelay);
@@ -85,12 +78,7 @@ export function SearchBar({
   };
 
   return (
-    <div
-      className={cn(
-        "relative flex items-center w-full",
-        className
-      )}
-    >
+    <div className={cn("relative flex items-center w-full", className)}>
       {/* Search icon */}
       <Search
         className="absolute left-3 h-4 w-4 text-muted-foreground pointer-events-none"
@@ -117,7 +105,7 @@ export function SearchBar({
           // Disabled state
           "disabled:cursor-not-allowed disabled:opacity-50",
           // Remove the browser's native search cancel button so we can render our own
-          "[&::-webkit-search-cancel-button]:appearance-none"
+          "[&::-webkit-search-cancel-button]:appearance-none",
         )}
       />
 

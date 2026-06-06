@@ -2816,6 +2816,7 @@ dependencies = [
  "opentelemetry-jaeger",
  "opentelemetry-otlp",
  "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
  "predifi-errors",
  "prometheus",
  "redis",

@@ -4,11 +4,12 @@
 //! OTLP (OpenTelemetry Protocol) exporters for distributed tracing.
 
 use opentelemetry::trace::TracerProvider;
+use opentelemetry_otlp::WithExportConfig;
+
 use opentelemetry::KeyValue;
 use opentelemetry_sdk::{
-    resource::{Resource, SERVICE_NAME},
+    resource::Resource,
     trace::{self, Tracer},
-    Runtime,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -34,23 +35,25 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 /// ```
 pub fn init_telemetry(service_name: &'static str, otlp_endpoint: &'static str) -> Tracer {
     // Create a resource with service metadata
-    let resource = Resource::new(vec![
-        KeyValue::new(SERVICE_NAME, service_name),
+    let _resource = Resource::new(vec![
+        KeyValue::new("service.name", service_name),
         KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-        KeyValue::new("deployment.environment", std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string())),
+        KeyValue::new(
+            "deployment.environment",
+            std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string()),
+        ),
     ]);
 
     // Configure OTLP exporter
     let otlp_exporter = opentelemetry_otlp::new_exporter()
         .tonic()
         .with_endpoint(otlp_endpoint)
-        .build_exporter()
+        .build_span_exporter()
         .expect("Failed to create OTLP exporter");
 
     // Create a trace pipeline
     let provider = trace::TracerProvider::builder()
-        .with_resource(resource)
-        .with_batch_exporter(otlp_exporter, Runtime::Tokio)
+        .with_batch_exporter(otlp_exporter, opentelemetry_sdk::runtime::Tokio)
         .build();
 
     // Get a tracer from the provider
@@ -73,20 +76,20 @@ pub fn init_telemetry(service_name: &'static str, otlp_endpoint: &'static str) -
 /// # Returns
 /// A Tracer instance for manual instrumentation.
 pub fn init_jaeger_telemetry(service_name: &'static str, jaeger_endpoint: &'static str) -> Tracer {
-    let resource = Resource::new(vec![
-        KeyValue::new(SERVICE_NAME, service_name),
+    let _resource = Resource::new(vec![
+        KeyValue::new("service.name", service_name),
         KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-        KeyValue::new("deployment.environment", std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string())),
+        KeyValue::new(
+            "deployment.environment",
+            std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string()),
+        ),
     ]);
 
-    let jaeger_exporter = opentelemetry_jaeger::new_agent_pipeline()
+    opentelemetry_jaeger::new_agent_pipeline()
         .with_endpoint(jaeger_endpoint)
         .with_service_name(service_name)
-        .with_trace_config(opentelemetry_sdk::trace::config().with_resource(resource))
         .install_simple()
-        .expect("Failed to install Jaeger exporter");
-
-    jaeger_exporter
+        .expect("Failed to install Jaeger exporter")
 }
 
 /// Initialize tracing subscriber with OpenTelemetry layer.
@@ -134,14 +137,15 @@ pub fn init_tracing_subscriber(tracer: Tracer, log_level: &str, use_json: bool) 
 pub fn init_telemetry_from_env() -> Option<Tracer> {
     let telemetry_enabled = std::env::var("TELEMETRY_ENABLED")
         .unwrap_or_else(|_| "true".to_string())
-        .to_lowercase() == "true";
+        .to_lowercase()
+        == "true";
 
     if !telemetry_enabled {
         return None;
     }
 
-    let service_name = std::env::var("SERVICE_NAME")
-        .unwrap_or_else(|_| "predifi-backend".to_string());
+    let service_name =
+        std::env::var("SERVICE_NAME").unwrap_or_else(|_| "predifi-backend".to_string());
 
     // Check for Jaeger endpoint first
     if let Ok(jaeger_endpoint) = std::env::var("JAEGER_ENDPOINT") {

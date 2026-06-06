@@ -29,6 +29,7 @@
 //! }
 //! ```
 
+use crate::errors::AppError;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -36,7 +37,6 @@ use axum::{
 };
 use serde::Serialize;
 use sqlx::PgPool;
-use crate::errors::AppError;
 
 use crate::db::ReferralEarningRow;
 use crate::response::ApiResponse;
@@ -80,7 +80,7 @@ pub async fn get_referrals(
     .fetch_one(&pool)
     .await;
 
-    match result.await {
+    match result {
         Ok(row) if row.unique_users == 0 => Ok(ApiResponse::error(
             StatusCode::NOT_FOUND,
             format!("no referrals found for {address}"),

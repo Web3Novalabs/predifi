@@ -4,6 +4,7 @@ use crate::redis_cache::RedisCache;
 use crate::ws::EventBus;
 use axum::Router;
 use sqlx::PgPool;
+use std::sync::Arc;
 
 pub mod v1;
 
@@ -12,7 +13,7 @@ pub mod v1;
 /// All routes that require a database will return an error response at
 /// runtime. Useful for unit tests and health-check-only deployments.
 pub fn router(
-    config: Config,
+    config: Arc<Config>,
     cache: PriceCache,
     redis: RedisCache,
     pool: Option<sqlx::PgPool>,
@@ -29,7 +30,7 @@ pub fn router(
 ///
 /// Wraps the pool in `Some` and delegates to [`router`].
 pub fn router_with_db(
-    config: Config,
+    config: Arc<Config>,
     cache: PriceCache,
     redis: RedisCache,
     db: PgPool,

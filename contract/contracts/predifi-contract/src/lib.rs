@@ -4374,6 +4374,14 @@ impl PredifiContract {
         Ok(())
     }
 
+    fn load_price_resolution_condition(env: &Env, pool_id: u64) -> (Symbol, i128, u32, u32) {
+        let condition_key = DataKey::PriceCondition(pool_id);
+        env.storage()
+            .persistent()
+            .get(&condition_key)
+            .expect("Price condition not found")
+    }
+
     /// Convert the evaluated price condition into the pool outcome convention.
     ///
     /// ComparisonOp: 0=LT, 1=GT. Outcome: 0=No, 1=Yes.
@@ -4474,7 +4482,7 @@ impl PredifiContract {
     /// Automatically resolve a pool based on its configured price condition.
     /// Anyone can trigger this once the pool's end time and resolution delay have passed.
     pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
-        Self::require_not_paused(&env);
+        Self::require_not_paused(&env)?;
 
         let (feed_pair, target_price, comparison_op, _tolerance_bps) =
             Self::load_price_resolution_condition(&env, pool_id);

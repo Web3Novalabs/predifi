@@ -4,11 +4,10 @@
 
 pub mod config;
 pub mod constants;
-pub mod errors;
 pub mod db;
+pub mod errors;
 pub mod jwt;
 pub mod metrics;
-pub mod session;
 pub mod openapi;
 pub mod price_cache;
 pub mod redis_cache;
@@ -17,14 +16,26 @@ pub mod request_logger;
 pub mod response;
 pub mod routes;
 pub mod server;
+pub mod session;
 pub mod telemetry;
 pub mod worker;
 pub mod ws;
 
-pub use server::build_router;
-
 use crate::config::Config;
+use crate::metrics::Metrics;
+use crate::request_logger::LoggingLayer;
+use axum::response::IntoResponse;
+use axum::routing::get;
+use axum::Json;
+use axum::Router;
+use http::header::HeaderValue;
 use sentry_tracing::layer as sentry_tracing_layer;
+use serde_json::json;
+use std::sync::Arc;
+use std::time::Duration as TokioDuration;
+use tokio::time::sleep;
+use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
@@ -127,40 +138,41 @@ async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Re
         all_healthy = false;
     }
 
-    let (rpc_status, rpc_error) = check_rpc_health(
+    let (rpc_status, _rpc_error) = check_rpc_health(
         &state.config.stellar_rpc_url,
         state.config.rpc_health_timeout_secs,
         state.config.rpc_health_retry_count,
-    ).await;
+    )
+    .await;
     if rpc_status == "unreachable" {
         all_healthy = false;
     }
 
-/// Check Redis health and availability.
-async fn check_redis_health(redis: &redis_cache::RedisCache) -> (String, String) {
-    if !redis.is_available() {
-        return ("not_configured".to_string(), String::new());
+    /// Check Redis health and availability.
+    async fn check_redis_health(redis: &redis_cache::RedisCache) -> (String, String) {
+        if !redis.is_available() {
+            return ("not_configured".to_string(), String::new());
+        }
+        if !redis.ping().await {
+            return ("unreachable".to_string(), "Redis ping failed".to_string());
+        }
+        ("ok".to_string(), String::new())
     }
-    if !redis.ping().await {
-        return ("unreachable".to_string(), "Redis ping failed".to_string());
-    }
-    ("ok".to_string(), String::new())
-}
 
-/// Check price cache health.
-fn check_price_cache_health(cache: &price_cache::PriceCache) -> (String, String) {
-    if cache.snapshot().is_empty() {
-        return ("not_ready".to_string(), "price cache is empty".to_string());
+    /// Check price cache health.
+    fn check_price_cache_health(cache: &price_cache::PriceCache) -> (String, String) {
+        if cache.snapshot().is_empty() {
+            return ("not_ready".to_string(), "price cache is empty".to_string());
+        }
+        ("ok".to_string(), String::new())
     }
-    ("ok".to_string(), String::new())
-}
 
     let (redis_status, redis_error) = check_redis_health(&state.redis).await;
     if redis_status == "unreachable" || redis_status == "not_configured" {
         all_healthy = false;
     }
 
-    let (price_cache_status, price_cache_error) = check_price_cache_health(&state.cache);
+    let (price_cache_status, _price_cache_error) = check_price_cache_health(&state.cache);
     if price_cache_status == "not_ready" {
         all_healthy = false;
     }
@@ -177,7 +189,7 @@ fn check_price_cache_health(cache: &price_cache::PriceCache) -> (String, String)
         },
         "errors": {
             "db": if db_status == "unreachable" { Some(db_error.clone()) } else { None },
-            "rpc": if rpc_status == "unreachable" { Some(last_error.clone()) } else { None },
+            "rpc": if rpc_status == "unreachable" { Some("rpc unreachable".to_string()) } else { None },
             "redis": if redis_status == "unreachable" { Some(redis_error.clone()) } else { None },
             "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None }
         }
@@ -206,37 +218,40 @@ async fn metrics(State(state): State<routes::v1::AppState>) -> impl IntoResponse
             [(http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
             body,
         ),
-        Err(error) => {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                [(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
-                format!("failed to gather metrics: {error}"),
-            )
-        }
+        Err(error) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            [(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            format!("failed to gather metrics: {error}"),
+        ),
     }
 }
 
-async fn metrics_middleware<B>(
-    State(metrics): State<SharedMetrics>,
-    request: axum::http::Request<B>,
-    next: Next<B>,
-) -> impl IntoResponse {
-    let method = request.method().to_string();
-    let path = request.uri().path().to_string();
-
-    let response = next.run(request).await;
-    let status = response.status().as_u16().to_string();
-
-    metrics
-        .http_requests_total
-        .with_label_values(&[&method, &path, &status])
-        .inc();
-
-    response
-}
+// async fn metrics_middleware(
+//     State(metrics): State<SharedMetrics>,
+//     request: axum::http::Request<axum::body::Body>,
+//     next: Next,
+// ) -> axum::response::Response {
+//     let method = request.method().to_string();
+//     let path = request.uri().path().to_string();
+//
+//     let response = next.run(request).await;
+//     let status = response.status().as_u16().to_string();
+//
+//     metrics
+//         .http_requests_total
+//         .with_label_values(&[&method, &path, &status])
+//         .inc();
+//
+//     response
+// }
 
 /// Build the Axum router with CORS, logging, and rate limiting middleware.
-pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis_cache::RedisCache, event_bus: ws::EventBus) -> Router {
+pub fn build_router(
+    config: Config,
+    cache: price_cache::PriceCache,
+    redis: redis_cache::RedisCache,
+    event_bus: ws::EventBus,
+) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(5)
@@ -252,12 +267,10 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis
             .unwrap(),
     );
 
-    let prometheus_metrics = Arc::new(
-        Metrics::new().unwrap_or_else(|error| {
-            eprintln!("failed to initialize Prometheus metrics: {error}");
-            std::process::exit(1);
-        }),
-    );
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
 
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
@@ -273,9 +286,18 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache, redis: redis
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .with_state(state)
-        .nest("/api", routes::router(config, cache, redis, None, prometheus_metrics.clone(), event_bus))
+        .nest(
+            "/api",
+            routes::router(
+                Arc::new(config.clone()),
+                cache,
+                redis,
+                None,
+                prometheus_metrics.clone(),
+                event_bus,
+            ),
+        )
         .merge(openapi::swagger_router())
-        .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
             config: governor_conf,
         })
@@ -306,12 +328,10 @@ pub fn build_router_with_db(
             .unwrap(),
     );
 
-    let prometheus_metrics = Arc::new(
-        Metrics::new().unwrap_or_else(|error| {
-            eprintln!("failed to initialize Prometheus metrics: {error}");
-            std::process::exit(1);
-        }),
-    );
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
 
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
@@ -327,9 +347,18 @@ pub fn build_router_with_db(
         .route("/health", get(health))
         .route("/metrics", get(metrics))
         .with_state(state)
-        .nest("/api", routes::router_with_db(config, cache, redis, pool, prometheus_metrics.clone(), event_bus))
+        .nest(
+            "/api",
+            routes::router_with_db(
+                Arc::new(config.clone()),
+                cache,
+                redis,
+                pool,
+                prometheus_metrics.clone(),
+                event_bus,
+            ),
+        )
         .merge(openapi::swagger_router())
-        .layer(from_fn_with_state(metrics.clone(), metrics_middleware))
         .layer(GovernorLayer {
             config: governor_conf,
         })
@@ -347,21 +376,11 @@ async fn main() {
     });
 
     let filter = EnvFilter::new(config.log_level.clone());
-    let use_json = config.app_env == "production";
-
-    // Initialize OpenTelemetry tracing if enabled
-    let tracer = telemetry::init_telemetry_from_env();
+    let use_json = true;
 
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
 
     let registry = tracing_subscriber::registry().with(filter);
-
-    let registry = if let Some(tracer) = tracer {
-        let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-        registry.with(telemetry_layer)
-    } else {
-        registry
-    };
 
     if use_json {
         let registry = registry.with(fmt_layer.json());
@@ -373,7 +392,8 @@ async fn main() {
                     ..Default::default()
                 },
             ));
-            registry.with(sentry_tracing_layer()).init();
+            let registry = registry.with(sentry_tracing_layer());
+            registry.init();
         } else {
             registry.init();
         }
@@ -387,7 +407,8 @@ async fn main() {
                     ..Default::default()
                 },
             ));
-            registry.with(sentry_tracing_layer()).init();
+            let registry = registry.with(sentry_tracing_layer());
+            registry.init();
         } else {
             registry.init();
         }
@@ -399,10 +420,10 @@ async fn main() {
 }
 
 #[cfg(test)]
-mod test_support;
-#[cfg(test)]
 mod db_integration_tests;
 #[cfg(test)]
 mod redis_integration_tests;
+#[cfg(test)]
+mod test_support;
 #[cfg(test)]
 mod tests;

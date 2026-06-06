@@ -263,7 +263,7 @@ pub fn build_router(
             cache,
             redis,
             event_bus,
-            crate::constants::RATE_LIMIT_PER_SECOND,
+            crate::constants::RATE_LIMIT_PERIOD_SECS,
             crate::constants::RATE_LIMIT_BURST_SIZE,
         )
     }
@@ -335,7 +335,7 @@ fn build_router_with_rate_period(
     }));
 
     let state = crate::routes::v1::AppState {
-        config: config.clone(),
+        config: Arc::new(config.clone()),
         cache: cache.clone(),
         redis: redis.clone(),
         db: None,
@@ -352,7 +352,7 @@ fn build_router_with_rate_period(
         .nest(
             "/api",
             crate::routes::router(
-                config.clone(),
+                Arc::new(config.clone()),
                 cache,
                 redis,
                 None,
@@ -382,7 +382,7 @@ fn build_router_with_db(
 ) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
-            .per_second(crate::constants::RATE_LIMIT_PER_SECOND)
+            .per_second(crate::constants::RATE_LIMIT_PERIOD_SECS)
             .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
             .error_handler(|_| {
                 (
@@ -401,7 +401,7 @@ fn build_router_with_db(
     }));
 
     let state = crate::routes::v1::AppState {
-        config: config.clone(),
+        config: Arc::new(config.clone()),
         cache: cache.clone(),
         redis: redis.clone(),
         db: Some(pool.clone()),
@@ -418,7 +418,7 @@ fn build_router_with_db(
         .nest(
             "/api",
             crate::routes::router_with_db(
-                config.clone(),
+                Arc::new(config.clone()),
                 cache,
                 redis,
                 pool,
@@ -461,6 +461,7 @@ pub async fn run(config: Config) {
         config.stellar_rpc_url.clone(),
         pool.clone(),
         event_bus.clone(),
+        std::time::Duration::from_secs(30),
     );
 
     // Initialize Redis cache
