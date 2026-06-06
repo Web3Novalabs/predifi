@@ -34,7 +34,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration as TokioDuration;
 use tokio::time::sleep;
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 use tracing_subscriber::prelude::*;
@@ -302,7 +302,7 @@ pub fn build_router(
                 .finish()
                 .unwrap(),
         );
-        router.layer(GovernorLayer {
+        router.layer(tower_governor::GovernorLayer {
             config: governor_conf,
         })
     };
@@ -369,7 +369,7 @@ pub fn build_router_with_db(
         .layer(LoggingLayer);
 
     #[cfg(not(test))]
-    let router = router.layer(GovernorLayer {
+    let router = router.layer(tower_governor::GovernorLayer {
         config: governor_conf,
     });
 

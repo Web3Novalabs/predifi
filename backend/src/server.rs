@@ -20,7 +20,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, Duration as TokioDuration};
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info, warn};
 
@@ -288,6 +288,7 @@ pub fn build_router_with_rate_limit(
     )
 }
 
+#[allow(unused_variables)]
 fn build_router_with_rate_period(
     config: Config,
     cache: crate::price_cache::PriceCache,
