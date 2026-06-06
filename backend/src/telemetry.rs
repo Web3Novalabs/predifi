@@ -180,7 +180,7 @@ mod tests {
         std::env::remove_var("TELEMETRY_ENABLED");
         // This will try to connect to localhost, so we just check it returns Some
         // In a real test, we'd mock the exporter
-        let result = init_telemetry_from_env();
+        let _result = init_telemetry_from_env();
         // Will fail to connect but should return Some (the tracer)
         // We skip this assertion in unit tests to avoid network calls
     }
