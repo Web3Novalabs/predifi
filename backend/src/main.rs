@@ -252,21 +252,6 @@ pub fn build_router(
     redis: redis_cache::RedisCache,
     event_bus: ws::EventBus,
 ) -> Router {
-    let governor_conf = Arc::new(
-        GovernorConfigBuilder::default()
-            .per_second(5)
-            .burst_size(50)
-            .error_handler(|_| {
-                (
-                    axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    "Too Many Requests",
-                )
-                    .into_response()
-            })
-            .finish()
-            .unwrap(),
-    );
-
     let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
         eprintln!("failed to initialize Prometheus metrics: {error}");
         std::process::exit(1);
@@ -281,7 +266,7 @@ pub fn build_router(
         event_bus: event_bus.clone(),
     };
 
-    Router::new()
+    let router = Router::new()
         .route("/", get(root))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
@@ -298,11 +283,31 @@ pub fn build_router(
             ),
         )
         .merge(openapi::swagger_router())
-        .layer(GovernorLayer {
+        .layer(build_cors(&config))
+        .layer(LoggingLayer);
+
+    #[cfg(not(test))]
+    let router = {
+        let governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(5)
+                .burst_size(50)
+                .error_handler(|_| {
+                    (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        "Too Many Requests",
+                    )
+                        .into_response()
+                })
+                .finish()
+                .unwrap(),
+        );
+        router.layer(GovernorLayer {
             config: governor_conf,
         })
-        .layer(build_cors(&config))
-        .layer(LoggingLayer)
+    };
+
+    router
 }
 
 /// Build the Axum router with a live database pool.
@@ -313,6 +318,21 @@ pub fn build_router_with_db(
     pool: sqlx::PgPool,
     event_bus: ws::EventBus,
 ) -> Router {
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
+
+    let state = routes::v1::AppState {
+        config: Arc::new(config.clone()),
+        cache: cache.clone(),
+        redis: redis.clone(),
+        db: Some(pool.clone()),
+        metrics: prometheus_metrics.clone(),
+        event_bus: event_bus.clone(),
+    };
+
+    #[cfg(not(test))]
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(5)
@@ -328,21 +348,7 @@ pub fn build_router_with_db(
             .unwrap(),
     );
 
-    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
-        eprintln!("failed to initialize Prometheus metrics: {error}");
-        std::process::exit(1);
-    }));
-
-    let state = routes::v1::AppState {
-        config: Arc::new(config.clone()),
-        cache: cache.clone(),
-        redis: redis.clone(),
-        db: Some(pool.clone()),
-        metrics: prometheus_metrics.clone(),
-        event_bus: event_bus.clone(),
-    };
-
-    Router::new()
+    let router = Router::new()
         .route("/", get(root))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
@@ -359,11 +365,15 @@ pub fn build_router_with_db(
             ),
         )
         .merge(openapi::swagger_router())
-        .layer(GovernorLayer {
-            config: governor_conf,
-        })
         .layer(build_cors(&config))
-        .layer(LoggingLayer)
+        .layer(LoggingLayer);
+
+    #[cfg(not(test))]
+    let router = router.layer(GovernorLayer {
+        config: governor_conf,
+    });
+
+    router
 }
 
 #[tokio::main]

@@ -48,6 +48,7 @@ mod tests {
     /// A value stored with a 1-second TTL should be retrievable immediately
     /// but become inaccessible after the TTL has elapsed.
     #[tokio::test]
+    #[ignore = "Requires Docker container for Redis"]
     async fn cached_item_expires_after_short_ttl() {
         let (cache, container) = setup().await;
 
@@ -79,6 +80,7 @@ mod tests {
 
     /// Multiple cached items with different TTLs should expire independently.
     #[tokio::test]
+    #[ignore = "Requires Docker container for Redis"]
     async fn items_with_different_ttls_expire_independently() {
         let (cache, container) = setup().await;
 
@@ -124,6 +126,7 @@ mod tests {
 
     /// A zero TTL should cause the item to expire immediately.
     #[tokio::test]
+    #[ignore = "Requires Docker container for Redis"]
     async fn zero_ttl_expires_immediately() {
         let (cache, container) = setup().await;
 
@@ -147,6 +150,7 @@ mod tests {
     /// Verifies that a value can be retrieved immediately after being cached
     /// and does NOT prematurely expire before its TTL.
     #[tokio::test]
+    #[ignore = "Requires Docker container for Redis"]
     async fn cached_item_persists_within_ttl_window() {
         let (cache, container) = setup().await;
 
@@ -174,6 +178,7 @@ mod tests {
     /// Verify that complex serializable types (not just strings) are properly
     /// cached and expire correctly.
     #[tokio::test]
+    #[ignore = "Requires Docker container for Redis"]
     async fn complex_types_expire_correctly() {
         use serde::{Deserialize, Serialize};
 

@@ -34,6 +34,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
     async fn migrations_apply_and_revert() {
         let (pool, _container) = start_postgres().await;
 

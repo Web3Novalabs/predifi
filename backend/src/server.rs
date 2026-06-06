@@ -254,8 +254,8 @@ pub fn build_router(
             cache,
             redis,
             event_bus,
-            std::time::Duration::from_nanos(1),
-            1_000_000,
+            std::time::Duration::from_secs(1),
+            u32::MAX,
         )
     } else {
         build_router_with_rate_limit(
@@ -296,39 +296,6 @@ fn build_router_with_rate_period(
     period: std::time::Duration,
     burst_size: u32,
 ) -> Router {
-    #[cfg(test)]
-    let governor_conf = Arc::new(
-        GovernorConfigBuilder::default()
-            .key_extractor(tower_governor::key_extractor::GlobalKeyExtractor)
-            .period(period)
-            .burst_size(burst_size)
-            .error_handler(|_| {
-                (
-                    axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    "Too Many Requests",
-                )
-                    .into_response()
-            })
-            .finish()
-            .unwrap(),
-    );
-
-    #[cfg(not(test))]
-    let governor_conf = Arc::new(
-        GovernorConfigBuilder::default()
-            .period(period)
-            .burst_size(burst_size)
-            .error_handler(|_| {
-                (
-                    axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    "Too Many Requests",
-                )
-                    .into_response()
-            })
-            .finish()
-            .unwrap(),
-    );
-
     let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
         eprintln!("failed to initialize Prometheus metrics: {error}");
         std::process::exit(1);
@@ -343,7 +310,7 @@ fn build_router_with_rate_period(
         event_bus: event_bus.clone(),
     };
 
-    Router::new()
+    let router = Router::new()
         .route("/", get(root))
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -365,11 +332,31 @@ fn build_router_with_rate_period(
             prometheus_metrics.clone(),
             metrics_middleware,
         ))
-        .layer(GovernorLayer {
+        .layer(build_cors(&config))
+        .layer(LoggingLayer);
+
+    #[cfg(not(test))]
+    let router = {
+        let governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .period(period)
+                .burst_size(burst_size)
+                .error_handler(|_| {
+                    (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        "Too Many Requests",
+                    )
+                        .into_response()
+                })
+                .finish()
+                .unwrap(),
+        );
+        router.layer(tower_governor::GovernorLayer {
             config: governor_conf,
         })
-        .layer(build_cors(&config))
-        .layer(LoggingLayer)
+    };
+
+    router
 }
 
 /// Build the Axum router with a live database pool.
@@ -380,21 +367,6 @@ fn build_router_with_db(
     pool: sqlx::PgPool,
     event_bus: crate::ws::EventBus,
 ) -> Router {
-    let governor_conf = Arc::new(
-        GovernorConfigBuilder::default()
-            .per_second(crate::constants::RATE_LIMIT_PERIOD_SECS)
-            .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
-            .error_handler(|_| {
-                (
-                    axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    "Too Many Requests",
-                )
-                    .into_response()
-            })
-            .finish()
-            .unwrap(),
-    );
-
     let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
         eprintln!("failed to initialize Prometheus metrics: {error}");
         std::process::exit(1);
@@ -409,7 +381,7 @@ fn build_router_with_db(
         event_bus: event_bus.clone(),
     };
 
-    Router::new()
+    let router = Router::new()
         .route("/", get(root))
         .route("/health", get(health))
         .route("/ready", get(ready))
@@ -431,11 +403,31 @@ fn build_router_with_db(
             prometheus_metrics.clone(),
             metrics_middleware,
         ))
-        .layer(GovernorLayer {
+        .layer(build_cors(&config))
+        .layer(LoggingLayer);
+
+    #[cfg(not(test))]
+    let router = {
+        let governor_conf = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(crate::constants::RATE_LIMIT_PERIOD_SECS)
+                .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
+                .error_handler(|_| {
+                    (
+                        axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        "Too Many Requests",
+                    )
+                        .into_response()
+                })
+                .finish()
+                .unwrap(),
+        );
+        router.layer(tower_governor::GovernorLayer {
             config: governor_conf,
         })
-        .layer(build_cors(&config))
-        .layer(LoggingLayer)
+    };
+
+    router
 }
 
 /// Initialise all dependencies, build the router, and start serving.

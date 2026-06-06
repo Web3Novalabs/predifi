@@ -175,8 +175,8 @@ mod tests {
         std::env::remove_var("TELEMETRY_ENABLED");
     }
 
-    #[test]
-    fn test_telemetry_enabled_by_default() {
+    #[tokio::test]
+    async fn test_telemetry_enabled_by_default() {
         std::env::remove_var("TELEMETRY_ENABLED");
         // This will try to connect to localhost, so we just check it returns Some
         // In a real test, we'd mock the exporter
