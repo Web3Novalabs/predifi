@@ -4602,6 +4602,7 @@ impl OracleCallback for PredifiContract {
         Self::require_not_paused(&env)?;
         oracle.require_auth();
 
+        // #697: Enforce Oracle role — only addresses with Role::Oracle (3) may cast oracle votes.
         Self::require_oracle_role_for_resolution(&env, &oracle, pool_id)?;
 
         let pool_key = DataKey::Pool(pool_id);
@@ -4610,6 +4611,9 @@ impl OracleCallback for PredifiContract {
             .persistent()
             .get(&pool_key)
             .expect("Pool not found");
+
+        // #703: Assert outcome_descriptions.len() == options_count to prevent index-out-of-bounds.
+        Self::validate_pool_invariants(&pool);
 
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
