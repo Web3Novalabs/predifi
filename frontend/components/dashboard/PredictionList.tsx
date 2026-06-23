@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useCallback, memo } from "react";
-import { FixedSizeList, type ListChildComponentProps } from "react-window";
 import { cn } from "@/lib/utils";
+import { formatUtcDateTime } from "@/lib/date";
 import { Card, CardContent } from "@/components/ui/card";
 import { ChefHat, ChevronRight, Users, Copy } from "lucide-react";
 
@@ -31,7 +31,7 @@ const activePredictions: Prediction[] = [
   {
     id: "1",
     title: "125,000 or above",
-    date: "18-04-2025 21:43",
+    date: "2025-04-18T21:43:00Z",
     potentialPayout: "179.52 strk",
     stake: "100 strk",
     odd: "2.54",
@@ -41,12 +41,6 @@ const activePredictions: Prediction[] = [
     status: "Pending",
   },
 ];
-
-/** Height of each PredictionCard row in pixels (including gap). */
-const ITEM_HEIGHT = 220;
-
-/** Maximum visible height of the virtualized list before scrolling kicks in. */
-const LIST_MAX_HEIGHT = 600;
 
 // ---------------------------------------------------------------------------
 // PredictionCard — memoized list item
@@ -64,7 +58,9 @@ const PredictionCard = memo(function PredictionCard({
         <div className="p-4 flex items-center justify-between border-b border-white/5">
           <div>
             <h4 className="font-bold text-base">{prediction.title}</h4>
-            <p className="text-zinc-500 text-xs mt-1">{prediction.date}</p>
+            <p className="text-zinc-500 text-xs mt-1">
+              {formatUtcDateTime(prediction.date)}
+            </p>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-emerald-400 text-xs font-bold">
@@ -122,26 +118,6 @@ const PredictionCard = memo(function PredictionCard({
 PredictionCard.displayName = "PredictionCard";
 
 // ---------------------------------------------------------------------------
-// VirtualRow — renderer passed to FixedSizeList
-//
-// react-window calls this for every visible row, providing `index` and
-// `style`. The `style` (position/height) MUST be applied to the outermost
-// element so the list can correctly position each row.
-// ---------------------------------------------------------------------------
-
-function VirtualRow({ index, style, data }: ListChildComponentProps<Prediction[]>) {
-  return (
-    // Outer div carries react-window's absolute-position style.
-    // Inner div adds the gap between cards via padding-bottom.
-    <div style={style}>
-      <div className="pb-4">
-        <PredictionCard prediction={data[index]} />
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // PredictionList
 // ---------------------------------------------------------------------------
 
@@ -150,23 +126,6 @@ export function PredictionList() {
 
   const handleTabActive = useCallback(() => setActiveTab("active"), []);
   const handleTabPast = useCallback(() => setActiveTab("past"), []);
-
-  /** Clamp list height so a small dataset doesn't leave empty space. */
-  const listHeight = Math.min(
-    activePredictions.length * ITEM_HEIGHT,
-    LIST_MAX_HEIGHT
-  );
-
-  /**
-   * Memoize the mapped cards so they are only re-calculated if the data changes.
-   * This saves a full array map and object creation on every render of the 
-   * parent PredictionList.
-   */
-  const renderedActivePredictions = useMemo(() => (
-    activePredictions.map((prediction) => (
-      <PredictionCard key={prediction.id} prediction={prediction} />
-    ))
-  ), []);
 
   return (
     <div className="space-y-6">
@@ -178,7 +137,7 @@ export function PredictionList() {
             "pb-3 text-sm font-medium transition-colors relative",
             activeTab === "active"
               ? "text-primary"
-              : "text-muted-foreground hover:text-white"
+              : "text-muted-foreground hover:text-white",
           )}
         >
           Active Prediction
@@ -196,7 +155,7 @@ export function PredictionList() {
             "pb-3 text-sm font-medium transition-colors relative",
             activeTab === "past"
               ? "text-primary"
-              : "text-muted-foreground hover:text-white"
+              : "text-muted-foreground hover:text-white",
           )}
         >
           Past Predictions
@@ -206,19 +165,13 @@ export function PredictionList() {
         </button>
       </div>
 
-      {/* Virtualized list */}
+      {/* Scrollable list */}
       {activeTab === "active" ? (
-        <FixedSizeList
-          height={listHeight}
-          itemCount={activePredictions.length}
-          itemSize={ITEM_HEIGHT}
-          width="100%"
-          itemData={activePredictions}
-          // Remove the default inline overflow so Tailwind/CSS controls scrolling
-          style={{ overflow: "auto" }}
-        >
-          {VirtualRow}
-        </FixedSizeList>
+        <div className="max-h-[600px] overflow-y-auto space-y-4 pr-2">
+          {activePredictions.map((prediction) => (
+            <PredictionCard key={prediction.id} prediction={prediction} />
+          ))}
+        </div>
       ) : (
         <div className="text-center py-10 text-zinc-500">
           No past predictions found

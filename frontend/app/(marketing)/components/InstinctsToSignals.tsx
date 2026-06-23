@@ -1,3 +1,4 @@
+import React from "react";
 import {
   ArrowUpRight,
   ChartPie,
@@ -15,10 +16,10 @@ const InstinctsToSignals = React.memo(function InstinctsToSignals() {
   return (
     <div>
       <p className="text-[24px] md:text-[48px]/[120%] max-w-[1000px] mx-auto -tracking-[4%] text-center text-[#D9D9D9] font-medium">
-        You don't just bet. turns instincts into signals
+        You don&apos;t just bet. turns instincts into signals
       </p>
 
-      <div className="flex lg:flex-row flex-col items-center justify-center gap-y-10 gap-x-[80px] items-center mt-[50px] mb-10">
+      <div className="flex lg:flex-row flex-col items-center justify-center gap-y-10 gap-x-[80px] mt-[50px] mb-10">
         <div className="space-y-[10px] max-w-[340px]">
           <ChartPie size={40} />
           <h3 className="text-sm lg:text-lg font-medium">

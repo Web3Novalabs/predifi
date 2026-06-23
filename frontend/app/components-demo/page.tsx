@@ -9,14 +9,14 @@ import {
   Checkbox,
   Tooltip,
   ToastProvider,
-  useToast,
+  useToastActions,
 } from "@/components/ui";
 
 function ComponentShowcase() {
   const [checkedState, setCheckedState] = useState(false);
   const [indeterminateState, setIndeterminateState] = useState(true);
   const [searchResult, setSearchResult] = useState("");
-  const { addToast } = useToast();
+  const { addToast } = useToastActions();
 
   const handleToastSuccess = () => {
     addToast({

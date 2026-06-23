@@ -23,6 +23,12 @@ pub struct EventBus {
     tx: broadcast::Sender<String>,
 }
 
+impl Default for EventBus {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventBus {
     /// Create a new broadcast channel with a capacity of [`CHANNEL_CAPACITY`] messages.
     ///
@@ -65,7 +71,7 @@ async fn handle_socket(mut socket: WebSocket, bus: EventBus) {
             result = rx.recv() => {
                 match result {
                     Ok(msg) => {
-                        if socket.send(Message::Text(msg.into())).await.is_err() {
+                        if socket.send(Message::Text(msg)).await.is_err() {
                             break; // client disconnected
                         }
                     }
