@@ -21,6 +21,9 @@
 import { Suspense } from "react";
 import dynamic from "next/dynamic";
 import { Diamond, Box, Activity, ShieldCheck } from "lucide-react";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Dashboard" };
 import { MetricCard } from "@/components/dashboard/MetricCard";
 
 // ---------------------------------------------------------------------------
