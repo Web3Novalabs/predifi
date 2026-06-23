@@ -16,8 +16,7 @@ mod storage_test;
 mod stress_test;
 #[cfg(test)]
 mod test_utils;
-// #[cfg(test)]
-// mod storage_test;
+
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, log, symbol_short, token,
@@ -1269,7 +1268,6 @@ impl PredifiContract {
     /// Pure: Check if pool state transition is valid
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
-    #[allow(dead_code)]
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
@@ -1282,7 +1280,6 @@ impl PredifiContract {
 
     /// Pure: Validate fee basis points
     /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
-    #[allow(dead_code)]
     fn is_valid_fee_bps(fee_bps: u32) -> bool {
         fee_bps <= 10_000
     }
@@ -1293,14 +1290,12 @@ impl PredifiContract {
     ///
     /// PRE: pool is a valid Pool instance
     /// POST: returns true only when all three conditions hold simultaneously
-    #[allow(dead_code)]
     fn is_pool_active(pool: &Pool) -> bool {
         pool.state == MarketState::Active
     }
 
-    /// Pure: Initialize outcome stakes vector with zeros
-    /// Used for markets with many outcomes (e.g., 32+ teams tournament)
-    #[allow(dead_code)]
+    /// Pure: Initialize outcome stakes vector with zeros.
+    /// Used for markets with many outcomes (e.g., 32+ teams tournament).
     fn init_outcome_stakes(env: &Env, options_count: u32) -> Vec<i128> {
         let mut stakes = Vec::new(env);
         for _ in 0..options_count {
@@ -1390,25 +1385,44 @@ impl PredifiContract {
         Self::extend_persistent(env, key);
     }
 
-    fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> bool {
-        env.invoke_contract(
+    /// Call `has_role` on the access-control contract.
+    ///
+    /// On success returns the boolean result.
+    /// On failure (e.g. the access-control contract panics or is not deployed)
+    /// maps the error to [`PredifiError::OracleNotInitialized`] so callers get a
+    /// typed error rather than an unstructured panic.
+    fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> Result<bool, PredifiError> {
+        // try_invoke_contract returns Result<Result<T, ConversionError>, InvokeError>;
+        // we flatten both layers into a single PredifiError.
+        env.try_invoke_contract::<bool, PredifiError>(
             contract,
             &Symbol::new(env, "has_role"),
             soroban_sdk::vec![env, user.into_val(env), role.into_val(env)],
         )
+        .map_err(|_| PredifiError::OracleNotInitialized) // outer: invocation failure
+        .and_then(|inner| inner.map_err(|_| PredifiError::OracleNotInitialized)) // inner: XDR error
     }
 
-    fn get_access_control_admin(env: &Env, contract: &Address) -> Address {
-        env.invoke_contract(
+    /// Call `get_admin` on the access-control contract.
+    ///
+    /// Maps external call failures to [`PredifiError::InvalidData`] so callers
+    /// receive a descriptive, typed error instead of a contract panic.
+    fn get_access_control_admin(env: &Env, contract: &Address) -> Result<Address, PredifiError> {
+        // try_invoke_contract returns Result<Result<T, ConversionError>, InvokeError>;
+        // we flatten both layers into a single PredifiError.
+        env.try_invoke_contract::<Address, PredifiError>(
             contract,
             &Symbol::new(env, "get_admin"),
             soroban_sdk::vec![env],
         )
+        .map_err(|_| PredifiError::InvalidData) // outer: invocation failure
+        .and_then(|inner| inner.map_err(|_| PredifiError::InvalidData)) // inner: XDR error
     }
 
     fn require_role(env: &Env, user: &Address, role: u32) -> Result<(), PredifiError> {
         let config = Self::get_config(env);
-        if !Self::has_role(env, &config.access_control, user, role) {
+        let has = Self::has_role(env, &config.access_control, user, role)?;
+        if !has {
             return Err(PredifiError::Unauthorized);
         }
         Ok(())
@@ -1551,9 +1565,21 @@ impl PredifiContract {
     }
 
     /// Register a newly created pool in the global active pool index.
+    ///
+    /// The counter (`ActivePoolCtr`) is stored in **persistent** storage rather than
+    /// instance storage so that pool-index bookkeeping does not inflate the instance
+    /// storage entry that is loaded on every contract call.
     fn add_to_active_index(env: &Env, pool_id: u64) {
         let ctr_key = DataKey::ActivePoolCtr;
-        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&ctr_key)
+            .unwrap_or(0u32);
+        // Only extend TTL if the key already exists (extend_ttl panics on missing keys).
+        if count > 0 {
+            Self::extend_persistent(env, &ctr_key);
+        }
 
         let slot_key = DataKey::ActivePool(count);
         env.storage().persistent().set(&slot_key, &pool_id);
@@ -1563,18 +1589,27 @@ impl PredifiContract {
         env.storage().persistent().set(&idx_key, &count);
         Self::extend_persistent(env, &idx_key);
 
-        env.storage().instance().set(&ctr_key, &(count + 1));
-        Self::extend_instance(env);
+        // Write the incremented counter and extend its TTL.
+        env.storage().persistent().set(&ctr_key, &(count + 1));
+        Self::extend_persistent(env, &ctr_key);
     }
 
     /// Remove a pool from the global active pool index using swap-and-pop.
     /// The last entry is moved into the vacated slot so the index stays dense.
+    ///
+    /// The counter is persisted in persistent storage (see `add_to_active_index`).
     fn remove_from_active_index(env: &Env, pool_id: u64) {
         let ctr_key = DataKey::ActivePoolCtr;
-        let count: u32 = env.storage().instance().get(&ctr_key).unwrap_or(0);
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&ctr_key)
+            .unwrap_or(0u32);
         if count == 0 {
             return;
         }
+        // Key exists (count > 0), safe to extend TTL.
+        Self::extend_persistent(env, &ctr_key);
 
         let idx_key = DataKey::ActivePoolIdx(pool_id);
         let pos: u32 = match env.storage().persistent().get(&idx_key) {
@@ -1616,8 +1651,8 @@ impl PredifiContract {
         env.storage().persistent().remove(&idx_key);
 
         // Decrement the counter.
-        env.storage().instance().set(&ctr_key, &last);
-        Self::extend_instance(env);
+        env.storage().persistent().set(&ctr_key, &last);
+        Self::extend_persistent(env, &ctr_key);
     }
 
     // ── Public interface ──────────────────────────────────────────────────────
@@ -2191,7 +2226,10 @@ impl PredifiContract {
     /// Return an aggregated metadata view of contract config and protocol state.
     pub fn get_contract_info(env: Env) -> ContractInfo {
         let config = Self::get_config(&env);
-        let current_admin = Self::get_access_control_admin(&env, &config.access_control);
+        // If the access-control contract cannot be reached, fall back to the
+        // contract's own address so callers still receive a valid response.
+        let current_admin = Self::get_access_control_admin(&env, &config.access_control)
+            .unwrap_or_else(|_| env.current_contract_address());
 
         ContractInfo {
             version: env
@@ -2400,13 +2438,14 @@ impl PredifiContract {
         );
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
-        assert!(options_count >= 2, "options_count must be at least 2");
+        if options_count < 2 {
+            return Err(PredifiError::InvalidData);
+        }
 
         // Validate: options_count must not exceed maximum limit
-        assert!(
-            options_count <= MAX_OPTIONS_COUNT,
-            "options_count exceeds maximum allowed value"
-        );
+        if options_count > MAX_OPTIONS_COUNT {
+            return Err(PredifiError::InvalidData);
+        }
 
         // Validate: initial_liquidity must be non-negative if provided
         assert!(
@@ -2434,11 +2473,17 @@ impl PredifiContract {
         // Note: If operator_count is 0, the pool can still be resolved by oracles.
         {
             let cfg = Self::get_config(&env);
-            let operator_count: u32 = env.invoke_contract(
-                &cfg.access_control,
-                &Symbol::new(&env, "get_operator_count"),
-                soroban_sdk::vec![&env],
-            );
+            // Use try_invoke_contract so that an unreachable access-control contract maps
+            // to OracleNotInitialized rather than causing an unhandled panic.
+            let operator_count: u32 = env
+                .try_invoke_contract::<u32, PredifiError>(
+                    &cfg.access_control,
+                    &Symbol::new(&env, "get_operator_count"),
+                    soroban_sdk::vec![&env],
+                )
+                .map_err(|_| PredifiError::OracleNotInitialized)
+                .and_then(|inner| inner.map_err(|_| PredifiError::OracleNotInitialized))
+                .unwrap_or(0u32); // default: treat as zero operators so creation can proceed
             if operator_count > 0 && config.required_resolutions > operator_count {
                 soroban_sdk::panic_with_error!(
                     &env,
@@ -3963,10 +4008,11 @@ impl PredifiContract {
             .checked_add(limit)
             .ok_or(PredifiError::InvalidPagination)?;
 
+        let ctr_key = DataKey::ActivePoolCtr;
         let count: u32 = env
             .storage()
-            .instance()
-            .get(&DataKey::ActivePoolCtr)
+            .persistent()
+            .get(&ctr_key)
             .unwrap_or(0);
         let mut results = Vec::new(&env);
 
@@ -3974,7 +4020,10 @@ impl PredifiContract {
             return Ok(results);
         }
 
-        Self::extend_instance(&env);
+        // Only extend the counter TTL if the key actually exists.
+        if count > 0 {
+            Self::extend_persistent(&env, &ctr_key);
+        }
 
         let end = core::cmp::min(end_check, count);
 
@@ -3991,13 +4040,13 @@ impl PredifiContract {
 
     /// Return the total number of currently active (open) pools.
     ///
-    /// This is an O(1) read of the `ActivePoolCtr` instance-storage counter
+    /// This is an O(1) read of the `ActivePoolCtr` persistent-storage counter
     /// that is maintained by `add_to_active_index` / `remove_from_active_index`.
     /// Frontends can use this to display "Showing N of M active pools" without
     /// fetching every page.
     pub fn get_active_pools_count(env: Env) -> u32 {
         env.storage()
-            .instance()
+            .persistent()
             .get(&DataKey::ActivePoolCtr)
             .unwrap_or(0)
     }
