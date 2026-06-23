@@ -1,12 +1,10 @@
-import { useMemo } from "react";
+"use client";
+
+import { useMemo, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
 interface PoolsListProps {
-  /**
-   * Force the loading skeleton regardless of fetch state — handy for demos and
-   * visual tests. When omitted, the live SWR loading state is used.
-   */
   isLoading?: boolean;
 }
 
@@ -28,7 +26,7 @@ export function PoolsList({ isLoading = false }: PoolsListProps) {
     [],
   );
 
-  if (isLoading) {
+  if (forceLoading || isLoading) {
     return (
       <Card className="bg-[#121212] border-none text-white h-full min-h-[400px]">
         <CardHeader>
@@ -41,8 +39,13 @@ export function PoolsList({ isLoading = false }: PoolsListProps) {
 
   return (
     <Card className="bg-[#121212] border-none text-white h-full min-h-[400px]">
-      <CardHeader>
+      <CardHeader className="space-y-3">
         <CardTitle className="text-lg font-medium">Created Pools</CardTitle>
+        <SearchBar
+          placeholder="Search pools…"
+          onSearch={handleSearch}
+          aria-label="Search pools"
+        />
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-center h-[300px] text-zinc-600">
