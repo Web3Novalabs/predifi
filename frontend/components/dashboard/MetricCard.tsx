@@ -67,8 +67,44 @@ export function MetricCard({
                     </div>
                 </div>
             </CardContent>
-            {/* Background gradient effect */}
-            <div className="absolute top-0 right-0 -mt-4 -mr-4 w-24 h-24 bg-primary/5 rounded-full blur-3xl group-hover:bg-primary/10 transition-colors duration-500" />
+            {/* Background SVG graphic */}
+            <svg
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 h-full w-full opacity-[0.07] transition-opacity duration-500 group-hover:opacity-[0.13]"
+                xmlns="http://www.w3.org/2000/svg"
+                preserveAspectRatio="xMidYMid slice"
+            >
+                <defs>
+                    <radialGradient id="mg-glow" cx="85%" cy="15%" r="50%">
+                        <stop offset="0%" stopColor="#37B7C3" stopOpacity="1" />
+                        <stop offset="100%" stopColor="#37B7C3" stopOpacity="0" />
+                    </radialGradient>
+                </defs>
+                {/* Glow orb */}
+                <ellipse cx="90%" cy="10%" rx="40%" ry="35%" fill="url(#mg-glow)" />
+                {/* Corner hex ring */}
+                <polygon
+                    points="88,4 100,11 100,25 88,32 76,25 76,11"
+                    fill="none"
+                    stroke="#37B7C3"
+                    strokeWidth="0.75"
+                    className="transition-all duration-500 group-hover:stroke-[1.2]"
+                />
+                <polygon
+                    points="94,8 100,11.5 100,22.5 94,26 88,22.5 88,11.5"
+                    fill="none"
+                    stroke="#37B7C3"
+                    strokeWidth="0.4"
+                    opacity="0.5"
+                />
+                {/* Diagonal grid lines */}
+                <line x1="60%" y1="0" x2="100%" y2="60%" stroke="#37B7C3" strokeWidth="0.4" />
+                <line x1="75%" y1="0" x2="100%" y2="40%" stroke="#37B7C3" strokeWidth="0.3" />
+                <line x1="100%" y1="0" x2="60%" y2="80%" stroke="#37B7C3" strokeWidth="0.3" />
+                {/* Bottom-left accent dot */}
+                <circle cx="8%" cy="88%" r="1.5" fill="#37B7C3" opacity="0.5" />
+                <circle cx="8%" cy="88%" r="4" fill="none" stroke="#37B7C3" strokeWidth="0.5" opacity="0.3" />
+            </svg>
         </Card>
     );
 }
