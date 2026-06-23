@@ -16,6 +16,7 @@ export {
   type TooltipProps,
 } from "./tooltip";
 export { default as SocialIcon, type SocialIconId } from "./SocialIcon";
+export { StakeInput, type StakeInputProps } from "./stake-input";
 export {
   Card,
   CardHeader,
