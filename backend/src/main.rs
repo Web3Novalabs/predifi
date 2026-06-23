@@ -17,6 +17,7 @@ pub mod response;
 pub mod routes;
 pub mod server;
 pub mod session;
+pub mod shutdown;
 pub mod telemetry;
 pub mod worker;
 pub mod ws;

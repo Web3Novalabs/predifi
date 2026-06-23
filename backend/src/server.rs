@@ -7,6 +7,7 @@
 use crate::config::Config;
 use crate::metrics::{Metrics, SharedMetrics};
 use crate::request_logger::LoggingLayer;
+use crate::shutdown;
 use axum::{
     extract::State,
     middleware::{from_fn_with_state, Next},
@@ -16,10 +17,12 @@ use axum::{
 };
 use http::HeaderValue;
 use serde_json::json;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, Duration as TokioDuration};
+use tokio::task::JoinHandle;
 #[cfg(not(test))]
 use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
@@ -434,10 +437,39 @@ fn build_router_with_db(
 
 /// Initialise all dependencies, build the router, and start serving.
 ///
-/// This is the main server entry point called from `main()`.  It
-/// creates the database pool, spawns background workers, initialises
-/// the Redis cache, and binds the TCP listener.
+/// This delegates to [`run_with_signal`] using [`crate::shutdown::wait_for_signal`]
+/// so that SIGINT, SIGTERM and (on Unix) SIGHUP cause a graceful drain of
+/// in-flight requests before the process exits.
 pub async fn run(config: Config) {
+    run_with_signal(config, shutdown::wait_for_signal()).await;
+}
+
+/// Initialise all dependencies, build the router, start serving, and tear
+/// everything down again on `signal`.
+///
+/// The function is split out from [`run`] so the shutdown plumbing is
+/// testable: callers (notably the integration tests in [`crate::tests`])
+/// pass a hand-crafted future instead of relying on real OS signals.
+///
+/// # Order of operations on shutdown
+///
+/// 1. The provided `signal` future resolves (this is what kicks off the
+///    drain — Axum then refuses new connections and waits for in-flight
+///    ones to finish).
+/// 2. The HTTP server future is awaited with [`shutdown::with_shutdown_timeout`]
+///    giving in-flight requests up to `config.shutdown_timeout_secs` to
+///    finish.  This protects the process from being held hostage by a
+///    stuck handler.
+/// 3. The PostgreSQL connection pool is closed via [`sqlx::Pool::close`].
+///    In-flight queries get a chance to finish because `close` waits for
+///    outstanding checkouts to be returned.
+/// 4. Background workers (the price-cache fetcher and the Stellar event
+///    listener) are aborted so they do not keep the runtime alive after
+///    the listener has gone away.
+pub async fn run_with_signal<F>(config: Config, signal: F)
+where
+    F: Future<Output = ()> + Send + 'static,
+{
     let pool = crate::db::create_pool(&config)
         .await
         .unwrap_or_else(|error| {
@@ -446,12 +478,12 @@ pub async fn run(config: Config) {
         });
 
     let cache = crate::price_cache::PriceCache::new();
-    crate::price_cache::spawn_fetcher(cache.clone());
+    let fetcher_handle: JoinHandle<()> = crate::price_cache::spawn_fetcher(cache.clone());
 
     let event_bus = crate::ws::EventBus::new();
 
     // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
-    crate::worker::stellar_listener::spawn(
+    let listener_handle: JoinHandle<()> = crate::worker::stellar_listener::spawn(
         config.stellar_rpc_url.clone(),
         pool.clone(),
         event_bus.clone(),
@@ -479,13 +511,59 @@ pub async fn run(config: Config) {
 
     info!(address = %bind_addr, "backend server listening");
 
-    if let Err(error) = axum::serve(
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .await
-    {
-        error!(error = %error, "server error");
-        std::process::exit(1);
+    .with_graceful_shutdown(signal);
+
+    let drain_timeout = Duration::from_secs(config.shutdown_timeout_secs.max(1));
+
+    // `axum::serve().with_graceful_shutdown(...)` resolves with
+    // `Result<(), std::io::Error>` so we cannot reuse the
+    // `shutdown::with_shutdown_timeout` helper directly — instead inline a
+    // short match so every branch records whether the drain completed,
+    // the handler returned an error, or we blew the deadline.
+    match tokio::time::timeout(drain_timeout, server).await {
+        Ok(Ok(())) => {
+            info!(
+                timeout_secs = drain_timeout.as_secs(),
+                "HTTP server drained in-flight requests cleanly"
+            );
+        }
+        Ok(Err(error)) => {
+            warn!(
+                error = %error,
+                "HTTP server returned an error during shutdown drain"
+            );
+        }
+        Err(_) => {
+            warn!(
+                component = "http server drain",
+                timeout_secs = drain_timeout.as_secs(),
+                "HTTP drain exceeded shutdown timeout; aborting in-flight handlers"
+            );
+        }
     }
+
+    // Stop the background workers *before* closing the database pool so
+    // they cannot race the close by acquiring a fresh connection from the
+    // pool between `pool.close().await` starting and completing.  The
+    // listeners' loops are stateless w.r.t. in-flight work — the ledger
+    // cursor persists to the database after every successful poll — so a
+    // restarted worker will resume from the last persisted position.
+    fetcher_handle.abort();
+    listener_handle.abort();
+
+    // Close the database pool last so any in-flight query the listener was
+    // already running gets a chance to finish, and no NEW query can be
+    // submitted because the workers were already aborted above.
+    shutdown::with_shutdown_timeout(
+        drain_timeout,
+        "database pool close",
+        pool.close(),
+    )
+    .await;
+
+    info!("graceful shutdown complete");
 }

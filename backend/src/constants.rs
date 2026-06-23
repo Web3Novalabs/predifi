@@ -69,3 +69,17 @@ pub const JWT_PARTS_COUNT: usize = 3;
 /// dots.  Anything shorter is trivially invalid and can be rejected cheaply
 /// before attempting base64 decoding.
 pub const JWT_MIN_LENGTH: usize = 20;
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+/// Maximum number of seconds the HTTP server is allowed to spend draining
+/// in-flight requests after a shutdown signal has been received.
+///
+/// Once this interval elapses with requests still pending, the server stops
+/// accepting new connections immediately, aborts the remaining handlers, and
+/// proceeds to close the database pool and background workers so the process
+/// can exit without leaking connections.
+///
+/// 30 s matches the default `terminationGracePeriodSeconds` for Kubernetes
+/// pods and gives long-tail requests (e.g. external RPCs) room to finish.
+pub const DEFAULT_SHUTDOWN_TIMEOUT_SECS: u64 = 30;

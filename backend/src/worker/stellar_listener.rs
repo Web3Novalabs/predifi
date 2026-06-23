@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use sqlx::PgPool;
 use std::time::Duration;
+use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
@@ -113,10 +114,20 @@ async fn fetch_events(
 /// `db`        – PostgreSQL connection pool used to persist the ledger cursor
 /// `event_bus` – broadcast channel; new predictions are published here
 /// `timeout`   – maximum time to wait for an RPC response
-pub fn spawn(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
+///
+/// Returns the [`JoinHandle`] for the spawned task so the caller
+/// (typically [`crate::server::run`]) can abort it as part of the graceful
+/// shutdown sequence.  Aborting the handle cancels the in-flight RPC poll
+/// and prevents the listener from blocking process exit.
+pub fn spawn(
+    rpc_url: String,
+    db: PgPool,
+    event_bus: crate::ws::EventBus,
+    timeout: Duration,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
         run(rpc_url, db, event_bus, timeout).await;
-    });
+    })
 }
 
 async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
