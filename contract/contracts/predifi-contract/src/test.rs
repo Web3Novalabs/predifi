@@ -6068,14 +6068,14 @@ fn test_create_pool_rejects_initial_liquidity_above_maximum() {
 
 /// options_count == 1 must be rejected (minimum is 2).
 #[test]
-#[should_panic(expected = "options_count must be at least 2")]
 fn test_create_pool_rejects_single_option() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    client.create_pool(
+    // options_count < 2 now returns Err(PredifiError::InvalidData) instead of panicking.
+    let result = client.try_create_pool(
         &creator,
         &100_000u64,
         &token_address,
@@ -6096,18 +6096,22 @@ fn test_create_pool_rejects_single_option() {
             outcome_descriptions: soroban_sdk::vec![&env, String::from_str(&env, "Outcome 0")],
         },
     );
+    assert!(
+        result.is_err(),
+        "create_pool should reject options_count < 2 with an error"
+    );
 }
 
 /// options_count > MAX_OPTIONS_COUNT (100) must be rejected.
 #[test]
-#[should_panic(expected = "options_count exceeds maximum allowed value")]
 fn test_create_pool_rejects_excess_options_count() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    client.create_pool(
+    // options_count > MAX_OPTIONS_COUNT now returns Err(PredifiError::InvalidData) instead of panicking.
+    let result = client.try_create_pool(
         &creator,
         &100_000u64,
         &token_address,
@@ -6230,6 +6234,10 @@ fn test_create_pool_rejects_excess_options_count() {
                 String::from_str(&env, "Outcome 100"),
             ],
         },
+    );
+    assert!(
+        result.is_err(),
+        "create_pool should reject options_count > MAX_OPTIONS_COUNT with an error"
     );
 }
 
