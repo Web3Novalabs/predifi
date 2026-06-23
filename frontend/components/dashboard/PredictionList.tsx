@@ -3,6 +3,7 @@
 import { useState, useCallback, memo } from "react";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
+import { formatStake } from "@/lib/stakeFilters";
 import { Card, CardContent } from "@/components/ui/card";
 import { ChefHat, ChevronRight, Users, Copy } from "lucide-react";
 
@@ -75,12 +76,12 @@ const PredictionCard = memo(function PredictionCard({
           <div className="flex justify-between items-center text-sm">
             <span className="text-zinc-400">Potential Payout:</span>
             <span className="font-bold font-mono text-lg">
-              {prediction.potentialPayout}
+              {formatStake(prediction.potentialPayout)}
             </span>
           </div>
           <div className="flex justify-between items-center text-sm">
             <span className="text-zinc-400">Stake</span>
-            <span className="text-white">{prediction.stake}</span>
+            <span className="text-white">{formatStake(prediction.stake)}</span>
           </div>
           <div className="flex justify-between items-center text-sm">
             <span className="text-zinc-400">Odd</span>

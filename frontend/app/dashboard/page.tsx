@@ -22,6 +22,7 @@ import { Suspense } from "react";
 import dynamic from "next/dynamic";
 import { Diamond, Box, Activity, ShieldCheck } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/MetricCard";
+import { formatStakeCompact } from "@/lib/stakeFilters";
 
 // ---------------------------------------------------------------------------
 // Below-the-fold dashboard components — loaded lazily
@@ -114,7 +115,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           title="Total Earned"
-          value="1,255"
+          value={formatStakeCompact(1255)}
           icon={<Diamond />}
           change="65% increase"
           changeType="positive"
