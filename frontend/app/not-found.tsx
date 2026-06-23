@@ -1,42 +1,75 @@
 "use client";
 
-import Link from 'next/link';
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
 export default function NotFound() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-black px-4">
-      <div className="text-center animate-in fade-in duration-1000">
-        <h1 className="text-6xl md:text-9xl font-bold text-[#0E0E10] dark:text-zinc-100 mb-4 animate-pulse">
+    <main
+      className="relative flex min-h-screen items-center justify-center bg-[#0A0A0A] px-6 overflow-hidden"
+      aria-labelledby="not-found-heading"
+    >
+      {/* Ambient background glows */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute left-1/2 top-1/4 -translate-x-1/2 -translate-y-1/2 w-[480px] h-[480px] rounded-full bg-[#37B7C3]/10 blur-[120px]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute right-0 bottom-0 w-64 h-64 rounded-full bg-[#37B7C3]/5 blur-[80px]"
+      />
+
+      {/* Grid overlay */}
+      <svg
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 h-full w-full opacity-[0.03]"
+        xmlns="http://www.w3.org/2000/svg"
+      >
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#37B7C3" strokeWidth="1" />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#grid)" />
+      </svg>
+
+      {/* Content */}
+      <div className="relative z-10 text-center animate-fade-in">
+        {/* 404 label */}
+        <p className="text-xs font-medium tracking-[0.3em] text-[#37B7C3] uppercase mb-6">
+          Error 404
+        </p>
+
+        {/* Large numeral */}
+        <h1
+          id="not-found-heading"
+          className="text-[clamp(6rem,20vw,14rem)] font-bold leading-none tracking-tighter text-white/5 select-none mb-2"
+          aria-hidden="true"
+        >
           404
         </h1>
-        <h2 className="text-xl md:text-2xl font-semibold text-zinc-700 dark:text-zinc-300 mb-4">
+
+        {/* Divider */}
+        <div className="mx-auto mb-6 h-px w-24 bg-gradient-to-r from-transparent via-[#37B7C3]/60 to-transparent" />
+
+        <h2 className="text-2xl md:text-3xl font-semibold text-white mb-3">
           Page Not Found
         </h2>
-        <p className="text-sm md:text-base text-zinc-600 dark:text-zinc-400 mb-8 max-w-md mx-auto">
-          Oops! The page you&apos;re looking for doesn&apos;t exist. It might have been moved or deleted.
+        <p className="text-sm text-zinc-400 max-w-sm mx-auto mb-10 leading-relaxed">
+          The page you&apos;re looking for doesn&apos;t exist or has been moved.
+          Head back and keep predicting.
         </p>
-        {/*
-         * prefetch={true} ensures the home route is eagerly prefetched so
-         * clicking "Go Home" from the 404 page feels instant, even though
-         * Next.js 15 defaults to lazy prefetching.
-         */}
+
+        {/* CTA */}
         <Link
           href="/"
-          prefetch={true}
-          className="inline-block px-6 py-3 bg-[#259BA5] dark:bg-zinc-100 text-white dark:text-black rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors duration-200"
+          prefetch
+          className="group inline-flex items-center gap-2 rounded-xl border border-[#37B7C3]/30 bg-[#37B7C3]/10 px-6 py-3 text-sm font-medium text-[#37B7C3] transition-all duration-200 hover:bg-[#37B7C3]/20 hover:border-[#37B7C3]/60 hover:gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]"
         >
+          <ArrowLeft className="w-4 h-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
           Go Home
         </Link>
       </div>
-      <style jsx>{`
-        @keyframes fade-in {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-in {
-          animation: fade-in 1s ease-out;
-        }
-      `}</style>
     </main>
   );
 }
