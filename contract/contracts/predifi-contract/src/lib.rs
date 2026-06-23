@@ -17,7 +17,6 @@ mod stress_test;
 #[cfg(test)]
 mod test_utils;
 
-
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, log, symbol_short, token,
     Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
@@ -1268,6 +1267,7 @@ impl PredifiContract {
     /// Pure: Check if pool state transition is valid
     /// PRE: current_state is valid MarketState
     /// POST: returns true only for valid transitions (INV-2)
+    #[allow(dead_code)]
     fn is_valid_state_transition(current: MarketState, next: MarketState) -> bool {
         matches!(
             (current, next),
@@ -1296,6 +1296,7 @@ impl PredifiContract {
 
     /// Pure: Initialize outcome stakes vector with zeros.
     /// Used for markets with many outcomes (e.g., 32+ teams tournament).
+    #[allow(dead_code)]
     fn init_outcome_stakes(env: &Env, options_count: u32) -> Vec<i128> {
         let mut stakes = Vec::new(env);
         for _ in 0..options_count {
@@ -1391,7 +1392,12 @@ impl PredifiContract {
     /// On failure (e.g. the access-control contract panics or is not deployed)
     /// maps the error to [`PredifiError::OracleNotInitialized`] so callers get a
     /// typed error rather than an unstructured panic.
-    fn has_role(env: &Env, contract: &Address, user: &Address, role: u32) -> Result<bool, PredifiError> {
+    fn has_role(
+        env: &Env,
+        contract: &Address,
+        user: &Address,
+        role: u32,
+    ) -> Result<bool, PredifiError> {
         // try_invoke_contract returns Result<Result<T, ConversionError>, InvokeError>;
         // we flatten both layers into a single PredifiError.
         env.try_invoke_contract::<bool, PredifiError>(
@@ -1400,7 +1406,8 @@ impl PredifiContract {
             soroban_sdk::vec![env, user.into_val(env), role.into_val(env)],
         )
         .map_err(|_| PredifiError::OracleNotInitialized) // outer: invocation failure
-        .and_then(|inner| inner.map_err(|_| PredifiError::OracleNotInitialized)) // inner: XDR error
+        .and_then(|inner| inner.map_err(|_| PredifiError::OracleNotInitialized))
+        // inner: XDR error
     }
 
     /// Call `get_admin` on the access-control contract.
@@ -1571,11 +1578,7 @@ impl PredifiContract {
     /// storage entry that is loaded on every contract call.
     fn add_to_active_index(env: &Env, pool_id: u64) {
         let ctr_key = DataKey::ActivePoolCtr;
-        let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&ctr_key)
-            .unwrap_or(0u32);
+        let count: u32 = env.storage().persistent().get(&ctr_key).unwrap_or(0u32);
         // Only extend TTL if the key already exists (extend_ttl panics on missing keys).
         if count > 0 {
             Self::extend_persistent(env, &ctr_key);
@@ -1600,11 +1603,7 @@ impl PredifiContract {
     /// The counter is persisted in persistent storage (see `add_to_active_index`).
     fn remove_from_active_index(env: &Env, pool_id: u64) {
         let ctr_key = DataKey::ActivePoolCtr;
-        let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&ctr_key)
-            .unwrap_or(0u32);
+        let count: u32 = env.storage().persistent().get(&ctr_key).unwrap_or(0u32);
         if count == 0 {
             return;
         }
@@ -4009,11 +4008,7 @@ impl PredifiContract {
             .ok_or(PredifiError::InvalidPagination)?;
 
         let ctr_key = DataKey::ActivePoolCtr;
-        let count: u32 = env
-            .storage()
-            .persistent()
-            .get(&ctr_key)
-            .unwrap_or(0);
+        let count: u32 = env.storage().persistent().get(&ctr_key).unwrap_or(0);
         let mut results = Vec::new(&env);
 
         if offset >= count || limit == 0 {

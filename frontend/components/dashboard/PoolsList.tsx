@@ -1,14 +1,20 @@
 "use client";
 
 import { useMemo, useState, useCallback } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader, CardTitle, Skeleton, SearchBar } from "@/components/ui";
 
 interface PoolsListProps {
   isLoading?: boolean;
+  forceLoading?: boolean;
 }
 
-export function PoolsList({ isLoading = false }: PoolsListProps) {
+export function PoolsList({ isLoading = false, forceLoading = false }: PoolsListProps) {
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const handleSearch = useCallback((value: string) => {
+    setSearchQuery(value);
+  }, []);
+
   const skeletonItems = useMemo(
     () =>
       Array.from({ length: 4 }).map((_, i) => (
@@ -49,7 +55,7 @@ export function PoolsList({ isLoading = false }: PoolsListProps) {
       </CardHeader>
       <CardContent>
         <div className="flex items-center justify-center h-[300px] text-zinc-600">
-          <p>No pools created yet!</p>
+          <p>{searchQuery ? `No pools matching "${searchQuery}" found` : "No pools created yet!"}</p>
         </div>
       </CardContent>
     </Card>

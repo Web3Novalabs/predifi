@@ -16,3 +16,11 @@ export {
   type TooltipProps,
 } from "./tooltip";
 export { default as SocialIcon, type SocialIconId } from "./SocialIcon";
+export {
+  Card,
+  CardHeader,
+  CardFooter,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from "./card";

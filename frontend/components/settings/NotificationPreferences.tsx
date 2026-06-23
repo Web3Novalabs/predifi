@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Button } from "@/components/ui/button";
+import { Button, Checkbox } from "@/components/ui";
 
 interface NotificationPrefs {
   poolResults: boolean;
