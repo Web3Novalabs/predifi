@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { Button, Input } from "@/components/ui";
 import { ShieldCheck } from "lucide-react";
 
 interface PasswordValues {

@@ -2,10 +2,8 @@
 
 import { useMemo } from "react";
 import dynamic from "next/dynamic";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, Button, Skeleton } from "@/components/ui";
 import { ChevronDown } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * Dynamically import the recharts renderer so the library is code-split into

@@ -26,8 +26,11 @@
   --ring: 183 91% 47%;
   --radius: 0.5rem;
   --success: 142 76% 36%;
+  --success-foreground: 210 40% 98%;
   --warning: 38 92% 50%;
+  --warning-foreground: 222.2 47.4% 11.2%;
   --info: 199 89% 48%;
+  --info-foreground: 210 40% 98%;
 }
 
 @media (prefers-color-scheme: dark) {

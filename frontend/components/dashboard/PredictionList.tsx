@@ -4,7 +4,7 @@ import { useState, useCallback, memo } from "react";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
 import { formatStake } from "@/lib/stakeFilters";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui";
 import { ChefHat, ChevronRight, Users, Copy } from "lucide-react";
 
 // ---------------------------------------------------------------------------

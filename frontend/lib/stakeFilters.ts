@@ -93,8 +93,8 @@ export function formatStake(
   const units = toBigIntBaseUnits(raw);
   if (units === null) return "—";
 
-  const [whole, frac] = divmod(units < 0n ? -units : units, STROOP_FACTOR);
-  const sign = units < 0n ? "-" : "";
+  const [whole, frac] = divmod(units < BigInt(0) ? -units : units, STROOP_FACTOR);
+  const sign = units < BigInt(0) ? "-" : "";
   const fracStr = frac.toString().padStart(STROOP_DECIMALS, "0").slice(0, dp);
   const formatted = `${sign}${whole.toLocaleString("en-US")}.${fracStr}`;
 
