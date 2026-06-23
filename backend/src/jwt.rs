@@ -115,10 +115,7 @@ mod tests {
 
     #[test]
     fn rejects_too_short_token() {
-        assert_eq!(
-            validate_jwt_format("short"),
-            Err(JwtFormatError::TooShort)
-        );
+        assert_eq!(validate_jwt_format("short"), Err(JwtFormatError::TooShort));
     }
 
     #[test]

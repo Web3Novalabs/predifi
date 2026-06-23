@@ -128,7 +128,7 @@ function Navbar() {
             Explore Pools
           </button>
         </div>
-      </div>
+      )}
     </nav>
   );
 }

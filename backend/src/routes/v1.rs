@@ -5,7 +5,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::time::Duration;
+use std::sync::Arc;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::Config;
@@ -145,7 +145,7 @@ async fn index() -> Json<serde_json::Value> {
 #[derive(Clone)]
 pub struct AppState {
     /// Validated runtime configuration (fees, URLs, timeouts, etc.).
-    pub config: Config,
+    pub config: Arc<Config>,
     /// In-memory oracle price cache refreshed every 60 seconds.
     pub cache: PriceCache,
     /// Redis cache client for hot-path response caching.
@@ -158,7 +158,7 @@ pub struct AppState {
     pub event_bus: crate::ws::EventBus,
 }
 
-impl axum::extract::FromRef<AppState> for Config {
+impl axum::extract::FromRef<AppState> for Arc<Config> {
     fn from_ref(state: &AppState) -> Self {
         state.config.clone()
     }
@@ -290,7 +290,11 @@ pub async fn get_pools(
             // Cache the response for 60 seconds
             state
                 .redis
-                .set(&cache_key, &json_response, crate::redis_cache::POOLS_CACHE_TTL)
+                .set(
+                    &cache_key,
+                    &json_response,
+                    crate::redis_cache::POOLS_CACHE_TTL,
+                )
                 .await;
 
             Json(json_response)
@@ -492,7 +496,7 @@ pub async fn ingest_prediction_placed(
 
 /// Build the version 1 API router.
 pub fn router(
-    config: Config,
+    config: Arc<Config>,
     cache: PriceCache,
     redis: RedisCache,
     pool: Option<sqlx::PgPool>,
@@ -551,9 +555,13 @@ async fn referrals_handler(
 
     match state.db {
         Some(pool) => {
-            let (status, body) =
-                crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await;
-            (status, body).into_response()
+            match crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await {
+                Ok((status, body)) => (status, body).into_response(),
+                Err(e) => {
+                    ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+                        .into_response()
+                }
+            }
         }
         None => {
             ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
@@ -573,12 +581,18 @@ async fn user_referral_earnings_handler(
 
     match state.db {
         Some(pool) => {
-            let (status, body) = crate::referrals::get_user_referral_earnings(
+            match crate::referrals::get_user_referral_earnings(
                 axum::extract::Path(address),
                 State(pool),
             )
-            .await;
-            (status, body).into_response()
+            .await
+            {
+                Ok((status, body)) => (status, body).into_response(),
+                Err(e) => {
+                    ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+                        .into_response()
+                }
+            }
         }
         None => {
             ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")

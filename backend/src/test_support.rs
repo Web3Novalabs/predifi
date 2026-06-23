@@ -15,6 +15,7 @@ use crate::redis_cache::RedisCache;
 ///
 /// Callers should keep the returned container alive for the duration of the
 /// test and close the pool before dropping the container.
+#[allow(dead_code)]
 pub async fn setup_postgres() -> (PgPool, testcontainers::ContainerAsync<Postgres>) {
     let container = Postgres::default()
         .start()
@@ -39,11 +40,9 @@ pub async fn setup_postgres() -> (PgPool, testcontainers::ContainerAsync<Postgre
 ///
 /// A short delay gives the connection manager time to fully initialize before
 /// the tests begin issuing commands.
+#[allow(dead_code)]
 pub async fn setup_redis() -> (RedisCache, testcontainers::ContainerAsync<Redis>) {
-    let container = Redis::default()
-        .start()
-        .await
-        .expect("redis container");
+    let container = Redis::default().start().await.expect("redis container");
     let port = container
         .get_host_port_ipv4(6379)
         .await
