@@ -18,6 +18,7 @@ import {
   Tooltip,
   XAxis,
 } from "recharts";
+import { formatChartValue } from "@/lib/stakeFilters";
 
 const data = [
   { name: "JAN", value: 35000 },
@@ -34,14 +35,19 @@ const data = [
   { name: "DEC", value: 60000 },
 ];
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const CustomTooltip = ({ active, payload, label }: any) => {
+interface TooltipProps {
+  active?: boolean;
+  payload?: { value: number }[];
+  label?: string;
+}
+
+const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-zinc-900 border border-white/10 p-2 rounded-lg shadow-xl">
         <p className="text-zinc-400 text-xs mb-1">{label}</p>
         <p className="text-white font-bold font-mono">
-          ${(payload[0].value / 1000).toFixed(0)}k
+          {formatChartValue(payload[0].value)}
         </p>
       </div>
     );

@@ -2,12 +2,21 @@ import { ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { formatUsd } from "@/lib/stakeFilters";
 
 interface BalanceSectionProps {
     isLoading?: boolean;
+    /** Total balance in USD. Defaults to demo value. */
+    balance?: number | string | null;
+    /** Rewards amount in USD. Defaults to demo value. */
+    rewards?: number | string | null;
 }
 
-export function BalanceSection({ isLoading = false }: BalanceSectionProps) {
+export function BalanceSection({
+    isLoading = false,
+    balance = 15255.25,
+    rewards = 1255.68,
+}: BalanceSectionProps) {
     if (isLoading) {
         return (
             <Card className="bg-[#121212] border-none text-white h-full relative overflow-hidden">
@@ -35,10 +44,10 @@ export function BalanceSection({ isLoading = false }: BalanceSectionProps) {
             </CardHeader>
             <CardContent className="space-y-6 relative z-10">
                 <div>
-                    <h2 className="text-5xl font-bold font-mono tracking-tighter mb-4">$15,255.25</h2>
+                    <h2 className="text-5xl font-bold font-mono tracking-tighter mb-4">{formatUsd(balance)}</h2>
                     <div className="inline-flex items-center px-4 py-2 rounded-full bg-zinc-900 border border-white/5">
                         <span className="text-zinc-400 mr-2">Rewards:</span>
-                        <span className="font-bold text-white font-mono">$1,255.68</span>
+                        <span className="font-bold text-white font-mono">{formatUsd(rewards)}</span>
                     </div>
                 </div>
 
