@@ -11,6 +11,7 @@ const DEFAULT_DB_CONNECT_BASE_DELAY_MS: u64 = 200;
 const DEFAULT_DB_CONNECT_MAX_DELAY_MS: u64 = 5_000;
 const DEFAULT_RPC_HEALTH_TIMEOUT_SECS: u64 = 2;
 const DEFAULT_RPC_HEALTH_RETRY_COUNT: u8 = 3;
+const DEFAULT_RPC_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
@@ -55,6 +56,8 @@ pub struct Config {
     pub rpc_health_timeout_secs: u64,
     /// Number of times to retry the Stellar RPC health check before reporting failure (default `3`).
     pub rpc_health_retry_count: u8,
+    /// Per-attempt timeout in seconds for general Stellar RPC calls (default `30`).
+    pub rpc_timeout_secs: u64,
     /// Tracing log level passed to `RUST_LOG` / `EnvFilter` (default `"info"`).
     pub log_level: String,
     /// Protocol treasury fee in basis points (default `300` = 3 %).
@@ -129,6 +132,7 @@ impl Config {
             "PREDIFI_RPC_HEALTH_RETRY_COUNT",
             DEFAULT_RPC_HEALTH_RETRY_COUNT,
         )?;
+        let rpc_timeout_secs = get_u64(vars, "RPC_TIMEOUT_SECS", DEFAULT_RPC_TIMEOUT_SECS)?;
         let log_level = get_string(vars, "RUST_LOG", DEFAULT_LOG_LEVEL);
         let treasury_fee_bps = get_u32(vars, "PREDIFI_TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "PREDIFI_REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
@@ -161,6 +165,7 @@ impl Config {
             db_connect_max_delay_ms,
             rpc_health_timeout_secs,
             rpc_health_retry_count,
+            rpc_timeout_secs,
             log_level,
             treasury_fee_bps,
             referral_fee_bps,
@@ -195,6 +200,7 @@ impl Config {
             db_connect_max_delay_ms: 0,
             rpc_health_timeout_secs: 2,
             rpc_health_retry_count: 3,
+            rpc_timeout_secs: 30,
             log_level: String::from("debug"),
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
@@ -496,6 +502,7 @@ mod tests {
         assert_eq!(config.treasury_fee_bps, DEFAULT_TREASURY_FEE_BPS);
         assert_eq!(config.referral_fee_bps, DEFAULT_REFERRAL_FEE_BPS);
         assert_eq!(config.redis_url, DEFAULT_REDIS_URL);
+        assert_eq!(config.rpc_timeout_secs, DEFAULT_RPC_TIMEOUT_SECS);
     }
 
     #[test]
@@ -926,8 +933,10 @@ mod tests {
 
     #[test]
     fn config_rejects_non_numeric_db_max_connections() {
-        let vars =
-            HashMap::from([(String::from("PREDIFI_DB_MAX_CONNECTIONS"), String::from("x"))]);
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_MAX_CONNECTIONS"),
+            String::from("x"),
+        )]);
         assert!(matches!(
             Config::from_map(&vars),
             Err(ConfigError::InvalidNumber {
@@ -1022,8 +1031,7 @@ mod tests {
 
     #[test]
     fn config_rejects_non_numeric_rpc_timeout() {
-        let vars =
-            HashMap::from([(String::from("RPC_TIMEOUT_SECS"), String::from("inf"))]);
+        let vars = HashMap::from([(String::from("RPC_TIMEOUT_SECS"), String::from("inf"))]);
         assert!(matches!(
             Config::from_map(&vars),
             Err(ConfigError::InvalidNumber {
@@ -1099,7 +1107,10 @@ mod tests {
             String::from("https://abc@sentry.io/123"),
         )]);
         let config = Config::from_map(&vars).unwrap();
-        assert_eq!(config.sentry_dsn.as_deref(), Some("https://abc@sentry.io/123"));
+        assert_eq!(
+            config.sentry_dsn.as_deref(),
+            Some("https://abc@sentry.io/123")
+        );
     }
 
     // ── bind_address ──────────────────────────────────────────────────────────
