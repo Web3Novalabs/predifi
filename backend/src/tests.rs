@@ -1318,8 +1318,14 @@ async fn graceful_shutdown_drains_inflight_request() {
     // Give the server a small window to finish its accept loop setup.
     sleep(Duration::from_millis(50)).await;
 
+    // Build a fresh reqwest client per test.  Disabling connection pooling
+    // keeps the "new connection after shutdown refused" assertion
+    // deterministic: we want every request to open a new TCP socket and
+    // observe the absence of the listener, not reuse a half-closed
+    // keep-alive connection that produces a misleading success.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
+        .pool_max_idle_per_host(0)
         .build()
         .expect("reqwest client builds");
 
@@ -1355,8 +1361,11 @@ async fn graceful_shutdown_drains_inflight_request() {
         "drained request must keep its full response body"
     );
 
-    // The server task itself must finish cleanly.
-    let server_result = tokio::time::timeout(Duration::from_secs(3), server_handle)
+    // The server task itself must finish cleanly.  Three nested expects walk
+    // through `Result<Result<Result<(), io::Error>, JoinError>, Elapsed>`:
+    // outer is the timeout, middle is the JoinError, inner is the io::Error
+    // returned by `axum::serve`.
+    tokio::time::timeout(Duration::from_secs(3), server_handle)
         .await
         .expect("server task did not finish after drain")
         .expect("server task panicked")
@@ -1375,9 +1384,6 @@ async fn graceful_shutdown_drains_inflight_request() {
         "new connections after shutdown must fail, but got: {:?}",
         after_shutdown
     );
-
-    // suppress unused-variable warning on `server_result`
-    let _ = server_result;
 }
 
 /// Verify multiple concurrent in-flight requests all complete during a
@@ -1414,8 +1420,12 @@ async fn graceful_shutdown_drains_many_concurrent_requests() {
 
     sleep(Duration::from_millis(50)).await;
 
+    // Disable reqwest connection pooling so each request opens a fresh
+    // socket and is forced to observe whether the listener is still
+    // accepting connections after shutdown.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
+        .pool_max_idle_per_host(0)
         .build()
         .unwrap();
 
