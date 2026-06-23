@@ -456,8 +456,17 @@ async fn rate_limiting_returns_429_after_burst() {
 
     // The 6th request should be rate limited.
     let response = app.oneshot(get("/health")).await.expect("request failed");
-
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"error\""),
+        "rate limit response should contain 'error' field, got: {body}"
+    );
+    assert!(
+        body.contains("Too many requests"),
+        "rate limit response should contain human-readable message, got: {body}"
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
