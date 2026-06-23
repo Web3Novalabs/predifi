@@ -12,7 +12,10 @@ const dmMono = DM_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Predifi",
+  title: {
+    default: "Predifi | Web3 Prediction Markets",
+    template: "%s | Predifi",
+  },
   description: "Decentralized prediction protocol built on the Stellar. ",
   keywords: [
     "decentralized prediction",

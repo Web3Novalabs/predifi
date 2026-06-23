@@ -1,4 +1,7 @@
+import type { Metadata } from "next";
 import Navbar from "../(marketing)/components/NavBar";
+
+export const metadata: Metadata = { title: "About" };
 import Footer from "../(marketing)/components/Footer";
 import Hero from "./components/Hero";
 import Mission from "./components/Mission";

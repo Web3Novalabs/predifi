@@ -1,4 +1,7 @@
+import type { Metadata } from "next";
 import Navbar from "../(marketing)/components/NavBar";
+
+export const metadata: Metadata = { title: "Join the Waitlist" };
 import Footer from "../(marketing)/components/Footer";
 import WaitlistForm from "./components/WaitlistForm";
 

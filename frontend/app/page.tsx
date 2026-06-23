@@ -22,6 +22,9 @@
 import dynamic from "next/dynamic";
 import { Suspense } from "react";
 import Image from "next/image";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Web3 Prediction Markets" };
 import NavBar from "./(marketing)/components/NavBar";
 import HeroSection from "./(marketing)/components/HeroSection";
 
