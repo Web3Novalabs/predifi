@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button, Input } from "@/components/ui";
+import { isValidEmail } from "@/lib/email";
 
 interface ProfileFormValues {
   username: string;
@@ -15,14 +16,12 @@ interface ProfileFormErrors {
   bio?: string;
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 function validate(values: ProfileFormValues): ProfileFormErrors {
   const errors: ProfileFormErrors = {};
   if (values.username.length < 3 || values.username.length > 32) {
     errors.username = "Username must be 3–32 characters.";
   }
-  if (values.email && !EMAIL_RE.test(values.email)) {
+  if (values.email && !isValidEmail(values.email)) {
     errors.email = "Enter a valid email address.";
   }
   if (values.bio.length > 160) {

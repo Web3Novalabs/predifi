@@ -4,6 +4,7 @@ import { useState, FormEvent } from "react";
 import Image from "next/image";
 import { Button, Input } from "@/components/ui";
 import { CheckCircle2 } from "lucide-react";
+import { isValidEmail } from "@/lib/email";
 
 export default function WaitlistForm() {
   const [email, setEmail] = useState("");
@@ -12,11 +13,6 @@ export default function WaitlistForm() {
     "idle" | "loading" | "success" | "error"
   >("idle");
   const [errorMessage, setErrorMessage] = useState("");
-
-  const validateEmail = (email: string): boolean => {
-    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(email);
-  };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -27,7 +23,7 @@ export default function WaitlistForm() {
       return;
     }
 
-    if (!validateEmail(email)) {
+    if (!isValidEmail(email)) {
       setStatus("error");
       setErrorMessage("Please enter a valid email address");
       return;
@@ -82,7 +78,7 @@ export default function WaitlistForm() {
         {/* Form Card */}
         <div className="w-full max-w-md text-left">
           {status !== "success" ? (
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleSubmit} noValidate className="space-y-6">
               <div className="rounded-[24px] md:rounded-[33px] bg-[#03353A4D] backdrop-blur-[15px] p-6 md:py-10 md:px-8 space-y-6 border border-[#ffffff0d]">
                 <div className="space-y-4">
                   <Input
@@ -104,14 +100,25 @@ export default function WaitlistForm() {
                     label="Email Address"
                     required
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (status === "error") {
+                        setStatus("idle");
+                        setErrorMessage("");
+                      }
+                    }}
+                    error={
+                      status === "error" && errorMessage.includes("email")
+                        ? errorMessage
+                        : undefined
+                    }
                     placeholder="Enter your email address"
                     disabled={status === "loading"}
                     className="bg-[#001518] border-[#EBFDFF33] text-white placeholder:text-[#B3CECB] focus-visible:ring-[#37B7C3]"
                   />
                 </div>
 
-                {status === "error" && (
+                {status === "error" && !errorMessage.includes("email") && (
                   <div className="rounded-lg bg-red-900/20 border border-red-800 p-3">
                     <p className="text-sm text-red-400 text-center">
                       {errorMessage}

@@ -20,11 +20,12 @@
 
 import { Suspense } from "react";
 import dynamic from "next/dynamic";
-import { Diamond, Box, Activity, ShieldCheck } from "lucide-react";
+import { Diamond, Activity, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Dashboard" };
 import { MetricCard } from "@/components/dashboard/MetricCard";
+import { ActivePoolsMetricCard } from "@/components/dashboard/ActivePoolsMetricCard";
 import { formatStakeCompact } from "@/lib/stakeFilters";
 
 // ---------------------------------------------------------------------------
@@ -123,13 +124,7 @@ export default function DashboardPage() {
           change="65% increase"
           changeType="positive"
         />
-        <MetricCard
-          title="Active Pool"
-          value="75"
-          icon={<Box />}
-          change="+7 new add"
-          changeType="positive"
-        />
+        <ActivePoolsMetricCard />
         <MetricCard
           title="Win Rate"
           value="65%"
