@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 // Types
 // ---------------------------------------------------------------------------
 
-interface PayoutEstimatorProps {
+export interface PayoutEstimatorProps {
   /** Token symbol shown in the UI (default "XLM"). */
   token?: string;
   className?: string;
@@ -89,7 +89,8 @@ function NumericField({
           step={step}
           className={cn(
             "w-full rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2.5 text-sm font-mono text-white placeholder:text-zinc-600",
-            "focus:outline-none focus:ring-2 focus:ring-[#37B7C3]/50 focus:border-[#37B7C3]/60",
+            "ring-offset-background",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3] focus-visible:ring-offset-2 focus-visible:border-[#37B7C3]",
             "transition-[border-color,box-shadow] duration-200",
             suffix && "pr-14",
           )}
