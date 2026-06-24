@@ -4,6 +4,9 @@ import "./globals.css";
 import { SWRProvider } from "@/components/providers/SWRProvider";
 import { NetworkGuardProvider } from "@/components/providers/NetworkGuardProvider";
 
+const SITE_DESCRIPTION =
+  "PrediFi is a decentralized prediction market protocol built on the Stellar network with Soroban smart contracts.";
+
 const dmMono = DM_Mono({
   subsets: ["latin"],
   weight: ["300", "400", "500"],
@@ -17,7 +20,7 @@ export const metadata: Metadata = {
     default: "Predifi | Web3 Prediction Markets",
     template: "%s | Predifi",
   },
-  description: "Decentralized prediction protocol built on the Stellar. ",
+  description: SITE_DESCRIPTION,
   keywords: [
     "decentralized prediction",
     "predifi",
@@ -34,8 +37,7 @@ export const metadata: Metadata = {
   ],
   openGraph: {
     title: "Predifi- Decentralized prediction protocol built on the Stellar",
-    description:
-      "PrediFi is a decentralized prediction protocol built on the Stellar network using Soroban smart contracts. ",
+    description: SITE_DESCRIPTION,
     url: "https://predifi.app",
     siteName: "nevo",
     images: [
@@ -52,8 +54,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Predifi - Decentralized prediction protocol built on the Stellarr",
-    description:
-      "PrediFi is a decentralized prediction protocol built on the Stellar network using Soroban smart contracts.",
+    description: SITE_DESCRIPTION,
     images: ["https://predifi.app/logo.jpeg"],
     creator: "@nevoapp",
   },

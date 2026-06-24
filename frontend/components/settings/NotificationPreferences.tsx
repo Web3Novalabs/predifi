@@ -1,7 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button, Checkbox } from "@/components/ui";
+import {
+  getPersistedValue,
+  setPersistedValue,
+} from "@/lib/persistentStorage";
 
 interface NotificationPrefs {
   poolResults: boolean;
@@ -33,24 +37,52 @@ const PREFS_CONFIG: { key: keyof NotificationPrefs; label: string; description: 
   },
 ];
 
+const STORAGE_KEY = "notification-preferences";
+const DEFAULT_PREFS: NotificationPrefs = {
+  poolResults: true,
+  newPools: true,
+  rewards: true,
+  marketing: false,
+};
+
+function isNotificationPrefs(value: unknown): value is NotificationPrefs {
+  if (!value || typeof value !== "object") return false;
+
+  const prefs = value as Record<string, unknown>;
+  return PREFS_CONFIG.every(({ key }) => typeof prefs[key] === "boolean");
+}
+
 export function NotificationPreferences() {
-  const [prefs, setPrefs] = useState<NotificationPrefs>({
-    poolResults: true,
-    newPools: true,
-    rewards: true,
-    marketing: false,
-  });
+  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState(false);
+
+  useEffect(() => {
+    const storedPrefs = getPersistedValue(STORAGE_KEY);
+    if (!storedPrefs) return;
+
+    try {
+      const parsed: unknown = JSON.parse(storedPrefs);
+      // Browser persistence is an external source that is only available after
+      // hydration, so synchronizing it into component state requires an effect.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (isNotificationPrefs(parsed)) setPrefs(parsed);
+    } catch {
+      // Ignore malformed browser data and keep the safe defaults.
+    }
+  }, []);
 
   function handleToggle(key: keyof NotificationPrefs, checked: boolean) {
     setPrefs((prev) => ({ ...prev, [key]: checked }));
     setSaved(false);
+    setSaveError(false);
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // TODO: wire up to API
-    setSaved(true);
+    const didSave = setPersistedValue(STORAGE_KEY, JSON.stringify(prefs));
+    setSaved(didSave);
+    setSaveError(!didSave);
   }
 
   return (
@@ -80,6 +112,11 @@ export function NotificationPreferences() {
         <Button type="submit" size="medium">Save preferences</Button>
         {saved && (
           <span className="text-sm text-green-400" role="status">Saved!</span>
+        )}
+        {saveError && (
+          <span className="text-sm text-red-400" role="alert">
+            Your browser blocked preference storage.
+          </span>
         )}
       </div>
     </form>
