@@ -1,6 +1,6 @@
-import { ArrowUpRight, ArrowDownRight, Minus } from "lucide-react";
+import { ArrowUpRight, ArrowDownRight, Info, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, Skeleton } from "@/components/ui";
+import { Card, CardContent, Skeleton, Tooltip } from "@/components/ui";
 
 interface MetricCardProps {
     title: string;
@@ -9,6 +9,7 @@ interface MetricCardProps {
     change?: string;
     changeType?: "positive" | "negative" | "neutral";
     subtext?: string;
+    tooltip?: string;
     isLoading?: boolean;
 }
 
@@ -19,6 +20,7 @@ export function MetricCard({
     change,
     changeType = "neutral",
     subtext,
+    tooltip,
     isLoading = false,
 }: MetricCardProps) {
     if (isLoading) {
@@ -44,9 +46,16 @@ export function MetricCard({
                         <div className="text-primary [&>svg]:w-6 [&>svg]:h-6">{icon}</div>
                     </div>
                     <div className="space-y-1">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            {title}
-                        </p>
+                        <div className="flex items-center gap-1">
+                            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{title}</p>
+                            {tooltip && (
+                                <Tooltip content={tooltip} side="top">
+                                    <button type="button" aria-label={`About ${title}`} className="text-muted-foreground hover:text-white">
+                                        <Info className="h-3.5 w-3.5" />
+                                    </button>
+                                </Tooltip>
+                            )}
+                        </div>
                         <h3 className="text-3xl font-bold font-mono tracking-tight">{value}</h3>
                         {(change || subtext) && (
                             <div

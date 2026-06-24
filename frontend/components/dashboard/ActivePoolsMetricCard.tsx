@@ -17,6 +17,7 @@ export function ActivePoolsMetricCard() {
       icon={<Box />}
       change={isError ? "Count unavailable" : `${total} live now`}
       changeType={isError ? "neutral" : "positive"}
+      tooltip="Prediction pools that are currently open for participation."
       isLoading={isLoading}
     />
   );
