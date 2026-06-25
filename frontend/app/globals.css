@@ -33,6 +33,17 @@
   --info-foreground: 210 40% 98%;
 }
 
+/* Explicit theme overrides via data-theme attribute (set by useTheme hook) */
+[data-theme="light"] {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;

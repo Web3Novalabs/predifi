@@ -1,7 +1,7 @@
 "use client";
 
-import { memo } from "react";
-import { Trophy, Star, TrendingUp, Users } from "lucide-react";
+import { memo, useState, useMemo, useCallback } from "react";
+import { Trophy, Star, TrendingUp, Users, ChevronUp, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, Skeleton } from "@/components/ui";
 
@@ -24,6 +24,9 @@ export interface LeaderboardProps {
   currentUserAddress?: string;
 }
 
+type SortKey = "rank" | "winRate" | "predictions" | "totalWinnings";
+type SortDir = "asc" | "desc";
+
 // ---------------------------------------------------------------------------
 // Rank medal colours
 // ---------------------------------------------------------------------------
@@ -38,6 +41,10 @@ function rankStyle(rank: number) {
   return RANK_STYLES[rank] ?? { bg: "bg-white/5", text: "text-zinc-500", border: "border-white/10", label: `${rank}th` };
 }
 
+function parseWinnings(s: string): number {
+  return parseFloat(s.replace(/[^0-9.]/g, "")) || 0;
+}
+
 // ---------------------------------------------------------------------------
 // LeaderboardEmptyState
 // ---------------------------------------------------------------------------
@@ -45,36 +52,25 @@ function rankStyle(rank: number) {
 export const LeaderboardEmptyState = memo(function LeaderboardEmptyState() {
   return (
     <div className="flex flex-col items-center justify-center py-16 px-6 text-center space-y-6">
-      {/* Decorative icon stack */}
       <div className="relative">
-        {/* Outer glow ring */}
         <div className="absolute inset-0 rounded-full bg-[#37B7C3]/10 blur-xl scale-150" />
-
-        {/* Podium silhouette */}
         <div className="relative flex items-end gap-1.5 mb-1">
-          {/* 2nd place */}
           <div className="w-8 h-10 rounded-t-md bg-zinc-700/50 border border-white/10 flex items-end justify-center pb-1.5">
             <span className="text-[8px] font-bold text-zinc-500">2</span>
           </div>
-          {/* 1st place */}
           <div className="w-8 h-14 rounded-t-md bg-[#37B7C3]/20 border border-[#37B7C3]/30 flex items-end justify-center pb-1.5">
             <span className="text-[8px] font-bold text-[#37B7C3]">1</span>
           </div>
-          {/* 3rd place */}
           <div className="w-8 h-7 rounded-t-md bg-zinc-700/50 border border-white/10 flex items-end justify-center pb-1.5">
             <span className="text-[8px] font-bold text-zinc-500">3</span>
           </div>
         </div>
-
-        {/* Trophy icon centred over 1st place */}
         <div className="absolute -top-6 left-1/2 -translate-x-1/2">
           <div className="w-10 h-10 rounded-full bg-[#37B7C3]/15 border border-[#37B7C3]/30 flex items-center justify-center shadow-[0_0_16px_rgba(55,183,195,0.25)]">
             <Trophy className="w-5 h-5 text-[#37B7C3]" />
           </div>
         </div>
       </div>
-
-      {/* Heading */}
       <div className="space-y-2 pt-2">
         <h3 className="text-base font-semibold text-white">No rankings yet</h3>
         <p className="text-sm text-zinc-500 max-w-xs leading-relaxed">
@@ -82,8 +78,6 @@ export const LeaderboardEmptyState = memo(function LeaderboardEmptyState() {
           Make your first prediction to secure a spot.
         </p>
       </div>
-
-      {/* Hint tiles */}
       <div className="grid grid-cols-3 gap-3 w-full max-w-xs pt-2">
         {[
           { icon: Star,        label: "Predict" },
@@ -128,7 +122,6 @@ const LeaderboardRow = memo(function LeaderboardRow({
           : "border-transparent hover:bg-white/[0.03]",
       )}
     >
-      {/* Rank badge */}
       <span
         className={cn(
           "w-8 h-8 rounded-lg border text-xs font-bold flex items-center justify-center flex-shrink-0",
@@ -137,11 +130,7 @@ const LeaderboardRow = memo(function LeaderboardRow({
       >
         {entry.rank <= 3 ? rs.label : entry.rank}
       </span>
-
-      {/* Avatar placeholder */}
       <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#37B7C3]/30 to-indigo-500/30 border border-white/10 flex-shrink-0" />
-
-      {/* Identity */}
       <div className="flex-1 min-w-0">
         <p className={cn("text-sm font-medium truncate", isCurrentUser ? "text-[#37B7C3]" : "text-white")}>
           {shortAddr}
@@ -155,8 +144,6 @@ const LeaderboardRow = memo(function LeaderboardRow({
           {entry.predictions} predictions · {entry.winRate}% win rate
         </p>
       </div>
-
-      {/* Winnings */}
       <span className="text-sm font-mono font-medium text-white flex-shrink-0">
         {entry.totalWinnings}
       </span>
@@ -189,6 +176,44 @@ function LeaderboardSkeleton() {
 }
 
 // ---------------------------------------------------------------------------
+// SortHeader
+// ---------------------------------------------------------------------------
+
+const SORT_COLS: { key: SortKey; label: string }[] = [
+  { key: "rank",          label: "Rank"     },
+  { key: "winRate",       label: "Win Rate" },
+  { key: "predictions",   label: "Preds"    },
+  { key: "totalWinnings", label: "Winnings" },
+];
+
+function SortHeader({
+  sortKey,
+  dir,
+  active,
+  onSort,
+}: {
+  sortKey: SortKey;
+  dir: SortDir;
+  active: boolean;
+  onSort: (k: SortKey) => void;
+}) {
+  const Icon = active ? (dir === "asc" ? ChevronUp : ChevronDown) : ChevronUp;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={cn(
+        "flex items-center gap-1 hover:text-zinc-300 transition-colors",
+        active ? "text-[#37B7C3]" : "text-zinc-500",
+      )}
+    >
+      {SORT_COLS.find((c) => c.key === sortKey)?.label}
+      <Icon className={cn("w-3 h-3", !active && "opacity-30")} />
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Leaderboard (main export)
 // ---------------------------------------------------------------------------
 
@@ -197,6 +222,32 @@ export const Leaderboard = memo(function Leaderboard({
   isLoading = false,
   currentUserAddress,
 }: LeaderboardProps) {
+  const [sortKey, setSortKey] = useState<SortKey>("rank");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  const handleSort = useCallback((key: SortKey) => {
+    setSortKey((prev) => {
+      if (prev === key) {
+        setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+        return key;
+      }
+      setSortDir("asc");
+      return key;
+    });
+  }, []);
+
+  const sorted = useMemo(() => {
+    if (entries.length === 0) return entries;
+    return [...entries].sort((a, b) => {
+      let diff = 0;
+      if (sortKey === "rank") diff = a.rank - b.rank;
+      else if (sortKey === "winRate") diff = a.winRate - b.winRate;
+      else if (sortKey === "predictions") diff = a.predictions - b.predictions;
+      else if (sortKey === "totalWinnings") diff = parseWinnings(a.totalWinnings) - parseWinnings(b.totalWinnings);
+      return sortDir === "asc" ? diff : -diff;
+    });
+  }, [entries, sortKey, sortDir]);
+
   return (
     <Card className="bg-[#121212] border-none text-white overflow-hidden">
       <CardHeader className="pb-2">
@@ -220,18 +271,32 @@ export const Leaderboard = memo(function Leaderboard({
         ) : entries.length === 0 ? (
           <LeaderboardEmptyState />
         ) : (
-          <div className="space-y-1 px-2">
-            {entries.map((entry) => (
-              <LeaderboardRow
-                key={entry.address}
-                entry={entry}
-                isCurrentUser={
-                  !!currentUserAddress &&
-                  entry.address.toLowerCase() === currentUserAddress.toLowerCase()
-                }
-              />
-            ))}
-          </div>
+          <>
+            {/* Sort header bar */}
+            <div className="flex items-center gap-4 px-4 py-2 border-b border-white/5 text-[10px] uppercase tracking-wider">
+              {SORT_COLS.map((col) => (
+                <SortHeader
+                  key={col.key}
+                  sortKey={col.key}
+                  dir={sortDir}
+                  active={sortKey === col.key}
+                  onSort={handleSort}
+                />
+              ))}
+            </div>
+            <div className="space-y-1 px-2 pt-1">
+              {sorted.map((entry) => (
+                <LeaderboardRow
+                  key={entry.address}
+                  entry={entry}
+                  isCurrentUser={
+                    !!currentUserAddress &&
+                    entry.address.toLowerCase() === currentUserAddress.toLowerCase()
+                  }
+                />
+              ))}
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

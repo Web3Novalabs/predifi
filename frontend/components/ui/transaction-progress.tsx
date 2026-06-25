@@ -1,7 +1,7 @@
 "use client";
 
 import { memo } from "react";
-import { CheckCircle2, Clock, Loader2, XCircle, Send } from "lucide-react";
+import { CheckCircle2, Loader2, XCircle, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------

@@ -23,8 +23,8 @@ export const metadata: Metadata = {
   },
 };
 
-export default function Page(){
-    return(
-        <h1>My Profile Page</h1>
-    )
+import { PredictionHistoryClient } from "./PredictionHistoryClient";
+
+export default function Page() {
+  return <PredictionHistoryClient />;
 }
