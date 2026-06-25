@@ -11,7 +11,14 @@ export const metadata: Metadata = {
       "Discover how PrediFi is reshaping prediction markets with trustless, transparent, and automated outcomes on the Stellar blockchain.",
     url: "https://predifi.app/about",
     siteName: "PrediFi",
-    images: [{ url: "https://predifi.app/logo.jpeg", width: 1200, height: 630, alt: "About PrediFi" }],
+    images: [
+      {
+        url: "https://predifi.app/logo.jpeg",
+        width: 1200,
+        height: 630,
+        alt: "About PrediFi",
+      },
+    ],
     locale: "en_US",
     type: "website",
   },
@@ -34,7 +41,7 @@ export default function AboutPage() {
     <div className="text-sm min-h-screen bg-[#001112]">
       <Navbar />
 
-      <main className="w-screen overflow-x-hidden">
+      <main className="w-full overflow-x-hidden">
         <Hero />
         <Mission />
         <HowItWorks />

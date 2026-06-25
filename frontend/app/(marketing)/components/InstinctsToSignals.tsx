@@ -14,7 +14,7 @@ import {
  */
 const InstinctsToSignals = React.memo(function InstinctsToSignals() {
   return (
-    <div>
+    <div className="px-5">
       <p className="text-[24px] md:text-[48px]/[120%] max-w-[1000px] mx-auto -tracking-[4%] text-center text-[#D9D9D9] font-medium">
         You don&apos;t just bet. turns instincts into signals
       </p>
@@ -47,7 +47,7 @@ const InstinctsToSignals = React.memo(function InstinctsToSignals() {
         </div>
       </div>
 
-      <button className="w-[300px] py-[10px] gap-x-3 items-center flex justify-center text-lg bg-[#37B7C31A] rounded-[10px] mx-auto">
+      <button className="w-full max-w-[300px] py-[10px] gap-x-3 items-center flex justify-center text-lg bg-[#37B7C31A] rounded-[10px] mx-auto">
         Learn more <ArrowUpRight />
       </button>
     </div>

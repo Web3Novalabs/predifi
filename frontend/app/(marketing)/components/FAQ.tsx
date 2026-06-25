@@ -125,9 +125,7 @@ const AccordionItem = memo(function AccordionItem({
             className={[
               "px-5 md:px-6 pb-5 md:pb-6 text-[#FFFFFF99] text-sm lg:text-base leading-relaxed",
               "transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
-              isOpen
-                ? "opacity-100 translate-y-0"
-                : "opacity-0 -translate-y-1",
+              isOpen ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-1",
             ].join(" ")}
           >
             {answer}
@@ -168,24 +166,26 @@ function FAQ() {
 
   return (
     <div className="py-[100px] px-5 md:px-[75px]">
-      <div className="bg-[#FFFFFF0D] backdrop-blur-sm p-4 md:p-[37px] mx-auto border border-[#FFFFFF0D]">
+      <div className="bg-[#FFFFFF0D] backdrop-blur-sm p-4 md:p-[37px] mx-auto max-w-[1000px] border border-[#FFFFFF0D]">
         <h3 className="mb-[40px] md:mb-[60px] font-medium text-[24px] md:text-[30px]/[100%] -tracking-[6%] text-white">
           Frequently Asked Questions
         </h3>
 
         <div className="flex flex-col gap-4">
-          {useMemo(() => (
-            faqData.map((item, index) => (
-              <AccordionItem
-                key={item.question}
-                index={index}
-                question={item.question}
-                answer={item.answer}
-                isOpen={openIndex === index}
-                onToggle={handleToggle}
-              />
-            ))
-          ), [openIndex, handleToggle])}
+          {useMemo(
+            () =>
+              faqData.map((item, index) => (
+                <AccordionItem
+                  key={item.question}
+                  index={index}
+                  question={item.question}
+                  answer={item.answer}
+                  isOpen={openIndex === index}
+                  onToggle={handleToggle}
+                />
+              )),
+            [openIndex, handleToggle],
+          )}
         </div>
       </div>
     </div>
