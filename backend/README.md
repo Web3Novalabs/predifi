@@ -133,11 +133,43 @@ cargo test
 
 ---
 
+## Seed local database
+
+A `predifi-seed` binary populates the local PostgreSQL database with
+deterministic, idempotent sample data — pools across every state/category,
+predictions from fixture wallets, and referral payments — so the API can be
+exercised end-to-end without waiting for on-chain events to be indexed.
+
+```bash
+# insert seed data (idempotent — safe to re-run)
+cargo run --bin predifi-seed
+
+# truncate first, then seed fresh
+cargo run --bin predifi-seed -- --fresh
+
+# generate more pools
+cargo run --bin predifi-seed -- --num-pools 25
+
+cargo run --bin predifi-seed -- --help
+```
+
+The seeder runs all migrations before inserting, so it is safe to invoke
+against a freshly created database. All inserts use `ON CONFLICT DO NOTHING` /
+`DO UPDATE` keyed on natural primary keys, so re-running produces the same
+final state. The fixture data is generated in `src/seed.rs`; the binary
+entry point lives in `src/bin/seed.rs`.
+
+---
+
 ## Project layout
 
 ```text
 src/
-|-- main.rs            # top-level app router and server entry point
+|-- main.rs            # server binary entry point
+|-- lib.rs             # library crate shared with the seed binary
+|-- bin/
+|   `-- seed.rs        # `predifi-seed` binary (local DB seeding)
+|-- seed.rs            # seed data fixtures + idempotent inserts
 |-- config.rs          # typed env configuration loader
 |-- db.rs              # SQLx PostgreSQL pool initialization
 |-- request_logger.rs  # LoggingLayer / LoggingService middleware
