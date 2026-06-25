@@ -20,13 +20,10 @@
 
 import { Suspense } from "react";
 import dynamic from "next/dynamic";
-import { Diamond, Activity, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Dashboard" };
-import { MetricCard } from "@/components/dashboard/MetricCard";
-import { ActivePoolsMetricCard } from "@/components/dashboard/ActivePoolsMetricCard";
-import { formatStakeCompact } from "@/lib/stakeFilters";
+import { DashboardMetrics } from "@/components/dashboard/DashboardMetrics";
 
 // ---------------------------------------------------------------------------
 // Below-the-fold dashboard components — loaded lazily
@@ -116,37 +113,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Metric Cards — above the fold; eagerly loaded */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard
-          title="Total Earned"
-          value={formatStakeCompact(1255)}
-          icon={<Diamond />}
-          change="65% increase"
-          changeType="positive"
-        />
-        <ActivePoolsMetricCard />
-        <MetricCard
-          title="Win Rate"
-          value="65%"
-          icon={<Activity />}
-          change="7.8% Growth"
-          changeType="positive"
-        />
-        <MetricCard
-          title="Reputation Score"
-          value={
-            <span className="flex items-end gap-1">
-              <span className="text-[#84CC16]">3.5</span>
-              <span className="text-lg text-zinc-500 font-normal mb-1">
-                /5.0
-              </span>
-            </span>
-          }
-          icon={<ShieldCheck />}
-          change="70% accuracy"
-          changeType="neutral"
-        />
-      </div>
+      <DashboardMetrics />
 
       {/* Charts Section — below the fold; lazily loaded */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
