@@ -1,7 +1,7 @@
 use std::{future::Future, time::Duration};
 
 use chrono::{DateTime, Utc};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{postgres::PgPoolOptions, Executor, PgPool, Postgres};
 use tokio::time::sleep;
 use tracing::{info, warn};
 
@@ -710,34 +710,54 @@ pub async fn get_users_by_winnings(
     Ok(rankings)
 }
 
-/// Mark a pool as settled and record the winning outcome.
-pub async fn resolve_pool_in_db(
+/// Run `operation` inside a database transaction, committing on success.
+pub async fn insert_prediction_from_event_with_pool(
     pool: &PgPool,
+    event: &PredictionPlacedEvent,
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    insert_prediction_from_event(&mut tx, event).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Mark a pool as settled and record the winning outcome.
+pub async fn resolve_pool_in_db<'e, E>(
+    executor: E,
     pool_id: u64,
     winning_outcome: i32,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query("UPDATE pools SET state = 'settled', result = $1 WHERE pool_id = $2")
         .bind(winning_outcome.to_string())
         .bind(pool_id as i64)
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(())
 }
 
 /// Mark a pool as closed (cancelled on-chain).
-pub async fn cancel_pool_in_db(pool: &PgPool, pool_id: u64) -> Result<(), sqlx::Error> {
+pub async fn cancel_pool_in_db<'e, E>(executor: E, pool_id: u64) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query("UPDATE pools SET state = 'closed' WHERE pool_id = $1")
         .bind(pool_id as i64)
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(())
 }
 
 /// Insert a new pool record decoded from a `PoolCreated` contract event.
-pub async fn insert_pool_from_event(
-    pool: &PgPool,
+pub async fn insert_pool_from_event<'e, E>(
+    executor: E,
     event: &PoolCreatedEvent,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query(
         r#"
         INSERT INTO pools (pool_id, name, category, total_stake, end_time, state, creator, token, created_at)
@@ -751,18 +771,20 @@ pub async fn insert_pool_from_event(
     .bind(event.end_time as f64)
     .bind(&event.creator)
     .bind(&event.token)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
 
 /// Insert a decoded `prediction_placed` contract event into the prediction index.
+///
+/// Must run inside a transaction so the prediction insert and pool stake update
+/// stay atomic. Use [`insert_prediction_from_event_with_pool`] or pass an open
+/// transaction reference.
 pub async fn insert_prediction_from_event(
-    pool: &PgPool,
+    tx: &mut sqlx::Transaction<'_, Postgres>,
     event: &PredictionPlacedEvent,
 ) -> Result<(), sqlx::Error> {
-    let mut tx = pool.begin().await?;
-
     sqlx::query(
         r#"
         INSERT INTO predictions (pool_id, user_address, outcome, amount)
@@ -773,16 +795,15 @@ pub async fn insert_prediction_from_event(
     .bind(&event.user_address)
     .bind(event.outcome)
     .bind(event.amount)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
 
     sqlx::query("UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2")
         .bind(event.amount)
         .bind(event.pool_id as i64)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
 
-    tx.commit().await?;
     Ok(())
 }
 
@@ -878,15 +899,16 @@ pub struct ReferralPaidEvent {
 /// This function uses PostgreSQL's `INSERT INTO ... VALUES (...), (...), ...` syntax
 /// to insert all referral records in a single database round-trip, significantly
 /// improving performance over individual inserts when processing multiple events.
-pub async fn insert_referrals_bulk(
-    pool: &PgPool,
+pub async fn insert_referrals_bulk<'e, E>(
+    executor: E,
     events: &[ReferralPaidEvent],
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     if events.is_empty() {
         return Ok(());
     }
-
-    let mut tx = pool.begin().await?;
 
     // Build bulk insert query with dynamic values
     let query = r#"
@@ -920,19 +942,20 @@ pub async fn insert_referrals_bulk(
             .bind(event.referral_amount);
     }
 
-    query_builder.execute(&mut *tx).await?;
-
-    tx.commit().await?;
+    query_builder.execute(executor).await?;
     Ok(())
 }
 
 /// Insert a single referral record.
 ///
 /// For inserting multiple referrals, use `insert_referrals_bulk` instead for better performance.
-pub async fn insert_referral_from_event(
-    pool: &PgPool,
+pub async fn insert_referral_from_event<'e, E>(
+    executor: E,
     event: &ReferralPaidEvent,
-) -> Result<(), sqlx::Error> {
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
     sqlx::query(
         r#"
         INSERT INTO referrals (referrer, user_address, pool_id, amount)
@@ -944,9 +967,47 @@ pub async fn insert_referral_from_event(
     .bind(&event.referred_user)
     .bind(event.pool_id as i64)
     .bind(event.referral_amount)
-    .execute(pool)
+    .execute(executor)
     .await?;
     Ok(())
 }
 
 // Tests live near the top-level helpers (see `retry_with_backoff` tests).
+
+#[cfg(test)]
+mod write_helper_tests {
+    use super::*;
+
+    #[test]
+    fn insert_referrals_bulk_query_builds_expected_placeholders() {
+        let events = vec![
+            ReferralPaidEvent {
+                pool_id: 1,
+                referrer: "GREF".into(),
+                referred_user: "GUSER".into(),
+                referral_amount: 100,
+            },
+            ReferralPaidEvent {
+                pool_id: 2,
+                referrer: "GREF2".into(),
+                referred_user: "GUSER2".into(),
+                referral_amount: 200,
+            },
+        ];
+
+        let mut values = Vec::new();
+        let mut param_index = 1i32;
+        for _ in &events {
+            values.push(format!(
+                "(${}, ${}, ${}, ${})",
+                param_index,
+                param_index + 1,
+                param_index + 2,
+                param_index + 3
+            ));
+            param_index += 4;
+        }
+
+        assert_eq!(values, vec!["($1, $2, $3, $4)", "($5, $6, $7, $8)"]);
+    }
+}

@@ -304,7 +304,7 @@ async fn handle_prediction_placed_event(
         amount,
     };
 
-    crate::db::insert_prediction_from_event(db, &ev)
+    crate::db::insert_prediction_from_event_with_pool(db, &ev)
         .await
         .map_err(|e| e.to_string())?;
 
