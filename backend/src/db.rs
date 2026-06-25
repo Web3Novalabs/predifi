@@ -646,18 +646,21 @@ pub async fn get_users_by_winnings(
               AND pl.result IS NOT NULL
               AND p.outcome = CAST(pl.result AS INTEGER)
         ),
+        pool_winning_totals AS (
+            SELECT
+                pool_id,
+                SUM(amount) AS winning_stake
+            FROM winning_predictions
+            GROUP BY pool_id
+        ),
         user_winnings AS (
-            SELECT 
-                user_address,
-                SUM(amount * (total_stake::FLOAT / 
-                    (SELECT SUM(amount) FROM predictions p2 
-                     WHERE p2.pool_id = wp.pool_id 
-                       AND p2.outcome = CAST((SELECT result FROM pools WHERE pool_id = wp.pool_id) AS INTEGER)
-                    )
-                )) as total_winnings,
+            SELECT
+                wp.user_address,
+                SUM(wp.amount * (wp.total_stake::FLOAT / pwt.winning_stake)) as total_winnings,
                 COUNT(*) as winning_predictions
             FROM winning_predictions wp
-            GROUP BY user_address
+            JOIN pool_winning_totals pwt ON pwt.pool_id = wp.pool_id
+            GROUP BY wp.user_address
         ),
         user_totals AS (
             SELECT 
