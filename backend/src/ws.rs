@@ -5,6 +5,11 @@
 //! prediction is indexed; the WS handler at `GET /ws` forwards each message
 //! to the client until the connection closes.
 
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -21,6 +26,8 @@ const CHANNEL_CAPACITY: usize = 256;
 #[derive(Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<String>,
+    /// Number of currently connected WebSocket clients.
+    active_connections: Arc<AtomicUsize>,
 }
 
 impl Default for EventBus {
@@ -36,7 +43,15 @@ impl EventBus {
     /// blocking the sender.
     pub fn new() -> Self {
         let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
-        Self { tx }
+        Self {
+            tx,
+            active_connections: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    /// Number of WebSocket clients currently connected.
+    pub fn active_connections(&self) -> usize {
+        self.active_connections.load(Ordering::Relaxed)
     }
 
     /// Publish a serialisable event to all connected WebSocket clients.
@@ -65,6 +80,17 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(bus): State<EventBus>) -> im
 
 async fn handle_socket(mut socket: WebSocket, bus: EventBus) {
     let mut rx = bus.subscribe();
+
+    let count = bus.active_connections.fetch_add(1, Ordering::Relaxed) + 1;
+    tracing::info!(active_connections = count, "websocket client connected");
+
+    run_socket(&mut socket, &mut rx).await;
+
+    let count = bus.active_connections.fetch_sub(1, Ordering::Relaxed) - 1;
+    tracing::info!(active_connections = count, "websocket client disconnected");
+}
+
+async fn run_socket(socket: &mut WebSocket, rx: &mut broadcast::Receiver<String>) {
     loop {
         tokio::select! {
             // Forward broadcast messages to the client.
