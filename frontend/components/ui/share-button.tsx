@@ -21,7 +21,7 @@ export interface ShareButtonProps {
 
 const defaultNetworks: SocialIconId[] = ["x", "telegram", "reddit", "discord"];
 
-function getShareUrl(network: SocialIconId, url: string, title?: string, _text?: string) {
+function getShareUrl(network: SocialIconId, url: string, title?: string) {
   const encodedUrl = encodeURIComponent(url);
   const encodedTitle = title ? encodeURIComponent(title) : "";
 
@@ -69,7 +69,7 @@ export function ShareButton({
   };
 
   const handleNetworkClick = (network: SocialIconId) => {
-    const shareUrl = getShareUrl(network, url, title, text);
+    const shareUrl = getShareUrl(network, url, title);
     if (shareUrl) {
       window.open(shareUrl, "_blank", "noopener,noreferrer");
     } else if (network === "discord") {
