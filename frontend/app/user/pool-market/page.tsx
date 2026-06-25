@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import Link from "next/link";
+import { Plus } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "Pool Market",
@@ -10,7 +12,14 @@ export const metadata: Metadata = {
       "Explore all prediction pools on PrediFi — browse open and upcoming markets, compare odds, and stake XLM on outcomes powered by Soroban smart contracts.",
     url: "https://predifi.app/user/pool-market",
     siteName: "PrediFi",
-    images: [{ url: "https://predifi.app/logo.jpeg", width: 1200, height: 630, alt: "PrediFi Pool Market" }],
+    images: [
+      {
+        url: "https://predifi.app/logo.jpeg",
+        width: 1200,
+        height: 630,
+        alt: "PrediFi Pool Market",
+      },
+    ],
     locale: "en_US",
     type: "website",
   },
