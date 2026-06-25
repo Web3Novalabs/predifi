@@ -21,10 +21,9 @@ export interface ShareButtonProps {
 
 const defaultNetworks: SocialIconId[] = ["x", "telegram", "reddit", "discord"];
 
-function getShareUrl(network: SocialIconId, url: string, title?: string, text?: string) {
+function getShareUrl(network: SocialIconId, url: string, title?: string, _text?: string) {
   const encodedUrl = encodeURIComponent(url);
   const encodedTitle = title ? encodeURIComponent(title) : "";
-  const encodedText = text ? encodeURIComponent(text) : "";
 
   switch (network) {
     case "x":
@@ -60,7 +59,7 @@ export function ShareButton({
           text,
           url,
         });
-      } catch (err) {
+      } catch {
         // User canceled or share failed, open custom dropdown
         setIsOpen(!isOpen);
       }

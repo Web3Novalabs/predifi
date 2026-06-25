@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 
 export type Theme = "dark" | "light" | "system";
 
@@ -24,13 +24,12 @@ function readStored(): Theme {
 }
 
 export function useTheme() {
-  const [theme, setThemeState] = useState<Theme>("dark");
-
-  useEffect(() => {
+  const [theme, setThemeState] = useState<Theme>(() => {
+    if (typeof window === "undefined") return "dark";
     const stored = readStored();
-    setThemeState(stored);
     applyTheme(stored);
-  }, []);
+    return stored;
+  });
 
   const setTheme = useCallback((next: Theme) => {
     setThemeState(next);
