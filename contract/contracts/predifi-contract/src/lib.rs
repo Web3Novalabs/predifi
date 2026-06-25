@@ -4655,6 +4655,8 @@ impl OracleCallback for PredifiContract {
             .get(&pool_key)
             .expect("Pool not found");
 
+        Self::validate_pool_invariants(&pool);
+
         // if pool.state != MarketState::Active {
         //     return Err(PredifiError::InvalidPoolState);
         // }
