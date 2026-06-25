@@ -5,6 +5,7 @@ import { Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import SocialIcon, { SocialIconId } from "@/components/ui/SocialIcon";
+import { useCopyToClipboard } from "@/lib/hooks/useCopyToClipboard";
 
 export interface ShareButtonProps {
   /** The URL to share */
@@ -51,6 +52,10 @@ export function ShareButton({
   const [isOpen, setIsOpen] = React.useState(false);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
+  const { copy } = useCopyToClipboard({
+    successTitle: "Link copied!",
+    successDescription: "The link has been copied to your clipboard.",
+  });
 
   const handleShare = async () => {
     if (navigator.share) {
@@ -74,9 +79,8 @@ export function ShareButton({
     if (shareUrl) {
       window.open(shareUrl, "_blank", "noopener,noreferrer");
     } else if (network === "discord") {
-      // For Discord, copy to clipboard
-      navigator.clipboard.writeText(url);
-      // TODO: Maybe show a toast?
+      // For Discord, copy the URL and show a toast
+      void copy(url);
     }
     setIsOpen(false);
   };
