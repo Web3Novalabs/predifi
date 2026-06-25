@@ -523,6 +523,10 @@ pub fn router(
         .route("/prices", get(crate::price_cache::get_prices))
         .route("/referrals/{address}", get(referrals_handler))
         .route(
+            "/referrals/{address}/estimate",
+            get(referral_estimate_handler),
+        )
+        .route(
             "/users/{address}/referrals",
             get(user_referral_earnings_handler),
         )
@@ -556,6 +560,41 @@ async fn referrals_handler(
     match state.db {
         Some(pool) => {
             match crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await {
+                Ok((status, body)) => (status, body).into_response(),
+                Err(e) => {
+                    ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+                        .into_response()
+                }
+            }
+        }
+        None => {
+            ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
+                .into_response()
+        }
+    }
+}
+
+/// `GET /api/v1/referrals/:address/estimate` — estimated referral reward.
+///
+/// Requires a live DB pool; returns 503 if the pool is not configured.
+async fn referral_estimate_handler(
+    axum::extract::Path(address): axum::extract::Path<String>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    use crate::response::ApiResponse;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    match state.db {
+        Some(pool) => {
+            match crate::referrals::estimate_referral_rewards(
+                address,
+                &pool,
+                state.config.treasury_fee_bps,
+                state.config.referral_fee_bps,
+            )
+            .await
+            {
                 Ok((status, body)) => (status, body).into_response(),
                 Err(e) => {
                     ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
