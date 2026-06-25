@@ -18,6 +18,7 @@ pub mod routes;
 pub mod server;
 pub mod session;
 pub mod telemetry;
+pub mod tracing_context;
 pub mod worker;
 pub mod ws;
 

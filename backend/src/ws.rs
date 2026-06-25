@@ -14,6 +14,8 @@ use axum::{
 };
 use serde::Serialize;
 use tokio::sync::broadcast;
+use tracing::info_span;
+use tracing::Instrument;
 
 const CHANNEL_CAPACITY: usize = 256;
 
@@ -60,7 +62,8 @@ impl EventBus {
 
 /// Axum handler — upgrades the HTTP connection to WebSocket and streams events.
 pub async fn ws_handler(ws: WebSocketUpgrade, State(bus): State<EventBus>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, bus))
+    let span = info_span!("websocket.connect");
+    ws.on_upgrade(move |socket| handle_socket(socket, bus).instrument(span))
 }
 
 async fn handle_socket(mut socket: WebSocket, bus: EventBus) {
