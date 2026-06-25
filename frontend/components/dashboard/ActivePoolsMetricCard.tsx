@@ -4,7 +4,11 @@ import { Box } from "lucide-react";
 import { MetricCard } from "@/components/dashboard/MetricCard";
 import { usePools } from "@/lib/hooks/usePools";
 
-export function ActivePoolsMetricCard() {
+interface ActivePoolsMetricCardProps {
+  isLoading?: boolean;
+}
+
+export function ActivePoolsMetricCard({ isLoading: forceLoading = false }: ActivePoolsMetricCardProps) {
   const { total, isLoading, isError } = usePools({
     status: "active",
     limit: 1,
@@ -18,7 +22,7 @@ export function ActivePoolsMetricCard() {
       change={isError ? "Count unavailable" : `${total} live now`}
       changeType={isError ? "neutral" : "positive"}
       tooltip="Prediction pools that are currently open for participation."
-      isLoading={isLoading}
+      isLoading={forceLoading || isLoading}
     />
   );
 }
