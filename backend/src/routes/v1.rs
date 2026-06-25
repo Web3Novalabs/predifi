@@ -230,16 +230,32 @@ pub async fn get_pool_by_id_handler(
     }
 }
 
+/// Query parameters for the `GET /api/v1/stats` endpoint.
+#[derive(Debug, Deserialize)]
+pub struct StatsQuery {
+    /// Category filter, e.g. "Sports", "Crypto"
+    pub category: Option<String>,
+    /// Pool state filter: "active" | "closed" | "settled"
+    pub status: Option<String>,
+}
+
 /// `GET /api/v1/stats` — protocol-wide aggregate statistics.
 ///
 /// Returns total value locked, total bets placed, and total pools created.
-/// Responds with a database-unavailable error if no pool is configured.
-pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
+/// Optional `category` and `status` query parameters scope the aggregates to
+/// the matching pools. Responds with a database-unavailable error if no pool
+/// is configured.
+pub async fn get_stats(
+    State(state): State<AppState>,
+    Query(params): Query<StatsQuery>,
+) -> Json<serde_json::Value> {
     let Some(db) = &state.db else {
         return Json(json!({ "error": "database not available" }));
     };
 
-    match crate::db::get_protocol_stats(db).await {
+    match crate::db::get_protocol_stats(db, params.category.as_deref(), params.status.as_deref())
+        .await
+    {
         Ok(stats) => Json(json!(stats)),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
