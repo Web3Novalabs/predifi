@@ -12,6 +12,7 @@ const DEFAULT_DB_CONNECT_MAX_DELAY_MS: u64 = 5_000;
 const DEFAULT_RPC_HEALTH_TIMEOUT_SECS: u64 = 2;
 const DEFAULT_RPC_HEALTH_RETRY_COUNT: u8 = 3;
 const DEFAULT_RPC_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_SHUTDOWN_TIMEOUT_SECS: u64 = crate::constants::DEFAULT_SHUTDOWN_TIMEOUT_SECS;
 const DEFAULT_LOG_LEVEL: &str = "info";
 const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
@@ -58,6 +59,13 @@ pub struct Config {
     pub rpc_health_retry_count: u8,
     /// Per-attempt timeout in seconds for general Stellar RPC calls (default `30`).
     pub rpc_timeout_secs: u64,
+    /// Maximum number of seconds the HTTP server is allowed to spend
+    /// draining in-flight requests after a termination signal is received.
+    ///
+    /// Once this window closes, any handlers that are still running are
+    /// dropped, the database pool is asked to close, and the process exits.
+    /// Default [`DEFAULT_SHUTDOWN_TIMEOUT_SECS`] (30 s).
+    pub shutdown_timeout_secs: u64,
     /// Tracing log level passed to `RUST_LOG` / `EnvFilter` (default `"info"`).
     pub log_level: String,
     /// Protocol treasury fee in basis points (default `300` = 3 %).
@@ -133,6 +141,17 @@ impl Config {
             DEFAULT_RPC_HEALTH_RETRY_COUNT,
         )?;
         let rpc_timeout_secs = get_u64(vars, "RPC_TIMEOUT_SECS", DEFAULT_RPC_TIMEOUT_SECS)?;
+        let shutdown_timeout_secs = get_u64(
+            vars,
+            "PREDIFI_SHUTDOWN_TIMEOUT_SECS",
+            DEFAULT_SHUTDOWN_TIMEOUT_SECS,
+        )?;
+        if shutdown_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SHUTDOWN_TIMEOUT_SECS",
+                reason: String::from("must be greater than zero so in-flight requests can drain"),
+            });
+        }
         let log_level = get_string(vars, "RUST_LOG", DEFAULT_LOG_LEVEL);
         let treasury_fee_bps = get_u32(vars, "PREDIFI_TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "PREDIFI_REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
@@ -166,6 +185,7 @@ impl Config {
             rpc_health_timeout_secs,
             rpc_health_retry_count,
             rpc_timeout_secs,
+            shutdown_timeout_secs,
             log_level,
             treasury_fee_bps,
             referral_fee_bps,
@@ -201,6 +221,7 @@ impl Config {
             rpc_health_timeout_secs: 2,
             rpc_health_retry_count: 3,
             rpc_timeout_secs: 30,
+            shutdown_timeout_secs: 5,
             log_level: String::from("debug"),
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
@@ -1036,6 +1057,61 @@ mod tests {
             Config::from_map(&vars),
             Err(ConfigError::InvalidNumber {
                 key: "RPC_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    // ── Graceful shutdown timeout ─────────────────────────────────────────────
+
+    /// When `PREDIFI_SHUTDOWN_TIMEOUT_SECS` is absent we fall back to the
+    /// compiled-in default.
+    #[test]
+    fn shutdown_timeout_defaults_when_env_absent() {
+        let vars = HashMap::new();
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.shutdown_timeout_secs, DEFAULT_SHUTDOWN_TIMEOUT_SECS);
+    }
+
+    /// Operators can override the shutdown grace period.
+    #[test]
+    fn shutdown_timeout_reads_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_SHUTDOWN_TIMEOUT_SECS"),
+            String::from("60"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.shutdown_timeout_secs, 60);
+    }
+
+    /// Reject a zero shutdown timeout — the server must allow at least one
+    /// tick for in-flight requests to begin draining.
+    #[test]
+    fn shutdown_timeout_rejects_zero() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_SHUTDOWN_TIMEOUT_SECS"),
+            String::from("0"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SHUTDOWN_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    /// Reject non-numeric shutdown timeout values.
+    #[test]
+    fn shutdown_timeout_rejects_non_numeric() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_SHUTDOWN_TIMEOUT_SECS"),
+            String::from("fast"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_SHUTDOWN_TIMEOUT_SECS",
                 ..
             })
         ));

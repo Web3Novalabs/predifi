@@ -1269,3 +1269,186 @@ async fn ready_response_includes_error_details_when_not_ready() {
         "response should include an errors object, got: {body}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Graceful Shutdown Tests (#997)
+// ──────────────────────────────────────────────────────────────────────────────
+//
+// These tests use a hand-crafted `axum::Router` with a slow handler plus an
+// injected shutdown-trigger future so we can exercise Axum's
+// `with_graceful_shutdown` plumbing end-to-end without needing a real
+// PostgreSQL pool, Redis, or OS signal delivery in the test process.
+
+/// Verify that a request which is already in flight when the shutdown
+/// signal fires is allowed to complete with its real response.
+#[tokio::test]
+async fn graceful_shutdown_drains_inflight_request() {
+    use axum::{routing::get, Router};
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+    use tokio::time::sleep;
+
+    async fn slow() -> &'static str {
+        sleep(Duration::from_millis(500)).await;
+        "done"
+    }
+
+    let app: Router = Router::new().route("/slow", get(slow));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("failed to bind ephemeral port");
+    let addr = listener.local_addr().expect("local_addr is available");
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+    let server_handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            // Ignore cancellation: we only care that this future resolves when
+            // the test fires `shutdown_tx`.
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    // Give the server a small window to finish its accept loop setup.
+    sleep(Duration::from_millis(50)).await;
+
+    // Build a fresh reqwest client per test.  Disabling connection pooling
+    // keeps the "new connection after shutdown refused" assertion
+    // deterministic: we want every request to open a new TCP socket and
+    // observe the absence of the listener, not reuse a half-closed
+    // keep-alive connection that produces a misleading success.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .pool_max_idle_per_host(0)
+        .build()
+        .expect("reqwest client builds");
+
+    // Kick off a slow request that will be pending when we trigger shutdown.
+    let in_flight = {
+        let url = format!("http://{}/slow", addr);
+        let client = client.clone();
+        tokio::spawn(async move { client.get(url).send().await })
+    };
+
+    // Wait long enough for the request to actually reach the handler (and
+    // therefore to be sitting in `slow()` mid-sleep).
+    sleep(Duration::from_millis(150)).await;
+
+    // Trigger graceful shutdown while the request is still in flight.
+    shutdown_tx.send(()).expect("shutdown trigger must be sendable");
+
+    // The in-flight request must still complete successfully.
+    let response = tokio::time::timeout(Duration::from_secs(3), in_flight)
+        .await
+        .expect("in-flight request should be drained within 3 s")
+        .expect("request task did not panic")
+        .expect("request itself failed");
+
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::OK,
+        "in-flight request must complete with 200 OK during graceful drain"
+    );
+    let body = response.text().await.expect("body");
+    assert_eq!(
+        body, "done",
+        "drained request must keep its full response body"
+    );
+
+    // The server task itself must finish cleanly.  Three nested expects walk
+    // through `Result<Result<Result<(), io::Error>, JoinError>, Elapsed>`:
+    // outer is the timeout, middle is the JoinError, inner is the io::Error
+    // returned by `axum::serve`.
+    tokio::time::timeout(Duration::from_secs(3), server_handle)
+        .await
+        .expect("server task did not finish after drain")
+        .expect("server task panicked")
+        .expect("server returned an io::Error during shutdown");
+
+    // A NEW connection after shutdown must be refused — the listener has
+    // already been dropped.
+    let after_shutdown = tokio::time::timeout(
+        Duration::from_secs(1),
+        client.get(format!("http://{}/slow", addr)).send(),
+    )
+    .await;
+
+    assert!(
+        after_shutdown.is_err(),
+        "new connections after shutdown must fail, but got: {:?}",
+        after_shutdown
+    );
+}
+
+/// Verify multiple concurrent in-flight requests all complete during a
+/// graceful shutdown rather than being aborted individually.
+#[tokio::test]
+async fn graceful_shutdown_drains_many_concurrent_requests() {
+    use axum::{routing::get, Router};
+    use std::time::Duration;
+    use tokio::sync::oneshot;
+    use tokio::time::sleep;
+
+    async fn slow() -> &'static str {
+        sleep(Duration::from_millis(300)).await;
+        "ok"
+    }
+
+    let app: Router = Router::new().route("/slow", get(slow));
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+    let server_handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
+    });
+
+    sleep(Duration::from_millis(50)).await;
+
+    // Disable reqwest connection pooling so each request opens a fresh
+    // socket and is forced to observe whether the listener is still
+    // accepting connections after shutdown.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .pool_max_idle_per_host(0)
+        .build()
+        .unwrap();
+
+    let mut handles = Vec::new();
+    for _ in 0..5 {
+        let url = format!("http://{}/slow", addr);
+        let c = client.clone();
+        handles.push(tokio::spawn(async move { c.get(url).send().await }));
+    }
+
+    sleep(Duration::from_millis(100)).await;
+    shutdown_tx.send(()).unwrap();
+
+    for (i, h) in handles.into_iter().enumerate() {
+        let response = tokio::time::timeout(Duration::from_secs(3), h)
+            .await
+            .unwrap_or_else(|_| panic!("request #{i} did not drain within 3 s"))
+            .unwrap_or_else(|_| panic!("request #{i} task panicked"))
+            .unwrap_or_else(|_| panic!("request #{i} reqwest call failed"));
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+    }
+
+    let _ = tokio::time::timeout(Duration::from_secs(3), server_handle)
+        .await
+        .expect("server must exit");
+}

@@ -25,6 +25,7 @@ use std::{
 
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
+use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::response::ApiResponse;
@@ -96,12 +97,17 @@ const ASSETS: &[(&str, &str)] = &[("BTC", "bitcoin"), ("ETH", "ethereum"), ("XLM
 /// On failure (network error, rate limit, etc.) the previous data is
 /// retained and the error is logged — the cache never goes backwards.
 ///
+/// The returned [`JoinHandle`] allows the caller (typically the graceful
+/// shutdown sequence in [`crate::server`]) to abort the fetcher task when
+/// the process is winding down so it does not keep the runtime alive
+/// after the HTTP listener has stopped.
+///
 /// # Panics
 ///
 /// Panics if the reqwest HTTP client cannot be built (this should never
 /// happen in practice).
-pub fn spawn_fetcher(cache: PriceCache) {
-    tracing_context::spawn_worker("price_fetcher", async move {
+pub fn spawn_fetcher(cache: PriceCache) -> JoinHandle<()> {
+    tokio::spawn(async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -119,7 +125,7 @@ pub fn spawn_fetcher(cache: PriceCache) {
             }
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
-    });
+    })
 }
 
 /// Fetch prices from CoinGecko simple/price endpoint.
