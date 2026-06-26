@@ -20,14 +20,15 @@
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinHandle;
-use tracing::{error, info};
+use tracing::{error, info, info_span, Instrument};
 
+use crate::metrics::SharedMetrics;
 use crate::response::ApiResponse;
 use crate::tracing_context;
 
@@ -106,21 +107,40 @@ const ASSETS: &[(&str, &str)] = &[("BTC", "bitcoin"), ("ETH", "ethereum"), ("XLM
 ///
 /// Panics if the reqwest HTTP client cannot be built (this should never
 /// happen in practice).
-pub fn spawn_fetcher(cache: PriceCache) -> JoinHandle<()> {
-    tokio::spawn(async move {
+pub fn spawn_fetcher(cache: PriceCache, metrics: Option<SharedMetrics>) -> JoinHandle<()> {
+    tracing_context::spawn_worker("price_cache_fetcher", async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
             .expect("failed to build reqwest client");
 
         loop {
-            match fetch_prices(&client).await {
+            let span = info_span!("price_cache.fetch");
+            let fetch_started = Instant::now();
+
+            let fetch_result = async {
+                fetch_prices(&client).await
+            }
+            .instrument(span)
+            .await;
+
+            let duration_secs = fetch_started.elapsed().as_secs_f64();
+
+            match fetch_result {
                 Ok(prices) => {
-                    info!(assets = prices.len(), "price cache refreshed");
+                    let asset_count = prices.len();
+                    info!(assets = asset_count, duration_secs, "price cache refreshed");
                     cache.update(prices);
+                    if let Some(ref metrics) = metrics {
+                        metrics.record_price_cache_fetch("success", asset_count, duration_secs);
+                    }
                 }
                 Err(err) => {
-                    error!(error = %err, "price fetch failed; retaining stale cache");
+                    let cached_assets = cache.snapshot().len();
+                    error!(error = %err, duration_secs, "price fetch failed; retaining stale cache");
+                    if let Some(ref metrics) = metrics {
+                        metrics.record_price_cache_fetch("failure", cached_assets, duration_secs);
+                    }
                 }
             }
             tokio::time::sleep(Duration::from_secs(60)).await;
@@ -270,5 +290,15 @@ mod tests {
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("BTC"));
         assert!(text.contains("50000"));
+    }
+
+    #[test]
+    fn metrics_record_price_cache_fetch() {
+        let metrics = crate::metrics::Metrics::new().expect("metrics");
+        metrics.record_price_cache_fetch("success", 3, 0.25);
+        let text = metrics.gather_text().expect("metrics text");
+        assert!(text.contains("app_price_cache_fetch_total"));
+        assert!(text.contains("app_price_cache_assets"));
+        assert!(text.contains("app_price_cache_fetch_duration_seconds"));
     }
 }

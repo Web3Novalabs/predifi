@@ -21,7 +21,9 @@ pub mod routes;
 pub mod seed;
 pub mod server;
 pub mod session;
+pub mod shutdown;
 pub mod telemetry;
+pub mod tracing_context;
 pub mod worker;
 pub mod ws;
 
@@ -270,7 +272,7 @@ pub fn build_router(
         )
         .merge(openapi::swagger_router())
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
     #[cfg(not(test))]
     let router = {
@@ -352,7 +354,7 @@ pub fn build_router_with_db(
         )
         .merge(openapi::swagger_router())
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
     #[cfg(not(test))]
     let router = router.layer(tower_governor::GovernorLayer {
@@ -364,6 +366,11 @@ pub fn build_router_with_db(
 
 /// Initialise tracing, build the server, and run it to completion.
 pub async fn run_server(config: Config) {
+    config.validate().unwrap_or_else(|error| {
+        eprintln!("configuration validation failed: {error}");
+        std::process::exit(1);
+    });
+
     let filter = EnvFilter::new(config.log_level.clone());
     let use_json = true;
 
