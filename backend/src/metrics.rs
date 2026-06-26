@@ -10,6 +10,7 @@ pub struct Metrics {
     pub app_info: Gauge,
     pub memory_used_bytes: Gauge,
     pub memory_total_bytes: Gauge,
+    pub active_pools: Gauge,
 }
 
 /// Type alias for a reference-counted [`Metrics`] instance shared across handlers.
@@ -51,11 +52,17 @@ impl Metrics {
             "Total system memory in bytes.",
         ))?;
 
+        let active_pools = Gauge::with_opts(Opts::new(
+            "app_active_pools",
+            "Number of currently active prediction market pools.",
+        ))?;
+
         registry.register(Box::new(http_requests_total.clone()))?;
         registry.register(Box::new(app_up.clone()))?;
         registry.register(Box::new(app_info.clone()))?;
         registry.register(Box::new(memory_used_bytes.clone()))?;
         registry.register(Box::new(memory_total_bytes.clone()))?;
+        registry.register(Box::new(active_pools.clone()))?;
 
         Ok(Self {
             registry,
@@ -64,6 +71,7 @@ impl Metrics {
             app_info,
             memory_used_bytes,
             memory_total_bytes,
+            active_pools,
         })
     }
 
@@ -117,6 +125,10 @@ mod tests {
         assert!(
             names.contains(&"app_memory_total_bytes"),
             "app_memory_total_bytes must be registered"
+        );
+        assert!(
+            names.contains(&"app_active_pools"),
+            "app_active_pools must be registered"
         );
 
         // CounterVec metrics are omitted until a label set is instantiated.
@@ -195,6 +207,15 @@ mod tests {
             !m2_text.contains("GET"),
             "m2 registry must be independent of m1"
         );
+    }
+
+    /// `active_pools` gauge starts at 0 and can be set.
+    #[test]
+    fn metrics_active_pools_gauge_works() {
+        let metrics = Metrics::new().expect("Metrics::new() must succeed");
+        assert_eq!(metrics.active_pools.get(), 0.0, "active_pools must start at 0");
+        metrics.active_pools.set(42.0);
+        assert_eq!(metrics.active_pools.get(), 42.0, "active_pools must reflect set value");
     }
 
     /// `SharedMetrics` (Arc<Metrics>) can be cloned and used from multiple owners.
