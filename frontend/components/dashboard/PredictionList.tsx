@@ -4,8 +4,8 @@ import { useState, useCallback, memo } from "react";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
 import { formatStake } from "@/lib/stakeFilters";
-import { Card, CardContent } from "@/components/ui";
-import { ChefHat, ChevronRight, Users, Copy } from "lucide-react";
+import { Card, CardContent, CopyButton } from "@/components/ui";
+import { ChefHat, ChevronRight, Users } from "lucide-react";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -91,7 +91,12 @@ const PredictionCard = memo(function PredictionCard({
             <span className="text-zinc-400">ID No.</span>
             <div className="flex items-center gap-2 text-white">
               {prediction.idNo}
-              <Copy className="w-3 h-3 text-zinc-500 cursor-pointer hover:text-white" />
+              <CopyButton
+                text={prediction.idNo}
+                size="xs"
+                aria-label={`Copy prediction ID ${prediction.idNo}`}
+                copyOptions={{ successDescription: `ID ${prediction.idNo} copied to clipboard` }}
+              />
             </div>
           </div>
         </div>

@@ -646,18 +646,21 @@ pub async fn get_users_by_winnings(
               AND pl.result IS NOT NULL
               AND p.outcome = CAST(pl.result AS INTEGER)
         ),
+        pool_winning_totals AS (
+            SELECT
+                pool_id,
+                SUM(amount) AS winning_stake
+            FROM winning_predictions
+            GROUP BY pool_id
+        ),
         user_winnings AS (
-            SELECT 
-                user_address,
-                SUM(amount * (total_stake::FLOAT / 
-                    (SELECT SUM(amount) FROM predictions p2 
-                     WHERE p2.pool_id = wp.pool_id 
-                       AND p2.outcome = CAST((SELECT result FROM pools WHERE pool_id = wp.pool_id) AS INTEGER)
-                    )
-                )) as total_winnings,
+            SELECT
+                wp.user_address,
+                SUM(wp.amount * (wp.total_stake::FLOAT / pwt.winning_stake)) as total_winnings,
                 COUNT(*) as winning_predictions
             FROM winning_predictions wp
-            GROUP BY user_address
+            JOIN pool_winning_totals pwt ON pwt.pool_id = wp.pool_id
+            GROUP BY wp.user_address
         ),
         user_totals AS (
             SELECT 
@@ -831,16 +834,33 @@ pub struct ProtocolStats {
 }
 
 /// Fetch protocol-wide aggregate statistics in a single query.
-pub async fn get_protocol_stats(pool: &PgPool) -> Result<ProtocolStats, sqlx::Error> {
+///
+/// When `category` and/or `state` are provided, the aggregates are scoped to
+/// the matching pools (and the bets placed in them). Passing `None` for both
+/// yields the unfiltered protocol-wide totals.
+pub async fn get_protocol_stats(
+    pool: &PgPool,
+    category: Option<&str>,
+    state: Option<&str>,
+) -> Result<ProtocolStats, sqlx::Error> {
     sqlx::query_as::<_, ProtocolStats>(
         r#"
+        WITH filtered_pools AS (
+            SELECT pool_id, total_stake
+            FROM pools
+            WHERE ($1::text IS NULL OR category = $1)
+              AND ($2::text IS NULL OR state = $2)
+        )
         SELECT
-            COALESCE(SUM(total_stake), 0)       AS total_value_locked,
-            (SELECT COUNT(*) FROM predictions)  AS total_bets,
-            COUNT(*)                            AS total_pools
-        FROM pools
+            COALESCE(SUM(total_stake), 0) AS total_value_locked,
+            (SELECT COUNT(*) FROM predictions p
+                WHERE p.pool_id IN (SELECT pool_id FROM filtered_pools)) AS total_bets,
+            COUNT(*) AS total_pools
+        FROM filtered_pools
         "#,
     )
+    .bind(category)
+    .bind(state)
     .fetch_one(pool)
     .await
 }
