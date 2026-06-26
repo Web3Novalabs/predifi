@@ -59,7 +59,7 @@ use std::{
 
 use axum::http::{Request, Response};
 use tower::{Layer, Service};
-use tracing::{error, info};
+use tracing::{error, info, info_span, Instrument};
 
 // Layer
 
@@ -132,6 +132,12 @@ where
         // Record when the request arrived so we can measure latency.
         let start = Instant::now();
 
+        let span = info_span!(
+            "http.request",
+            http.method = %method,
+            http.route = %path,
+        );
+
         // Forward the request to the inner service and get back a Future
         // that will eventually produce a Response.
         let inner_future = self.inner.call(req);
@@ -166,6 +172,7 @@ where
             }
 
             result
-        })
+        }
+        .instrument(span))
     }
 }

@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{error, info};
 
 use crate::response::ApiResponse;
+use crate::tracing_context;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -100,7 +101,7 @@ const ASSETS: &[(&str, &str)] = &[("BTC", "bitcoin"), ("ETH", "ethereum"), ("XLM
 /// Panics if the reqwest HTTP client cannot be built (this should never
 /// happen in practice).
 pub fn spawn_fetcher(cache: PriceCache) {
-    tokio::spawn(async move {
+    tracing_context::spawn_worker("price_fetcher", async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
