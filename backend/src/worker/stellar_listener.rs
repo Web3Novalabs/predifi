@@ -12,10 +12,12 @@ use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
-use crate::tracing_context;
+use crate::redis_cache::RedisCache;
 
 const POLL_INTERVAL_SECS: u64 = 5;
 const STATE_KEY: &str = "stellar_listener_latest_ledger";
+const INITIAL_RECONNECT_DELAY_SECS: u64 = 1;
+const MAX_RECONNECT_DELAY_SECS: u64 = 60;
 
 // ── RPC response types ────────────────────────────────────────────────────────
 
@@ -125,14 +127,32 @@ pub fn spawn(
     rpc_url: String,
     db: PgPool,
     event_bus: crate::ws::EventBus,
+    redis: RedisCache,
     timeout: Duration,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        run(rpc_url, db, event_bus, timeout).await;
+        run(rpc_url, db, event_bus, redis, timeout).await;
     })
 }
 
-async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeout: Duration) {
+/// Compute exponential backoff delay for RPC reconnect attempts.
+fn reconnect_delay_secs(consecutive_failures: u32) -> u64 {
+    if consecutive_failures == 0 {
+        return INITIAL_RECONNECT_DELAY_SECS;
+    }
+    let shift = consecutive_failures.saturating_sub(1).min(6);
+    INITIAL_RECONNECT_DELAY_SECS
+        .saturating_mul(2u64.saturating_pow(shift))
+        .min(MAX_RECONNECT_DELAY_SECS)
+}
+
+async fn run(
+    rpc_url: String,
+    db: PgPool,
+    event_bus: crate::ws::EventBus,
+    redis: RedisCache,
+    timeout: Duration,
+) {
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
@@ -141,13 +161,24 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeou
 
     // Resume from the last persisted ledger, or start from ledger 1.
     let mut cursor: u64 = load_cursor(&db).await.unwrap_or(1);
+    let mut consecutive_failures: u32 = 0;
     info!(cursor, "stellar listener starting");
 
     loop {
-        ticker.tick().await;
+        if consecutive_failures == 0 {
+            ticker.tick().await;
+        }
 
         match fetch_events(&client, &rpc_url, cursor).await {
             Ok(result) => {
+                if consecutive_failures > 0 {
+                    info!(
+                        previous_failures = consecutive_failures,
+                        "stellar RPC connection restored after reconnect"
+                    );
+                }
+                consecutive_failures = 0;
+
                 let count = result.events.len();
                 if count > 0 {
                     info!(
@@ -178,7 +209,7 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeou
 
                         if event.event_type == "contract" {
                             if topic_matches("pool_created") {
-                                if let Err(e) = handle_pool_created_event(&db, event).await {
+                                if let Err(e) = handle_pool_created_event(&db, &redis, event).await {
                                     error!(
                                         id = %event.id,
                                         ledger = event.ledger,
@@ -250,13 +281,26 @@ async fn run(rpc_url: String, db: PgPool, event_bus: crate::ws::EventBus, timeou
                 }
             }
             Err(e) => {
-                error!(error = %e, cursor, "failed to fetch stellar events");
+                consecutive_failures += 1;
+                let delay = reconnect_delay_secs(consecutive_failures);
+                error!(
+                    error = %e,
+                    cursor,
+                    consecutive_failures,
+                    delay_secs = delay,
+                    "failed to fetch stellar events; scheduling reconnect"
+                );
+                tokio::time::sleep(Duration::from_secs(delay)).await;
             }
         }
     }
 }
 
-async fn handle_pool_created_event(db: &PgPool, event: &StellarEvent) -> Result<(), String> {
+async fn handle_pool_created_event(
+    db: &PgPool,
+    redis: &RedisCache,
+    event: &StellarEvent,
+) -> Result<(), String> {
     let data = event
         .data
         .as_ref()
@@ -287,7 +331,10 @@ async fn handle_pool_created_event(db: &PgPool, event: &StellarEvent) -> Result<
 
     crate::db::insert_pool_from_event(db, &pool_event)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    redis.invalidate_pools_cache().await;
+    Ok(())
 }
 
 async fn handle_prediction_placed_event(
@@ -505,5 +552,14 @@ mod tests {
         let data = serde_json::json!({ "pool_id": 1 });
         assert!(extract_string(&data, "creator").is_none());
         assert!(extract_u64(&data, "end_time").is_none());
+    }
+
+    #[test]
+    fn reconnect_delay_is_exponential_and_capped() {
+        assert_eq!(reconnect_delay_secs(1), 1);
+        assert_eq!(reconnect_delay_secs(2), 2);
+        assert_eq!(reconnect_delay_secs(3), 4);
+        assert_eq!(reconnect_delay_secs(4), 8);
+        assert_eq!(reconnect_delay_secs(10), 60);
     }
 }
