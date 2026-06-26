@@ -3,6 +3,7 @@ import { DM_Mono } from "next/font/google";
 import "./globals.css";
 import { SWRProvider } from "@/components/providers/SWRProvider";
 import { NetworkGuardProvider } from "@/components/providers/NetworkGuardProvider";
+import { ToastProvider } from "@/components/ui";
 
 const SITE_DESCRIPTION =
   "PrediFi is a decentralized prediction market protocol built on the Stellar network with Soroban smart contracts.";
@@ -100,7 +101,9 @@ export default function RootLayout({
       </head>
       <body className={`antialiased text-sm ${dmMono.variable}`}>
         <SWRProvider>
-          <NetworkGuardProvider>{children}</NetworkGuardProvider>
+          <NetworkGuardProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </NetworkGuardProvider>
         </SWRProvider>
       </body>
     </html>

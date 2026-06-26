@@ -3,11 +3,20 @@
 /**
  * StakedChartRenderer
  *
- * This module is intentionally isolated so that the recharts library is placed
- * in its own JavaScript chunk by the bundler.  It is loaded exclusively via a
- * dynamic import inside StakedChart.tsx, which means recharts is never part of
- * the initial page bundle and is only fetched when the chart is about to be
- * rendered.
+ * Intentionally isolated so recharts is placed in its own JS chunk by the
+ * bundler. Loaded exclusively via dynamic import in StakedChart.tsx so the
+ * library never ships in the initial page bundle.
+ *
+ * Sizing strategy
+ * ───────────────
+ * The parent (StakedChart) measures its own container with useContainerSize
+ * and passes explicit pixel dimensions here.  We still wrap the BarChart in
+ * ResponsiveContainer so recharts' internal layout math is happy, but we
+ * set width/height on the container to the measured values rather than "100%"
+ * so re-renders are triggered correctly when the container resizes.
+ *
+ * Fallback: when dimensions are not yet known (first render / SSR), the
+ * component renders nothing — the skeleton placeholder handles that state.
  */
 
 import {
@@ -35,13 +44,17 @@ const data = [
   { name: "DEC", value: 60000 },
 ];
 
-interface TooltipProps {
+interface TooltipPayload {
+  value: number;
+}
+
+interface CustomTooltipProps {
   active?: boolean;
-  payload?: { value: number }[];
+  payload?: TooltipPayload[];
   label?: string;
 }
 
-const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
+const CustomTooltip = ({ active, payload, label }: CustomTooltipProps) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-zinc-900 border border-white/10 p-2 rounded-lg shadow-xl">
@@ -55,14 +68,30 @@ const CustomTooltip = ({ active, payload, label }: TooltipProps) => {
   return null;
 };
 
+export interface StakedChartRendererProps {
+  /** Measured container width in px from useContainerSize. */
+  width: number;
+  /** Measured container height in px from useContainerSize. */
+  height: number;
+}
+
 /**
- * The raw recharts bar chart.  Rendered inside a fixed-height container
- * supplied by the parent StakedChart card.
+ * The raw recharts bar chart.
+ *
+ * Width and height are driven by the parent's ResizeObserver measurement so
+ * the chart scales precisely when the layout container changes size — e.g.
+ * on window resize, sidebar collapse, or responsive breakpoint transitions.
  */
-export function StakedChartRenderer() {
+export function StakedChartRenderer({ width, height }: StakedChartRendererProps) {
+  // Don't render until we have real measurements
+  if (width === 0 || height === 0) return null;
+
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data}>
+    <ResponsiveContainer width={width} height={height}>
+      <BarChart
+        data={data}
+        margin={{ top: 4, right: 4, bottom: 0, left: 4 }}
+      >
         <XAxis
           dataKey="name"
           axisLine={false}
@@ -70,7 +99,10 @@ export function StakedChartRenderer() {
           tick={{ fill: "#525252", fontSize: 10 }}
           dy={10}
         />
-        <Tooltip content={<CustomTooltip />} cursor={{ fill: "transparent" }} />
+        <Tooltip
+          content={<CustomTooltip />}
+          cursor={{ fill: "transparent" }}
+        />
         <Bar dataKey="value" radius={[4, 4, 4, 4]}>
           {data.map((entry, index) => (
             <Cell

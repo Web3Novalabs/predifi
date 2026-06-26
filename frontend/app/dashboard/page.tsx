@@ -117,11 +117,15 @@ export default function DashboardPage() {
 
       {/* Charts Section — below the fold; lazily loaded */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1 h-[320px]">
+        {/*
+          Balance card: taller on small screens (content needs room), shorter
+          on large screens where the layout is side-by-side.
+        */}
+        <div className="lg:col-span-1 h-[280px] sm:h-[300px] lg:h-[360px]">
           <Suspense
             fallback={
               <div
-                className="h-[320px] w-full animate-pulse bg-zinc-800/50 rounded-xl"
+                className="h-full w-full animate-pulse bg-zinc-800/50 rounded-xl"
                 aria-hidden="true"
               />
             }
@@ -129,11 +133,16 @@ export default function DashboardPage() {
             <BalanceSection />
           </Suspense>
         </div>
-        <div className="lg:col-span-2 h-[320px]">
+        {/*
+          Chart card: more vertical space on large screens so bars are clearly
+          readable. On mobile the stacked layout already gives good width so a
+          moderate height is fine.
+        */}
+        <div className="lg:col-span-2 h-[280px] sm:h-[300px] lg:h-[360px]">
           <Suspense
             fallback={
               <div
-                className="h-[320px] w-full animate-pulse bg-zinc-800/50 rounded-xl"
+                className="h-full w-full animate-pulse bg-zinc-800/50 rounded-xl"
                 aria-hidden="true"
               />
             }

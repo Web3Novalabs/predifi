@@ -1,9 +1,9 @@
-//! `predifi-backend` — Axum HTTP server entry point.
+//! # predifi-backend (library)
 //!
-//! All routers, handlers, and shared modules live in the `predifi_backend`
-//! library crate so they can be reused by other binaries (notably
-//! `predifi-seed`).  This file only wires environment loading to
-//! [`predifi_backend::run_server`].
+//! Library crate shared by the `predifi-backend` server binary and the
+//! `predifi-seed` database seeding binary.  All modules, router builders, and
+//! handlers live here so both binaries (and the test suite) share a single
+//! source of truth.
 
 pub mod config;
 pub mod constants;
@@ -18,10 +18,10 @@ pub mod referrals;
 pub mod request_logger;
 pub mod response;
 pub mod routes;
+pub mod seed;
 pub mod server;
 pub mod session;
 pub mod telemetry;
-pub mod tracing_context;
 pub mod worker;
 pub mod ws;
 
@@ -32,7 +32,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
-use http::header::HeaderValue;
+use http::HeaderValue;
 use sentry_tracing::layer as sentry_tracing_layer;
 use serde_json::json;
 use std::sync::Arc;
@@ -231,25 +231,6 @@ async fn metrics(State(state): State<routes::v1::AppState>) -> impl IntoResponse
     }
 }
 
-// async fn metrics_middleware(
-//     State(metrics): State<SharedMetrics>,
-//     request: axum::http::Request<axum::body::Body>,
-//     next: Next,
-// ) -> axum::response::Response {
-//     let method = request.method().to_string();
-//     let path = request.uri().path().to_string();
-//
-//     let response = next.run(request).await;
-//     let status = response.status().as_u16().to_string();
-//
-//     metrics
-//         .http_requests_total
-//         .with_label_values(&[&method, &path, &status])
-//         .inc();
-//
-//     response
-// }
-
 /// Build the Axum router with CORS, logging, and rate limiting middleware.
 pub fn build_router(
     config: Config,
@@ -381,14 +362,57 @@ pub fn build_router_with_db(
     router
 }
 
-#[tokio::main]
-async fn main() {
-    dotenvy::dotenv().ok();
+/// Initialise tracing, build the server, and run it to completion.
+pub async fn run_server(config: Config) {
+    let filter = EnvFilter::new(config.log_level.clone());
+    let use_json = true;
 
-    let config = Config::from_env().unwrap_or_else(|error| {
-        eprintln!("failed to load configuration: {error}");
-        std::process::exit(1);
-    });
+    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
 
-    run_server(config).await;
+    let registry = tracing_subscriber::registry().with(filter);
+
+    if use_json {
+        let registry = registry.with(fmt_layer.json());
+        if let Some(dsn) = config.sentry_dsn.as_ref() {
+            let _guard = sentry::init((
+                dsn.as_str(),
+                sentry::ClientOptions {
+                    release: Some(env!("CARGO_PKG_VERSION").into()),
+                    ..Default::default()
+                },
+            ));
+            let registry = registry.with(sentry_tracing_layer());
+            registry.init();
+        } else {
+            registry.init();
+        }
+    } else {
+        let registry = registry.with(fmt_layer.compact());
+        if let Some(dsn) = config.sentry_dsn.as_ref() {
+            let _guard = sentry::init((
+                dsn.as_str(),
+                sentry::ClientOptions {
+                    release: Some(env!("CARGO_PKG_VERSION").into()),
+                    ..Default::default()
+                },
+            ));
+            let registry = registry.with(sentry_tracing_layer());
+            registry.init();
+        } else {
+            registry.init();
+        }
+    }
+
+    info!("starting predifi-backend server");
+
+    server::run(config).await;
 }
+
+#[cfg(test)]
+mod db_integration_tests;
+#[cfg(test)]
+mod redis_integration_tests;
+#[cfg(test)]
+mod test_support;
+#[cfg(test)]
+mod tests;

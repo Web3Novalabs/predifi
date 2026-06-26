@@ -11,6 +11,10 @@ readme = "README.md"
 name = "predifi-backend"
 path = "src/main.rs"
 
+[[bin]]
+name = "predifi-seed"
+path = "src/bin/seed.rs"
+
 [dependencies]
 axum = { version = "0.7", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }

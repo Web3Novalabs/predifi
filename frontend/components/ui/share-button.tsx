@@ -5,6 +5,7 @@ import { Share2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import SocialIcon, { SocialIconId } from "@/components/ui/SocialIcon";
+import { useCopyToClipboard } from "@/lib/hooks/useCopyToClipboard";
 
 export interface ShareButtonProps {
   /** The URL to share */
@@ -21,10 +22,9 @@ export interface ShareButtonProps {
 
 const defaultNetworks: SocialIconId[] = ["x", "telegram", "reddit", "discord"];
 
-function getShareUrl(network: SocialIconId, url: string, title?: string, text?: string) {
+function getShareUrl(network: SocialIconId, url: string, title?: string) {
   const encodedUrl = encodeURIComponent(url);
   const encodedTitle = title ? encodeURIComponent(title) : "";
-  const encodedText = text ? encodeURIComponent(text) : "";
 
   switch (network) {
     case "x":
@@ -51,6 +51,10 @@ export function ShareButton({
   const [isOpen, setIsOpen] = React.useState(false);
   const buttonRef = React.useRef<HTMLButtonElement>(null);
   const dropdownRef = React.useRef<HTMLDivElement>(null);
+  const { copy } = useCopyToClipboard({
+    successTitle: "Link copied!",
+    successDescription: "The link has been copied to your clipboard.",
+  });
 
   const handleShare = async () => {
     if (navigator.share) {
@@ -60,7 +64,7 @@ export function ShareButton({
           text,
           url,
         });
-      } catch (err) {
+      } catch {
         // User canceled or share failed, open custom dropdown
         setIsOpen(!isOpen);
       }
@@ -70,13 +74,12 @@ export function ShareButton({
   };
 
   const handleNetworkClick = (network: SocialIconId) => {
-    const shareUrl = getShareUrl(network, url, title, text);
+    const shareUrl = getShareUrl(network, url, title);
     if (shareUrl) {
       window.open(shareUrl, "_blank", "noopener,noreferrer");
     } else if (network === "discord") {
-      // For Discord, copy to clipboard
-      navigator.clipboard.writeText(url);
-      // TODO: Maybe show a toast?
+      // For Discord, copy the URL and show a toast
+      void copy(url);
     }
     setIsOpen(false);
   };

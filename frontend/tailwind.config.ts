@@ -68,6 +68,35 @@ const config: Config = {
                 md: "calc(var(--radius) - 2px)",
                 sm: "calc(var(--radius) - 4px)",
             },
+            keyframes: {
+                // Page-level fade-in (used by settings panel transitions)
+                fadeIn: {
+                    from: { opacity: "0", transform: "translateY(10px)" },
+                    to:   { opacity: "1", transform: "translateY(0)" },
+                },
+                // Toast enter: slide in from the right edge
+                "toast-in": {
+                    from: { opacity: "0", transform: "translateX(calc(100% + 1rem))" },
+                    to:   { opacity: "1", transform: "translateX(0)" },
+                },
+                // Toast exit: slide back out, then collapse height so the stack closes up
+                "toast-out": {
+                    "0%":   { opacity: "1", transform: "translateX(0)", maxHeight: "200px", marginBottom: "0.5rem" },
+                    "60%":  { opacity: "0", transform: "translateX(calc(100% + 1rem))" },
+                    "100%": { opacity: "0", transform: "translateX(calc(100% + 1rem))", maxHeight: "0", marginBottom: "0" },
+                },
+                // Progress bar drains from full width to zero
+                "toast-progress": {
+                    from: { transform: "scaleX(1)" },
+                    to:   { transform: "scaleX(0)" },
+                },
+            },
+            animation: {
+                "fade-in":        "fadeIn 0.5s ease-out forwards",
+                "toast-in":       "toast-in  0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards",
+                "toast-out":      "toast-out 0.4s  cubic-bezier(0.4,  0, 1,   1) forwards",
+                "toast-progress": "toast-progress linear forwards",
+            },
         },
     },
     plugins: [],

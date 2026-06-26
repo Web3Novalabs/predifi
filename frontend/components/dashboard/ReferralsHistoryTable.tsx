@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useCallback, memo } from "react";
-import { Copy, CheckCircle2, Clock, XCircle } from "lucide-react";
+import { memo } from "react";
+import { CheckCircle2, Clock, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui";
+import { Card, CardContent, CardHeader, CardTitle, CopyButton } from "@/components/ui";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -109,34 +109,6 @@ const StatusBadge = memo(function StatusBadge({ status }: { status: ReferralStat
 StatusBadge.displayName = "StatusBadge";
 
 // ---------------------------------------------------------------------------
-// CopyButton — copies referral id
-// ---------------------------------------------------------------------------
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // clipboard API unavailable
-    }
-  }, [text]);
-
-  return (
-    <button
-      onClick={handleCopy}
-      aria-label={copied ? "Copied" : "Copy ID"}
-      className="ml-1.5 text-zinc-500 hover:text-white transition-colors"
-    >
-      <Copy className={cn("w-3 h-3", copied && "text-emerald-400")} />
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // ReferralsHistoryTable
 // ---------------------------------------------------------------------------
 
@@ -179,9 +151,15 @@ export function ReferralsHistoryTable() {
                       {ref.reward}
                     </td>
                     <td className="px-6 py-4 font-mono text-zinc-400 whitespace-nowrap">
-                      <span className="flex items-center">
+                      <span className="flex items-center gap-1">
                         {ref.id}
-                        <CopyButton text={ref.id} />
+                        <CopyButton
+                          text={ref.id}
+                          size="xs"
+                          aria-label={`Copy referral ID ${ref.id}`}
+                          copyOptions={{ successDescription: `${ref.id} copied to clipboard` }}
+                          className="ml-0.5"
+                        />
                       </span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
