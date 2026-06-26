@@ -57,9 +57,11 @@ export function SearchBar({
   const [inputValue, setInputValue] = React.useState<string>(
     controlledValue ?? "",
   );
+  const isControlled = controlledValue !== undefined;
+  const currentValue = isControlled ? controlledValue : inputValue;
 
   // The debounced value — only updates after the user pauses typing.
-  const debouncedValue = useDebounce(inputValue, debounceDelay);
+  const debouncedValue = useDebounce(currentValue, debounceDelay);
 
   // Fire `onSearch` whenever the debounced value changes.
   React.useEffect(() => {
@@ -73,7 +75,9 @@ export function SearchBar({
   };
 
   const handleClear = () => {
-    setInputValue("");
+    if (!isControlled) {
+      setInputValue("");
+    }
     onChange?.("");
   };
 
@@ -89,10 +93,11 @@ export function SearchBar({
         type="search"
         role="searchbox"
         aria-label={ariaLabel}
-        value={inputValue}
+        value={currentValue}
         onChange={handleChange}
         placeholder={placeholder}
         disabled={disabled}
+        autoComplete="off"
         className={cn(
           // Base styles
           "flex h-10 w-full rounded-md border border-input bg-transparent",
