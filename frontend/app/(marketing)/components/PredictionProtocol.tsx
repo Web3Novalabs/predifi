@@ -173,36 +173,40 @@ function PredictionProtocol() {
   /**
    * Memoized mobile pagination dots. Only re-calculates if activeTab changes.
    */
-  const dotButtons = useMemo(() => (
-    steps.map((_, index) => (
-      <DotButton
-        key={index}
-        index={index}
-        isActive={activeTab === index}
-        onSelect={handleSelect}
-      />
-    ))
-  ), [activeTab, handleSelect]);
+  const dotButtons = useMemo(
+    () =>
+      steps.map((_, index) => (
+        <DotButton
+          key={index}
+          index={index}
+          isActive={activeTab === index}
+          onSelect={handleSelect}
+        />
+      )),
+    [activeTab, handleSelect],
+  );
 
   /**
    * Memoized desktop step buttons. Only re-calculates if activeTab changes.
    */
-  const stepButtons = useMemo(() => (
-    steps.map((step, index) => (
-      <StepButton
-        key={index}
-        index={index}
-        title={step.title}
-        description={step.description}
-        isActive={activeTab === index}
-        onSelect={handleSelect}
-      />
-    ))
-  ), [activeTab, handleSelect]);
+  const stepButtons = useMemo(
+    () =>
+      steps.map((step, index) => (
+        <StepButton
+          key={index}
+          index={index}
+          title={step.title}
+          description={step.description}
+          isActive={activeTab === index}
+          onSelect={handleSelect}
+        />
+      )),
+    [activeTab, handleSelect],
+  );
 
   return (
     <div className="px-5 overflow-hidden">
-      <h1 className="max-w-[558px] text-center mb-[40px] md:mb-[52px] text-white text-[28px] md:text-[48px] leading-[120%] -tracking-[9%] font-medium mx-auto">
+      <h1 className="max-w-full sm:max-w-[558px] text-center mb-[40px] md:mb-[52px] text-white text-[26px] sm:text-[32px] md:text-[48px] leading-[120%] -tracking-[9%] font-medium mx-auto">
         A decentralized Prediction Protocol
       </h1>
 
@@ -214,7 +218,7 @@ function PredictionProtocol() {
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
         >
-          <div className="relative w-full max-w-[320px] md:max-w-none">
+          <div className="relative w-full max-w-[320px] sm:max-w-[400px] md:max-w-none">
             <img
               key={activeTab} // key forces re-mount for the fade-in animation
               src={steps[activeTab].image}
@@ -230,9 +234,7 @@ function PredictionProtocol() {
         {/* === LEFT SIDE (Content) — ordered second on mobile === */}
         <div className="order-2 md:order-1 flex flex-col items-center md:items-start gap-y-6 md:gap-y-10 max-w-[700px] w-full">
           {/* MOBILE: Pagination dots */}
-          <div className="flex md:hidden gap-3 mb-2">
-            {dotButtons}
-          </div>
+          <div className="flex md:hidden gap-3 mb-2">{dotButtons}</div>
 
           {/* MOBILE: Active step text */}
           <div className="block md:hidden text-center animate-fade-in">
@@ -245,9 +247,7 @@ function PredictionProtocol() {
           </div>
 
           {/* DESKTOP: Step buttons list */}
-          <div className="hidden md:flex flex-col gap-y-10">
-            {stepButtons}
-          </div>
+          <div className="hidden md:flex flex-col gap-y-10">{stepButtons}</div>
         </div>
       </div>
     </div>

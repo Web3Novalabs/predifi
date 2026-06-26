@@ -46,24 +46,21 @@ const PredictionProtocol = dynamic(
         aria-hidden="true"
       />
     ),
-  }
+  },
 );
 
 /**
  * Features — three feature cards with images; well below the fold.
  * Pure server-renderable component, so ssr:true (default) is fine.
  */
-const Features = dynamic(
-  () => import("./(marketing)/components/Features"),
-  {
-    loading: () => (
-      <div
-        className="h-[600px] w-full animate-pulse bg-white/5 rounded-2xl"
-        aria-hidden="true"
-      />
-    ),
-  }
-);
+const Features = dynamic(() => import("./(marketing)/components/Features"), {
+  loading: () => (
+    <div
+      className="h-[600px] w-full animate-pulse bg-white/5 rounded-2xl"
+      aria-hidden="true"
+    />
+  ),
+});
 
 /**
  * InstinctsToSignals — stats/feature grid; well below the fold.
@@ -77,47 +74,41 @@ const InstinctsToSignals = dynamic(
         aria-hidden="true"
       />
     ),
-  }
+  },
 );
 
 /**
  * FAQ — accordion; "use client" component (uses useState for open/close).
  * Deferred with ssr:false to keep the initial bundle lean.
  */
-const FAQ = dynamic(
-  () => import("./(marketing)/components/FAQ"),
-  {
-    loading: () => (
-      <div
-        className="h-[400px] w-full animate-pulse bg-white/5 rounded-2xl"
-        aria-hidden="true"
-      />
-    ),
-  }
-);
+const FAQ = dynamic(() => import("./(marketing)/components/FAQ"), {
+  loading: () => (
+    <div
+      className="h-[400px] w-full animate-pulse bg-white/5 rounded-2xl"
+      aria-hidden="true"
+    />
+  ),
+});
 
 /**
  * Footer — bottom of page; no interactivity, but deferred to prioritise
  * above-the-fold content in the initial JS bundle.
  */
-const Footer = dynamic(
-  () => import("./(marketing)/components/Footer"),
-  {
-    loading: () => (
-      <div
-        className="h-[120px] w-full animate-pulse bg-white/5 rounded-t-[40px]"
-        aria-hidden="true"
-      />
-    ),
-  }
-);
+const Footer = dynamic(() => import("./(marketing)/components/Footer"), {
+  loading: () => (
+    <div
+      className="h-[120px] w-full animate-pulse bg-white/5 rounded-t-[40px]"
+      aria-hidden="true"
+    />
+  ),
+});
 
 // ---------------------------------------------------------------------------
 
 export default function Home() {
   return (
     <div className="text-sm min-h-screen bg-[#001112]">
-      <main className="w-screen overflow-x-hidden">
+      <main className="w-full overflow-x-hidden">
         {/* Above the fold — eagerly loaded */}
         <NavBar />
         <HeroSection />

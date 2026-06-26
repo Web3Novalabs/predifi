@@ -67,16 +67,19 @@ export default function WaitlistForm() {
         {/* Early Access Message */}
         <div className="mb-8 md:mb-12 space-y-4">
           <p className="text-[#E0FFFB] text-base md:text-[18px]/[140%] tracking-[2%] max-w-xl">
-            PrediFi is currently in <span className="font-semibold text-white">early access</span> and coming soon!
+            PrediFi is currently in{" "}
+            <span className="font-semibold text-white">early access</span> and
+            coming soon!
           </p>
           <p className="text-[#B3CECB] text-sm md:text-base tracking-[2%] max-w-lg">
-            Be among the first to experience decentralized prediction markets. 
-            Join our waitlist to get early access and stay updated on our launch.
+            Be among the first to experience decentralized prediction markets.
+            Join our waitlist to get early access and stay updated on our
+            launch.
           </p>
         </div>
 
         {/* Form Card */}
-        <div className="w-full max-w-md text-left">
+        <div className="w-full max-w-md text-left mx-auto">
           {status !== "success" ? (
             <form onSubmit={handleSubmit} noValidate className="space-y-6">
               <div className="rounded-[24px] md:rounded-[33px] bg-[#03353A4D] backdrop-blur-[15px] p-6 md:py-10 md:px-8 space-y-6 border border-[#ffffff0d]">
@@ -134,7 +137,9 @@ export default function WaitlistForm() {
                   loading={status === "loading"}
                   className="w-full bg-[#37B7C3] text-black hover:bg-[#2aa0ac] font-semibold text-base md:text-lg"
                 >
-                  {status === "loading" ? "Joining Waitlist..." : "Join Waitlist"}
+                  {status === "loading"
+                    ? "Joining Waitlist..."
+                    : "Join Waitlist"}
                 </Button>
               </div>
             </form>
@@ -148,8 +153,9 @@ export default function WaitlistForm() {
                   You&apos;re on the list!
                 </h3>
                 <p className="text-[#B3CECB] text-sm md:text-base">
-                  Thank you for joining the waitlist. We&apos;ll notify you when 
-                  PrediFi launches so you can be among the first to start predicting!
+                  Thank you for joining the waitlist. We&apos;ll notify you when
+                  PrediFi launches so you can be among the first to start
+                  predicting!
                 </p>
               </div>
             </div>
@@ -159,8 +165,8 @@ export default function WaitlistForm() {
         {/* Additional Info */}
         <div className="mt-8 md:mt-12 text-[#758382] text-xs md:text-sm max-w-lg">
           <p>
-            By joining the waitlist, you&apos;ll receive updates about our launch, 
-            early access opportunities, and exclusive features.
+            By joining the waitlist, you&apos;ll receive updates about our
+            launch, early access opportunities, and exclusive features.
           </p>
         </div>
       </div>
