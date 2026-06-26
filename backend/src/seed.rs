@@ -325,7 +325,8 @@ pub fn seed_pool_to_event(p: &SeedPool) -> PoolCreatedEvent {
 }
 
 /// Convert a [`SeedPrediction`] into the on-chain event shape used by
-/// `db::insert_prediction_from_event`.
+/// `db::insert_prediction_from_event_with_pool` (or `db::insert_prediction_from_event`
+/// when composing multi-step writes inside a transaction).
 pub fn seed_prediction_to_event(p: &SeedPrediction) -> PredictionPlacedEvent {
     PredictionPlacedEvent {
         pool_id: p.pool_id,

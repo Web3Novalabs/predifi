@@ -495,7 +495,7 @@ pub async fn ingest_prediction_placed(
         outcome: payload.outcome,
     };
 
-    match crate::db::insert_prediction_from_event(db, &event).await {
+    match crate::db::insert_prediction_from_event_with_pool(db, &event).await {
         Ok(()) => {
             state.event_bus.send(&json!({
                 "type": "prediction_placed",
