@@ -40,6 +40,7 @@ use sqlx::PgPool;
 
 use crate::db::ReferralEarningRow;
 use crate::response::ApiResponse;
+use crate::response::error_codes;
 
 /// Summary statistics for a single referrer address.
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -83,6 +84,7 @@ pub async fn get_referrals(
     match result {
         Ok(row) if row.unique_users == 0 => Ok(ApiResponse::error(
             StatusCode::NOT_FOUND,
+            error_codes::NOT_FOUND,
             format!("no referrals found for {address}"),
         )),
         Ok(row) => Ok(ApiResponse::success(ReferralStats {
@@ -181,6 +183,7 @@ pub async fn get_user_referral_earnings(
     match crate::db::get_referral_earnings(&pool, &address).await {
         Ok(rows) if rows.is_empty() => Ok(ApiResponse::error(
             StatusCode::NOT_FOUND,
+            error_codes::NOT_FOUND,
             format!("no referral earnings found for {address}"),
         )),
         Ok(rows) => {

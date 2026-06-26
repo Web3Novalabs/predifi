@@ -347,11 +347,13 @@ fn build_router_with_rate_period(
                 .period(period)
                 .burst_size(burst_size)
                 .error_handler(|_| {
-                    (
+                    use crate::response::ApiResponse;
+                    use crate::response::error_codes;
+                    ApiResponse::<()>::error(
                         axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
+                        error_codes::RATE_LIMIT_EXCEEDED,
+                        "Too Many Requests"
+                    ).into_response()
                 })
                 .finish()
                 .unwrap(),
@@ -418,11 +420,13 @@ fn build_router_with_db(
                 .per_second(crate::constants::RATE_LIMIT_PERIOD_SECS)
                 .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
                 .error_handler(|_| {
-                    (
+                    use crate::response::ApiResponse;
+                    use crate::response::error_codes;
+                    ApiResponse::<()>::error(
                         axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
+                        error_codes::RATE_LIMIT_EXCEEDED,
+                        "Too Many Requests"
+                    ).into_response()
                 })
                 .finish()
                 .unwrap(),
@@ -498,7 +502,7 @@ where
         warn!("Redis cache unavailable - running without caching");
     }
 
-    let app = build_router_with_db(config.clone(), cache, redis, pool, event_bus);
+    let app = build_router_with_db(config.clone(), cache, redis, pool.clone(), event_bus);
 
     let bind_addr = config.bind_address();
 

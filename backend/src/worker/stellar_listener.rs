@@ -12,8 +12,6 @@ use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
-use crate::tracing_context;
-
 const POLL_INTERVAL_SECS: u64 = 5;
 const STATE_KEY: &str = "stellar_listener_latest_ledger";
 

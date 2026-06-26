@@ -29,7 +29,6 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 
 use crate::response::ApiResponse;
-use crate::tracing_context;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -161,9 +160,14 @@ async fn fetch_prices(client: &reqwest::Client) -> Result<HashMap<String, f64>, 
 pub async fn get_prices(
     State(cache): State<PriceCache>,
 ) -> (StatusCode, Json<ApiResponse<Vec<AssetPrice>>>) {
+    use crate::response::error_codes;
     let snapshot = cache.snapshot();
     if snapshot.is_empty() {
-        return ApiResponse::error(StatusCode::SERVICE_UNAVAILABLE, "price cache not ready");
+        return ApiResponse::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::SERVICE_UNAVAILABLE,
+            "price cache not ready"
+        );
     }
 
     let mut prices: Vec<AssetPrice> = snapshot

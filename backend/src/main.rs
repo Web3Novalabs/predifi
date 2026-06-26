@@ -5,46 +5,7 @@
 //! `predifi-seed`).  This file only wires environment loading to
 //! [`predifi_backend::run_server`].
 
-pub mod config;
-pub mod constants;
-pub mod db;
-pub mod errors;
-pub mod jwt;
-pub mod metrics;
-pub mod openapi;
-pub mod price_cache;
-pub mod redis_cache;
-pub mod referrals;
-pub mod request_logger;
-pub mod response;
-pub mod routes;
-pub mod server;
-pub mod session;
-pub mod shutdown;
-pub mod telemetry;
-pub mod tracing_context;
-pub mod worker;
-pub mod ws;
-
-use crate::config::Config;
-use crate::metrics::Metrics;
-use crate::request_logger::LoggingLayer;
-use axum::response::IntoResponse;
-use axum::routing::get;
-use axum::Json;
-use axum::Router;
-use http::header::HeaderValue;
-use sentry_tracing::layer as sentry_tracing_layer;
-use serde_json::json;
-use std::sync::Arc;
-use std::time::Duration as TokioDuration;
-use tokio::time::sleep;
-#[cfg(not(test))]
-use tower_governor::governor::GovernorConfigBuilder;
-use tower_http::cors::{AllowOrigin, CorsLayer};
-use tracing::info;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
+use predifi_backend::config::Config;
 
 /// Build the CORS middleware layer from the validated origin list in `config`.
 ///
@@ -391,5 +352,5 @@ async fn main() {
         std::process::exit(1);
     });
 
-    run_server(config).await;
+    predifi_backend::run_server(config).await;
 }

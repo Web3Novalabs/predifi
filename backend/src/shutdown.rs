@@ -121,13 +121,9 @@ pub async fn wait_for_signal() {
 /// user presses Ctrl+C in the controlling terminal.
 #[cfg(not(unix))]
 pub async fn wait_for_signal() {
-    match tokio::signal::ctrl_c() {
-        Ok(future) => {
-            if future.await.is_ok() {
-                info!("received Ctrl+C, beginning graceful shutdown");
-            } else {
-                warn!("Ctrl+C future returned an error; shutting down anyway");
-            }
+    match tokio::signal::ctrl_c().await {
+        Ok(_) => {
+            info!("received Ctrl+C, beginning graceful shutdown");
         }
         Err(error) => {
             warn!(error = %error, "failed to install Ctrl+C handler; shutting down anyway");
