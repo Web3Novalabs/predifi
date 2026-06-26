@@ -71,42 +71,65 @@ const AccordionItem = memo(function AccordionItem({
   isOpen,
   onToggle,
 }: AccordionItemProps) {
-  /**
-   * Stable click handler scoped to this item.
-   * useCallback here is valid — it is called at the top level of the component,
-   * not inside a loop. `onToggle` is stable (parent useCallback), and `index`
-   * is a primitive that never changes for a given list position.
-   */
   const handleClick = useCallback(() => {
     onToggle(index);
   }, [onToggle, index]);
 
   return (
-    <div className="border border-[#FFFFFF1A] rounded-[12px] overflow-hidden transition-all duration-300">
+    <div
+      className={[
+        "rounded-[12px] overflow-hidden",
+        "border transition-[border-color,background-color,box-shadow] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
+        isOpen
+          ? "border-[#37B7C3]/60 bg-[#37B7C3]/[0.06] shadow-[0_0_0_1px_rgba(55,183,195,0.15)]"
+          : "border-[#FFFFFF1A] bg-transparent hover:border-[#FFFFFF30] hover:bg-white/[0.03]",
+      ].join(" ")}
+    >
       <button
         onClick={handleClick}
-        className="w-full flex items-center justify-between p-4 text-left focus:outline-none group"
+        aria-expanded={isOpen}
+        className="w-full flex items-center justify-between p-4 md:p-5 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]/50 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent group"
       >
-        <span className="text-sm md:text-[18px] font-medium text-[#FFFFFFCC] group-hover:text-white transition-colors">
+        <span
+          className={[
+            "text-sm md:text-[18px] font-medium transition-colors duration-200",
+            isOpen ? "text-white" : "text-[#FFFFFFCC] group-hover:text-white",
+          ].join(" ")}
+        >
           {question}
         </span>
 
-        {/* Chevron rotates when the item is open */}
-        <ChevronDown
-          className={`w-5 h-5 text-[#FFFFFF80] transition-transform duration-300 ${
-            isOpen ? "rotate-180" : "rotate-0"
-          }`}
-        />
+        {/* Chevron — smooth rotate + color shift */}
+        <span
+          className={[
+            "ml-4 flex-shrink-0 rounded-full p-1",
+            "transition-[transform,background-color,color] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
+            isOpen
+              ? "rotate-180 bg-[#37B7C3]/20 text-[#37B7C3]"
+              : "rotate-0 bg-transparent text-[#FFFFFF50]",
+          ].join(" ")}
+        >
+          <ChevronDown className="w-4 h-4" />
+        </span>
       </button>
 
-      {/* Answer — CSS grid trick for smooth height transition */}
+      {/* Answer — CSS grid-rows trick for smooth height + opacity fade */}
       <div
-        className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-          isOpen ? "grid-rows-[1fr] pb-6" : "grid-rows-[0fr]"
-        }`}
+        className={[
+          "grid transition-[grid-template-rows] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
+          isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        ].join(" ")}
       >
-        <div className="overflow-hidden px-6">
-          <p className="text-[#FFFFFF99] text-sm lg:text-base leading-relaxed">
+        <div className="overflow-hidden">
+          <p
+            className={[
+              "px-5 md:px-6 pb-5 md:pb-6 text-[#FFFFFF99] text-sm lg:text-base leading-relaxed",
+              "transition-[opacity,transform] duration-300 ease-[cubic-bezier(0.4,0,0.2,1)]",
+              isOpen
+                ? "opacity-100 translate-y-0"
+                : "opacity-0 -translate-y-1",
+            ].join(" ")}
+          >
             {answer}
           </p>
         </div>

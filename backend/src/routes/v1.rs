@@ -230,16 +230,32 @@ pub async fn get_pool_by_id_handler(
     }
 }
 
+/// Query parameters for the `GET /api/v1/stats` endpoint.
+#[derive(Debug, Deserialize)]
+pub struct StatsQuery {
+    /// Category filter, e.g. "Sports", "Crypto"
+    pub category: Option<String>,
+    /// Pool state filter: "active" | "closed" | "settled"
+    pub status: Option<String>,
+}
+
 /// `GET /api/v1/stats` — protocol-wide aggregate statistics.
 ///
 /// Returns total value locked, total bets placed, and total pools created.
-/// Responds with a database-unavailable error if no pool is configured.
-pub async fn get_stats(State(state): State<AppState>) -> Json<serde_json::Value> {
+/// Optional `category` and `status` query parameters scope the aggregates to
+/// the matching pools. Responds with a database-unavailable error if no pool
+/// is configured.
+pub async fn get_stats(
+    State(state): State<AppState>,
+    Query(params): Query<StatsQuery>,
+) -> Json<serde_json::Value> {
     let Some(db) = &state.db else {
         return Json(json!({ "error": "database not available" }));
     };
 
-    match crate::db::get_protocol_stats(db).await {
+    match crate::db::get_protocol_stats(db, params.category.as_deref(), params.status.as_deref())
+        .await
+    {
         Ok(stats) => Json(json!(stats)),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
@@ -479,7 +495,7 @@ pub async fn ingest_prediction_placed(
         outcome: payload.outcome,
     };
 
-    match crate::db::insert_prediction_from_event(db, &event).await {
+    match crate::db::insert_prediction_from_event_with_pool(db, &event).await {
         Ok(()) => {
             state.event_bus.send(&json!({
                 "type": "prediction_placed",
@@ -523,6 +539,10 @@ pub fn router(
         .route("/prices", get(crate::price_cache::get_prices))
         .route("/referrals/{address}", get(referrals_handler))
         .route(
+            "/referrals/{address}/estimate",
+            get(referral_estimate_handler),
+        )
+        .route(
             "/users/{address}/referrals",
             get(user_referral_earnings_handler),
         )
@@ -556,6 +576,41 @@ async fn referrals_handler(
     match state.db {
         Some(pool) => {
             match crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await {
+                Ok((status, body)) => (status, body).into_response(),
+                Err(e) => {
+                    ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+                        .into_response()
+                }
+            }
+        }
+        None => {
+            ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
+                .into_response()
+        }
+    }
+}
+
+/// `GET /api/v1/referrals/:address/estimate` — estimated referral reward.
+///
+/// Requires a live DB pool; returns 503 if the pool is not configured.
+async fn referral_estimate_handler(
+    axum::extract::Path(address): axum::extract::Path<String>,
+    State(state): State<AppState>,
+) -> axum::response::Response {
+    use crate::response::ApiResponse;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    match state.db {
+        Some(pool) => {
+            match crate::referrals::estimate_referral_rewards(
+                address,
+                &pool,
+                state.config.treasury_fee_bps,
+                state.config.referral_fee_bps,
+            )
+            .await
+            {
                 Ok((status, body)) => (status, body).into_response(),
                 Err(e) => {
                     ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())

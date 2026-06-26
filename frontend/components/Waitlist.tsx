@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, FormEvent } from "react";
+import { isValidEmail } from "@/lib/email";
 
 export default function Waitlist() {
   const [email, setEmail] = useState("");
@@ -9,11 +10,6 @@ export default function Waitlist() {
     "idle" | "loading" | "success" | "error"
   >("idle");
   const [errorMessage, setErrorMessage] = useState("");
-
-  const validateEmail = (email: string): boolean => {
-    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    return re.test(email);
-  };
 
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -24,7 +20,7 @@ export default function Waitlist() {
       return;
     }
 
-    if (!validateEmail(email)) {
+    if (!isValidEmail(email)) {
       setStatus("error");
       setErrorMessage("Please enter a valid email address");
       return;
@@ -63,7 +59,7 @@ export default function Waitlist() {
 
         {/* Form */}
         {status !== "success" ? (
-          <form onSubmit={handleSubmit} className="mt-8 space-y-6">
+          <form onSubmit={handleSubmit} noValidate className="mt-8 space-y-6">
             <div className="space-y-4">
               <div>
                 <label htmlFor="name" className="sr-only">
@@ -91,7 +87,19 @@ export default function Waitlist() {
                   type="email"
                   required
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (status === "error") {
+                      setStatus("idle");
+                      setErrorMessage("");
+                    }
+                  }}
+                  aria-invalid={
+                    status === "error" && errorMessage.includes("email")
+                  }
+                  aria-describedby={
+                    status === "error" ? "waitlist-error" : undefined
+                  }
                   className="appearance-none relative block w-full px-4 py-3 border border-gray-700 bg-[#1a1a1a] placeholder-gray-500 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-[#00D9D9] focus:border-transparent transition-all"
                   placeholder="Email Address"
                   disabled={status === "loading"}
@@ -109,7 +117,11 @@ export default function Waitlist() {
             >
               {status === "error" && (
                 <div className="rounded-lg bg-red-900/20 border border-red-800 p-3">
-                  <p className="text-sm text-red-400 text-center">
+                  <p
+                    id="waitlist-error"
+                    className="text-sm text-red-400 text-center"
+                    role="alert"
+                  >
                     {errorMessage}
                   </p>
                 </div>

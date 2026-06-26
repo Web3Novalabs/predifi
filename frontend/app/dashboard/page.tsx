@@ -20,12 +20,10 @@
 
 import { Suspense } from "react";
 import dynamic from "next/dynamic";
-import { Diamond, Box, Activity, ShieldCheck } from "lucide-react";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Dashboard" };
-import { MetricCard } from "@/components/dashboard/MetricCard";
-import { formatStakeCompact } from "@/lib/stakeFilters";
+import { DashboardMetrics } from "@/components/dashboard/DashboardMetrics";
 
 // ---------------------------------------------------------------------------
 // Below-the-fold dashboard components — loaded lazily
@@ -115,51 +113,19 @@ export default function DashboardPage() {
       </div>
 
       {/* Metric Cards — above the fold; eagerly loaded */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard
-          title="Total Earned"
-          value={formatStakeCompact(1255)}
-          icon={<Diamond />}
-          change="65% increase"
-          changeType="positive"
-        />
-        <MetricCard
-          title="Active Pool"
-          value="75"
-          icon={<Box />}
-          change="+7 new add"
-          changeType="positive"
-        />
-        <MetricCard
-          title="Win Rate"
-          value="65%"
-          icon={<Activity />}
-          change="7.8% Growth"
-          changeType="positive"
-        />
-        <MetricCard
-          title="Reputation Score"
-          value={
-            <span className="flex items-end gap-1">
-              <span className="text-[#84CC16]">3.5</span>
-              <span className="text-lg text-zinc-500 font-normal mb-1">
-                /5.0
-              </span>
-            </span>
-          }
-          icon={<ShieldCheck />}
-          change="70% accuracy"
-          changeType="neutral"
-        />
-      </div>
+      <DashboardMetrics />
 
       {/* Charts Section — below the fold; lazily loaded */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-1 h-[320px]">
+        {/*
+          Balance card: taller on small screens (content needs room), shorter
+          on large screens where the layout is side-by-side.
+        */}
+        <div className="lg:col-span-1 h-[280px] sm:h-[300px] lg:h-[360px]">
           <Suspense
             fallback={
               <div
-                className="h-[320px] w-full animate-pulse bg-zinc-800/50 rounded-xl"
+                className="h-full w-full animate-pulse bg-zinc-800/50 rounded-xl"
                 aria-hidden="true"
               />
             }
@@ -167,11 +133,16 @@ export default function DashboardPage() {
             <BalanceSection />
           </Suspense>
         </div>
-        <div className="lg:col-span-2 h-[320px]">
+        {/*
+          Chart card: more vertical space on large screens so bars are clearly
+          readable. On mobile the stacked layout already gives good width so a
+          moderate height is fine.
+        */}
+        <div className="lg:col-span-2 h-[280px] sm:h-[300px] lg:h-[360px]">
           <Suspense
             fallback={
               <div
-                className="h-[320px] w-full animate-pulse bg-zinc-800/50 rounded-xl"
+                className="h-full w-full animate-pulse bg-zinc-800/50 rounded-xl"
                 aria-hidden="true"
               />
             }

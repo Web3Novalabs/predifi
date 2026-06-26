@@ -1,4 +1,7 @@
+"use client";
+
 import { ArrowUpRight } from "lucide-react";
+import { useState } from "react";
 import { Button, Card, CardContent, CardHeader, CardTitle, Skeleton } from "@/components/ui";
 import { formatUsd } from "@/lib/stakeFilters";
 
@@ -8,13 +11,27 @@ interface BalanceSectionProps {
     balance?: number | string | null;
     /** Rewards amount in USD. Defaults to demo value. */
     rewards?: number | string | null;
+    onWithdraw?: () => Promise<void> | void;
+    onClaim?: () => Promise<void> | void;
 }
 
 export function BalanceSection({
     isLoading = false,
     balance = 15255.25,
     rewards = 1255.68,
+    onWithdraw,
+    onClaim,
 }: BalanceSectionProps) {
+    const [pendingAction, setPendingAction] = useState<"withdraw" | "claim" | null>(null);
+
+    const runAction = async (action: "withdraw" | "claim", callback?: () => Promise<void> | void) => {
+        setPendingAction(action);
+        try {
+            await callback?.();
+        } finally {
+            setPendingAction(null);
+        }
+    };
     if (isLoading) {
         return (
             <Card className="bg-[#121212] border-none text-white h-full relative overflow-hidden">
@@ -50,11 +67,11 @@ export function BalanceSection({
                 </div>
 
                 <div className="flex gap-4">
-                    <Button className="bg-primary hover:bg-primary/90 text-black min-w-[140px] rounded-xl h-12 text-base font-medium group">
+                    <Button loading={pendingAction === "withdraw"} onClick={() => runAction("withdraw", onWithdraw)} className="bg-primary hover:bg-primary/90 text-black min-w-[140px] rounded-xl h-12 text-base font-medium group">
                         Withdrawal
                         <ArrowUpRight className="ml-2 w-4 h-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                     </Button>
-                    <Button className="bg-primary hover:bg-primary text-black border-transparent hover:border-transparent min-w-[140px] rounded-xl h-12 text-base font-medium group bg-[#37B7C3] hover:opacity-90">
+                    <Button loading={pendingAction === "claim"} onClick={() => runAction("claim", onClaim)} className="bg-primary hover:bg-primary text-black border-transparent hover:border-transparent min-w-[140px] rounded-xl h-12 text-base font-medium group bg-[#37B7C3] hover:opacity-90">
                         Claim
                         <ArrowUpRight className="ml-2 w-4 h-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
                     </Button>

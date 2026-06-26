@@ -12,6 +12,8 @@ use tokio::task::JoinHandle;
 use tokio::time::interval;
 use tracing::{error, info, warn};
 
+use crate::tracing_context;
+
 const POLL_INTERVAL_SECS: u64 = 5;
 const STATE_KEY: &str = "stellar_listener_latest_ledger";
 
@@ -315,7 +317,7 @@ async fn handle_prediction_placed_event(
         amount,
     };
 
-    crate::db::insert_prediction_from_event(db, &ev)
+    crate::db::insert_prediction_from_event_with_pool(db, &ev)
         .await
         .map_err(|e| e.to_string())?;
 

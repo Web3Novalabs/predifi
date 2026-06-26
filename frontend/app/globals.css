@@ -33,6 +33,14 @@
   --info-foreground: 210 40% 98%;
 }
 
+.dark {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --card: 222.2 84% 4.9%;
+  --card-foreground: 210 40% 98%;
+  --border: 217.2 32.6% 17.5%;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
@@ -43,7 +51,7 @@
     --card-foreground: 210 40% 98%;
     --popover: 222.2 84% 4.9%;
     --popover-foreground: 210 40% 98%;
-    --primary: 183 91% 47%; /* Keep primary consistent */
+    --primary: 183.91% 47%; /* Keep primary consistent */
     --primary-foreground: 222.2 47.4% 11.2%;
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
@@ -75,13 +83,64 @@ button {
   }
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px); /* Slight slide up effect */
+/* ── Custom scrollbar overrides for dark theme ── */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --scrollbar-thumb: #37b7c3;
+    --scrollbar-thumb-hover: #2ea3ad;
+    --scrollbar-track: #1a1a1a;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+}
+
+:root {
+  --scrollbar-thumb: #94a3b8;
+  --scrollbar-thumb-hover: #64748b;
+  --scrollbar-track: #f1f5f9;
+}
+
+/* Webkit browsers (Chrome, Safari, Edge) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: var(--scrollbar-track);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* Dark-theme utility class for components that force dark regardless of OS */
+.dark-scroll::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.dark-scroll::-webkit-scrollbar-thumb {
+  background: #37b7c3;
+}
+
+.dark-scroll::-webkit-scrollbar-thumb:hover {
+  background: #2ea3ad;
+}
+
+.dark-scroll {
+  scrollbar-color: #37b7c3 #1a1a1a;
 }

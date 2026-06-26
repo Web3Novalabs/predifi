@@ -1,6 +1,9 @@
-//! # predifi-backend
+//! `predifi-backend` — Axum HTTP server entry point.
 //!
-//! A minimal Axum HTTP server with CORS and request-logging middleware.
+//! All routers, handlers, and shared modules live in the `predifi_backend`
+//! library crate so they can be reused by other binaries (notably
+//! `predifi-seed`).  This file only wires environment loading to
+//! [`predifi_backend::run_server`].
 
 pub mod config;
 pub mod constants;
@@ -19,6 +22,7 @@ pub mod server;
 pub mod session;
 pub mod shutdown;
 pub mod telemetry;
+pub mod tracing_context;
 pub mod worker;
 pub mod ws;
 
@@ -387,55 +391,5 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let filter = EnvFilter::new(config.log_level.clone());
-    let use_json = true;
-
-    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
-
-    let registry = tracing_subscriber::registry().with(filter);
-
-    if use_json {
-        let registry = registry.with(fmt_layer.json());
-        if let Some(dsn) = config.sentry_dsn.as_ref() {
-            let _guard = sentry::init((
-                dsn.as_str(),
-                sentry::ClientOptions {
-                    release: Some(env!("CARGO_PKG_VERSION").into()),
-                    ..Default::default()
-                },
-            ));
-            let registry = registry.with(sentry_tracing_layer());
-            registry.init();
-        } else {
-            registry.init();
-        }
-    } else {
-        let registry = registry.with(fmt_layer.compact());
-        if let Some(dsn) = config.sentry_dsn.as_ref() {
-            let _guard = sentry::init((
-                dsn.as_str(),
-                sentry::ClientOptions {
-                    release: Some(env!("CARGO_PKG_VERSION").into()),
-                    ..Default::default()
-                },
-            ));
-            let registry = registry.with(sentry_tracing_layer());
-            registry.init();
-        } else {
-            registry.init();
-        }
-    }
-
-    info!("starting predifi-backend server");
-
-    server::run(config).await;
+    run_server(config).await;
 }
-
-#[cfg(test)]
-mod db_integration_tests;
-#[cfg(test)]
-mod redis_integration_tests;
-#[cfg(test)]
-mod test_support;
-#[cfg(test)]
-mod tests;
