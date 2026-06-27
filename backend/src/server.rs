@@ -239,6 +239,10 @@ async fn metrics_middleware(
         .with_label_values(&[&method, &path, &status])
         .inc();
 
+    if response.status() == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
+        metrics.http_server_errors_total.inc();
+    }
+
     response
 }
 
@@ -346,13 +350,7 @@ fn build_router_with_rate_period(
             GovernorConfigBuilder::default()
                 .period(period)
                 .burst_size(burst_size)
-                .error_handler(|_| {
-                    (
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
-                })
+                .error_handler(|_| crate::response::rate_limit_error_response())
                 .finish()
                 .unwrap(),
         );
@@ -417,13 +415,7 @@ fn build_router_with_db(
             GovernorConfigBuilder::default()
                 .per_second(crate::constants::RATE_LIMIT_PERIOD_SECS)
                 .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
-                .error_handler(|_| {
-                    (
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
-                })
+                .error_handler(|_| crate::response::rate_limit_error_response())
                 .finish()
                 .unwrap(),
         );
@@ -483,22 +475,23 @@ where
     let event_bus = crate::ws::EventBus::new();
 
     // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
+    // Initialize Redis cache
+    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
+
     let listener_handle: JoinHandle<()> = crate::worker::stellar_listener::spawn(
         config.stellar_rpc_url.clone(),
         pool.clone(),
         event_bus.clone(),
+        redis.clone(),
         std::time::Duration::from_secs(30),
     );
-
-    // Initialize Redis cache
-    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
         warn!("Redis cache unavailable - running without caching");
     }
 
-    let app = build_router_with_db(config.clone(), cache, redis, pool, event_bus);
+    let app = build_router_with_db(config.clone(), cache, redis, pool.clone(), event_bus);
 
     let bind_addr = config.bind_address();
 

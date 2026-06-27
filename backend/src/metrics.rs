@@ -1,4 +1,4 @@
-use prometheus::{CounterVec, Encoder, Gauge, Opts, Registry, TextEncoder};
+use prometheus::{Counter, CounterVec, Encoder, Gauge, Opts, Registry, TextEncoder};
 use std::sync::Arc;
 
 /// Shared application metrics exposed to Prometheus.
@@ -6,6 +6,8 @@ use std::sync::Arc;
 pub struct Metrics {
     pub registry: Registry,
     pub http_requests_total: CounterVec,
+    /// Total HTTP 500 Internal Server Error responses served.
+    pub http_server_errors_total: Counter,
     pub app_up: Gauge,
     pub app_info: Gauge,
     pub memory_used_bytes: Gauge,
@@ -33,6 +35,11 @@ impl Metrics {
             &["method", "path", "status"],
         )?;
 
+        let http_server_errors_total = Counter::with_opts(Opts::new(
+            "app_http_500_errors_total",
+            "Total number of HTTP 500 Internal Server Error responses.",
+        ))?;
+
         let app_up = Gauge::with_opts(Opts::new("app_up", "Application availability status."))?;
         app_up.set(1.0);
 
@@ -58,6 +65,7 @@ impl Metrics {
         ))?;
 
         registry.register(Box::new(http_requests_total.clone()))?;
+        registry.register(Box::new(http_server_errors_total.clone()))?;
         registry.register(Box::new(app_up.clone()))?;
         registry.register(Box::new(app_info.clone()))?;
         registry.register(Box::new(memory_used_bytes.clone()))?;
@@ -67,6 +75,7 @@ impl Metrics {
         Ok(Self {
             registry,
             http_requests_total,
+            http_server_errors_total,
             app_up,
             app_info,
             memory_used_bytes,
@@ -127,8 +136,8 @@ mod tests {
             "app_memory_total_bytes must be registered"
         );
         assert!(
-            names.contains(&"app_active_pools"),
-            "app_active_pools must be registered"
+            names.contains(&"app_http_500_errors_total"),
+            "app_http_500_errors_total must be registered"
         );
 
         // CounterVec metrics are omitted until a label set is instantiated.
@@ -209,13 +218,19 @@ mod tests {
         );
     }
 
-    /// `active_pools` gauge starts at 0 and can be set.
+    /// HTTP 500 counter increments independently of the general request counter.
     #[test]
-    fn metrics_active_pools_gauge_works() {
+    fn http_server_errors_total_increments() {
         let metrics = Metrics::new().expect("Metrics::new() must succeed");
-        assert_eq!(metrics.active_pools.get(), 0.0, "active_pools must start at 0");
-        metrics.active_pools.set(42.0);
-        assert_eq!(metrics.active_pools.get(), 42.0, "active_pools must reflect set value");
+        assert_eq!(metrics.http_server_errors_total.get(), 0.0);
+        metrics.http_server_errors_total.inc();
+        assert_eq!(metrics.http_server_errors_total.get(), 1.0);
+
+        let text = metrics.gather_text().expect("gather_text() must succeed");
+        assert!(
+            text.contains("app_http_500_errors_total"),
+            "output must contain app_http_500_errors_total"
+        );
     }
 
     /// `SharedMetrics` (Arc<Metrics>) can be cloned and used from multiple owners.

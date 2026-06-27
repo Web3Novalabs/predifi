@@ -24,6 +24,9 @@ pub const POOL_DETAILS_CACHE_TTL: u64 = 30;
 /// Default TTL for user predictions (45 seconds)
 pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 
+/// Redis key pattern matching all cached pool list queries.
+pub const POOLS_CACHE_PATTERN: &str = "pools:*";
+
 /// Thread-safe Redis cache client with graceful fail-open behaviour.
 ///
 /// All operations silently no-op when Redis is unavailable so the application
@@ -200,6 +203,14 @@ impl RedisCache {
                 pattern
             );
         }
+    }
+
+    /// Invalidate all cached pool list entries.
+    ///
+    /// Call after a new pool is created so clients see fresh data on the next
+    /// `GET /api/v1/pools` request.
+    pub async fn invalidate_pools_cache(&self) {
+        self.delete_pattern(POOLS_CACHE_PATTERN).await;
     }
 
     /// Ping Redis to check connection health
