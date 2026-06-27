@@ -512,7 +512,6 @@ where
         warn!("Redis cache unavailable - running without caching");
     }
 
-    let app = build_router_with_db(config.clone(), cache, redis, pool.clone(), event_bus);
     let app = build_router_with_db(
         config.clone(),
         cache,

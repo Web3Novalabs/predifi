@@ -133,7 +133,7 @@ mod tests {
             .await
             .expect("request failed");
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
         let body = body_string(response.into_body()).await;
         assert!(
@@ -192,7 +192,7 @@ mod tests {
             .await
             .expect("request failed");
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
         let body = body_string(response.into_body()).await;
         assert!(

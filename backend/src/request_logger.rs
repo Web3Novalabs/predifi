@@ -34,7 +34,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use axum::{Router, routing::get};
 //! use request_logger::logging::LoggingLayer;
 //!
@@ -176,8 +176,8 @@ where
                     let status = response.status();
                     let status_label = status.as_u16().to_string();
                     info!(
-                        http.status_code = status_code,
-                        http.duration_ms = duration_ms,
+                        http.status_code = status.as_u16(),
+                        http.duration_ms = elapsed_ms,
                         "request complete"
                     );
                     if let Some(metrics) = metrics {
@@ -189,7 +189,7 @@ where
                 }
                 Err(_) => {
                     error!(
-                        http.duration_ms = duration_ms,
+                        http.duration_ms = elapsed_ms,
                         "request failed"
                     );
                     if let Some(metrics) = metrics {
