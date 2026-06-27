@@ -342,7 +342,7 @@ fn build_router_with_rate_period(
             metrics_middleware,
         ))
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
     #[cfg(not(test))]
     let router = {
@@ -369,11 +369,8 @@ fn build_router_with_db(
     redis: crate::redis_cache::RedisCache,
     pool: sqlx::PgPool,
     event_bus: crate::ws::EventBus,
+    prometheus_metrics: SharedMetrics,
 ) -> Router {
-    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
-        eprintln!("failed to initialize Prometheus metrics: {error}");
-        std::process::exit(1);
-    }));
 
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
@@ -407,7 +404,7 @@ fn build_router_with_db(
             metrics_middleware,
         ))
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
     #[cfg(not(test))]
     let router = {
@@ -469,8 +466,14 @@ where
             std::process::exit(1);
         });
 
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
+
     let cache = crate::price_cache::PriceCache::new();
-    let fetcher_handle: JoinHandle<()> = crate::price_cache::spawn_fetcher(cache.clone());
+    let fetcher_handle: JoinHandle<()> =
+        crate::price_cache::spawn_fetcher(cache.clone(), Some(prometheus_metrics.clone()));
 
     let event_bus = crate::ws::EventBus::new();
 
@@ -491,7 +494,14 @@ where
         warn!("Redis cache unavailable - running without caching");
     }
 
-    let app = build_router_with_db(config.clone(), cache, redis, pool.clone(), event_bus);
+    let app = build_router_with_db(
+        config.clone(),
+        cache,
+        redis,
+        pool.clone(),
+        event_bus,
+        prometheus_metrics,
+    );
 
     let bind_addr = config.bind_address();
 

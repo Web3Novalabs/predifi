@@ -48,47 +48,43 @@ use tracing::{info, warn};
 /// On non-Unix platforms only `SIGINT` is registered.
 #[cfg(unix)]
 pub async fn wait_for_signal() {
-    let mut terminate = match tokio::signal::unix::signal(
-        tokio::signal::unix::SignalKind::terminate(),
-    ) {
-        Ok(signal) => Some(signal),
-        Err(error) => {
-            warn!(error = %error, "failed to install SIGTERM handler; skipping");
-            None
+    async fn wait_sigterm() {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+                info!("received SIGTERM, beginning graceful shutdown");
+            }
+            Err(error) => {
+                warn!(error = %error, "failed to install SIGTERM handler; skipping");
+                std::future::pending::<()>().await;
+            }
         }
-    };
+    }
 
-    let mut hangup = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
-    {
-        Ok(signal) => Some(signal),
-        Err(error) => {
-            warn!(error = %error, "failed to install SIGHUP handler; skipping");
-            None
+    async fn wait_sighup() {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+                info!("received SIGHUP, beginning graceful shutdown");
+            }
+            Err(error) => {
+                warn!(error = %error, "failed to install SIGHUP handler; skipping");
+                std::future::pending::<()>().await;
+            }
         }
-    };
+    }
+
+    async fn wait_ctrl_c() {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            warn!(error = %error, "Ctrl+C handler failed");
+        }
+        info!("received Ctrl+C, beginning graceful shutdown");
+    }
 
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("received Ctrl+C, beginning graceful shutdown");
-        }
-        _ = async {
-            if let Some(ref mut signal) = terminate {
-                signal.recv().await;
-            } else {
-                std::future::pending::<()>().await;
-            }
-        } => {
-            info!("received SIGTERM, beginning graceful shutdown");
-        }
-        _ = async {
-            if let Some(ref mut signal) = hangup {
-                signal.recv().await;
-            } else {
-                std::future::pending::<()>().await;
-            }
-        } => {
-            info!("received SIGHUP, beginning graceful shutdown");
-        }
+        _ = wait_ctrl_c() => {},
+        _ = wait_sigterm() => {},
+        _ = wait_sighup() => {},
     }
 }
 
@@ -97,11 +93,11 @@ pub async fn wait_for_signal() {
 /// user presses Ctrl+C in the controlling terminal.
 #[cfg(not(unix))]
 pub async fn wait_for_signal() {
-    if tokio::signal::ctrl_c().await.is_ok() {
-        info!("received Ctrl+C, beginning graceful shutdown");
-    } else {
-        warn!("Ctrl+C handler returned an error; shutting down anyway");
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        warn!(error = %error, "Ctrl+C handler failed; shutting down anyway");
+        return;
     }
+    info!("received Ctrl+C, beginning graceful shutdown");
 }
 
 /// Run `fut` with a wall-clock deadline.
@@ -159,7 +155,6 @@ mod tests {
     /// the future would take longer than the deadline.
     #[tokio::test]
     async fn shutdown_timeout_returns_after_deadline_when_future_is_slow() {
-        // Use a short real sleep; the helper should return once the deadline elapses.
         let start = tokio::time::Instant::now();
         with_shutdown_timeout(Duration::from_millis(50), "slow-unit", async {
             tokio::time::sleep(Duration::from_secs(10)).await;
@@ -171,7 +166,7 @@ mod tests {
             "helper should have waited at least the deadline (got {elapsed:?})"
         );
         assert!(
-            elapsed < Duration::from_secs(5),
+            elapsed < Duration::from_secs(1),
             "helper should not have waited for the full future (got {elapsed:?})"
         );
     }
