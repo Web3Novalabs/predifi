@@ -13,6 +13,7 @@ use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
+use crate::response::{ApiResponse, error_codes};
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -218,15 +219,30 @@ pub struct PoolsResponse {
 pub async fn get_pool_by_id_handler(
     State(state): State<AppState>,
     Path(pool_id): Path<i64>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available"
+        ).into_response();
     };
 
     match crate::db::get_pool_with_odds(db, pool_id).await {
-        Ok(Some(pool)) => Json(json!(pool)),
-        Ok(None) => Json(json!({ "error": "pool not found" })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Ok(Some(pool)) => ApiResponse::success(pool).into_response(),
+        Ok(None) => ApiResponse::<()>::error(
+            StatusCode::NOT_FOUND,
+            error_codes::NOT_FOUND,
+            "pool not found"
+        ).into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string()
+        ).into_response(),
     }
 }
 
@@ -248,16 +264,27 @@ pub struct StatsQuery {
 pub async fn get_stats(
     State(state): State<AppState>,
     Query(params): Query<StatsQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available"
+        ).into_response();
     };
 
     match crate::db::get_protocol_stats(db, params.category.as_deref(), params.status.as_deref())
         .await
     {
-        Ok(stats) => Json(json!(stats)),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Ok(stats) => ApiResponse::success(stats).into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string()
+        ).into_response(),
     }
 }
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
@@ -267,7 +294,10 @@ pub async fn get_stats(
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let sort_by = params.sort_by.as_deref().unwrap_or("new");
     let category = params.category.as_deref();
     let status = params.status.as_deref().unwrap_or("active");
@@ -275,14 +305,19 @@ pub async fn get_pools(
     let offset = params.offset.unwrap_or(0);
 
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available"
+        ).into_response();
     };
 
     // Try to get from Redis cache first
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        return Json(cached_response);
+        // Return cached response as-is (it's already in the old format)
+        return (StatusCode::OK, Json(cached_response)).into_response();
     }
 
     // Cache miss - fetch from database
@@ -317,9 +352,14 @@ pub async fn get_pools(
                 )
                 .await;
 
-            Json(json_response)
+            // Return cached format for compatibility
+            (StatusCode::OK, Json(json_response)).into_response()
         }
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string()
+        ).into_response(),
     }
 }
 
@@ -339,22 +379,36 @@ pub async fn get_user_history(
     State(state): State<AppState>,
     Path(address): Path<String>,
     Query(params): Query<PaginationQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available"
+        ).into_response();
     };
 
     match crate::db::get_user_prediction_history(db, &address, limit, offset).await {
-        Ok(rows) => Json(json!({
-            "address": address,
-            "predictions": rows,
-            "limit": limit,
-            "offset": offset,
-        })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Ok(rows) => {
+            let response = json!({
+                "address": address,
+                "predictions": rows,
+                "limit": limit,
+                "offset": offset,
+            });
+            ApiResponse::success(response).into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string()
+        ).into_response(),
     }
 }
 
@@ -363,23 +417,37 @@ pub async fn get_user_predictions(
     State(state): State<AppState>,
     Path(address): Path<String>,
     Query(params): Query<PaginationQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
 
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available"
+        ).into_response();
     };
 
     match crate::db::get_user_predictions(db, &address, limit, offset).await {
-        Ok(predictions) => Json(json!({
-            "address": address,
-            "predictions": predictions,
-            "limit": limit,
-            "offset": offset,
-            "total_predictions": predictions.len(),
-        })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Ok(predictions) => {
+            let response = json!({
+                "address": address,
+                "predictions": predictions,
+                "limit": limit,
+                "offset": offset,
+                "total_predictions": predictions.len(),
+            });
+            ApiResponse::success(response).into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string()
+        ).into_response(),
     }
 }
 
@@ -398,35 +466,56 @@ pub struct LeaderboardQuery {
 pub async fn get_leaderboard(
     State(state): State<AppState>,
     Query(params): Query<LeaderboardQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let limit = params.limit.unwrap_or(20).min(100);
     let offset = params.offset.unwrap_or(0);
     let rank_by = params.rank_by.as_deref().unwrap_or("volume");
 
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available"
+        ).into_response();
     };
 
     match rank_by {
         "winnings" => match crate::db::get_users_by_winnings(db, limit, offset).await {
-            Ok(users) => Json(json!({
-                "leaderboard": users,
-                "rank_by": "winnings",
-                "limit": limit,
-                "offset": offset,
-            })),
-            Err(e) => Json(json!({ "error": e.to_string() })),
+            Ok(users) => {
+                let response = json!({
+                    "leaderboard": users,
+                    "rank_by": "winnings",
+                    "limit": limit,
+                    "offset": offset,
+                });
+                ApiResponse::success(response).into_response()
+            }
+            Err(e) => ApiResponse::<()>::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_codes::INTERNAL_ERROR,
+                e.to_string()
+            ).into_response(),
         },
         _ => {
             // Default to volume ranking
             match crate::db::get_users_by_betting_volume(db, limit, offset).await {
-                Ok(users) => Json(json!({
-                    "leaderboard": users,
-                    "rank_by": "volume",
-                    "limit": limit,
-                    "offset": offset,
-                })),
-                Err(e) => Json(json!({ "error": e.to_string() })),
+                Ok(users) => {
+                    let response = json!({
+                        "leaderboard": users,
+                        "rank_by": "volume",
+                        "limit": limit,
+                        "offset": offset,
+                    });
+                    ApiResponse::success(response).into_response()
+                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string()
+                ).into_response(),
             }
         }
     }
@@ -454,9 +543,16 @@ pub struct PoolCreatedPayload {
 pub async fn ingest_pool_created(
     State(state): State<AppState>,
     Json(payload): Json<PoolCreatedPayload>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available"
+        ).into_response();
     };
 
     let event = PoolCreatedEvent {
@@ -469,7 +565,18 @@ pub async fn ingest_pool_created(
     };
 
     match crate::db::insert_pool_from_event(db, &event).await {
-        Ok(()) => Json(json!({ "status": "ok", "pool_id": event.pool_id })),
+        Ok(()) => {
+            let response = json!({ "status": "ok", "pool_id": event.pool_id });
+            ApiResponse::success(response).into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string()
+        ).into_response(),
+            state.redis.invalidate_pools_cache().await;
+            Json(json!({ "status": "ok", "pool_id": event.pool_id }))
+        }
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
@@ -487,9 +594,16 @@ pub struct PredictionPlacedPayload {
 pub async fn ingest_prediction_placed(
     State(state): State<AppState>,
     Json(payload): Json<PredictionPlacedPayload>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available"
+        ).into_response();
     };
 
     let event = PredictionPlacedEvent {
@@ -508,9 +622,14 @@ pub async fn ingest_prediction_placed(
                 "outcome": event.outcome,
                 "amount": event.amount,
             }));
-            Json(json!({ "status": "ok", "pool_id": event.pool_id }))
+            let response = json!({ "status": "ok", "pool_id": event.pool_id });
+            ApiResponse::success(response).into_response()
         }
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string()
+        ).into_response(),
     }
 }
 
@@ -573,7 +692,6 @@ async fn referrals_handler(
     axum::extract::Path(address): axum::extract::Path<String>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    use crate::response::ApiResponse;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
@@ -582,14 +700,20 @@ async fn referrals_handler(
             match crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await {
                 Ok((status, body)) => (status, body).into_response(),
                 Err(e) => {
-                    ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-                        .into_response()
+                    ApiResponse::<()>::error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        error_codes::INTERNAL_ERROR,
+                        e.to_string()
+                    ).into_response()
                 }
             }
         }
         None => {
-            ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
-                .into_response()
+            ApiResponse::<()>::error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                error_codes::DATABASE_UNAVAILABLE,
+                "database not configured"
+            ).into_response()
         }
     }
 }
@@ -601,7 +725,6 @@ async fn referral_estimate_handler(
     axum::extract::Path(address): axum::extract::Path<String>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    use crate::response::ApiResponse;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
@@ -617,14 +740,20 @@ async fn referral_estimate_handler(
             {
                 Ok((status, body)) => (status, body).into_response(),
                 Err(e) => {
-                    ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-                        .into_response()
+                    ApiResponse::<()>::error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        error_codes::INTERNAL_ERROR,
+                        e.to_string()
+                    ).into_response()
                 }
             }
         }
         None => {
-            ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
-                .into_response()
+            ApiResponse::<()>::error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                error_codes::DATABASE_UNAVAILABLE,
+                "database not configured"
+            ).into_response()
         }
     }
 }
@@ -634,7 +763,6 @@ async fn user_referral_earnings_handler(
     axum::extract::Path(address): axum::extract::Path<String>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
-    use crate::response::ApiResponse;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
@@ -648,14 +776,20 @@ async fn user_referral_earnings_handler(
             {
                 Ok((status, body)) => (status, body).into_response(),
                 Err(e) => {
-                    ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-                        .into_response()
+                    ApiResponse::<()>::error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        error_codes::INTERNAL_ERROR,
+                        e.to_string()
+                    ).into_response()
                 }
             }
         }
         None => {
-            ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, "database not configured")
-                .into_response()
+            ApiResponse::<()>::error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                error_codes::DATABASE_UNAVAILABLE,
+                "database not configured"
+            ).into_response()
         }
     }
 }

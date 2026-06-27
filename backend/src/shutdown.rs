@@ -80,27 +80,46 @@ pub async fn wait_for_signal() {
     let terminate_block = async {
         match terminate_signal.as_mut() {
             Some(signal) => {
+    async fn wait_sigterm() {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
                 signal.recv().await;
                 info!("received SIGTERM, beginning graceful shutdown");
             }
-            None => std::future::pending::<()>().await,
+            Err(error) => {
+                warn!(error = %error, "failed to install SIGTERM handler; skipping");
+                std::future::pending::<()>().await;
+            }
         }
-    };
+    }
 
     let hangup_block = async {
         match hangup_signal.as_mut() {
             Some(signal) => {
+    async fn wait_sighup() {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+            Ok(mut signal) => {
                 signal.recv().await;
                 info!("received SIGHUP, beginning graceful shutdown");
             }
-            None => std::future::pending::<()>().await,
+            Err(error) => {
+                warn!(error = %error, "failed to install SIGHUP handler; skipping");
+                std::future::pending::<()>().await;
+            }
         }
-    };
+    }
+
+    async fn wait_ctrl_c() {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            warn!(error = %error, "Ctrl+C handler failed");
+        }
+        info!("received Ctrl+C, beginning graceful shutdown");
+    }
 
     tokio::select! {
-        _ = ctrl_c_block => {},
-        _ = terminate_block => {},
-        _ = hangup_block => {},
+        _ = wait_ctrl_c() => {},
+        _ = wait_sigterm() => {},
+        _ = wait_sighup() => {},
     }
 }
 
@@ -109,18 +128,18 @@ pub async fn wait_for_signal() {
 /// user presses Ctrl+C in the controlling terminal.
 #[cfg(not(unix))]
 pub async fn wait_for_signal() {
-    match tokio::signal::ctrl_c() {
-        Ok(future) => {
-            if future.await.is_ok() {
-                info!("received Ctrl+C, beginning graceful shutdown");
-            } else {
-                warn!("Ctrl+C future returned an error; shutting down anyway");
-            }
+    match tokio::signal::ctrl_c().await {
+        Ok(_) => {
+            info!("received Ctrl+C, beginning graceful shutdown");
         }
         Err(error) => {
             warn!(error = %error, "failed to install Ctrl+C handler; shutting down anyway");
         }
+    if let Err(error) = tokio::signal::ctrl_c().await {
+        warn!(error = %error, "Ctrl+C handler failed; shutting down anyway");
+        return;
     }
+    info!("received Ctrl+C, beginning graceful shutdown");
 }
 
 /// Run `fut` with a wall-clock deadline.
@@ -184,6 +203,9 @@ mod tests {
         let start = tokio::time::Instant::now();
         with_shutdown_timeout(Duration::from_millis(100), "slow-unit", async {
             tokio::time::sleep(Duration::from_secs(2)).await;
+        let start = tokio::time::Instant::now();
+        with_shutdown_timeout(Duration::from_millis(50), "slow-unit", async {
+            tokio::time::sleep(Duration::from_secs(10)).await;
         })
         .await;
         let elapsed = start.elapsed();
@@ -193,6 +215,11 @@ mod tests {
         );
         assert!(
             elapsed < Duration::from_secs(2),
+            elapsed >= Duration::from_millis(50),
+            "helper should have waited at least the deadline (got {elapsed:?})"
+        );
+        assert!(
+            elapsed < Duration::from_secs(1),
             "helper should not have waited for the full future (got {elapsed:?})"
         );
     }
