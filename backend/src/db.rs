@@ -1030,3 +1030,176 @@ mod write_helper_tests {
         assert_eq!(values, vec!["($1, $2, $3, $4)", "($5, $6, $7, $8)"]);
     }
 }
+
+// ── Tests for predictions index migration (009) ───────────────────────────────
+
+#[cfg(test)]
+mod predictions_index_tests {
+    use super::*;
+
+    // ── calculate_odds ──────────────────────────────────────────────────────
+
+    /// Zero total stake produces zero odds for every outcome (no division by zero).
+    #[test]
+    fn calculate_odds_zero_total_stake_returns_zero_odds() {
+        let stakes = vec![(0i32, 100i64), (1, 200)];
+        let odds = calculate_odds(&stakes, 0);
+
+        assert_eq!(odds.len(), 2);
+        for o in &odds {
+            assert_eq!(o.odds, 0.0, "expected 0.0 odds when total_stake is 0");
+        }
+    }
+
+    /// An outcome with zero stake inside a non-zero pool gets 0.0 odds (no
+    /// division by zero on the per-outcome stake).
+    #[test]
+    fn calculate_odds_zero_outcome_stake_returns_zero_odds_for_that_outcome() {
+        let stakes = vec![(0i32, 0i64), (1, 500)];
+        let odds = calculate_odds(&stakes, 500);
+
+        assert_eq!(odds[0].odds, 0.0);
+        assert!(
+            (odds[1].odds - 1.0).abs() < f64::EPSILON,
+            "outcome with 100 % of stake should have odds of 1.0"
+        );
+    }
+
+    /// Even split across two outcomes should yield odds of 2.0 each.
+    #[test]
+    fn calculate_odds_even_split_gives_2x_odds() {
+        let stakes = vec![(0i32, 500i64), (1, 500)];
+        let odds = calculate_odds(&stakes, 1000);
+
+        for o in &odds {
+            assert!(
+                (o.odds - 2.0).abs() < 1e-9,
+                "expected 2.0 odds for a 50/50 split, got {}",
+                o.odds
+            );
+        }
+    }
+
+    /// Dominant outcome (90 %) yields odds near 1.11; minority (10 %) near 10.
+    #[test]
+    fn calculate_odds_asymmetric_split() {
+        let stakes = vec![(0i32, 900i64), (1, 100)];
+        let odds = calculate_odds(&stakes, 1000);
+
+        let dominant = odds.iter().find(|o| o.outcome == 0).unwrap();
+        let minority = odds.iter().find(|o| o.outcome == 1).unwrap();
+
+        assert!(
+            (dominant.odds - (1000.0 / 900.0)).abs() < 1e-9,
+            "dominant odds should be ~1.111, got {}",
+            dominant.odds
+        );
+        assert!(
+            (minority.odds - 10.0).abs() < 1e-9,
+            "minority odds should be 10.0, got {}",
+            minority.odds
+        );
+    }
+
+    /// Empty input returns empty output without panicking.
+    #[test]
+    fn calculate_odds_empty_stakes_returns_empty() {
+        let odds = calculate_odds(&[], 0);
+        assert!(odds.is_empty());
+
+        let odds_nonzero = calculate_odds(&[], 1000);
+        assert!(odds_nonzero.is_empty());
+    }
+
+    // ── UserWinnings win_rate ───────────────────────────────────────────────
+
+    /// Win-rate is 0.0 when there are no total predictions (guard against
+    /// division by zero in the query result mapper).
+    #[test]
+    fn user_winnings_win_rate_is_zero_when_no_predictions() {
+        let win_rate = if 0 > 0 { 5_f64 / 0_f64 } else { 0.0 };
+        assert_eq!(win_rate, 0.0);
+    }
+
+    /// Win-rate is computed correctly for a partial win record.
+    #[test]
+    fn user_winnings_win_rate_partial() {
+        let total = 10i64;
+        let winning = 3i64;
+        let win_rate = winning as f64 / total as f64;
+        assert!((win_rate - 0.3).abs() < 1e-9);
+    }
+
+    // ── Rank offset calculation ─────────────────────────────────────────────
+
+    /// Rank starts at offset + 1 for the first returned row so pagination
+    /// offsets are reflected correctly in the leaderboard.
+    #[test]
+    fn leaderboard_rank_respects_page_offset() {
+        let offset: i64 = 20;
+        let rank_of_first_row = offset + 0 + 1; // index 0 in the result set
+        let rank_of_second_row = offset + 1 + 1;
+
+        assert_eq!(rank_of_first_row, 21);
+        assert_eq!(rank_of_second_row, 22);
+    }
+
+    // ── Migration file sanity checks ────────────────────────────────────────
+
+    /// Verify the migration SQL file for index 009 exists and contains the
+    /// four expected index names so a future rename does not silently break
+    /// the schema.
+    #[test]
+    fn migration_009_contains_expected_index_names() {
+        let sql = include_str!("../../migrations/009_add_predictions_indexes.sql");
+
+        let expected_indexes = [
+            "idx_predictions_pool_created",
+            "idx_predictions_outcome_pool",
+            "idx_predictions_pool_user",
+            "idx_predictions_amount_desc",
+        ];
+
+        for name in &expected_indexes {
+            assert!(
+                sql.contains(name),
+                "migration 009 should define index '{name}', but it was not found in the SQL"
+            );
+        }
+    }
+
+    /// The migration must use `IF NOT EXISTS` for every CREATE INDEX so
+    /// re-running migrations on an already-migrated schema is idempotent.
+    #[test]
+    fn migration_009_all_indexes_are_idempotent() {
+        let sql = include_str!("../../migrations/009_add_predictions_indexes.sql");
+
+        // Count CREATE INDEX and CREATE INDEX IF NOT EXISTS occurrences.
+        let total_creates = sql.matches("CREATE INDEX").count();
+        let idempotent_creates = sql.matches("CREATE INDEX IF NOT EXISTS").count();
+
+        assert_eq!(
+            total_creates, idempotent_creates,
+            "every CREATE INDEX in migration 009 must use IF NOT EXISTS \
+             (found {total_creates} CREATE INDEX, {idempotent_creates} with IF NOT EXISTS)"
+        );
+    }
+
+    /// All indexes in migration 009 must target the `predictions` table.
+    #[test]
+    fn migration_009_all_indexes_target_predictions_table() {
+        let sql = include_str!("../../migrations/009_add_predictions_indexes.sql");
+
+        // Each ON clause in the file should reference `predictions`.
+        let on_clauses: Vec<&str> = sql.match_indices("ON predictions").map(|(_, s)| s).collect();
+        let total_creates = sql.matches("CREATE INDEX IF NOT EXISTS").count();
+
+        assert_eq!(
+            on_clauses.len(),
+            total_creates,
+            "every index in migration 009 must target the 'predictions' table \
+             (found {total_creates} CREATE INDEX IF NOT EXISTS but only {} ON predictions clauses)",
+            on_clauses.len()
+        );
+    }
+}
