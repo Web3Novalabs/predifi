@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import dynamic from "next/dynamic";
+
 import { SettingsSidebar, type SettingsTab } from "@/components/settings/SettingsSidebar";
 
 // ProfileForm — below-the-fold, lazily loaded
@@ -43,15 +43,24 @@ const PANEL_MAP: Record<SettingsTab, React.ReactNode> = {
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
   const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (typeof window === "undefined") return "dark";
+    if (typeof window === "undefined") return "light";
+
     const stored = window.localStorage.getItem("theme");
-    return (stored ?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) as "light" | "dark";
+    const initial =
+      stored ??
+      (window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light");
+
+    return (initial as "light" | "dark") ?? "light";
   });
+
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
     window.localStorage.setItem("theme", theme);
   }, [theme]);
+
 
   return (
     <div className="min-h-screen bg-background p-6 lg:p-8 text-foreground">
