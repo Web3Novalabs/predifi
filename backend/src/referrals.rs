@@ -14,6 +14,9 @@
 //!     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 //! );
 //! CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals (referrer);
+//! CREATE INDEX IF NOT EXISTS idx_referrals_user_address ON referrals (user_address);
+//! CREATE INDEX IF NOT EXISTS idx_referrals_referrer_pool ON referrals (referrer, pool_id);
+//! CREATE INDEX IF NOT EXISTS idx_referrals_pool_id ON referrals (pool_id);
 //! ```
 //!
 //! ## Response
@@ -71,27 +74,31 @@ pub async fn get_referrals(
     let result = sqlx::query_as::<_, Row>(
         r#"
         SELECT
-            COALESCE(SUM(amount), 0)::BIGINT   AS total_volume,
-            COUNT(DISTINCT user_address)::BIGINT AS unique_users
-        FROM referrals
+            COALESCE(total_volume, 0)::BIGINT AS total_volume,
+            unique_users
+        FROM referrer_stats
         WHERE referrer = $1
         "#,
     )
     .bind(&address)
-    .fetch_one(&pool)
+    .fetch_optional(&pool)
     .await;
 
     match result {
-        Ok(row) if row.unique_users == 0 => Ok(ApiResponse::error(
+        Ok(Some(row)) if row.unique_users == 0 => Ok(ApiResponse::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
             format!("no referrals found for {address}"),
         )),
-        Ok(row) => Ok(ApiResponse::success(ReferralStats {
+        Ok(Some(row)) => Ok(ApiResponse::success(ReferralStats {
             referrer: address,
             total_volume: row.total_volume,
             unique_users: row.unique_users,
         })),
+        Ok(None) => Ok(ApiResponse::error(
+            StatusCode::NOT_FOUND,
+            format!("no referrals found for {address}"),
+        )),
         Err(err) => {
             tracing::error!(error = %err, "referrals query failed");
             Err(AppError::from(err))
@@ -147,11 +154,12 @@ pub async fn estimate_referral_rewards(
     referral_fee_bps: u32,
 ) -> Result<(StatusCode, Json<ApiResponse<ReferralRewardEstimate>>), AppError> {
     let total_volume = sqlx::query_scalar::<_, i64>(
-        r#"SELECT COALESCE(SUM(amount), 0)::BIGINT FROM referrals WHERE referrer = $1"#,
+        r#"SELECT COALESCE(total_volume, 0)::BIGINT FROM referrer_stats WHERE referrer = $1"#,
     )
     .bind(&address)
-    .fetch_one(pool)
-    .await?;
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or(0);
 
     let estimated_reward = estimate_referral_reward(total_volume, treasury_fee_bps, referral_fee_bps);
 

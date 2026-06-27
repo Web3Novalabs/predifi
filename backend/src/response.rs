@@ -136,6 +136,35 @@ impl<T: Serialize + Send> IntoResponse for ApiResponse<T> {
     }
 }
 
+/// Standard JSON body returned when the rate limiter rejects a request (HTTP 429).
+///
+/// Matches the [`ApiResponse`] error envelope so clients can parse all error
+/// responses uniformly.
+#[derive(Debug, Serialize)]
+pub struct RateLimitErrorPayload {
+    /// Always `"error"`.
+    pub status: &'static str,
+    /// Human-readable rate limit message.
+    pub error: String,
+}
+
+impl RateLimitErrorPayload {
+    /// Default message included in every 429 response.
+    pub const MESSAGE: &'static str = "Too many requests";
+}
+
+/// Build the HTTP 429 response used by the tower-governor rate limiter.
+pub fn rate_limit_error_response() -> Response {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(RateLimitErrorPayload {
+            status: "error",
+            error: RateLimitErrorPayload::MESSAGE.to_string(),
+        }),
+    )
+        .into_response()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +218,17 @@ mod tests {
         assert_eq!(v["error"]["code"], "INVALID_INPUT");
         assert_eq!(v["error"]["message"], "bad input");
         assert!(v["error"]["request_id"].is_string());
+    }
+
+    #[test]
+    fn rate_limit_error_payload_serializes_expected_json() {
+        let payload = RateLimitErrorPayload {
+            status: "error",
+            error: RateLimitErrorPayload::MESSAGE.to_string(),
+        };
+        let v = serde_json::to_value(&payload).unwrap();
+        assert_eq!(v["status"], "error");
+        assert_eq!(v["error"], "Too many requests");
     }
 
     #[test]

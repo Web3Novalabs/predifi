@@ -239,6 +239,10 @@ async fn metrics_middleware(
         .with_label_values(&[&method, &path, &status])
         .inc();
 
+    if response.status() == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
+        metrics.http_server_errors_total.inc();
+    }
+
     response
 }
 
@@ -338,7 +342,7 @@ fn build_router_with_rate_period(
             metrics_middleware,
         ))
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
     #[cfg(not(test))]
     let router = {
@@ -355,6 +359,7 @@ fn build_router_with_rate_period(
                         "Too Many Requests"
                     ).into_response()
                 })
+                .error_handler(|_| crate::response::rate_limit_error_response())
                 .finish()
                 .unwrap(),
         );
@@ -373,11 +378,8 @@ fn build_router_with_db(
     redis: crate::redis_cache::RedisCache,
     pool: sqlx::PgPool,
     event_bus: crate::ws::EventBus,
+    prometheus_metrics: SharedMetrics,
 ) -> Router {
-    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
-        eprintln!("failed to initialize Prometheus metrics: {error}");
-        std::process::exit(1);
-    }));
 
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
@@ -411,7 +413,7 @@ fn build_router_with_db(
             metrics_middleware,
         ))
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
     #[cfg(not(test))]
     let router = {
@@ -428,6 +430,7 @@ fn build_router_with_db(
                         "Too Many Requests"
                     ).into_response()
                 })
+                .error_handler(|_| crate::response::rate_limit_error_response())
                 .finish()
                 .unwrap(),
         );
@@ -481,21 +484,28 @@ where
             std::process::exit(1);
         });
 
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
+
     let cache = crate::price_cache::PriceCache::new();
-    let fetcher_handle: JoinHandle<()> = crate::price_cache::spawn_fetcher(cache.clone());
+    let fetcher_handle: JoinHandle<()> =
+        crate::price_cache::spawn_fetcher(cache.clone(), Some(prometheus_metrics.clone()));
 
     let event_bus = crate::ws::EventBus::new();
 
     // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
+    // Initialize Redis cache
+    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
+
     let listener_handle: JoinHandle<()> = crate::worker::stellar_listener::spawn(
         config.stellar_rpc_url.clone(),
         pool.clone(),
         event_bus.clone(),
+        redis.clone(),
         std::time::Duration::from_secs(30),
     );
-
-    // Initialize Redis cache
-    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
@@ -503,6 +513,14 @@ where
     }
 
     let app = build_router_with_db(config.clone(), cache, redis, pool.clone(), event_bus);
+    let app = build_router_with_db(
+        config.clone(),
+        cache,
+        redis,
+        pool.clone(),
+        event_bus,
+        prometheus_metrics,
+    );
 
     let bind_addr = config.bind_address();
 

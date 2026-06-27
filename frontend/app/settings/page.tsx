@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
 import { SettingsSidebar, type SettingsTab } from "@/components/settings/SettingsSidebar";
 import { ProfileForm } from "@/components/settings/ProfileForm";
 import { SecuritySettings } from "@/components/settings/SecuritySettings";
@@ -14,18 +15,25 @@ const PANEL_MAP: Record<SettingsTab, React.ReactNode> = {
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>("profile");
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
 
-  useEffect(() => {
     const stored = window.localStorage.getItem("theme");
-    const initial = stored ?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-    setTheme(initial as "light" | "dark");
-  }, []);
+    const initial =
+      stored ??
+      (window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light");
+
+    return (initial as "light" | "dark") ?? "light";
+  });
+
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
     window.localStorage.setItem("theme", theme);
   }, [theme]);
+
 
   return (
     <div className="min-h-screen bg-background p-6 lg:p-8 text-foreground">

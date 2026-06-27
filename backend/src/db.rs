@@ -827,15 +827,14 @@ pub async fn get_referral_earnings(
     sqlx::query_as::<_, ReferralEarningRow>(
         r#"
         SELECT
-            r.pool_id,
-            pl.name          AS pool_name,
-            COALESCE(SUM(r.amount), 0) AS total_earned,
-            COUNT(r.id)               AS referral_count
-        FROM referrals r
-        JOIN pools pl ON pl.pool_id = r.pool_id
-        WHERE r.referrer = $1
-        GROUP BY r.pool_id, pl.name
-        ORDER BY SUM(r.amount) DESC
+            rps.pool_id,
+            pl.name                    AS pool_name,
+            COALESCE(rps.total_earned, 0)::BIGINT AS total_earned,
+            rps.referral_count
+        FROM referrer_pool_stats rps
+        JOIN pools pl ON pl.pool_id = rps.pool_id
+        WHERE rps.referrer = $1
+        ORDER BY rps.total_earned DESC
         "#,
     )
     .bind(address)

@@ -1,16 +1,7 @@
-//! Mock RPC server for use in integration tests.
+//! Mock Stellar RPC server for integration tests.
 //!
-//! Provides a lightweight TCP server that speaks just enough HTTP to satisfy
-//! the Stellar RPC health-check call made by the `/health` endpoint.
-//!
-//! # Usage
-//!
-//! ```rust,ignore
-//! let mock = MockRpcServer::start().await;
-//! config.stellar_rpc_url = mock.url();
-//! // … run your test …
-//! mock.shutdown().await;
-//! ```
+//! Binds an ephemeral port and responds to every HTTP request with a minimal
+//! JSON-RPC 2.0 payload so health probes succeed without hitting the real network.
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -21,21 +12,13 @@ use tokio::{
 
 /// A running mock RPC server that can be cleanly shut down after a test.
 pub struct MockRpcServer {
-    /// Base URL callers should point their RPC client at.
     url: String,
-    /// Sending half of the shutdown channel — dropping or sending signals the
-    /// background task to stop accepting new connections.
     shutdown_tx: oneshot::Sender<()>,
-    /// Handle to the background accept loop so callers can await full teardown.
     handle: JoinHandle<()>,
 }
 
 impl MockRpcServer {
     /// Bind an ephemeral port and start accepting connections in the background.
-    ///
-    /// The server responds to every request with a minimal JSON-RPC 2.0
-    /// `{"result":{"status":"healthy"}}` payload, which is enough to satisfy
-    /// the Stellar RPC health probe.
     pub async fn start() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -48,16 +31,14 @@ impl MockRpcServer {
         let handle = tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    // Stop the accept loop when the shutdown signal arrives.
                     _ = &mut shutdown_rx => break,
-
                     result = listener.accept() => {
                         if let Ok((mut socket, _)) = result {
                             tokio::spawn(async move {
                                 let mut buf = [0u8; 1024];
-                                // Read the request (we don't need to parse it).
                                 let _ = socket.read(&mut buf).await;
-                                let body = r#"{"jsonrpc":"2.0","id":1,"result":{"status":"healthy"}}"#;
+                                let body =
+                                    r#"{"jsonrpc":"2.0","id":1,"result":{"status":"healthy"}}"#;
                                 let response = format!(
                                     "HTTP/1.1 200 OK\r\n\
                                      Content-Type: application/json\r\n\
@@ -69,7 +50,6 @@ impl MockRpcServer {
                                     body
                                 );
                                 let _ = socket.write_all(response.as_bytes()).await;
-                                // Flush and close the socket cleanly.
                                 let _ = socket.shutdown().await;
                             });
                         }
@@ -85,19 +65,38 @@ impl MockRpcServer {
         }
     }
 
-    /// The base URL tests should use as `stellar_rpc_url`.
+    /// Base URL to assign to [`crate::config::Config::stellar_rpc_url`].
     pub fn url(&self) -> String {
         self.url.clone()
     }
 
-    /// Signal the accept loop to stop and wait for the background task to exit.
-    ///
-    /// Call this at the end of every test that uses a [`MockRpcServer`] to
-    /// ensure the socket is released before the next test runs.
+    /// Stop the accept loop and wait for the background task to exit.
     pub async fn shutdown(self) {
-        // Ignore send errors — the task may have already exited.
         let _ = self.shutdown_tx.send(());
-        // Await the task so the port is fully released before we return.
         let _ = self.handle.await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn mock_rpc_responds_to_health_probe() {
+        let mock = MockRpcServer::start().await;
+        let client = reqwest::Client::new();
+        let response = client
+            .post(mock.url())
+            .json(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getHealth"
+            }))
+            .send()
+            .await
+            .expect("request should succeed");
+
+        assert!(response.status().is_success());
+        mock.shutdown().await;
     }
 }

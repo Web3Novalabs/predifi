@@ -11,7 +11,7 @@
 //! - JSON serialization for complex types
 //! - Connection pooling via redis ConnectionManager
 
-use redis::{aio::ConnectionManager, AsyncCommands};
+use redis::{aio::ConnectionManager, AsyncCommands, ErrorKind};
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{debug, error, warn};
 
@@ -24,6 +24,9 @@ pub const POOL_DETAILS_CACHE_TTL: u64 = 30;
 /// Default TTL for user predictions (45 seconds)
 pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 
+/// Redis key pattern matching all cached pool list queries.
+pub const POOLS_CACHE_PATTERN: &str = "pools:*";
+
 /// Thread-safe Redis cache client with graceful fail-open behaviour.
 ///
 /// All operations silently no-op when Redis is unavailable so the application
@@ -32,6 +35,8 @@ pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 #[derive(Clone)]
 pub struct RedisCache {
     manager: Option<ConnectionManager>,
+    /// When set, health probes treat Redis as available without a live connection.
+    simulate_available: bool,
 }
 
 impl RedisCache {
@@ -46,28 +51,47 @@ impl RedisCache {
                     debug!("Redis cache initialized successfully");
                     Self {
                         manager: Some(manager),
+                        simulate_available: false,
                     }
                 }
                 Err(err) => {
                     warn!("Failed to create Redis connection manager: {}", err);
-                    Self { manager: None }
+                    Self {
+                        manager: None,
+                        simulate_available: false,
+                    }
                 }
             },
             Err(err) => {
                 warn!("Failed to create Redis client: {}", err);
-                Self { manager: None }
+                Self {
+                    manager: None,
+                    simulate_available: false,
+                }
             }
         }
     }
 
     /// Create a disabled cache instance (for testing or when Redis is not configured)
     pub fn disabled() -> Self {
-        Self { manager: None }
+        Self {
+            manager: None,
+            simulate_available: false,
+        }
+    }
+
+    /// Create a no-op cache that satisfies health/readiness probes in unit tests.
+    #[cfg(test)]
+    pub fn simulate_available() -> Self {
+        Self {
+            manager: None,
+            simulate_available: true,
+        }
     }
 
     /// Check if Redis is available
     pub fn is_available(&self) -> bool {
-        self.manager.is_some()
+        self.manager.is_some() || self.simulate_available
     }
 
     /// Get a value from cache
@@ -96,7 +120,11 @@ impl RedisCache {
                 None
             }
             Err(err) => {
-                error!("Redis GET error for {}: {}", key, err);
+                if is_connection_error(err.kind()) {
+                    warn!("Redis connection dropout on GET {}: {}", key, err);
+                } else {
+                    error!("Redis GET error for {}: {}", key, err);
+                }
                 None
             }
         }
@@ -122,7 +150,11 @@ impl RedisCache {
         };
 
         if let Err(err) = conn.set_ex::<_, _, ()>(key, data, ttl_secs).await {
-            error!("Redis SET error for {}: {}", key, err);
+            if is_connection_error(err.kind()) {
+                warn!("Redis connection dropout on SET {}: {}", key, err);
+            } else {
+                error!("Redis SET error for {}: {}", key, err);
+            }
         } else {
             debug!("Cached: {} (TTL: {}s)", key, ttl_secs);
         }
@@ -140,7 +172,11 @@ impl RedisCache {
         let mut conn = manager.clone();
 
         if let Err(err) = conn.del::<_, ()>(key).await {
-            error!("Redis DEL error for {}: {}", key, err);
+            if is_connection_error(err.kind()) {
+                warn!("Redis connection dropout on DEL {}: {}", key, err);
+            } else {
+                error!("Redis DEL error for {}: {}", key, err);
+            }
         } else {
             debug!("Invalidated cache: {}", key);
         }
@@ -161,7 +197,11 @@ impl RedisCache {
         let keys: Vec<String> = match conn.keys(pattern).await {
             Ok(k) => k,
             Err(err) => {
-                error!("Redis KEYS error for pattern {}: {}", pattern, err);
+                if is_connection_error(err.kind()) {
+                    warn!("Redis connection dropout on KEYS {}: {}", pattern, err);
+                } else {
+                    error!("Redis KEYS error for pattern {}: {}", pattern, err);
+                }
                 return;
             }
         };
@@ -172,7 +212,11 @@ impl RedisCache {
 
         // Delete all matching keys
         if let Err(err) = conn.del::<_, ()>(&keys).await {
-            error!("Redis DEL error for pattern {}: {}", pattern, err);
+            if is_connection_error(err.kind()) {
+                warn!("Redis connection dropout on DEL pattern {}: {}", pattern, err);
+            } else {
+                error!("Redis DEL error for pattern {}: {}", pattern, err);
+            }
         } else {
             debug!(
                 "Invalidated {} cache entries matching: {}",
@@ -182,8 +226,20 @@ impl RedisCache {
         }
     }
 
+    /// Invalidate all cached pool list entries.
+    ///
+    /// Call after a new pool is created so clients see fresh data on the next
+    /// `GET /api/v1/pools` request.
+    pub async fn invalidate_pools_cache(&self) {
+        self.delete_pattern(POOLS_CACHE_PATTERN).await;
+    }
+
     /// Ping Redis to check connection health
     pub async fn ping(&self) -> bool {
+        if self.simulate_available {
+            return true;
+        }
+
         let manager = match self.manager.as_ref() {
             Some(m) => m,
             None => return false,
@@ -195,6 +251,15 @@ impl RedisCache {
             .await
             .is_ok()
     }
+}
+
+/// Returns `true` for errors caused by a transient connection dropout.
+///
+/// The `ConnectionManager` automatically reconnects after a dropout, so
+/// these errors are expected during the brief window before reconnection and
+/// should be logged at `warn` rather than `error`.
+fn is_connection_error(kind: ErrorKind) -> bool {
+    matches!(kind, ErrorKind::IoError | ErrorKind::BusyLoadingError)
 }
 
 /// Generate a cache key for a pools list query.
