@@ -12,6 +12,7 @@ pub struct Metrics {
     pub app_info: Gauge,
     pub memory_used_bytes: Gauge,
     pub memory_total_bytes: Gauge,
+    pub active_pools: Gauge,
 }
 
 /// Type alias for a reference-counted [`Metrics`] instance shared across handlers.
@@ -58,12 +59,18 @@ impl Metrics {
             "Total system memory in bytes.",
         ))?;
 
+        let active_pools = Gauge::with_opts(Opts::new(
+            "app_active_pools",
+            "Number of currently active prediction market pools.",
+        ))?;
+
         registry.register(Box::new(http_requests_total.clone()))?;
         registry.register(Box::new(http_server_errors_total.clone()))?;
         registry.register(Box::new(app_up.clone()))?;
         registry.register(Box::new(app_info.clone()))?;
         registry.register(Box::new(memory_used_bytes.clone()))?;
         registry.register(Box::new(memory_total_bytes.clone()))?;
+        registry.register(Box::new(active_pools.clone()))?;
 
         Ok(Self {
             registry,
@@ -73,6 +80,7 @@ impl Metrics {
             app_info,
             memory_used_bytes,
             memory_total_bytes,
+            active_pools,
         })
     }
 

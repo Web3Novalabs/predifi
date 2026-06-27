@@ -11,7 +11,7 @@
 //! - JSON serialization for complex types
 //! - Connection pooling via redis ConnectionManager
 
-use redis::{aio::ConnectionManager, AsyncCommands};
+use redis::{aio::ConnectionManager, AsyncCommands, ErrorKind};
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{debug, error, warn};
 
@@ -99,7 +99,11 @@ impl RedisCache {
                 None
             }
             Err(err) => {
-                error!("Redis GET error for {}: {}", key, err);
+                if is_connection_error(err.kind()) {
+                    warn!("Redis connection dropout on GET {}: {}", key, err);
+                } else {
+                    error!("Redis GET error for {}: {}", key, err);
+                }
                 None
             }
         }
@@ -125,7 +129,11 @@ impl RedisCache {
         };
 
         if let Err(err) = conn.set_ex::<_, _, ()>(key, data, ttl_secs).await {
-            error!("Redis SET error for {}: {}", key, err);
+            if is_connection_error(err.kind()) {
+                warn!("Redis connection dropout on SET {}: {}", key, err);
+            } else {
+                error!("Redis SET error for {}: {}", key, err);
+            }
         } else {
             debug!("Cached: {} (TTL: {}s)", key, ttl_secs);
         }
@@ -143,7 +151,11 @@ impl RedisCache {
         let mut conn = manager.clone();
 
         if let Err(err) = conn.del::<_, ()>(key).await {
-            error!("Redis DEL error for {}: {}", key, err);
+            if is_connection_error(err.kind()) {
+                warn!("Redis connection dropout on DEL {}: {}", key, err);
+            } else {
+                error!("Redis DEL error for {}: {}", key, err);
+            }
         } else {
             debug!("Invalidated cache: {}", key);
         }
@@ -164,7 +176,11 @@ impl RedisCache {
         let keys: Vec<String> = match conn.keys(pattern).await {
             Ok(k) => k,
             Err(err) => {
-                error!("Redis KEYS error for pattern {}: {}", pattern, err);
+                if is_connection_error(err.kind()) {
+                    warn!("Redis connection dropout on KEYS {}: {}", pattern, err);
+                } else {
+                    error!("Redis KEYS error for pattern {}: {}", pattern, err);
+                }
                 return;
             }
         };
@@ -175,7 +191,11 @@ impl RedisCache {
 
         // Delete all matching keys
         if let Err(err) = conn.del::<_, ()>(&keys).await {
-            error!("Redis DEL error for pattern {}: {}", pattern, err);
+            if is_connection_error(err.kind()) {
+                warn!("Redis connection dropout on DEL pattern {}: {}", pattern, err);
+            } else {
+                error!("Redis DEL error for pattern {}: {}", pattern, err);
+            }
         } else {
             debug!(
                 "Invalidated {} cache entries matching: {}",
@@ -206,6 +226,15 @@ impl RedisCache {
             .await
             .is_ok()
     }
+}
+
+/// Returns `true` for errors caused by a transient connection dropout.
+///
+/// The `ConnectionManager` automatically reconnects after a dropout, so
+/// these errors are expected during the brief window before reconnection and
+/// should be logged at `warn` rather than `error`.
+fn is_connection_error(kind: ErrorKind) -> bool {
+    matches!(kind, ErrorKind::IoError | ErrorKind::BusyLoadingError)
 }
 
 /// Generate a cache key for a pools list query.
