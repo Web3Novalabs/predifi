@@ -6,6 +6,7 @@
 //! [`predifi_backend::run_server`].
 
 use predifi_backend::config::Config;
+use predifi_backend::run_server;
 
 /// Build the CORS middleware layer from the validated origin list in `config`.
 ///
