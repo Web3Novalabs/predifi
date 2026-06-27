@@ -153,6 +153,8 @@ where
         // Record when the request arrived so we can measure latency.
         let start = Instant::now();
 
+        // All per-request context lives on the span so the JSON formatter
+        // emits it once under "span" without duplicating it in "fields".
         let span = info_span!(
             "http.request",
             http.method = %method,
@@ -174,10 +176,8 @@ where
                     let status = response.status();
                     let status_label = status.as_u16().to_string();
                     info!(
-                        method = %method,
-                        path = %path,
-                        status = %status,
-                        elapsed_ms = elapsed_ms,
+                        http.status_code = status_code,
+                        http.duration_ms = duration_ms,
                         "request complete"
                     );
                     if let Some(metrics) = metrics {
@@ -189,9 +189,7 @@ where
                 }
                 Err(_) => {
                     error!(
-                        method = %method,
-                        path = %path,
-                        elapsed_ms = elapsed_ms,
+                        http.duration_ms = duration_ms,
                         "request failed"
                     );
                     if let Some(metrics) = metrics {

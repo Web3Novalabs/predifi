@@ -172,6 +172,41 @@ async fn fetch_prices(client: &reqwest::Client) -> Result<HashMap<String, f64>, 
     Ok(result)
 }
 
+/// Fetch prices from CoinCap as a fallback.
+async fn fetch_prices_fallback(client: &reqwest::Client) -> Result<HashMap<String, f64>, reqwest::Error> {
+    let ids: Vec<&str> = ASSETS.iter().map(|(_, id)| *id).collect();
+    let ids_param = ids.join(",");
+
+    let url = format!(
+        "https://api.coincap.io/v2/assets?ids={}",
+        ids_param
+    );
+
+    #[derive(serde::Deserialize)]
+    struct CoinCapAsset {
+        symbol: String,
+        #[serde(rename = "priceUsd")]
+        price_usd: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CoinCapResponse {
+        data: Vec<CoinCapAsset>,
+    }
+
+    let raw: CoinCapResponse = client.get(&url).send().await?.json().await?;
+
+    let mut result = HashMap::new();
+    for asset in raw.data {
+        if let Ok(price) = asset.price_usd.parse::<f64>() {
+            if ASSETS.iter().any(|(s, _)| *s == asset.symbol) {
+                result.insert(asset.symbol, price);
+            }
+        }
+    }
+    Ok(result)
+}
+
 // ── HTTP handler ─────────────────────────────────────────────────────────────
 
 /// `GET /api/v1/prices`

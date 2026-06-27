@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Plus } from "lucide-react";
+
 
 export const metadata: Metadata = {
   title: "Pool Market",
