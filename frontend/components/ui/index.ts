@@ -32,6 +32,7 @@ export {
   type TxStatus,
 } from "./transaction-progress";
 export { ShareButton, type ShareButtonProps } from "./share-button";
+export { CopyButton, type CopyButtonProps } from "./copy-button";
 export { WhitelistErrorBanner, type WhitelistErrorBannerProps } from "./whitelist-error-banner";
 export { SupportedTokensPicker, type SupportedTokensPickerProps, type Token } from "./supported-tokens-picker";
 export { ThemeToggle } from "./theme-toggle";
