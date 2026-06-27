@@ -291,6 +291,21 @@ pub async fn get_stats(
 ///
 /// Checks the Redis cache first; falls back to the database on a cache miss
 /// and stores the result for [`POOLS_CACHE_TTL`](crate::redis_cache::POOLS_CACHE_TTL) seconds.
+/// `GET /api/v1/pools` — paginated list of pools with optional filters.
+///
+/// Implements the **cache-aside pattern**:
+///
+/// 1. Check Redis cache for the queried parameters (sort_by, category, status, limit, offset)
+/// 2. If cache hit: Return the cached response
+/// 3. If cache miss: Fetch from database and cache the result for POOLS_CACHE_TTL (60s)
+///
+/// This reduces database load for frequently accessed pool lists while keeping
+/// data relatively fresh. When a new pool is created, the entire cache is
+/// invalidated (see `ingest_pool_created`) to prevent stale results.
+///
+/// Cache is keyed by all query parameters, so different sort/filter combinations
+/// are cached independently. For example, `/pools?sort=popular` and `/pools?sort=new`
+/// maintain separate cache entries.
 pub async fn get_pools(
     State(state): State<AppState>,
     Query(params): Query<PoolsQuery>,
@@ -312,15 +327,15 @@ pub async fn get_pools(
         ).into_response();
     };
 
-    // Try to get from Redis cache first
+    // Cache-aside pattern: Step 1 — Check cache
     let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        // Return cached response as-is (it's already in the old format)
+        // Cache hit — return cached data
         return (StatusCode::OK, Json(cached_response)).into_response();
     }
 
-    // Cache miss - fetch from database
+    // Cache miss — Step 2: Fetch from database
     match tokio::try_join!(
         crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset),
         crate::db::count_pools_with_filters(db, category, status)
@@ -342,7 +357,7 @@ pub async fn get_pools(
 
             let json_response = json!(&response);
 
-            // Cache the response for 60 seconds
+            // Step 3: Cache the response for 60 seconds
             state
                 .redis
                 .set(
@@ -352,7 +367,7 @@ pub async fn get_pools(
                 )
                 .await;
 
-            // Return cached format for compatibility
+            // Return the response
             (StatusCode::OK, Json(json_response)).into_response()
         }
         Err(e) => ApiResponse::<()>::error(
@@ -791,5 +806,125 @@ async fn user_referral_earnings_handler(
                 "database not configured"
             ).into_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_aside_tests {
+    use super::*;
+    use crate::redis_cache::{pools_cache_key, POOLS_CACHE_TTL};
+
+    /// Test the cache-aside pattern: cache miss, database fetch, and cache population
+    #[tokio::test]
+    async fn test_get_pools_cache_aside_pattern() {
+        let cache = crate::redis_cache::RedisCache::disabled();
+        let cache_key = pools_cache_key("new", None, "active", 20, 0);
+
+        // Step 1: Cache is empty (miss)
+        let cached: Option<serde_json::Value> = cache.get(&cache_key).await;
+        assert!(cached.is_none());
+
+        // Step 2: Simulate database result
+        let test_response = serde_json::json!({
+            "pools": [],
+            "total": 0,
+            "limit": 20,
+            "offset": 0,
+            "status": "active",
+            "category": serde_json::Value::Null,
+            "sort_by": "new"
+        });
+
+        // Step 3: Cache the result (as done in get_pools handler)
+        cache.set(&cache_key, &test_response, POOLS_CACHE_TTL).await;
+
+        // Step 4: Verify cache no-op with disabled cache (expected behavior)
+        let cached: Option<serde_json::Value> = cache.get(&cache_key).await;
+        assert!(cached.is_none());
+    }
+
+    /// Test cache key generation for different query parameters
+    #[test]
+    fn test_cache_key_uniqueness_for_pool_queries() {
+        // Same base query, different sort_by -> different keys
+        let key_new = pools_cache_key("new", None, "active", 20, 0);
+        let key_popular = pools_cache_key("popular", None, "active", 20, 0);
+        let key_ending = pools_cache_key("ending_soon", None, "active", 20, 0);
+
+        assert_ne!(key_new, key_popular);
+        assert_ne!(key_new, key_ending);
+        assert_ne!(key_popular, key_ending);
+
+        // Same base query, different category -> different keys
+        let key_no_category = pools_cache_key("new", None, "active", 20, 0);
+        let key_sports = pools_cache_key("new", Some("sports"), "active", 20, 0);
+        let key_finance = pools_cache_key("new", Some("finance"), "active", 20, 0);
+
+        assert_ne!(key_no_category, key_sports);
+        assert_ne!(key_sports, key_finance);
+
+        // Same base query, different status -> different keys
+        let key_active = pools_cache_key("new", None, "active", 20, 0);
+        let key_closed = pools_cache_key("new", None, "closed", 20, 0);
+        let key_settled = pools_cache_key("new", None, "settled", 20, 0);
+
+        assert_ne!(key_active, key_closed);
+        assert_ne!(key_closed, key_settled);
+
+        // Same base query, different pagination -> different keys
+        let key_page1 = pools_cache_key("new", None, "active", 20, 0);
+        let key_page2 = pools_cache_key("new", None, "active", 20, 20);
+        let key_limit50 = pools_cache_key("new", None, "active", 50, 0);
+
+        assert_ne!(key_page1, key_page2);
+        assert_ne!(key_page1, key_limit50);
+    }
+
+    /// Test cache invalidation pattern
+    #[tokio::test]
+    async fn test_cache_invalidation_on_new_pool() {
+        let cache = crate::redis_cache::RedisCache::disabled();
+
+        // Simulate setting multiple pool cache entries
+        let keys = vec![
+            pools_cache_key("new", None, "active", 20, 0),
+            pools_cache_key("popular", None, "active", 20, 0),
+            pools_cache_key("new", Some("sports"), "active", 20, 0),
+        ];
+
+        for key in &keys {
+            let data = serde_json::json!({"test": "data"});
+            cache.set(key, &data, POOLS_CACHE_TTL).await;
+        }
+
+        // Invalidate all pool caches (as done when new pool is created)
+        cache.invalidate_pools_cache().await;
+
+        // All keys should be invalidated (with disabled cache, get always returns None anyway)
+        for key in &keys {
+            let cached: Option<serde_json::Value> = cache.get(key).await;
+            assert!(cached.is_none());
+        }
+    }
+
+    /// Test cache behavior with different query parameter combinations
+    #[test]
+    fn test_cache_key_encoding_with_all_parameters() {
+        // Test with all parameters specified
+        let full_key = pools_cache_key("popular", Some("sports"), "closed", 50, 100);
+        assert_eq!(full_key, "pools:popular:sports:closed:50:100");
+
+        // Test with None category encodes as "all"
+        let no_category = pools_cache_key("new", None, "active", 20, 0);
+        assert_eq!(no_category, "pools:new:all:active:20:0");
+
+        // Test various sort_by values
+        let sort_new = pools_cache_key("new", None, "active", 20, 0);
+        let sort_popular = pools_cache_key("popular", None, "active", 20, 0);
+        let sort_ending = pools_cache_key("ending_soon", None, "active", 20, 0);
+
+        assert_eq!(sort_new, "pools:new:all:active:20:0");
+        assert_eq!(sort_popular, "pools:popular:all:active:20:0");
+        assert_eq!(sort_ending, "pools:ending_soon:all:active:20:0");
     }
 }

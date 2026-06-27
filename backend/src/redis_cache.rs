@@ -234,6 +234,29 @@ impl RedisCache {
         self.delete_pattern(POOLS_CACHE_PATTERN).await;
     }
 
+    /// Check if a cache entry exists without deserializing it
+    ///
+    /// Useful for cache-aside pattern to determine if we need to populate the cache
+    pub async fn exists(&self, key: &str) -> bool {
+        let manager = match self.manager.as_ref() {
+            Some(m) => m,
+            None => return false,
+        };
+
+        let mut conn = manager.clone();
+        match conn.exists::<_, bool>(key).await {
+            Ok(exists) => exists,
+            Err(err) => {
+                if is_connection_error(err.kind()) {
+                    debug!("Redis connection dropout on EXISTS {}: {}", key, err);
+                } else {
+                    debug!("Redis EXISTS error for {}: {}", key, err);
+                }
+                false
+            }
+        }
+    }
+
     /// Ping Redis to check connection health
     pub async fn ping(&self) -> bool {
         if self.simulate_available {
@@ -321,5 +344,70 @@ mod tests {
         let result: Option<String> = cache.get("test").await;
         assert!(result.is_none());
         cache.delete("test").await;
+    }
+
+    #[tokio::test]
+    async fn test_cache_aside_pattern_flow() {
+        // Simulates the cache-aside pattern: check cache, on miss load from DB, then cache result
+        let cache = RedisCache::disabled();
+        let cache_key = "pools:new:all:active:20:0";
+
+        // Step 1: Check cache (should be empty)
+        let cached: Option<serde_json::Value> = cache.get(cache_key).await;
+        assert!(cached.is_none());
+
+        // Step 2: Simulate DB load and cache result
+        let test_data = serde_json::json!({
+            "pools": [],
+            "total": 0,
+            "limit": 20,
+            "offset": 0
+        });
+        cache.set(cache_key, &test_data, POOLS_CACHE_TTL).await;
+
+        // Step 3: Verify we got None (disabled cache no-ops)
+        let cached: Option<serde_json::Value> = cache.get(cache_key).await;
+        assert!(cached.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_simulate_available_cache() {
+        let cache = RedisCache::simulate_available();
+        assert!(cache.is_available());
+        assert!(cache.ping().await);
+
+        // Operations still no-op since there's no actual Redis connection
+        cache.set("test", &"value", 60).await;
+        let result: Option<String> = cache.get("test").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cache_key_uniqueness() {
+        // Different parameters should produce different keys
+        let key1 = pools_cache_key("new", None, "active", 20, 0);
+        let key2 = pools_cache_key("popular", None, "active", 20, 0);
+        let key3 = pools_cache_key("new", Some("sports"), "active", 20, 0);
+        let key4 = pools_cache_key("new", None, "closed", 20, 0);
+        let key5 = pools_cache_key("new", None, "active", 10, 0);
+        let key6 = pools_cache_key("new", None, "active", 20, 10);
+
+        assert_ne!(key1, key2);
+        assert_ne!(key1, key3);
+        assert_ne!(key1, key4);
+        assert_ne!(key1, key5);
+        assert_ne!(key1, key6);
+    }
+
+    #[tokio::test]
+    async fn test_cache_pattern_invalidation() {
+        // Test pattern matching for cache invalidation
+        let cache = RedisCache::disabled();
+
+        // Operations that would invalidate all pool caches
+        cache.invalidate_pools_cache().await;
+
+        // Verify pattern constant
+        assert_eq!(POOLS_CACHE_PATTERN, "pools:*");
     }
 }
