@@ -18,6 +18,8 @@ const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
 const DEFAULT_REFERRAL_FEE_BPS: u32 = 5000;
 const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
+const DEFAULT_SECRET_KEY: &str = "predifi-dev-secret-do-not-use-in-production-32";
+const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = crate::constants::DEFAULT_INDEXER_MAX_BATCH_SIZE;
 
 /// Origins allowed by default when `CORS_ALLOWED_ORIGINS` is not set.
 pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
@@ -87,6 +89,10 @@ pub struct Config {
     ///
     /// Falls back to [`DEFAULT_CORS_ORIGINS`] when the variable is absent.
     pub cors_allowed_origins: Vec<String>,
+    /// HMAC secret used to verify JWT bearer tokens (default: dev-only placeholder).
+    pub secret_key: String,
+    /// Maximum number of Stellar events processed per indexer batch (default `500`).
+    pub indexer_max_batch_size: usize,
 }
 
 impl Config {
@@ -161,6 +167,12 @@ impl Config {
 
         // Parse and strictly validate CORS origins.
         let cors_allowed_origins = parse_cors_origins(vars)?;
+        let secret_key = get_string(vars, "PREDIFI_SECRET_KEY", DEFAULT_SECRET_KEY);
+        let indexer_max_batch_size = get_usize(
+            vars,
+            "PREDIFI_INDEXER_MAX_BATCH_SIZE",
+            DEFAULT_INDEXER_MAX_BATCH_SIZE,
+        )?;
 
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
@@ -193,6 +205,8 @@ impl Config {
             sentry_dsn,
             redis_url,
             cors_allowed_origins,
+            secret_key,
+            indexer_max_batch_size,
         };
 
         config.validate()?;
@@ -281,6 +295,18 @@ impl Config {
                 reason: String::from("must contain at least one origin"),
             });
         }
+        if let Err(reason) = crate::jwt::verify_jwt_secret(&self.secret_key) {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SECRET_KEY",
+                reason: reason.to_string(),
+            });
+        }
+        if self.indexer_max_batch_size == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_INDEXER_MAX_BATCH_SIZE",
+                reason: String::from("must be greater than zero"),
+            });
+        }
 
         Ok(())
     }
@@ -318,6 +344,8 @@ impl Config {
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
             cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
+            secret_key: String::from(DEFAULT_SECRET_KEY),
+            indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
         }
     }
 }
@@ -562,6 +590,19 @@ fn get_u64(
     match vars.get(key) {
         Some(value) => value
             .parse::<u64>()
+            .map_err(|err| to_number_error(key, value, err)),
+        None => Ok(default),
+    }
+}
+
+fn get_usize(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+    default: usize,
+) -> Result<usize, ConfigError> {
+    match vars.get(key) {
+        Some(value) => value
+            .parse::<usize>()
             .map_err(|err| to_number_error(key, value, err)),
         None => Ok(default),
     }

@@ -107,7 +107,7 @@ const ASSETS: &[(&str, &str)] = &[("BTC", "bitcoin"), ("ETH", "ethereum"), ("XLM
 /// Panics if the reqwest HTTP client cannot be built (this should never
 /// happen in practice).
 pub fn spawn_fetcher(cache: PriceCache, metrics: Option<SharedMetrics>) -> JoinHandle<()> {
-    tracing_context::spawn_worker("price_cache_fetcher", async move {
+    crate::tracing_context::spawn_worker("price_cache_fetcher", async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
