@@ -1160,7 +1160,7 @@ async fn api_v1_stats_returns_error_without_db() {
     .await
     .expect("request failed");
 
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body = body_string(response.into_body()).await;
     assert!(
         body.contains("\"error\""),

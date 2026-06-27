@@ -14,6 +14,7 @@ use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
 use crate::response::{ApiResponse, error_codes};
+use crate::validated_types::{BoundedI64, NonEmptyString, PoolSortBy, PoolStatus, StellarAddress};
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,13 +196,15 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
 #[derive(Debug, Deserialize)]
 pub struct PoolsQuery {
     /// Sort order: "popular" | "ending_soon" | "new" (default)
-    pub sort_by: Option<String>,
+    pub sort_by: Option<PoolSortBy>,
     /// Category filter, e.g. "Sports", "Crypto"
-    pub category: Option<String>,
+    pub category: Option<NonEmptyString>,
     /// Status filter: "active" | "closed" | "settled" (default: "active")
-    pub status: Option<String>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
+    pub status: Option<PoolStatus>,
+    /// Page size, clamped to [1, 100].
+    pub limit: Option<BoundedI64<1, 100>>,
+    /// Zero-based page offset, minimum 0.
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -298,11 +301,11 @@ pub async fn get_pools(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let sort_by = params.sort_by.as_deref().unwrap_or("new");
-    let category = params.category.as_deref();
-    let status = params.status.as_deref().unwrap_or("active");
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let sort_by = params.sort_by.map(|s| s.as_str()).unwrap_or("new");
+    let category = params.category.as_ref().map(|s| s.as_str());
+    let status = params.status.map(|s| s.as_str()).unwrap_or("active");
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -369,9 +372,9 @@ pub async fn get_pools(
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {
     /// Maximum number of results to return (capped at 100, default 20).
-    pub limit: Option<i64>,
+    pub limit: Option<BoundedI64<1, 100>>,
     /// Zero-based offset for pagination (default 0).
-    pub offset: Option<i64>,
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
 }
 
 /// `GET /api/v1/users/:address/history` — paginated prediction history for a user.
@@ -383,8 +386,8 @@ pub async fn get_user_history(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -421,8 +424,8 @@ pub async fn get_user_predictions(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -455,9 +458,9 @@ pub async fn get_user_predictions(
 #[derive(Debug, Deserialize)]
 pub struct LeaderboardQuery {
     /// Maximum number of results to return (capped at 100, default 20).
-    pub limit: Option<i64>,
+    pub limit: Option<BoundedI64<1, 100>>,
     /// Zero-based offset for pagination (default 0).
-    pub offset: Option<i64>,
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
     /// Ranking type: "volume" | "winnings" (default: "volume")
     pub rank_by: Option<String>,
 }
@@ -470,8 +473,8 @@ pub async fn get_leaderboard(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
     let rank_by = params.rank_by.as_deref().unwrap_or("volume");
 
     let Some(db) = &state.db else {
@@ -530,12 +533,12 @@ pub async fn get_leaderboard(
 #[derive(Debug, Deserialize)]
 pub struct PoolCreatedPayload {
     pub pool_id: u64,
-    pub creator: String,
+    pub creator: StellarAddress,
     pub end_time: u64,
-    pub token: String,
-    pub category: String,
+    pub token: NonEmptyString,
+    pub category: NonEmptyString,
     /// Pool description / name decoded from the event data.
-    pub description: String,
+    pub description: NonEmptyString,
 }
 
 /// `POST /api/v1/indexer/pool-created` — ingest a decoded `PoolCreated` event
@@ -557,15 +560,16 @@ pub async fn ingest_pool_created(
 
     let event = PoolCreatedEvent {
         pool_id: payload.pool_id,
-        creator: payload.creator,
+        creator: payload.creator.into(),
         end_time: payload.end_time,
-        token: payload.token,
-        category: payload.category,
-        description: payload.description,
+        token: payload.token.into(),
+        category: payload.category.into(),
+        description: payload.description.into(),
     };
 
     match crate::db::insert_pool_from_event(db, &event).await {
         Ok(()) => {
+            state.redis.invalidate_pools_cache().await;
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
             ApiResponse::success(response).into_response()
         }
@@ -574,10 +578,6 @@ pub async fn ingest_pool_created(
             error_codes::INTERNAL_ERROR,
             e.to_string()
         ).into_response(),
-            state.redis.invalidate_pools_cache().await;
-            Json(json!({ "status": "ok", "pool_id": event.pool_id }))
-        }
-        Err(e) => Json(json!({ "error": e.to_string() })),
     }
 }
 
@@ -585,7 +585,7 @@ pub async fn ingest_pool_created(
 #[derive(Debug, Deserialize)]
 pub struct PredictionPlacedPayload {
     pub pool_id: u64,
-    pub user_address: String,
+    pub user_address: StellarAddress,
     pub outcome: i32,
     pub amount: i64,
 }
@@ -608,7 +608,7 @@ pub async fn ingest_prediction_placed(
 
     let event = PredictionPlacedEvent {
         pool_id: payload.pool_id,
-        user_address: payload.user_address,
+        user_address: payload.user_address.into(),
         amount: payload.amount,
         outcome: payload.outcome,
     };

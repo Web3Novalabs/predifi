@@ -100,11 +100,7 @@ pub async fn wait_for_signal() {
         Err(error) => {
             warn!(error = %error, "failed to install Ctrl+C handler; shutting down anyway");
         }
-    if let Err(error) = tokio::signal::ctrl_c().await {
-        warn!(error = %error, "Ctrl+C handler failed; shutting down anyway");
-        return;
     }
-    info!("received Ctrl+C, beginning graceful shutdown");
 }
 
 /// Run `fut` with a wall-clock deadline.
