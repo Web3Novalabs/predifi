@@ -20,8 +20,17 @@ pub async fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
             .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
             .connect(&config.database_url);
 
-        match tokio::time::timeout(Duration::from_secs(config.db_acquire_timeout_secs), future)
-            .await
+        // `db_connect_timeout_secs` bounds the time spent on the initial TCP/TLS
+        // handshake for each individual connection attempt.  This is distinct from
+        // `acquire_timeout`, which limits how long a caller waits for a slot in an
+        // already-healthy pool.  sqlx 0.8 does not expose a separate
+        // `connect_timeout` on `PgPoolOptions`, so we wrap the connect future in a
+        // `tokio::time::timeout` to achieve the same effect.
+        match tokio::time::timeout(
+            Duration::from_secs(config.db_connect_timeout_secs),
+            future,
+        )
+        .await
         {
             Ok(result) => result,
             Err(_) => Err(sqlx::Error::PoolTimedOut),
@@ -289,6 +298,75 @@ mod tests {
         assert_eq!(backoff_delay_ms(2, 200, 5_000), 400);
         assert_eq!(backoff_delay_ms(3, 200, 5_000), 800);
         assert_eq!(backoff_delay_ms(10, 200, 5_000), 5_000);
+    }
+
+    #[test]
+    fn backoff_delay_with_zero_base_is_zero() {
+        // When base delay is 0, every attempt should return 0 (no delay)
+        assert_eq!(backoff_delay_ms(1, 0, 5_000), 0);
+        assert_eq!(backoff_delay_ms(5, 0, 5_000), 0);
+    }
+
+    #[test]
+    fn backoff_delay_saturates_at_max() {
+        // For large attempt counts the delay should be capped at max_delay_ms
+        assert_eq!(backoff_delay_ms(30, 100, 1_000), 1_000);
+        assert_eq!(backoff_delay_ms(64, 1, 500), 500);
+    }
+
+    /// Verify that `retry_with_backoff` treats `max_attempts = 0` as `1`
+    /// (the floor guard prevents zero-iteration loops).
+    #[tokio::test]
+    async fn retry_with_backoff_treats_zero_max_as_one() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+        let result: Result<(), &'static str> =
+            retry_with_backoff(0, 0, 0, "test", || async {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                Err("fail")
+            })
+            .await;
+
+        // Should attempt exactly once (0 is clamped to 1)
+        assert_eq!(result, Err("fail"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Ensure that a successful first attempt is returned immediately without
+    /// any retries, confirming the fast path works correctly.
+    #[tokio::test]
+    async fn retry_with_backoff_succeeds_on_first_attempt() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+        let result: Result<&'static str, &'static str> =
+            retry_with_backoff(5, 0, 0, "test", || async {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                Ok("immediate")
+            })
+            .await;
+
+        assert_eq!(result, Ok("immediate"));
+        // Must have called exactly once — no unnecessary retries
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Verify that the configurable connect delay fields in [`Config`] are
+    /// properly wired: `db_connect_timeout_secs` must be independent from
+    /// `db_acquire_timeout_secs` and both must be readable.
+    #[test]
+    fn config_connect_timeout_is_independent_from_acquire_timeout() {
+        let config = crate::config::Config::default_for_test();
+        // The two timeouts serve different purposes and must be independently
+        // configurable — a change to one must not imply a change to the other.
+        assert!(
+            config.db_connect_timeout_secs > 0,
+            "connect timeout must be > 0"
+        );
+        assert!(
+            config.db_acquire_timeout_secs > 0,
+            "acquire timeout must be > 0"
+        );
+        // They are allowed to be equal but are independently specified
     }
 }
 

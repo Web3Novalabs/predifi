@@ -9,6 +9,7 @@ const DEFAULT_DB_ACQUIRE_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_DB_CONNECT_MAX_ATTEMPTS: u32 = 5;
 const DEFAULT_DB_CONNECT_BASE_DELAY_MS: u64 = 200;
 const DEFAULT_DB_CONNECT_MAX_DELAY_MS: u64 = 5_000;
+const DEFAULT_DB_CONNECT_TIMEOUT_SECS: u64 = 10;
 const DEFAULT_RPC_HEALTH_TIMEOUT_SECS: u64 = 2;
 const DEFAULT_RPC_HEALTH_RETRY_COUNT: u8 = 3;
 const DEFAULT_RPC_TIMEOUT_SECS: u64 = 30;
@@ -53,6 +54,13 @@ pub struct Config {
     pub db_connect_base_delay_ms: u64,
     /// Maximum backoff delay in ms between startup connection attempts (default `5000`).
     pub db_connect_max_delay_ms: u64,
+    /// Per-connection TCP/TLS handshake timeout in seconds for each individual
+    /// connection the pool creates (default `10`).  This is distinct from
+    /// `db_acquire_timeout_secs`, which governs how long a caller waits for a
+    /// slot in an already-open pool; this field controls how long sqlx waits
+    /// for the underlying TCP connect + TLS handshake to complete when
+    /// establishing a brand-new connection.
+    pub db_connect_timeout_secs: u64,
     /// Per-attempt timeout in seconds for the Stellar RPC health check (default `2`).
     pub rpc_health_timeout_secs: u64,
     /// Number of times to retry the Stellar RPC health check before reporting failure (default `3`).
@@ -130,6 +138,11 @@ impl Config {
             "PREDIFI_DB_CONNECT_MAX_DELAY_MS",
             DEFAULT_DB_CONNECT_MAX_DELAY_MS,
         )?;
+        let db_connect_timeout_secs = get_u64(
+            vars,
+            "PREDIFI_DB_CONNECT_TIMEOUT_SECS",
+            DEFAULT_DB_CONNECT_TIMEOUT_SECS,
+        )?;
         let rpc_health_timeout_secs = get_u64(
             vars,
             "PREDIFI_RPC_HEALTH_TIMEOUT_SECS",
@@ -182,6 +195,7 @@ impl Config {
             db_connect_max_attempts,
             db_connect_base_delay_ms,
             db_connect_max_delay_ms,
+            db_connect_timeout_secs,
             rpc_health_timeout_secs,
             rpc_health_retry_count,
             rpc_timeout_secs,
@@ -307,6 +321,7 @@ impl Config {
             db_connect_max_attempts: 1,
             db_connect_base_delay_ms: 0,
             db_connect_max_delay_ms: 0,
+            db_connect_timeout_secs: 5,
             rpc_health_timeout_secs: 2,
             rpc_health_retry_count: 3,
             rpc_timeout_secs: 30,
