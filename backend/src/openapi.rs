@@ -262,6 +262,7 @@ pub struct IndexerOkResponse {
         ReferralEarningDoc,
         ReferralEarningsResponse,
         DependencyStatus,
+        HealthErrors,
         HealthResponse,
         ErrorResponse,
         PoolCreatedPayloadDoc,
