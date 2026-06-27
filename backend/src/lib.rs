@@ -21,7 +21,9 @@ pub mod routes;
 pub mod seed;
 pub mod server;
 pub mod session;
+pub mod shutdown;
 pub mod telemetry;
+pub mod tracing_context;
 pub mod worker;
 pub mod ws;
 
