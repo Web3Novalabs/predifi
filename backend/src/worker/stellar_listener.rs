@@ -129,9 +129,10 @@ pub fn spawn(
     event_bus: crate::ws::EventBus,
     redis: RedisCache,
     timeout: Duration,
+    max_batch_size: usize,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        run(rpc_url, db, event_bus, redis, timeout).await;
+        run(rpc_url, db, event_bus, redis, timeout, max_batch_size).await;
     })
 }
 
@@ -152,6 +153,7 @@ async fn run(
     event_bus: crate::ws::EventBus,
     redis: RedisCache,
     timeout: Duration,
+    max_batch_size: usize,
 ) {
     let client = reqwest::Client::builder()
         .timeout(timeout)
@@ -162,7 +164,8 @@ async fn run(
     // Resume from the last persisted ledger, or start from ledger 1.
     let mut cursor: u64 = load_cursor(&db).await.unwrap_or(1);
     let mut consecutive_failures: u32 = 0;
-    info!(cursor, "stellar listener starting");
+    let batch_size = max_batch_size.max(1);
+    info!(cursor, batch_size, "stellar listener starting");
 
     loop {
         if consecutive_failures == 0 {
@@ -181,96 +184,24 @@ async fn run(
 
                 let count = result.events.len();
                 if count > 0 {
+                    if count > batch_size {
+                        warn!(
+                            events = count,
+                            batch_size,
+                            "stellar event batch exceeds configured maximum; processing in chunks"
+                        );
+                    }
+
                     info!(
                         ledger_start = cursor,
                         latest_ledger = result.latest_ledger,
                         events = count,
+                        batch_size,
                         "stellar events received"
                     );
-                    // Collect referral events for bulk insert to minimise DB round-trips.
-                    let mut referral_events: Vec<crate::db::ReferralPaidEvent> = Vec::new();
 
-                    for event in &result.events {
-                        info!(
-                            id = %event.id,
-                            event_type = %event.event_type,
-                            ledger = event.ledger,
-                            contract_id = ?event.contract_id,
-                            "stellar event"
-                        );
-
-                        let topic_matches = |needle: &str| {
-                            event
-                                .topics
-                                .as_ref()
-                                .map(|t| t.iter().any(|s| s == needle))
-                                .unwrap_or(false)
-                        };
-
-                        if event.event_type == "contract" {
-                            if topic_matches("pool_created") {
-                                if let Err(e) = handle_pool_created_event(&db, &redis, event).await {
-                                    error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to process pool_created event"
-                                    );
-                                }
-                            } else if topic_matches("prediction_placed") {
-                                if let Err(e) =
-                                    handle_prediction_placed_event(&db, event, &event_bus).await
-                                {
-                                    error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to process prediction_placed event"
-                                    );
-                                }
-                            } else if topic_matches("pool_resolved") {
-                                if let Err(e) = handle_pool_resolved_event(&db, event).await {
-                                    error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to process pool_resolved event"
-                                    );
-                                }
-                            } else if topic_matches("pool_canceled") {
-                                if let Err(e) = handle_pool_canceled_event(&db, event).await {
-                                    error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to process pool_canceled event"
-                                    );
-                                }
-                            } else if topic_matches("referral_paid") {
-                                match parse_referral_paid_event(event) {
-                                    Ok(ev) => referral_events.push(ev),
-                                    Err(e) => error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to parse referral_paid event"
-                                    ),
-                                }
-                            }
-                        }
-                    }
-
-                    // Bulk-insert all collected referral events in a single query.
-                    if !referral_events.is_empty() {
-                        if let Err(e) =
-                            crate::db::insert_referrals_bulk(&db, &referral_events).await
-                        {
-                            error!(
-                                error = %e,
-                                count = referral_events.len(),
-                                "failed to bulk insert referral events"
-                            );
-                        }
+                    for chunk in result.events.chunks(batch_size) {
+                        process_event_batch(&db, &redis, &event_bus, chunk, batch_size).await;
                     }
                 }
 
@@ -292,6 +223,95 @@ async fn run(
                 );
                 tokio::time::sleep(Duration::from_secs(delay)).await;
             }
+        }
+    }
+}
+
+async fn process_event_batch(
+    db: &PgPool,
+    redis: &RedisCache,
+    event_bus: &crate::ws::EventBus,
+    events: &[StellarEvent],
+    max_batch_size: usize,
+) {
+    let mut referral_events: Vec<crate::db::ReferralPaidEvent> = Vec::new();
+
+    for event in events {
+        info!(
+            id = %event.id,
+            event_type = %event.event_type,
+            ledger = event.ledger,
+            contract_id = ?event.contract_id,
+            "stellar event"
+        );
+
+        let topic_matches = |needle: &str| {
+            event
+                .topics
+                .as_ref()
+                .map(|t| t.iter().any(|s| s == needle))
+                .unwrap_or(false)
+        };
+
+        if event.event_type == "contract" {
+            if topic_matches("pool_created") {
+                if let Err(e) = handle_pool_created_event(db, redis, event).await {
+                    error!(
+                        id = %event.id,
+                        ledger = event.ledger,
+                        error = %e,
+                        "failed to process pool_created event"
+                    );
+                }
+            } else if topic_matches("prediction_placed") {
+                if let Err(e) = handle_prediction_placed_event(db, event, event_bus).await {
+                    error!(
+                        id = %event.id,
+                        ledger = event.ledger,
+                        error = %e,
+                        "failed to process prediction_placed event"
+                    );
+                }
+            } else if topic_matches("pool_resolved") {
+                if let Err(e) = handle_pool_resolved_event(db, event).await {
+                    error!(
+                        id = %event.id,
+                        ledger = event.ledger,
+                        error = %e,
+                        "failed to process pool_resolved event"
+                    );
+                }
+            } else if topic_matches("pool_canceled") {
+                if let Err(e) = handle_pool_canceled_event(db, event).await {
+                    error!(
+                        id = %event.id,
+                        ledger = event.ledger,
+                        error = %e,
+                        "failed to process pool_canceled event"
+                    );
+                }
+            } else if topic_matches("referral_paid") {
+                match parse_referral_paid_event(event) {
+                    Ok(ev) => referral_events.push(ev),
+                    Err(e) => error!(
+                        id = %event.id,
+                        ledger = event.ledger,
+                        error = %e,
+                        "failed to parse referral_paid event"
+                    ),
+                }
+            }
+        }
+    }
+
+    if !referral_events.is_empty() {
+        if let Err(e) = crate::db::insert_referrals_bulk(db, &referral_events, max_batch_size).await
+        {
+            error!(
+                error = %e,
+                count = referral_events.len(),
+                "failed to bulk insert referral events"
+            );
         }
     }
 }
@@ -561,5 +581,14 @@ mod tests {
         assert_eq!(reconnect_delay_secs(3), 4);
         assert_eq!(reconnect_delay_secs(4), 8);
         assert_eq!(reconnect_delay_secs(10), 60);
+    }
+
+    #[test]
+    fn event_batch_is_split_into_configured_chunks() {
+        let events: Vec<u64> = (0..5).collect();
+        let chunks: Vec<_> = events.chunks(2).collect();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0], &[0, 1]);
+        assert_eq!(chunks[2], &[4]);
     }
 }

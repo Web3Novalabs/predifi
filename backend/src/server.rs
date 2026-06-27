@@ -59,7 +59,23 @@ fn build_cors(config: &Config) -> CorsLayer {
         ])
 }
 
-/// Health-check handler.
+/// Lightweight liveness probe — confirms the HTTP server process is running.
+///
+/// This endpoint performs **no** dependency checks and always returns `200 OK`
+/// when the Axum process can respond. Use it as the Kubernetes `livenessProbe`
+/// so transient dependency failures do not trigger pod restarts.
+async fn live() -> axum::response::Response {
+    use axum::http::StatusCode;
+
+    let body = json!({
+        "status": "alive",
+        "service": "predifi-backend",
+    });
+
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+/// Health-check handler — full dependency diagnostic endpoint.
 async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
 
@@ -152,19 +168,31 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
     }
 }
 
-/// Readiness probe handler — signals whether the service is ready to accept traffic.
+/// Readiness probe handler — signals whether the service can accept traffic.
 ///
-/// Unlike the general `/health` liveness endpoint, this probe focuses on
-/// Redis connectivity, which is required for the caching layer to function.
+/// Unlike the lightweight `/live` liveness endpoint, this probe verifies that
+/// critical runtime dependencies (database, Redis, and price cache) are ready.
 /// Kubernetes (and similar orchestrators) use readiness probes to decide
-/// whether to route traffic to a pod; returning `503` here will temporarily
-/// remove the instance from the load-balancer rotation until Redis recovers.
-///
-/// # Responses
-/// - `200 OK` — Redis is reachable and the service is ready.
-/// - `503 Service Unavailable` — Redis is not configured or unreachable.
+/// whether to route traffic to a pod; returning `503` here temporarily removes
+/// the instance from the load-balancer rotation until dependencies recover.
 async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
+
+    let mut ready = true;
+    let mut db_status = "ok";
+    let mut db_error: Option<String> = None;
+
+    if let Some(db) = &state.db {
+        if sqlx::query("SELECT 1").execute(db).await.is_err() {
+            db_status = "unreachable";
+            db_error = Some("database ping failed".to_string());
+            ready = false;
+        }
+    } else {
+        db_status = "not_configured";
+        db_error = Some("database pool is not configured".to_string());
+        ready = false;
+    }
 
     let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
         (
@@ -179,16 +207,34 @@ async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::respon
     } else {
         ("ok", None)
     };
+    if redis_status != "ok" {
+        ready = false;
+    }
 
-    let ready = redis_status == "ok";
+    let (price_cache_status, price_cache_error): (&str, Option<String>) =
+        if state.cache.snapshot().is_empty() {
+            (
+                "not_ready",
+                Some("price cache is empty — oracle data not yet loaded".to_string()),
+            )
+        } else {
+            ("ok", None)
+        };
+    if price_cache_status != "ok" {
+        ready = false;
+    }
 
     let body = json!({
         "status": if ready { "ready" } else { "not_ready" },
         "dependencies": {
+            "db": db_status,
             "redis": redis_status,
+            "price_cache": price_cache_status,
         },
         "errors": {
+            "db": db_error,
             "redis": redis_error,
+            "price_cache": price_cache_error,
         }
     });
 
@@ -238,10 +284,6 @@ async fn metrics_middleware(
         .http_requests_total
         .with_label_values(&[&method, &path, &status])
         .inc();
-
-    if response.status() == axum::http::StatusCode::INTERNAL_SERVER_ERROR {
-        metrics.http_server_errors_total.inc();
-    }
 
     response
 }
@@ -321,6 +363,7 @@ fn build_router_with_rate_period(
 
     let router = Router::new()
         .route("/", get(root))
+        .route("/live", get(live))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
@@ -392,6 +435,7 @@ fn build_router_with_db(
 
     let router = Router::new()
         .route("/", get(root))
+        .route("/live", get(live))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
@@ -504,7 +548,8 @@ where
         pool.clone(),
         event_bus.clone(),
         redis.clone(),
-        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(config.rpc_timeout_secs),
+        config.indexer_max_batch_size,
     );
     if redis.is_available() {
         info!("Redis cache initialized and available");
@@ -512,7 +557,6 @@ where
         warn!("Redis cache unavailable - running without caching");
     }
 
-    let app = build_router_with_db(config.clone(), cache, redis, pool.clone(), event_bus);
     let app = build_router_with_db(
         config.clone(),
         cache,

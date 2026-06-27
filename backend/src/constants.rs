@@ -70,6 +70,14 @@ pub const JWT_PARTS_COUNT: usize = 3;
 /// before attempting base64 decoding.
 pub const JWT_MIN_LENGTH: usize = 20;
 
+/// Minimum length (in bytes) required for the JWT signing secret.
+///
+/// HS256 requires a sufficiently long secret to resist brute-force attacks.
+pub const JWT_SECRET_MIN_LENGTH: usize = 32;
+
+/// Default maximum number of events processed per indexer poll cycle.
+pub const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = 500;
+
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 
 /// Maximum number of seconds the HTTP server is allowed to spend draining

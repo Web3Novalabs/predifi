@@ -915,16 +915,29 @@ pub struct ReferralPaidEvent {
 
 /// Insert multiple referral records using bulk insert for optimal performance.
 ///
-/// This function uses PostgreSQL's `INSERT INTO ... VALUES (...), (...), ...` syntax
-/// to insert all referral records in a single database round-trip, significantly
-/// improving performance over individual inserts when processing multiple events.
-pub async fn insert_referrals_bulk<'e, E>(
-    executor: E,
+/// Large batches are split into chunks of at most `max_batch_size` rows to
+/// avoid oversized SQL statements and PostgreSQL parameter limits.
+pub async fn insert_referrals_bulk(
+    pool: &PgPool,
     events: &[ReferralPaidEvent],
-) -> Result<(), sqlx::Error>
-where
-    E: Executor<'e, Database = Postgres>,
-{
+    max_batch_size: usize,
+) -> Result<(), sqlx::Error> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let chunk_size = max_batch_size.max(1);
+    for chunk in events.chunks(chunk_size) {
+        insert_referrals_bulk_chunk(pool, chunk).await?;
+    }
+
+    Ok(())
+}
+
+async fn insert_referrals_bulk_chunk(
+    pool: &PgPool,
+    events: &[ReferralPaidEvent],
+) -> Result<(), sqlx::Error> {
     if events.is_empty() {
         return Ok(());
     }
@@ -961,7 +974,7 @@ where
             .bind(event.referral_amount);
     }
 
-    query_builder.execute(executor).await?;
+    query_builder.execute(pool).await?;
     Ok(())
 }
 
@@ -1028,6 +1041,23 @@ mod write_helper_tests {
         }
 
         assert_eq!(values, vec!["($1, $2, $3, $4)", "($5, $6, $7, $8)"]);
+    }
+
+    #[test]
+    fn insert_referrals_bulk_chunks_large_batches() {
+        let events: Vec<_> = (0..5)
+            .map(|index| ReferralPaidEvent {
+                pool_id: index,
+                referrer: format!("GREF{index}"),
+                referred_user: format!("GUSER{index}"),
+                referral_amount: 100 + index as i64,
+            })
+            .collect();
+
+        let chunks: Vec<_> = events.chunks(2).collect();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), 2);
+        assert_eq!(chunks[2].len(), 1);
     }
 }
 
@@ -1151,7 +1181,7 @@ mod predictions_index_tests {
     /// the schema.
     #[test]
     fn migration_009_contains_expected_index_names() {
-        let sql = include_str!("../../migrations/009_add_predictions_indexes.sql");
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
 
         let expected_indexes = [
             "idx_predictions_pool_created",
@@ -1172,7 +1202,7 @@ mod predictions_index_tests {
     /// re-running migrations on an already-migrated schema is idempotent.
     #[test]
     fn migration_009_all_indexes_are_idempotent() {
-        let sql = include_str!("../../migrations/009_add_predictions_indexes.sql");
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
 
         // Count CREATE INDEX and CREATE INDEX IF NOT EXISTS occurrences.
         let total_creates = sql.matches("CREATE INDEX").count();
@@ -1188,7 +1218,7 @@ mod predictions_index_tests {
     /// All indexes in migration 009 must target the `predictions` table.
     #[test]
     fn migration_009_all_indexes_target_predictions_table() {
-        let sql = include_str!("../../migrations/009_add_predictions_indexes.sql");
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
 
         // Each ON clause in the file should reference `predictions`.
         let on_clauses: Vec<&str> = sql.match_indices("ON predictions").map(|(_, s)| s).collect();
