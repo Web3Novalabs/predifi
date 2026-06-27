@@ -15,6 +15,10 @@ export interface UsePoolsResult {
   pools: Pool[];
   /** Total number of pools matching the query (for pagination). */
   total: number;
+  /** Current page limit returned by the backend. */
+  limit: number;
+  /** Current page offset returned by the backend. */
+  offset: number;
   /** The raw response, or `undefined` until the first load resolves. */
   data: PoolsResponse | undefined;
   /** True during the initial load when no cached data is available yet. */
@@ -25,6 +29,11 @@ export interface UsePoolsResult {
   error: Error | undefined;
   /** Manually revalidate (e.g. a "retry" button). */
   refresh: () => void;
+  /**
+   * The SWR cache key — the full URL used for the request.
+   * Expose it so callers can use it with `useSWRMutation` or `mutate()`.
+   */
+  cacheKey: string;
 }
 
 /**
@@ -34,21 +43,35 @@ export interface UsePoolsResult {
  * leans on the cache: identical queries share a single cache entry, concurrent
  * requests are deduplicated, cached data is served instantly on remount, and
  * (via the global {@link SWRProvider} config) the data is not revalidated on
- * window focus or reconnect. Pass a {@link PoolsQuery} to fetch a
- * filtered/sorted page.
+ * window focus or reconnect.
+ *
+ * Pass a {@link PoolsQuery} — typically obtained from {@link usePoolsQuery} —
+ * to fetch a filtered/sorted page. The URL produced by {@link poolsUrl} doubles
+ * as the SWR cache key, so two calls with equivalent filter objects share the
+ * same cache entry automatically.
  *
  * @example
- * const { pools, isLoading, isError, refresh } = usePools({ status: "active" });
+ * // With usePoolsQuery for URL-synced state:
+ * const { poolsQuery, setSearch, setPage } = usePoolsQuery();
+ * const { pools, total, isLoading } = usePools(poolsQuery);
+ *
+ * @example
+ * // Standalone usage with inline options:
+ * const { pools, isLoading, isError, refresh } = usePools({ status: "active", sort_by: "new" });
  */
 export function usePools(query: PoolsQuery = {}): UsePoolsResult {
+  const key = poolsUrl(query);
+
   const { data, error, isLoading, mutate } = useSWR<PoolsResponse>(
-    poolsUrl(query),
-    fetchPools
+    key,
+    fetchPools,
   );
 
   return {
     pools: data?.pools ?? [],
     total: data?.total ?? 0,
+    limit: data?.limit ?? 0,
+    offset: data?.offset ?? 0,
     data,
     isLoading,
     isError: Boolean(error),
@@ -56,5 +79,6 @@ export function usePools(query: PoolsQuery = {}): UsePoolsResult {
     refresh: () => {
       void mutate();
     },
+    cacheKey: key,
   };
 }
