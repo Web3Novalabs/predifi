@@ -291,6 +291,10 @@ pub async fn get_pools(
         crate::db::count_pools_with_filters(db, category, status)
     ) {
         Ok((pools, total)) => {
+            if status == "active" {
+                state.metrics.active_pools.set(total as f64);
+            }
+
             let response = PoolsResponse {
                 pools,
                 total,

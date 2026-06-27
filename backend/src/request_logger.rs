@@ -132,6 +132,8 @@ where
         // Record when the request arrived so we can measure latency.
         let start = Instant::now();
 
+        // All per-request context lives on the span so the JSON formatter
+        // emits it once under "span" without duplicating it in "fields".
         let span = info_span!(
             "http.request",
             http.method = %method,
@@ -146,16 +148,16 @@ where
         // future and then run our logging code once it resolves.
         Box::pin(async move {
             let result = inner_future.await;
-            let elapsed_ms = start.elapsed().as_millis();
+            let duration_ms = start.elapsed().as_millis() as u64;
 
             match &result {
                 Ok(response) => {
-                    let status = response.status();
+                    // Emit the status code as a plain integer so JSON
+                    // consumers can filter/aggregate without string parsing.
+                    let status_code = response.status().as_u16();
                     info!(
-                        method = %method,
-                        path = %path,
-                        status = %status,
-                        elapsed_ms = elapsed_ms,
+                        http.status_code = status_code,
+                        http.duration_ms = duration_ms,
                         "request complete"
                     );
                 }
@@ -163,9 +165,7 @@ where
                     // The inner service returned an error before producing a
                     // response (e.g. a panic or an infrastructure failure).
                     error!(
-                        method = %method,
-                        path = %path,
-                        elapsed_ms = elapsed_ms,
+                        http.duration_ms = duration_ms,
                         "request failed"
                     );
                 }
