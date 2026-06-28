@@ -24,8 +24,14 @@ pub const POOL_DETAILS_CACHE_TTL: u64 = 30;
 /// Default TTL for user predictions (45 seconds)
 pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 
+/// Default TTL for cached protocol stats (30 seconds)
+pub const STATS_CACHE_TTL: u64 = 30;
+
 /// Redis key pattern matching all cached pool list queries.
 pub const POOLS_CACHE_PATTERN: &str = "pools:*";
+
+/// Redis key pattern matching all cached stats queries.
+pub const STATS_CACHE_PATTERN: &str = "stats:*";
 
 /// Thread-safe Redis cache client with graceful fail-open behaviour.
 ///
@@ -234,6 +240,14 @@ impl RedisCache {
         self.delete_pattern(POOLS_CACHE_PATTERN).await;
     }
 
+    /// Invalidate all cached stats entries.
+    ///
+    /// Call after a pool is created or a prediction is placed so the next
+    /// `GET /api/v1/stats` request reflects the updated aggregates.
+    pub async fn invalidate_stats_cache(&self) {
+        self.delete_pattern(STATS_CACHE_PATTERN).await;
+    }
+
     /// Check if a cache entry exists without deserializing it
     ///
     /// Useful for cache-aside pattern to determine if we need to populate the cache
@@ -310,6 +324,16 @@ pub fn pool_details_cache_key(pool_id: i64) -> String {
 /// Generate a cache key for a user's paginated predictions list.
 pub fn user_predictions_cache_key(address: &str, limit: i64, offset: i64) -> String {
     format!("user:{}:predictions:{}:{}", address, limit, offset)
+}
+
+/// Generate a cache key for the protocol stats endpoint.
+///
+/// The key encodes the optional `category` and `status` filter parameters so
+/// that different filter combinations are cached independently.
+pub fn stats_cache_key(category: Option<&str>, status: Option<&str>) -> String {
+    let cat = category.unwrap_or("all");
+    let st = status.unwrap_or("all");
+    format!("stats:{}:{}", cat, st)
 }
 
 #[cfg(test)]
@@ -409,5 +433,46 @@ mod tests {
 
         // Verify pattern constant
         assert_eq!(POOLS_CACHE_PATTERN, "pools:*");
+    }
+
+    #[test]
+    fn test_stats_cache_key_generation() {
+        assert_eq!(stats_cache_key(None, None), "stats:all:all");
+        assert_eq!(stats_cache_key(Some("sports"), None), "stats:sports:all");
+        assert_eq!(stats_cache_key(None, Some("active")), "stats:all:active");
+        assert_eq!(
+            stats_cache_key(Some("crypto"), Some("closed")),
+            "stats:crypto:closed"
+        );
+    }
+
+    #[test]
+    fn test_stats_cache_key_uniqueness() {
+        let key_all = stats_cache_key(None, None);
+        let key_cat = stats_cache_key(Some("sports"), None);
+        let key_st = stats_cache_key(None, Some("active"));
+        let key_both = stats_cache_key(Some("sports"), Some("active"));
+
+        assert_ne!(key_all, key_cat);
+        assert_ne!(key_all, key_st);
+        assert_ne!(key_all, key_both);
+        assert_ne!(key_cat, key_both);
+    }
+
+    #[test]
+    fn test_stats_cache_pattern_constant() {
+        assert_eq!(STATS_CACHE_PATTERN, "stats:*");
+    }
+
+    #[tokio::test]
+    async fn test_stats_cache_invalidation() {
+        let cache = RedisCache::disabled();
+        // Should not panic; no-ops on a disabled cache
+        cache.invalidate_stats_cache().await;
+    }
+
+    #[test]
+    fn test_stats_cache_ttl() {
+        assert_eq!(STATS_CACHE_TTL, 30);
     }
 }
