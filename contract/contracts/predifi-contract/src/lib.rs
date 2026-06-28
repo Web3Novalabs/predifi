@@ -1825,26 +1825,43 @@ impl PredifiContract {
             .publish(&env);
     }
 
-    /// Pause the contract. Only callable by Admin (role 0).
-    pub fn pause(env: Env, admin: Address) {
-        admin.require_auth();
-        if Self::require_admin_role(&env, &admin, "pause").is_err() {
-            panic!("Unauthorized: missing required role");
-        }
-        env.storage().instance().set(&DataKey::Paused, &true);
-        Self::extend_instance(&env);
-
-        // Emit dedicated pause-alert event so monitors can apply zero-tolerance
-        // rules independently of the generic PauseEvent.
-        ContractPausedAlertEvent {
-            admin: admin.clone(),
-            timestamp: env.ledger().timestamp(),
-        }
-        .publish(&env);
-        PauseEvent { admin }.publish(&env);
+   /// Pause the contract.
+///
+/// # Authorization
+/// Requires authentication from a caller with the Admin role.
+///
+/// # Effects
+/// - Marks the contract as paused.
+/// - Emits `ContractPausedAlertEvent`.
+/// - Emits `PauseEvent`.
+///
+/// While paused, administrative checks continue to work, but
+/// state-changing operations guarded by the pause flag are rejected.
+pub fn pause(env: Env, admin: Address) {
+    admin.require_auth();
+    if Self::require_admin_role(&env, &admin, "pause").is_err() {
+        panic!("Unauthorized: missing required role");
     }
+    env.storage().instance().set(&DataKey::Paused, &true);
+    Self::extend_instance(&env);
 
-    /// Unpause the contract. Only callable by Admin (role 0).
+    ContractPausedAlertEvent {
+        admin: admin.clone(),
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(&env);
+
+    PauseEvent { admin }.publish(&env);
+}
+
+    /// Resume normal contract operation.
+///
+/// # Authorization
+/// Requires authentication from a caller with the Admin role.
+///
+/// # Effects
+/// - Clears the paused state.
+/// - Emits `UnpauseEvent`.
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         if Self::require_admin_role(&env, &admin, "unpause").is_err() {
