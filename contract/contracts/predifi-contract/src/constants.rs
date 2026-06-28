@@ -78,6 +78,14 @@ pub const MAX_TOLERANCE: u32 = 10_000;
 /// This is stored in contract instance storage during initialization and upgrades.
 pub const CONTRACT_VERSION: u32 = 1;
 
+/// Minimum timelock delay in seconds for protocol fee changes (1 day = 86 400 s).
+///
+/// After an admin calls `set_fee_bps` to queue a proposal, at least this many
+/// seconds must elapse before `apply_fee_bps` can commit the new value.
+/// The delay gives users and integrators time to observe the pending change and
+/// react (e.g. withdraw positions) before the fee takes effect.
+pub const FEE_CHANGE_TIMELOCK_SECONDS: u64 = 86_400;
+
 #[cfg(test)]
 #[allow(clippy::assertions_on_constants)]
 mod tests {

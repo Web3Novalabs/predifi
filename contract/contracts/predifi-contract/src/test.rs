@@ -4997,8 +4997,10 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
     let token_admin_client2 = token::StellarAssetClient::new(&env, &token_contract2);
     client.add_token_to_whitelist(&admin, &token_contract2);
 
-    // Set protocol fee to 10% (1000 bps) for clear fee calculation
+    // Propose a 10% protocol fee (1000 bps) and apply it after the timelock.
     client.set_fee_bps(&admin, &1000u32);
+    env.ledger().with_mut(|li| li.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
 
     // Create two pools with different tokens
     let pool1_id = client.create_pool(
@@ -10408,9 +10410,12 @@ fn test_get_fees_returns_treasury_and_referral_fee_bps() {
     assert_eq!(fees.treasury_fee_bps, 300);
     assert_eq!(fees.referral_fee_bps, 5000); // default
 
-    // Update both and verify get_fees reflects the changes
+    // Update both and verify get_fees reflects the changes.
+    // set_fee_bps now queues a proposal; apply it after the timelock.
     c.set_fee_bps(&admin, &750u32);
     c.set_referral_cut_bps(&admin, &2000u32);
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    c.apply_fee_bps(&admin);
 
     let fees = c.get_fees();
     assert_eq!(fees.treasury_fee_bps, 750);
@@ -10464,7 +10469,10 @@ fn test_get_contract_info_returns_config_and_stats() {
         &pool_config,
     );
 
+    // set_fee_bps queues a proposal; advance past the timelock then apply.
     client.set_fee_bps(&admin, &250u32);
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
     client.set_treasury(&admin, &treasury);
     client.set_resolution_delay(&admin, &60u64);
     client.set_min_pool_duration(&admin, &7200u64);
@@ -12723,10 +12731,10 @@ fn test_already_initialized_panics() {
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(&env, &contract_id);
     let treasury = Address::generate(&env);
-    
+
     // First initialization should succeed
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
-    
+
     // Second initialization should panic with AlreadyInitializedOrConfigNotSet
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 }
@@ -12736,13 +12744,13 @@ fn test_already_initialized_panics() {
 fn test_delisted_token_prevents_prediction() {
     let env = Env::default();
     env.mock_all_auths();
-    
+
     let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) = setup(&env);
-    
+
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    
+
     token_admin_client.mint(&creator, &10000);
     token_admin_client.mint(&user, &10000);
 
@@ -12773,4 +12781,348 @@ fn test_delisted_token_prevents_prediction() {
 
     // User places prediction - should panic with TokenNotWhitelisted (Error 48)
     client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FEE TIMELOCK TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_propose_fee_bps_stores_pending_change() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // No proposal queued initially
+    assert!(client.get_pending_fee_change().is_none());
+
+    // Propose a fee change
+    client.set_fee_bps(&admin, &500u32);
+
+    // Verify the pending proposal was stored correctly
+    let pending = client.get_pending_fee_change().expect("pending change must exist");
+    assert_eq!(pending.new_fee_bps, 500u32);
+    // At t=0 the effective_at must equal the timelock duration
+    assert_eq!(pending.effective_at, FEE_CHANGE_TIMELOCK_SECONDS);
+    assert_eq!(pending.proposed_by, admin);
+
+    // The live fee must remain unchanged until apply_fee_bps is called
+    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+}
+
+#[test]
+fn test_apply_fee_bps_after_timelock_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Initial fee is 0 (as set in setup)
+    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+
+    // Queue the proposal
+    client.set_fee_bps(&admin, &300u32);
+
+    // Advance past the timelock and apply
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
+
+    // Fee is now committed
+    assert_eq!(client.get_fees().treasury_fee_bps, 300u32);
+    // Pending slot is cleared
+    assert!(client.get_pending_fee_change().is_none());
+}
+
+#[test]
+fn test_apply_fee_bps_exactly_at_expiry_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &200u32);
+
+    // Advance to exactly `effective_at` (t=0 + FEE_CHANGE_TIMELOCK_SECONDS)
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS);
+    client.apply_fee_bps(&admin);
+
+    assert_eq!(client.get_fees().treasury_fee_bps, 200u32);
+}
+
+#[test]
+fn test_apply_fee_bps_before_timelock_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &300u32);
+
+    // Advance to one second before the timelock expires
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS - 1);
+    let result = client.try_apply_fee_bps(&admin);
+    assert_eq!(result, Err(Ok(PredifiError::TimelockNotExpired)));
+
+    // Fee must remain at the original value
+    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+    // Pending proposal must still be present
+    assert!(client.get_pending_fee_change().is_some());
+}
+
+#[test]
+fn test_apply_fee_bps_no_pending_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // No proposal queued — apply must be rejected
+    let result = client.try_apply_fee_bps(&admin);
+    assert_eq!(result, Err(Ok(PredifiError::NoFeeChangePending)));
+}
+
+#[test]
+fn test_cancel_fee_proposal_removes_pending() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &700u32);
+    assert!(client.get_pending_fee_change().is_some());
+
+    // Cancel the proposal
+    client.cancel_fee_proposal(&admin);
+
+    // Pending slot must be cleared
+    assert!(client.get_pending_fee_change().is_none());
+    // Live fee must remain unchanged (still 0)
+    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+}
+
+#[test]
+fn test_cancel_fee_proposal_no_pending_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Nothing to cancel
+    let result = client.try_cancel_fee_proposal(&admin);
+    assert_eq!(result, Err(Ok(PredifiError::NoFeeChangePending)));
+}
+
+#[test]
+fn test_propose_fee_bps_while_pending_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // First proposal succeeds
+    client.set_fee_bps(&admin, &300u32);
+
+    // Second proposal must be rejected while the first is still pending
+    let result = client.try_set_fee_bps(&admin, &400u32);
+    assert_eq!(result, Err(Ok(PredifiError::FeeChangePending)));
+
+    // The original proposal must be unchanged
+    let pending = client.get_pending_fee_change().unwrap();
+    assert_eq!(pending.new_fee_bps, 300u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_apply_fee_bps_unauthorized_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &300u32);
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+
+    let not_admin = Address::generate(&env);
+    // Must panic with Unauthorized (error code 10)
+    client.apply_fee_bps(&not_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_cancel_fee_proposal_unauthorized_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &300u32);
+
+    let not_admin = Address::generate(&env);
+    // Must panic with Unauthorized (error code 10)
+    client.cancel_fee_proposal(&not_admin);
+}
+
+#[test]
+fn test_paused_blocks_apply_fee_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &300u32);
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.pause(&admin);
+
+    let result = client.try_apply_fee_bps(&admin);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+
+    // Fee must not have changed
+    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+}
+
+#[test]
+fn test_paused_blocks_cancel_fee_proposal() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.set_fee_bps(&admin, &300u32);
+    client.pause(&admin);
+
+    let result = client.try_cancel_fee_proposal(&admin);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+
+    // Pending proposal must still be intact
+    assert!(client.get_pending_fee_change().is_some());
+}
+
+#[test]
+fn test_fee_change_full_lifecycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // 1. No pending proposal at start
+    assert!(client.get_pending_fee_change().is_none());
+    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+
+    // 2. Queue a proposal
+    client.set_fee_bps(&admin, &250u32);
+    let pending = client.get_pending_fee_change().unwrap();
+    assert_eq!(pending.new_fee_bps, 250u32);
+    assert_eq!(pending.effective_at, FEE_CHANGE_TIMELOCK_SECONDS);
+
+    // 3. Live fee is still 0 — timelock not yet elapsed
+    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+
+    // 4. Applying before the deadline must fail
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS / 2);
+    let early_result = client.try_apply_fee_bps(&admin);
+    assert_eq!(early_result, Err(Ok(PredifiError::TimelockNotExpired)));
+
+    // 5. Apply after the timelock
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 100);
+    client.apply_fee_bps(&admin);
+    assert_eq!(client.get_fees().treasury_fee_bps, 250u32);
+    assert!(client.get_pending_fee_change().is_none());
+
+    // 6. A new proposal can now be queued
+    client.set_fee_bps(&admin, &500u32);
+    assert_eq!(
+        client.get_pending_fee_change().unwrap().new_fee_bps,
+        500u32
+    );
+
+    // 7. Cancel it — fee stays at 250
+    client.cancel_fee_proposal(&admin);
+    assert!(client.get_pending_fee_change().is_none());
+    assert_eq!(client.get_fees().treasury_fee_bps, 250u32);
+}
+
+#[test]
+fn test_cancel_then_repropose_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Propose 300 bps
+    client.set_fee_bps(&admin, &300u32);
+
+    // Cancel it, then re-propose with a different value
+    client.cancel_fee_proposal(&admin);
+    assert!(client.get_pending_fee_change().is_none());
+
+    client.set_fee_bps(&admin, &150u32);
+    let pending = client.get_pending_fee_change().unwrap();
+    assert_eq!(pending.new_fee_bps, 150u32);
+
+    // Apply and verify
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
+    assert_eq!(client.get_fees().treasury_fee_bps, 150u32);
+    assert!(client.get_pending_fee_change().is_none());
+}
+
+#[test]
+fn test_fee_change_invalid_fee_bps_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Proposal with invalid fee (> 10_000 bps) must be rejected
+    let result = client.try_set_fee_bps(&admin, &10_001u32);
+    assert_eq!(result, Err(Ok(PredifiError::InvalidFeeBps)));
+
+    // No proposal must be stored
+    assert!(client.get_pending_fee_change().is_none());
+}
+
+#[test]
+fn test_fee_change_zero_fee_is_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // 0 bps is a valid (fee-free) setting
+    client.set_fee_bps(&admin, &0u32);
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
+    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+}
+
+#[test]
+fn test_fee_change_max_fee_bps_is_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // 10_000 bps (100%) is the maximum allowed value
+    client.set_fee_bps(&admin, &10_000u32);
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
+    assert_eq!(client.get_fees().treasury_fee_bps, 10_000u32);
 }

@@ -197,6 +197,15 @@ pub enum PredifiError {
     /// Callers should check `is_contract_paused()` before submitting a transaction,
     /// or listen for `PauseEvent` / `UnpauseEvent` on-chain to stay in sync.
     ContractPaused = 83,
+    /// A fee change proposal is already pending.
+    /// Call `cancel_fee_proposal` before queuing a new one.
+    FeeChangePending = 202,
+    /// No fee change proposal is currently pending.
+    /// Call `set_fee_bps` first to queue a proposal.
+    NoFeeChangePending = 203,
+    /// The timelock period for the pending fee change has not yet elapsed.
+    /// Wait until `PendingFeeChange.effective_at` before calling `apply_fee_bps`.
+    TimelockNotExpired = 204,
 }
 
 /// Represents the current state of a prediction market.
@@ -426,6 +435,25 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
+/// Snapshot of a pending protocol fee change awaiting timelock expiry.
+///
+/// Created when an admin calls [`PredifiContract::set_fee_bps`] and persisted in
+/// instance storage until [`PredifiContract::apply_fee_bps`] commits the change
+/// or [`PredifiContract::cancel_fee_proposal`] discards it.
+///
+/// Only one proposal may exist at a time; a second `set_fee_bps` call while this
+/// record is present returns [`PredifiError::FeeChangePending`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingFeeChange {
+    /// The proposed new protocol fee in basis points (1 bp = 0.01%).
+    pub new_fee_bps: u32,
+    /// Unix timestamp (seconds) at or after which `apply_fee_bps` may execute.
+    pub effective_at: u64,
+    /// The admin address that submitted this proposal.
+    pub proposed_by: Address,
+}
+
 /// Aggregated contract metadata for frontend consumption.
 ///
 /// This read model allows clients to fetch protocol configuration and core stats
@@ -631,6 +659,12 @@ pub enum DataKey {
     /// for a given pool so that subsequent calls are idempotent — they return
     /// `Ok(())` but do NOT re-emit the `StakingClosedEvent`.
     StakingClosed(u64),
+    /// Pending protocol fee change awaiting timelock expiry:
+    /// `PendingFeeBps` -> `PendingFeeChange`
+    ///
+    /// Present only while a fee proposal is queued (between a `set_fee_bps` call
+    /// and the corresponding `apply_fee_bps` or `cancel_fee_proposal` call).
+    PendingFeeBps,
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -680,6 +714,31 @@ pub struct UnpauseEvent {
 pub struct FeeUpdateEvent {
     pub admin: Address,
     pub fee_bps: u32,
+}
+
+/// Emitted when an admin queues a fee change proposal via `set_fee_bps`.
+/// The change does not take effect until `apply_fee_bps` is called at or after
+/// `effective_at`.
+#[contractevent(topics = ["fee_change_proposed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeChangeProposeEvent {
+    /// Admin that submitted the proposal.
+    pub admin: Address,
+    /// The proposed new fee in basis points.
+    pub new_fee_bps: u32,
+    /// Unix timestamp at or after which the change may be applied.
+    pub effective_at: u64,
+}
+
+/// Emitted when an admin cancels a pending fee change proposal via
+/// `cancel_fee_proposal` before it has been applied.
+#[contractevent(topics = ["fee_change_canceled"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeChangeCancelEvent {
+    /// Admin that cancelled the proposal.
+    pub admin: Address,
 }
 
 #[contractevent(topics = ["max_predictions_update"])]
@@ -1781,9 +1840,20 @@ impl PredifiContract {
         Symbol::new(&env, "0_0_0")
     }
 
-    /// Set fee in basis points. Caller must have Admin role (0).
-    /// PRE: admin has role 0
-    /// POST: Config.fee_bps ≤ 10_000 (INV-6)
+    /// Queue a fee change proposal subject to a [`FEE_CHANGE_TIMELOCK_SECONDS`]-second
+    /// delay. The new fee does **not** take effect immediately; the admin must call
+    /// [`Self::apply_fee_bps`] once the delay has elapsed.
+    ///
+    /// # Errors
+    /// - [`PredifiError::ContractPaused`]   – contract is paused.
+    /// - [`PredifiError::Unauthorized`]     – caller lacks Admin role (0).
+    /// - [`PredifiError::InvalidFeeBps`]    – `fee_bps > 10_000`.
+    /// - [`PredifiError::FeeChangePending`] – a proposal is already queued;
+    ///   call `cancel_fee_proposal` first.
+    ///
+    /// PRE:  admin has role 0; no pending fee proposal exists.
+    /// POST: A [`PendingFeeChange`] is stored with
+    ///       `effective_at = now + FEE_CHANGE_TIMELOCK_SECONDS`.
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         admin.require_auth();
@@ -1791,13 +1861,106 @@ impl PredifiContract {
         if !Self::is_valid_fee_bps(fee_bps) {
             return Err(PredifiError::InvalidFeeBps);
         }
-        let mut config = Self::get_config(&env);
-        config.fee_bps = fee_bps;
-        env.storage().instance().set(&DataKey::Config, &config);
+        // Only one proposal may be pending at a time.
+        if env.storage().instance().has(&DataKey::PendingFeeBps) {
+            return Err(PredifiError::FeeChangePending);
+        }
+        let effective_at = env.ledger().timestamp() + FEE_CHANGE_TIMELOCK_SECONDS;
+        let pending = PendingFeeChange {
+            new_fee_bps: fee_bps,
+            effective_at,
+            proposed_by: admin.clone(),
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingFeeBps, &pending);
         Self::extend_instance(&env);
 
-        FeeUpdateEvent { admin, fee_bps }.publish(&env);
+        FeeChangeProposeEvent {
+            admin,
+            new_fee_bps: fee_bps,
+            effective_at,
+        }
+        .publish(&env);
         Ok(())
+    }
+
+    /// Apply a pending fee change once the [`FEE_CHANGE_TIMELOCK_SECONDS`]-second
+    /// delay has elapsed.
+    ///
+    /// Emits a [`FeeUpdateEvent`] with the newly committed fee value.
+    ///
+    /// # Errors
+    /// - [`PredifiError::ContractPaused`]      – contract is paused.
+    /// - [`PredifiError::Unauthorized`]        – caller lacks Admin role (0).
+    /// - [`PredifiError::NoFeeChangePending`]  – no proposal is queued.
+    /// - [`PredifiError::TimelockNotExpired`]  – the delay has not yet elapsed.
+    ///
+    /// PRE:  a [`PendingFeeChange`] exists and `now >= effective_at`.
+    /// POST: `Config.fee_bps` is updated; the pending proposal is removed.
+    pub fn apply_fee_bps(env: Env, admin: Address) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "apply_fee_bps")?;
+
+        let pending: PendingFeeChange = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingFeeBps)
+            .ok_or(PredifiError::NoFeeChangePending)?;
+
+        if env.ledger().timestamp() < pending.effective_at {
+            return Err(PredifiError::TimelockNotExpired);
+        }
+
+        let mut config = Self::get_config(&env);
+        config.fee_bps = pending.new_fee_bps;
+        env.storage().instance().set(&DataKey::Config, &config);
+        env.storage().instance().remove(&DataKey::PendingFeeBps);
+        Self::extend_instance(&env);
+
+        FeeUpdateEvent {
+            admin,
+            fee_bps: pending.new_fee_bps,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Cancel a pending fee change proposal before it is applied.
+    ///
+    /// Emits a [`FeeChangeCancelEvent`]. The current `Config.fee_bps` is unchanged.
+    ///
+    /// # Errors
+    /// - [`PredifiError::ContractPaused`]     – contract is paused.
+    /// - [`PredifiError::Unauthorized`]       – caller lacks Admin role (0).
+    /// - [`PredifiError::NoFeeChangePending`] – no proposal is queued.
+    ///
+    /// PRE:  a [`PendingFeeChange`] exists.
+    /// POST: the pending proposal is removed; `Config.fee_bps` is unmodified.
+    pub fn cancel_fee_proposal(env: Env, admin: Address) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "cancel_fee_proposal")?;
+
+        if !env.storage().instance().has(&DataKey::PendingFeeBps) {
+            return Err(PredifiError::NoFeeChangePending);
+        }
+
+        env.storage().instance().remove(&DataKey::PendingFeeBps);
+        Self::extend_instance(&env);
+
+        FeeChangeCancelEvent { admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Return the currently pending fee change proposal, or `None` if no proposal
+    /// is queued.
+    ///
+    /// Clients should poll this before calling [`Self::apply_fee_bps`] to confirm
+    /// a proposal exists and to read the `effective_at` timestamp.
+    pub fn get_pending_fee_change(env: Env) -> Option<PendingFeeChange> {
+        env.storage().instance().get(&DataKey::PendingFeeBps)
     }
 
     /// Set treasury address. Caller must have Admin role (0).
