@@ -132,6 +132,7 @@ pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1;
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
+    AlreadyInitializedOrConfigNotSet = 2,
     Unauthorized = 10,
     PoolNotFound = 20,
     PoolNotResolved = 22,
@@ -1779,8 +1780,11 @@ impl PredifiContract {
         min_pool_duration: u64,
         max_predictions_per_user: u32,
     ) {
-        if !env.storage().instance().has(&DataKey::Config) {
-            // Enforce the same 30-day cap on resolution_delay that
+        if env.storage().instance().has(&DataKey::Config) {
+            soroban_sdk::panic_with_error!(&env, PredifiError::AlreadyInitializedOrConfigNotSet);
+        }
+
+        // Enforce the same 30-day cap on resolution_delay that
             // set_resolution_delay enforces, so the contract cannot be
             // initialised with an unbounded delay.
             if resolution_delay > MAX_RESOLUTION_DELAY {
@@ -1819,7 +1823,6 @@ impl PredifiContract {
                 max_predictions_per_user,
             }
             .publish(&env);
-        }
     }
 
     /// Pause the contract. Only callable by Admin (role 0).
