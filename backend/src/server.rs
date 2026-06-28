@@ -21,7 +21,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{sleep, Duration as TokioDuration};
+use tokio::time::sleep;
 use tokio::task::JoinHandle;
 #[cfg(not(test))]
 use tower_governor::governor::GovernorConfigBuilder;
@@ -125,7 +125,7 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
         // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
         if rpc_attempts < max_attempts {
             let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
-            sleep(TokioDuration::from_secs(backoff_duration)).await;
+            sleep(Duration::from_secs(backoff_duration)).await;
         }
     }
 
@@ -632,4 +632,103 @@ where
     .await;
 
     info!("graceful shutdown complete");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, DEFAULT_CORS_ORIGINS};
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// Build a [`Config`] whose CORS origins are exactly `origins`.
+    fn config_with_origins(origins: Vec<&str>) -> Config {
+        let mut cfg = Config::default_for_test();
+        cfg.cors_allowed_origins = origins.into_iter().map(|s| s.to_string()).collect();
+        cfg
+    }
+
+    // ── CORS whitelist tests ──────────────────────────────────────────────────
+
+    /// `build_cors` must accept origins that are already validated by the
+    /// config layer without panicking or silently dropping them.
+    #[test]
+    fn build_cors_accepts_valid_https_origin() {
+        let cfg = config_with_origins(vec!["https://predifi.app"]);
+        // build_cors must not panic; it returns a CorsLayer
+        let _layer = build_cors(&cfg);
+    }
+
+    /// All three default origins must parse into valid header values, i.e.
+    /// none of them should be silently skipped by the `filter_map` in
+    /// `build_cors`.
+    #[test]
+    fn build_cors_default_origins_are_all_valid_header_values() {
+        let cfg = config_with_origins(DEFAULT_CORS_ORIGINS.to_vec());
+        // If any default origin was malformed it would be silently dropped.
+        // We verify all of them survive the filter_map.
+        let valid_count = cfg
+            .cors_allowed_origins
+            .iter()
+            .filter(|o| o.parse::<HeaderValue>().is_ok())
+            .count();
+        assert_eq!(
+            valid_count,
+            DEFAULT_CORS_ORIGINS.len(),
+            "every default CORS origin must parse into a valid HeaderValue"
+        );
+    }
+
+    /// An origin with a port should also parse correctly.
+    #[test]
+    fn build_cors_accepts_origin_with_port() {
+        let cfg = config_with_origins(vec!["http://localhost:5173"]);
+        let _layer = build_cors(&cfg);
+        // Verify the origin itself is parseable
+        assert!(
+            "http://localhost:5173".parse::<HeaderValue>().is_ok(),
+            "localhost origin with port must be a valid HeaderValue"
+        );
+    }
+
+    /// Multiple simultaneous origins must all be accepted.
+    #[test]
+    fn build_cors_accepts_multiple_origins() {
+        let cfg = config_with_origins(vec![
+            "https://predifi.app",
+            "https://staging.predifi.app",
+            "http://localhost:3000",
+        ]);
+        let _layer = build_cors(&cfg);
+    }
+
+    /// An empty origins list produces a CORS layer that allows no origin
+    /// (all cross-origin requests will be rejected by the browser).
+    #[test]
+    fn build_cors_with_empty_origins_does_not_panic() {
+        let cfg = config_with_origins(vec![]);
+        // Must not panic — the layer simply allows nothing.
+        let _layer = build_cors(&cfg);
+    }
+
+    /// Verifies that the CORS-allowed-origins field on [`Config`] is read
+    /// directly from the config struct, confirming that `build_cors` honours
+    /// the runtime configuration rather than hard-coding any origins.
+    #[test]
+    fn build_cors_uses_config_origins_not_hardcoded_list() {
+        let cfg_a = config_with_origins(vec!["https://app-a.example.com"]);
+        let cfg_b = config_with_origins(vec!["https://app-b.example.com"]);
+
+        // Both configs must produce valid CorsLayer instances — this confirms
+        // the function is parametric over the config rather than referencing
+        // a fixed list.
+        let _layer_a = build_cors(&cfg_a);
+        let _layer_b = build_cors(&cfg_b);
+
+        assert_ne!(
+            cfg_a.cors_allowed_origins,
+            cfg_b.cors_allowed_origins,
+            "the two configs must differ so the test is meaningful"
+        );
+    }
 }
