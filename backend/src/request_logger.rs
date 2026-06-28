@@ -61,22 +61,42 @@ use axum::http::{Request, Response};
 use tower::{Layer, Service};
 use tracing::{error, info, info_span, Instrument};
 
+use crate::metrics::SharedMetrics;
+
 // Layer
 
 /// A Tower [`Layer`] that wraps every service with [`LoggingService`].
 ///
-/// Attach this to your Axum router with `.layer(LoggingLayer)`.
-/// A `Layer` is just a factory: its only job is to produce a new, wrapped
-/// service each time Axum needs one.
-#[derive(Clone, Copy)]
-pub struct LoggingLayer;
+/// Attach this to your Axum router with `.layer(LoggingLayer::new())` or
+/// `.layer(LoggingLayer::with_metrics(metrics))` to also record request
+/// latency histograms.
+#[derive(Clone, Default)]
+pub struct LoggingLayer {
+    metrics: Option<SharedMetrics>,
+}
+
+impl LoggingLayer {
+    /// Create a logging layer that emits structured logs only.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a logging layer that also records Prometheus latency metrics.
+    pub fn with_metrics(metrics: SharedMetrics) -> Self {
+        Self {
+            metrics: Some(metrics),
+        }
+    }
+}
 
 impl<S> Layer<S> for LoggingLayer {
     type Service = LoggingService<S>;
 
-    /// Wrap the inner service `S` with our logging wrapper.
     fn layer(&self, inner: S) -> Self::Service {
-        LoggingService { inner }
+        LoggingService {
+            inner,
+            metrics: self.metrics.clone(),
+        }
     }
 }
 
@@ -90,6 +110,7 @@ impl<S> Layer<S> for LoggingLayer {
 #[derive(Clone)]
 pub struct LoggingService<S> {
     inner: S,
+    metrics: Option<SharedMetrics>,
 }
 
 impl<S, ReqBody, ResBody> Service<Request<ReqBody>> for LoggingService<S>
@@ -142,37 +163,81 @@ where
 
         // Forward the request to the inner service and get back a Future
         // that will eventually produce a Response.
+        let metrics = self.metrics.clone();
         let inner_future = self.inner.call(req);
 
-        // Wrap everything in an async block so we can `.await` the inner
-        // future and then run our logging code once it resolves.
         Box::pin(async move {
             let result = inner_future.await;
-            let duration_ms = start.elapsed().as_millis() as u64;
+            let elapsed = start.elapsed();
+            let elapsed_ms = elapsed.as_millis();
 
             match &result {
                 Ok(response) => {
-                    // Emit the status code as a plain integer so JSON
-                    // consumers can filter/aggregate without string parsing.
-                    let status_code = response.status().as_u16();
+                    let status = response.status();
+                    let status_label = status.as_u16().to_string();
                     info!(
-                        http.status_code = status_code,
-                        http.duration_ms = duration_ms,
+                        http.status_code = status.as_u16(),
+                        http.duration_ms = elapsed_ms,
                         "request complete"
                     );
+                    if let Some(metrics) = metrics {
+                        metrics
+                            .http_request_duration_seconds
+                            .with_label_values(&[&method, &path, &status_label])
+                            .observe(elapsed.as_secs_f64());
+                    }
                 }
                 Err(_) => {
-                    // The inner service returned an error before producing a
-                    // response (e.g. a panic or an infrastructure failure).
                     error!(
-                        http.duration_ms = duration_ms,
+                        http.duration_ms = elapsed_ms,
                         "request failed"
                     );
+                    if let Some(metrics) = metrics {
+                        metrics
+                            .http_request_duration_seconds
+                            .with_label_values(&[&method, &path, "error"])
+                            .observe(elapsed.as_secs_f64());
+                    }
                 }
             }
 
             result
         }
         .instrument(span))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, routing::get, Router};
+    use http::Request;
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn logging_layer_records_request_latency_metric() {
+        let metrics = Arc::new(crate::metrics::Metrics::new().expect("metrics"));
+        let app = Router::new()
+            .route("/ping", get(|| async { "pong" }))
+            .layer(LoggingLayer::with_metrics(metrics.clone()));
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("request should succeed");
+
+        assert_eq!(response.status(), http::StatusCode::OK);
+
+        let text = metrics.gather_text().expect("metrics text");
+        assert!(
+            text.contains("app_http_request_duration_seconds"),
+            "latency histogram must be recorded, got: {text}"
+        );
     }
 }

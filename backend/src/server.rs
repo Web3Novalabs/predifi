@@ -59,7 +59,23 @@ fn build_cors(config: &Config) -> CorsLayer {
         ])
 }
 
-/// Health-check handler.
+/// Lightweight liveness probe — confirms the HTTP server process is running.
+///
+/// This endpoint performs **no** dependency checks and always returns `200 OK`
+/// when the Axum process can respond. Use it as the Kubernetes `livenessProbe`
+/// so transient dependency failures do not trigger pod restarts.
+async fn live() -> axum::response::Response {
+    use axum::http::StatusCode;
+
+    let body = json!({
+        "status": "alive",
+        "service": "predifi-backend",
+    });
+
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+/// Health-check handler — full dependency diagnostic endpoint.
 async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
 
@@ -152,19 +168,31 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
     }
 }
 
-/// Readiness probe handler — signals whether the service is ready to accept traffic.
+/// Readiness probe handler — signals whether the service can accept traffic.
 ///
-/// Unlike the general `/health` liveness endpoint, this probe focuses on
-/// Redis connectivity, which is required for the caching layer to function.
+/// Unlike the lightweight `/live` liveness endpoint, this probe verifies that
+/// critical runtime dependencies (database, Redis, and price cache) are ready.
 /// Kubernetes (and similar orchestrators) use readiness probes to decide
-/// whether to route traffic to a pod; returning `503` here will temporarily
-/// remove the instance from the load-balancer rotation until Redis recovers.
-///
-/// # Responses
-/// - `200 OK` — Redis is reachable and the service is ready.
-/// - `503 Service Unavailable` — Redis is not configured or unreachable.
+/// whether to route traffic to a pod; returning `503` here temporarily removes
+/// the instance from the load-balancer rotation until dependencies recover.
 async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
+
+    let mut ready = true;
+    let mut db_status = "ok";
+    let mut db_error: Option<String> = None;
+
+    if let Some(db) = &state.db {
+        if sqlx::query("SELECT 1").execute(db).await.is_err() {
+            db_status = "unreachable";
+            db_error = Some("database ping failed".to_string());
+            ready = false;
+        }
+    } else {
+        db_status = "not_configured";
+        db_error = Some("database pool is not configured".to_string());
+        ready = false;
+    }
 
     let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
         (
@@ -179,16 +207,34 @@ async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::respon
     } else {
         ("ok", None)
     };
+    if redis_status != "ok" {
+        ready = false;
+    }
 
-    let ready = redis_status == "ok";
+    let (price_cache_status, price_cache_error): (&str, Option<String>) =
+        if state.cache.snapshot().is_empty() {
+            (
+                "not_ready",
+                Some("price cache is empty — oracle data not yet loaded".to_string()),
+            )
+        } else {
+            ("ok", None)
+        };
+    if price_cache_status != "ok" {
+        ready = false;
+    }
 
     let body = json!({
         "status": if ready { "ready" } else { "not_ready" },
         "dependencies": {
+            "db": db_status,
             "redis": redis_status,
+            "price_cache": price_cache_status,
         },
         "errors": {
+            "db": db_error,
             "redis": redis_error,
+            "price_cache": price_cache_error,
         }
     });
 
@@ -317,6 +363,7 @@ fn build_router_with_rate_period(
 
     let router = Router::new()
         .route("/", get(root))
+        .route("/live", get(live))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
@@ -338,7 +385,7 @@ fn build_router_with_rate_period(
             metrics_middleware,
         ))
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
     #[cfg(not(test))]
     let router = {
@@ -347,12 +394,15 @@ fn build_router_with_rate_period(
                 .period(period)
                 .burst_size(burst_size)
                 .error_handler(|_| {
-                    (
+                    use crate::response::ApiResponse;
+                    use crate::response::error_codes;
+                    ApiResponse::<()>::error(
                         axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
+                        error_codes::RATE_LIMIT_EXCEEDED,
+                        "Too Many Requests"
+                    ).into_response()
                 })
+                .error_handler(|_| crate::response::rate_limit_error_response())
                 .finish()
                 .unwrap(),
         );
@@ -371,11 +421,8 @@ fn build_router_with_db(
     redis: crate::redis_cache::RedisCache,
     pool: sqlx::PgPool,
     event_bus: crate::ws::EventBus,
+    prometheus_metrics: SharedMetrics,
 ) -> Router {
-    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
-        eprintln!("failed to initialize Prometheus metrics: {error}");
-        std::process::exit(1);
-    }));
 
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
@@ -388,6 +435,7 @@ fn build_router_with_db(
 
     let router = Router::new()
         .route("/", get(root))
+        .route("/live", get(live))
         .route("/health", get(health))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics))
@@ -409,7 +457,7 @@ fn build_router_with_db(
             metrics_middleware,
         ))
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
     #[cfg(not(test))]
     let router = {
@@ -418,12 +466,15 @@ fn build_router_with_db(
                 .per_second(crate::constants::RATE_LIMIT_PERIOD_SECS)
                 .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
                 .error_handler(|_| {
-                    (
+                    use crate::response::ApiResponse;
+                    use crate::response::error_codes;
+                    ApiResponse::<()>::error(
                         axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
+                        error_codes::RATE_LIMIT_EXCEEDED,
+                        "Too Many Requests"
+                    ).into_response()
                 })
+                .error_handler(|_| crate::response::rate_limit_error_response())
                 .finish()
                 .unwrap(),
         );
@@ -477,28 +528,43 @@ where
             std::process::exit(1);
         });
 
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
+
     let cache = crate::price_cache::PriceCache::new();
-    let fetcher_handle: JoinHandle<()> = crate::price_cache::spawn_fetcher(cache.clone());
+    let fetcher_handle: JoinHandle<()> =
+        crate::price_cache::spawn_fetcher(cache.clone(), Some(prometheus_metrics.clone()));
 
     let event_bus = crate::ws::EventBus::new();
 
     // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
+    // Initialize Redis cache
+    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
+
     let listener_handle: JoinHandle<()> = crate::worker::stellar_listener::spawn(
         config.stellar_rpc_url.clone(),
         pool.clone(),
         event_bus.clone(),
-        std::time::Duration::from_secs(30),
+        redis.clone(),
+        std::time::Duration::from_secs(config.rpc_timeout_secs),
+        config.indexer_max_batch_size,
     );
-
-    // Initialize Redis cache
-    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
         warn!("Redis cache unavailable - running without caching");
     }
 
-    let app = build_router_with_db(config.clone(), cache, redis, pool, event_bus);
+    let app = build_router_with_db(
+        config.clone(),
+        cache,
+        redis,
+        pool.clone(),
+        event_bus,
+        prometheus_metrics,
+    );
 
     let bind_addr = config.bind_address();
 

@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
+import dynamic from "next/dynamic";
 import Navbar from "../(marketing)/components/NavBar";
 
 export const metadata: Metadata = {
@@ -30,11 +32,34 @@ export const metadata: Metadata = {
     images: ["https://predifi.app/logo.jpeg"],
   },
 };
-import Footer from "../(marketing)/components/Footer";
+
+// Above the fold — eagerly loaded
 import Hero from "./components/Hero";
-import Mission from "./components/Mission";
-import HowItWorks from "./components/HowItWorks";
-import Benefits from "./components/Benefits";
+
+// Below the fold — lazily loaded via next/dynamic
+const Mission = dynamic(() => import("./components/Mission"), {
+  loading: () => (
+    <div className="h-[400px] w-full animate-pulse bg-white/5" aria-hidden="true" />
+  ),
+});
+
+const HowItWorks = dynamic(() => import("./components/HowItWorks"), {
+  loading: () => (
+    <div className="h-[500px] w-full animate-pulse bg-white/5" aria-hidden="true" />
+  ),
+});
+
+const Benefits = dynamic(() => import("./components/Benefits"), {
+  loading: () => (
+    <div className="h-[400px] w-full animate-pulse bg-white/5" aria-hidden="true" />
+  ),
+});
+
+const Footer = dynamic(() => import("../(marketing)/components/Footer"), {
+  loading: () => (
+    <div className="h-[120px] w-full animate-pulse bg-white/5 rounded-t-[40px]" aria-hidden="true" />
+  ),
+});
 
 export default function AboutPage() {
   return (
@@ -43,10 +68,38 @@ export default function AboutPage() {
 
       <main className="w-full overflow-x-hidden">
         <Hero />
-        <Mission />
-        <HowItWorks />
-        <Benefits />
-        <Footer />
+
+        <Suspense
+          fallback={
+            <div className="h-[400px] w-full animate-pulse bg-white/5" aria-hidden="true" />
+          }
+        >
+          <Mission />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="h-[500px] w-full animate-pulse bg-white/5" aria-hidden="true" />
+          }
+        >
+          <HowItWorks />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="h-[400px] w-full animate-pulse bg-white/5" aria-hidden="true" />
+          }
+        >
+          <Benefits />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div className="h-[120px] w-full animate-pulse bg-white/5 rounded-t-[40px]" aria-hidden="true" />
+          }
+        >
+          <Footer />
+        </Suspense>
       </main>
     </div>
   );

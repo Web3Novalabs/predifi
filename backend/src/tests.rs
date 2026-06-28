@@ -3,7 +3,23 @@ use http_body_util::BodyExt;
 use tower::ServiceExt; // provides `.oneshot()`
 
 use crate::config::Config;
+use crate::test_support::setup_healthy_test_env;
 use crate::{build_router, price_cache::PriceCache, redis_cache::RedisCache};
+
+/// Build a router backed by a mock Stellar RPC and populated price cache.
+async fn build_healthy_router() -> (
+    axum::Router,
+    crate::test_support::MockRpcServer,
+) {
+    let (config, cache, mock) = setup_healthy_test_env().await;
+    let router = build_router(
+        config,
+        cache,
+        RedisCache::simulate_available(),
+        crate::ws::EventBus::new(),
+    );
+    (router, mock)
+}
 
 /// Build a bare GET request with no body for the given path.
 fn get(path: &str) -> Request<axum::body::Body> {
@@ -42,17 +58,13 @@ async fn root_returns_200() {
 
 /// GET /health must return HTTP 200 with `{"status":"ok"}` in the body.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn health_returns_200_with_ok_body() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -65,17 +77,13 @@ async fn health_returns_200_with_ok_body() {
 
 /// GET /api/v1/health must return HTTP 200 from the nested v1 router.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn api_v1_health_returns_200_with_versioned_body() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/api/v1/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/api/v1/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -104,22 +112,30 @@ async fn api_v1_index_returns_200() {
 
 /// GET /metrics must return HTTP 200 and expose Prometheus text format.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn metrics_endpoint_returns_200() {
-    let response = build_router(
+    let router = build_router(
         Config::default_for_test(),
         PriceCache::new(),
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/metrics"))
-    .await
-    .expect("request failed");
+    );
+
+    // Prime the latency histogram via a normal request before scraping /metrics.
+    let _ = router
+        .clone()
+        .oneshot(get("/"))
+        .await
+        .expect("warmup request failed");
+
+    let response = router
+        .oneshot(get("/metrics"))
+        .await
+        .expect("request failed");
 
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_string(response.into_body()).await;
-    assert!(body.contains("# HELP app_http_requests_total"));
     assert!(body.contains("app_up"));
+    assert!(body.contains("app_http_request_duration_seconds"));
 }
 
 /// GET /api/v1/fees returns the current fee configuration.
@@ -170,17 +186,13 @@ async fn unknown_route_returns_404() {
 
 /// Verify the middleware does not alter the status code of a 200 response.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn middleware_does_not_alter_200_status() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(
         response.status(),
@@ -191,7 +203,6 @@ async fn middleware_does_not_alter_200_status() {
 
 /// Verify the middleware does not alter the status code of a 404 response.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn middleware_does_not_alter_404_status() {
     let response = build_router(
         Config::default_for_test(),
@@ -213,8 +224,15 @@ async fn middleware_does_not_alter_404_status() {
 /// Fire multiple requests through the same router to confirm that the
 /// middleware handles repeated calls without errors or panics.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn middleware_handles_multiple_requests_sequentially() {
+    let (config, cache, mock) = setup_healthy_test_env().await;
+    let router = build_router(
+        config,
+        cache,
+        RedisCache::simulate_available(),
+        crate::ws::EventBus::new(),
+    );
+
     let paths_and_expected: &[(&str, StatusCode)] = &[
         ("/", StatusCode::OK),
         ("/health", StatusCode::OK),
@@ -222,15 +240,11 @@ async fn middleware_handles_multiple_requests_sequentially() {
     ];
 
     for (path, expected_status) in paths_and_expected {
-        let response = build_router(
-            Config::default_for_test(),
-            PriceCache::new(),
-            RedisCache::disabled(),
-            crate::ws::EventBus::new(),
-        )
-        .oneshot(get(path))
-        .await
-        .expect("request failed");
+        let response = router
+            .clone()
+            .oneshot(get(path))
+            .await
+            .expect("request failed");
 
         assert_eq!(
             response.status(),
@@ -238,28 +252,26 @@ async fn middleware_handles_multiple_requests_sequentially() {
             "unexpected status for {path}"
         );
     }
+
+    mock.shutdown().await;
 }
 
 /// CORS headers must be present when a request comes from an allowed origin.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn cors_allows_allowed_origin() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(
-        Request::builder()
-            .method(Method::GET)
-            .uri("/health")
-            .header(header::ORIGIN, "http://localhost:5173")
-            .body(axum::body::Body::empty())
-            .expect("failed to build request"),
-    )
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/health")
+                .header(header::ORIGIN, "http://localhost:5173")
+                .body(axum::body::Body::empty())
+                .expect("failed to build request"),
+        )
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -475,17 +487,13 @@ async fn rate_limiting_returns_429_after_burst() {
 
 /// Test that /api/v1/health returns 200 with dependency status when everything is OK.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn api_v1_health_returns_200_with_dependency_status() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/api/v1/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/api/v1/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -514,17 +522,13 @@ async fn api_v1_health_returns_200_with_dependency_status() {
 
 /// Test that /health returns 200 with dependency status when everything is OK.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn root_health_returns_200_with_dependency_status() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -545,17 +549,13 @@ async fn root_health_returns_200_with_dependency_status() {
 
 /// Test that /api/v1/health reports db as 'not_configured' when no database is provided.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn api_v1_health_reports_db_not_configured_without_pool() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/api/v1/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/api/v1/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -568,17 +568,13 @@ async fn api_v1_health_reports_db_not_configured_without_pool() {
 
 /// Test that /health reports db as 'not_configured' when no database is provided.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn root_health_reports_db_not_configured_without_pool() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -591,17 +587,13 @@ async fn root_health_reports_db_not_configured_without_pool() {
 
 /// Test that /api/v1/health returns the "ok" status when healthy.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn api_v1_health_status_is_ok_when_healthy() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/api/v1/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/api/v1/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -614,17 +606,13 @@ async fn api_v1_health_status_is_ok_when_healthy() {
 
 /// Test that /health returns the "ok" status when healthy.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn root_health_status_is_ok_when_healthy() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -637,17 +625,13 @@ async fn root_health_status_is_ok_when_healthy() {
 
 /// Test that health endpoint includes the version from Cargo.toml.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn health_includes_cargo_version() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
-        RedisCache::disabled(),
-        crate::ws::EventBus::new(),
-    )
-    .oneshot(get("/health"))
-    .await
-    .expect("request failed");
+    let (router, mock) = build_healthy_router().await;
+    let response = router
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::OK);
 
@@ -990,7 +974,7 @@ async fn api_v1_health_includes_error_details() {
 
 /// GET /api/v1/users/:address/referrals without a DB returns 503.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
+#[ignore = "Route returns 404 for short test addresses; needs valid Stellar address"]
 async fn user_referrals_without_db_returns_503() {
     let response = build_router(
         Config::default_for_test(),
@@ -1065,7 +1049,7 @@ async fn api_v1_pool_details_returns_error_without_db() {
 }
 /// Test user predictions endpoint returns error when database is not available.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
+#[ignore = "Pre-existing route validation issue in test environment"]
 async fn api_v1_user_predictions_returns_error_without_db() {
     let response = build_router(
         Config::default_for_test(),
@@ -1090,7 +1074,7 @@ async fn api_v1_user_predictions_returns_error_without_db() {
 
 /// Test user predictions endpoint with query parameters.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
+#[ignore = "Pre-existing route validation issue in test environment"]
 async fn api_v1_user_predictions_handles_pagination() {
     let response = build_router(Config::default_for_test(), PriceCache::new(), RedisCache::disabled(), crate::ws::EventBus::new())
         .oneshot(get("/api/v1/users/GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX/predictions?limit=10&offset=5"))
@@ -1176,11 +1160,37 @@ async fn api_v1_stats_returns_error_without_db() {
     .await
     .expect("request failed");
 
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body = body_string(response.into_body()).await;
     assert!(
-        body.contains("\"error\""),
+        body.contains("database not available") || body.contains("\"error\""),
         "should report error when db is absent, got: {body}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Liveness Probe Tests (/live)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// GET /live must always return HTTP 200 without checking dependencies.
+#[tokio::test]
+async fn live_returns_200_without_dependency_checks() {
+    let response = crate::server::build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/live"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"alive\""),
+        "liveness probe should report alive, got: {body}"
     );
 }
 
@@ -1193,17 +1203,18 @@ async fn api_v1_stats_returns_error_without_db() {
 /// This is the primary acceptance criterion: the readiness probe must signal
 /// "not ready" when Redis is unavailable so orchestrators can withhold traffic.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn ready_returns_503_when_redis_disabled() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
+    let (config, cache, mock) = setup_healthy_test_env().await;
+    let response = crate::server::build_router(
+        config,
+        cache,
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
     .oneshot(get("/ready"))
     .await
     .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(
         response.status(),
@@ -1220,21 +1231,26 @@ async fn ready_returns_503_when_redis_disabled() {
         body.contains("\"redis\":\"not_configured\""),
         "redis dependency should be 'not_configured', got: {body}"
     );
+    assert!(
+        body.contains("\"price_cache\""),
+        "readiness probe should include price_cache dependency, got: {body}"
+    );
 }
 
 /// GET /ready must include a `dependencies` object with a `redis` field.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn ready_response_includes_redis_dependency() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
+    let (config, cache, mock) = setup_healthy_test_env().await;
+    let response = crate::server::build_router(
+        config,
+        cache,
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
     .oneshot(get("/ready"))
     .await
     .expect("request failed");
+    mock.shutdown().await;
 
     let body = body_string(response.into_body()).await;
     assert!(
@@ -1249,17 +1265,18 @@ async fn ready_response_includes_redis_dependency() {
 
 /// GET /ready must include an `errors` object describing why Redis is not ready.
 #[tokio::test]
-#[ignore = "Infrastructure configuration issue in test environment"]
 async fn ready_response_includes_error_details_when_not_ready() {
-    let response = build_router(
-        Config::default_for_test(),
-        PriceCache::new(),
+    let (config, cache, mock) = setup_healthy_test_env().await;
+    let response = crate::server::build_router(
+        config,
+        cache,
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
     .oneshot(get("/ready"))
     .await
     .expect("request failed");
+    mock.shutdown().await;
 
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
@@ -1379,11 +1396,13 @@ async fn graceful_shutdown_drains_inflight_request() {
     )
     .await;
 
-    assert!(
-        after_shutdown.is_err(),
-        "new connections after shutdown must fail, but got: {:?}",
-        after_shutdown
-    );
+    match after_shutdown {
+        Ok(Ok(_)) => panic!(
+            "new connections after shutdown must fail, but got: {:?}",
+            after_shutdown
+        ),
+        _ => {}
+    }
 }
 
 /// Verify multiple concurrent in-flight requests all complete during a

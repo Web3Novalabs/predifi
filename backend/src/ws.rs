@@ -1,9 +1,10 @@
 //! WebSocket broadcast for live prediction events.
 //!
-//! Clients connect at `GET /api/v1/ws?address=<wallet>` to receive only events
-//! where `user_address` matches the subscribed wallet. Omitting `address` delivers
-//! all events (useful for dashboards). The indexer calls [`EventBus::send`] whenever
-//! a new prediction is indexed.
+//! Clients connect at `GET /api/v1/ws?address=<wallet>` with a valid JWT in the
+//! `Authorization: Bearer <token>` header (or `?token=<jwt>` query param) to
+//! receive only events where `user_address` matches the subscribed wallet.
+//! Omitting `address` delivers all events (useful for dashboards). The indexer
+//! calls [`EventBus::send`] whenever a new prediction is indexed.
 
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -15,13 +16,17 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
-    response::IntoResponse,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::sync::broadcast;
 use tracing::info_span;
 use tracing::Instrument;
+
+use crate::config::Config;
+use crate::jwt::{extract_bearer_token, verify_jwt_token};
 
 const CHANNEL_CAPACITY: usize = 256;
 
@@ -30,6 +35,8 @@ const CHANNEL_CAPACITY: usize = 256;
 pub struct WsConnectParams {
     /// When set, only events whose `user_address` equals this value are forwarded.
     pub address: Option<String>,
+    /// Optional JWT passed as a query parameter when headers are unavailable.
+    pub token: Option<String>,
 }
 
 /// Shareable handle to the broadcast channel.
@@ -102,14 +109,48 @@ pub fn should_deliver_event(json: &str, wallet_filter: Option<&str>) -> bool {
         .is_some_and(|addr| addr == filter)
 }
 
-/// Axum handler — upgrades the HTTP connection to WebSocket and streams events.
+fn extract_ws_token(headers: &HeaderMap, params: &WsConnectParams) -> Option<String> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(extract_bearer_token)
+        .map(str::to_string)
+        .or_else(|| params.token.clone())
+}
+
+fn unauthorized_response(message: &str) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        axum::Json(serde_json::json!({
+            "error": message,
+        })),
+    )
+        .into_response()
+}
+
+/// Axum handler — validates JWT credentials, then upgrades to WebSocket.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    headers: HeaderMap,
     Query(params): Query<WsConnectParams>,
+    State(config): State<Arc<Config>>,
     State(bus): State<EventBus>,
 ) -> impl IntoResponse {
+    let Some(token) = extract_ws_token(&headers, &params) else {
+        return unauthorized_response("missing or invalid authorization token");
+    };
+
+    let claims = match verify_jwt_token(&token, &config.secret_key) {
+        Ok(claims) => claims,
+        Err(error) => return unauthorized_response(&error.to_string()),
+    };
+
     let wallet_filter = params.address;
-    let span = info_span!("websocket.connect", wallet = ?wallet_filter);
+    let span = info_span!(
+        "websocket.connect",
+        wallet = ?wallet_filter,
+        subject = %claims.sub
+    );
     ws.on_upgrade(move |socket| handle_socket(socket, bus, wallet_filter).instrument(span))
 }
 
@@ -160,6 +201,7 @@ async fn run_socket(
 #[cfg(test)]
 mod tests {
     use super::should_deliver_event;
+    use crate::jwt::{sign_jwt_for_test, verify_jwt_token};
 
     #[test]
     fn delivers_all_events_when_no_wallet_filter() {
@@ -188,5 +230,13 @@ mod tests {
     fn skips_event_missing_user_address_when_filter_active() {
         let json = r#"{"type":"prediction_placed","pool_id":1}"#;
         assert!(!should_deliver_event(json, Some("GABC")));
+    }
+
+    #[test]
+    fn ws_token_from_query_param_verifies_against_secret() {
+        let secret = "predifi-dev-secret-do-not-use-in-production-32";
+        let token = sign_jwt_for_test("GABC123", secret);
+        let claims = verify_jwt_token(&token, secret).expect("valid token");
+        assert_eq!(claims.sub, "GABC123");
     }
 }

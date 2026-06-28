@@ -3,9 +3,36 @@
 import { useEffect, useState } from "react";
 
 import { SettingsSidebar, type SettingsTab } from "@/components/settings/SettingsSidebar";
-import { ProfileForm } from "@/components/settings/ProfileForm";
-import { SecuritySettings } from "@/components/settings/SecuritySettings";
-import { NotificationPreferences } from "@/components/settings/NotificationPreferences";
+
+// ProfileForm — below-the-fold, lazily loaded
+const ProfileForm = dynamic(
+  () => import("@/components/settings/ProfileForm").then((mod) => mod.ProfileForm),
+  {
+    loading: () => (
+      <div className="h-[300px] w-full animate-pulse bg-zinc-800/50 rounded-xl" aria-hidden="true" />
+    ),
+  },
+);
+
+// SecuritySettings — below-the-fold, lazily loaded
+const SecuritySettings = dynamic(
+  () => import("@/components/settings/SecuritySettings").then((mod) => mod.SecuritySettings),
+  {
+    loading: () => (
+      <div className="h-[300px] w-full animate-pulse bg-zinc-800/50 rounded-xl" aria-hidden="true" />
+    ),
+  },
+);
+
+// NotificationPreferences — below-the-fold, lazily loaded
+const NotificationPreferences = dynamic(
+  () => import("@/components/settings/NotificationPreferences").then((mod) => mod.NotificationPreferences),
+  {
+    loading: () => (
+      <div className="h-[300px] w-full animate-pulse bg-zinc-800/50 rounded-xl" aria-hidden="true" />
+    ),
+  },
+);
 
 const PANEL_MAP: Record<SettingsTab, React.ReactNode> = {
   profile: <ProfileForm />,

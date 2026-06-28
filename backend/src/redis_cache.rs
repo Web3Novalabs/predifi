@@ -24,6 +24,9 @@ pub const POOL_DETAILS_CACHE_TTL: u64 = 30;
 /// Default TTL for user predictions (45 seconds)
 pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 
+/// Redis key pattern matching all cached pool list queries.
+pub const POOLS_CACHE_PATTERN: &str = "pools:*";
+
 /// Thread-safe Redis cache client with graceful fail-open behaviour.
 ///
 /// All operations silently no-op when Redis is unavailable so the application
@@ -32,6 +35,8 @@ pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 #[derive(Clone)]
 pub struct RedisCache {
     manager: Option<ConnectionManager>,
+    /// When set, health probes treat Redis as available without a live connection.
+    simulate_available: bool,
 }
 
 impl RedisCache {
@@ -46,28 +51,47 @@ impl RedisCache {
                     debug!("Redis cache initialized successfully");
                     Self {
                         manager: Some(manager),
+                        simulate_available: false,
                     }
                 }
                 Err(err) => {
                     warn!("Failed to create Redis connection manager: {}", err);
-                    Self { manager: None }
+                    Self {
+                        manager: None,
+                        simulate_available: false,
+                    }
                 }
             },
             Err(err) => {
                 warn!("Failed to create Redis client: {}", err);
-                Self { manager: None }
+                Self {
+                    manager: None,
+                    simulate_available: false,
+                }
             }
         }
     }
 
     /// Create a disabled cache instance (for testing or when Redis is not configured)
     pub fn disabled() -> Self {
-        Self { manager: None }
+        Self {
+            manager: None,
+            simulate_available: false,
+        }
+    }
+
+    /// Create a no-op cache that satisfies health/readiness probes in unit tests.
+    #[cfg(test)]
+    pub fn simulate_available() -> Self {
+        Self {
+            manager: None,
+            simulate_available: true,
+        }
     }
 
     /// Check if Redis is available
     pub fn is_available(&self) -> bool {
-        self.manager.is_some()
+        self.manager.is_some() || self.simulate_available
     }
 
     /// Get a value from cache
@@ -202,8 +226,43 @@ impl RedisCache {
         }
     }
 
+    /// Invalidate all cached pool list entries.
+    ///
+    /// Call after a new pool is created so clients see fresh data on the next
+    /// `GET /api/v1/pools` request.
+    pub async fn invalidate_pools_cache(&self) {
+        self.delete_pattern(POOLS_CACHE_PATTERN).await;
+    }
+
+    /// Check if a cache entry exists without deserializing it
+    ///
+    /// Useful for cache-aside pattern to determine if we need to populate the cache
+    pub async fn exists(&self, key: &str) -> bool {
+        let manager = match self.manager.as_ref() {
+            Some(m) => m,
+            None => return false,
+        };
+
+        let mut conn = manager.clone();
+        match conn.exists::<_, bool>(key).await {
+            Ok(exists) => exists,
+            Err(err) => {
+                if is_connection_error(err.kind()) {
+                    debug!("Redis connection dropout on EXISTS {}: {}", key, err);
+                } else {
+                    debug!("Redis EXISTS error for {}: {}", key, err);
+                }
+                false
+            }
+        }
+    }
+
     /// Ping Redis to check connection health
     pub async fn ping(&self) -> bool {
+        if self.simulate_available {
+            return true;
+        }
+
         let manager = match self.manager.as_ref() {
             Some(m) => m,
             None => return false,

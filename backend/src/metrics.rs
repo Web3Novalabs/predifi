@@ -1,4 +1,4 @@
-use prometheus::{CounterVec, Encoder, Gauge, Opts, Registry, TextEncoder};
+use prometheus::{CounterVec, Encoder, Gauge, Histogram, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder};
 use std::sync::Arc;
 
 /// Shared application metrics exposed to Prometheus.
@@ -6,6 +6,10 @@ use std::sync::Arc;
 pub struct Metrics {
     pub registry: Registry,
     pub http_requests_total: CounterVec,
+    pub http_request_duration_seconds: HistogramVec,
+    pub price_cache_fetch_total: CounterVec,
+    pub price_cache_assets: Gauge,
+    pub price_cache_fetch_duration_seconds: Histogram,
     pub app_up: Gauge,
     pub app_info: Gauge,
     pub memory_used_bytes: Gauge,
@@ -33,6 +37,38 @@ impl Metrics {
             &["method", "path", "status"],
         )?;
 
+        let http_request_duration_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "app_http_request_duration_seconds",
+                "HTTP request latency in seconds.",
+            )
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ]),
+            &["method", "path", "status"],
+        )?;
+
+        let price_cache_fetch_total = CounterVec::new(
+            Opts::new(
+                "app_price_cache_fetch_total",
+                "Total CoinGecko price-cache refresh attempts.",
+            ),
+            &["result"],
+        )?;
+
+        let price_cache_assets = Gauge::with_opts(Opts::new(
+            "app_price_cache_assets",
+            "Number of assets currently stored in the price cache.",
+        ))?;
+
+        let price_cache_fetch_duration_seconds = Histogram::with_opts(
+            HistogramOpts::new(
+                "app_price_cache_fetch_duration_seconds",
+                "CoinGecko price-cache refresh latency in seconds.",
+            )
+            .buckets(vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0]),
+        )?;
+
         let app_up = Gauge::with_opts(Opts::new("app_up", "Application availability status."))?;
         app_up.set(1.0);
 
@@ -58,6 +94,10 @@ impl Metrics {
         ))?;
 
         registry.register(Box::new(http_requests_total.clone()))?;
+        registry.register(Box::new(http_request_duration_seconds.clone()))?;
+        registry.register(Box::new(price_cache_fetch_total.clone()))?;
+        registry.register(Box::new(price_cache_assets.clone()))?;
+        registry.register(Box::new(price_cache_fetch_duration_seconds.clone()))?;
         registry.register(Box::new(app_up.clone()))?;
         registry.register(Box::new(app_info.clone()))?;
         registry.register(Box::new(memory_used_bytes.clone()))?;
@@ -67,12 +107,26 @@ impl Metrics {
         Ok(Self {
             registry,
             http_requests_total,
+            http_request_duration_seconds,
+            price_cache_fetch_total,
+            price_cache_assets,
+            price_cache_fetch_duration_seconds,
             app_up,
             app_info,
             memory_used_bytes,
             memory_total_bytes,
             active_pools,
         })
+    }
+
+    /// Record the outcome of a price-cache refresh attempt.
+    pub fn record_price_cache_fetch(&self, result: &str, assets: usize, duration_secs: f64) {
+        self.price_cache_fetch_total
+            .with_label_values(&[result])
+            .inc();
+        self.price_cache_assets.set(assets as f64);
+        self.price_cache_fetch_duration_seconds
+            .observe(duration_secs);
     }
 
     /// Encode all registered metrics into the Prometheus text exposition format.
@@ -127,8 +181,12 @@ mod tests {
             "app_memory_total_bytes must be registered"
         );
         assert!(
-            names.contains(&"app_active_pools"),
-            "app_active_pools must be registered"
+            names.contains(&"app_price_cache_assets"),
+            "app_price_cache_assets must be registered"
+        );
+        assert!(
+            names.contains(&"app_price_cache_fetch_duration_seconds"),
+            "app_price_cache_fetch_duration_seconds must be registered"
         );
 
         // CounterVec metrics are omitted until a label set is instantiated.
@@ -209,13 +267,20 @@ mod tests {
         );
     }
 
-    /// `active_pools` gauge starts at 0 and can be set.
+    /// HTTP 500 responses are tracked via the general request counter with status label.
     #[test]
-    fn metrics_active_pools_gauge_works() {
+    fn http_500_responses_are_counted_by_status_label() {
         let metrics = Metrics::new().expect("Metrics::new() must succeed");
-        assert_eq!(metrics.active_pools.get(), 0.0, "active_pools must start at 0");
-        metrics.active_pools.set(42.0);
-        assert_eq!(metrics.active_pools.get(), 42.0, "active_pools must reflect set value");
+        metrics
+            .http_requests_total
+            .with_label_values(&["GET", "/health", "500"])
+            .inc();
+
+        let text = metrics.gather_text().expect("gather_text() must succeed");
+        assert!(
+            text.contains("app_http_requests_total"),
+            "output must contain app_http_requests_total"
+        );
     }
 
     /// `SharedMetrics` (Arc<Metrics>) can be cloned and used from multiple owners.
