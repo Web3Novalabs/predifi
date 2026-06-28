@@ -12713,3 +12713,64 @@ fn test_close_staking_fails_for_resolved_pool() {
         "close_staking should fail for an already-resolved pool"
     );
 }
+
+#[should_panic(expected = "Error(Contract, #2)")]
+#[test]
+fn test_already_initialized_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    let treasury = Address::generate(&env);
+    
+    // First initialization should succeed
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    
+    // Second initialization should panic with AlreadyInitializedOrConfigNotSet
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+}
+
+#[should_panic(expected = "Error(Contract, #91)")]
+#[test]
+fn test_delisted_token_prevents_prediction() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) = setup(&env);
+    
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    
+    token_admin_client.mint(&creator, &10000);
+    token_admin_client.mint(&user, &10000);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = crate::PoolConfig {
+        start_time: 0,
+        description: soroban_sdk::String::from_str(&env, "Test Pool"),
+        metadata_url: soroban_sdk::String::from_str(&env, "ipfs://test"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 100000i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: soroban_sdk::vec![
+            &env,
+            soroban_sdk::String::from_str(&env, "Outcome 0"),
+            soroban_sdk::String::from_str(&env, "Outcome 1"),
+        ],
+    };
+    let pool_id = client.create_pool(&creator, &end_time, &token_address, &2u32, &soroban_sdk::Symbol::new(&env, "Sports"), &config);
+
+    // Remove token from whitelist
+    client.remove_token_from_whitelist(&admin, &token_address);
+
+    // User places prediction - should panic with TokenNotWhitelisted (Error 48)
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+}
