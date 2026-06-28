@@ -665,6 +665,14 @@ pub enum DataKey {
     /// Present only while a fee proposal is queued (between a `set_fee_bps` call
     /// and the corresponding `apply_fee_bps` or `cancel_fee_proposal` call).
     PendingFeeBps,
+    /// Minimum referred volume (in base token units) required before a referrer
+    /// is eligible to receive a referral reward on claim.
+    /// `ReferralMinVolumeBps` -> `i128`
+    ///
+    /// If the referrer's total referred volume for the pool is below this
+    /// threshold the referral cut is silently skipped (not paid out).
+    /// Default: 0 (no threshold — any volume qualifies).
+    ReferralMinVolumeBps,
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -1248,6 +1256,111 @@ pub struct ResolutionVoteCastEvent {
 mod events;
 // pub use events::*; // Unused import
 
+// ── Issue #1142: Event emission consistency ───────────────────────────────────
+
+/// Emitted when `update_referrer` successfully changes or removes a referrer
+/// for a (user, pool) pair. Allows off-chain indexers to keep referrer maps
+/// in sync without having to re-scan the full ledger state.
+#[contractevent(topics = ["referrer_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferrerUpdatedEvent {
+    /// The user whose referrer mapping changed.
+    pub user: Address,
+    /// The pool for which the referrer was updated.
+    pub pool_id: u64,
+    /// New referrer address, or `None` if the referrer was removed.
+    pub new_referrer: Option<Address>,
+}
+
+/// Emitted when `increase_max_total_stake` successfully raises the stake cap
+/// for a pool. Useful for frontends that display the current pool capacity.
+#[contractevent(topics = ["max_stake_increased"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaxTotalStakeIncreasedEvent {
+    /// The pool whose cap was increased.
+    pub pool_id: u64,
+    /// The creator/caller that raised the cap.
+    pub creator: Address,
+    /// The new `max_total_stake` value (0 = unlimited).
+    pub new_max_total_stake: i128,
+}
+
+/// Emitted when `set_referral_volume_threshold` changes the minimum referred
+/// volume required for a referrer to qualify for a reward.
+#[contractevent(topics = ["referral_threshold_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralThresholdUpdatedEvent {
+    /// The admin that updated the threshold.
+    pub admin: Address,
+    /// The new minimum referred volume (in base token units).
+    pub min_volume: i128,
+}
+
+/// Emitted when `renew_storage_ttl` is called to bump TTLs for pool storage
+/// entries, keeping them alive for another full BUMP_AMOUNT period.
+#[contractevent(topics = ["storage_ttl_renewed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageTtlRenewedEvent {
+    /// The pool whose storage TTLs were renewed.
+    pub pool_id: u64,
+    /// Ledger timestamp when the renewal was triggered.
+    pub timestamp: u64,
+}
+
+// ── Issue #1137: Contract metadata struct ────────────────────────────────────
+
+/// Extended contract metadata for frontend/tooling consumption.
+///
+/// Combines all protocol configuration, version information, and operational
+/// parameters into a single queryable structure via `get_contract_metadata()`.
+/// Unlike `ContractInfo`, this also exposes oracle configuration, fee tiers
+/// count, active pool count, and the referral volume threshold.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractMetadata {
+    /// Contract version stored in instance storage.
+    pub version: u32,
+    /// Human-readable semantic version string (e.g. `"0_0_0"`).
+    pub version_string: Symbol,
+    /// Admin address resolved from the access-control contract.
+    pub current_admin: Address,
+    /// Whether the contract is currently paused.
+    pub is_paused: bool,
+    /// Total number of pools ever created (monotonically increasing counter).
+    pub total_pools: u64,
+    /// Number of currently active (unresolved, uncanceled) pools.
+    pub active_pools_count: u32,
+    /// Protocol fee in basis points (1 bp = 0.01%).
+    pub fee_bps: u32,
+    /// Referral fee cut in basis points (share of protocol fee paid to referrer).
+    pub referral_cut_bps: u32,
+    /// Minimum referred volume (base token units) a referrer must accumulate
+    /// in a pool before receiving a referral reward. 0 = no minimum.
+    pub referral_min_volume: i128,
+    /// Treasury address that receives protocol fees.
+    pub treasury: Address,
+    /// Access-control contract address.
+    pub access_control: Address,
+    /// Global resolution delay in seconds.
+    pub resolution_delay: u64,
+    /// Minimum pool duration in seconds.
+    pub min_pool_duration: u64,
+    /// Global minimum stake amount (base token units).
+    pub min_stake: i128,
+    /// Maximum predictions allowed per user per pool (0 = no limit).
+    pub max_predictions_per_user: u32,
+    /// Cooldown in seconds between consecutive predictions from the same address.
+    pub prediction_cooldown_seconds: u64,
+    /// Number of dynamic fee tiers currently configured.
+    pub fee_tiers_count: u32,
+    /// Whether oracle/price-feed resolution has been initialized.
+    pub oracle_initialized: bool,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub trait OracleCallback {
@@ -1771,26 +1884,43 @@ impl PredifiContract {
             .publish(&env);
     }
 
-    /// Pause the contract. Only callable by Admin (role 0).
-    pub fn pause(env: Env, admin: Address) {
-        admin.require_auth();
-        if Self::require_admin_role(&env, &admin, "pause").is_err() {
-            panic!("Unauthorized: missing required role");
-        }
-        env.storage().instance().set(&DataKey::Paused, &true);
-        Self::extend_instance(&env);
-
-        // Emit dedicated pause-alert event so monitors can apply zero-tolerance
-        // rules independently of the generic PauseEvent.
-        ContractPausedAlertEvent {
-            admin: admin.clone(),
-            timestamp: env.ledger().timestamp(),
-        }
-        .publish(&env);
-        PauseEvent { admin }.publish(&env);
+   /// Pause the contract.
+///
+/// # Authorization
+/// Requires authentication from a caller with the Admin role.
+///
+/// # Effects
+/// - Marks the contract as paused.
+/// - Emits `ContractPausedAlertEvent`.
+/// - Emits `PauseEvent`.
+///
+/// While paused, administrative checks continue to work, but
+/// state-changing operations guarded by the pause flag are rejected.
+pub fn pause(env: Env, admin: Address) {
+    admin.require_auth();
+    if Self::require_admin_role(&env, &admin, "pause").is_err() {
+        panic!("Unauthorized: missing required role");
     }
+    env.storage().instance().set(&DataKey::Paused, &true);
+    Self::extend_instance(&env);
 
-    /// Unpause the contract. Only callable by Admin (role 0).
+    ContractPausedAlertEvent {
+        admin: admin.clone(),
+        timestamp: env.ledger().timestamp(),
+    }
+    .publish(&env);
+
+    PauseEvent { admin }.publish(&env);
+}
+
+    /// Resume normal contract operation.
+///
+/// # Authorization
+/// Requires authentication from a caller with the Admin role.
+///
+/// # Effects
+/// - Clears the paused state.
+/// - Emits `UnpauseEvent`.
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         if Self::require_admin_role(&env, &admin, "unpause").is_err() {
@@ -2464,6 +2594,15 @@ impl PredifiContract {
                 env.storage().persistent().remove(&referrer_key);
             }
         }
+
+        // Issue #1142: emit event so off-chain indexers stay in sync.
+        ReferrerUpdatedEvent {
+            user,
+            pool_id,
+            new_referrer,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -2859,6 +2998,14 @@ impl PredifiContract {
         pool.max_total_stake = new_max_total_stake;
         env.storage().persistent().set(&pool_key, &pool);
         Self::extend_persistent(&env, &pool_key);
+
+        // Issue #1142: emit event so frontends/indexers can update the displayed cap.
+        MaxTotalStakeIncreasedEvent {
+            pool_id,
+            creator,
+            new_max_total_stake,
+        }
+        .publish(&env);
 
         Ok(())
     }
@@ -3707,33 +3854,53 @@ impl PredifiContract {
             if let Some(referrer) = env.storage().persistent().get::<_, Address>(&referrer_key) {
                 Self::extend_persistent(env, &referrer_key);
                 if protocol_fee_total > 0 && pool.total_stake > 0 {
-                    let protocol_fee_share = SafeMath::proportion(
-                        prediction.amount,
-                        pool.total_stake,
-                        protocol_fee_total,
-                        RoundingMode::Neutral,
-                    )
-                    .map_err(|_| PredifiError::InvalidAmount)?;
-                    let referral_cut_bps = Self::read_referral_cut_bps(env) as i128;
-                    let referral_amount = SafeMath::percentage(
-                        protocol_fee_share,
-                        referral_cut_bps,
-                        RoundingMode::Neutral,
-                    )
-                    .map_err(|_| PredifiError::InvalidAmount)?;
-                    if referral_amount > 0 {
-                        token_client.transfer(
-                            &env.current_contract_address(),
-                            &referrer,
-                            &referral_amount,
-                        );
-                        ReferralPaidEvent {
-                            pool_id,
-                            referrer: referrer.clone(),
-                            referred_user: user.clone(),
-                            amount: referral_amount,
+                    // Issue #1128: Referral volume threshold check.
+                    // If a minimum volume threshold is configured, skip the
+                    // referral payout when the referrer has not yet accumulated
+                    // enough referred volume for this pool.
+                    let min_volume: i128 = env
+                        .storage()
+                        .instance()
+                        .get(&DataKey::ReferralMinVolumeBps)
+                        .unwrap_or(0i128);
+
+                    let referrer_volume: i128 = env
+                        .storage()
+                        .persistent()
+                        .get(&DataKey::ReferredVolume(referrer.clone(), pool_id))
+                        .unwrap_or(0i128);
+
+                    let volume_qualifies = min_volume == 0 || referrer_volume >= min_volume;
+
+                    if volume_qualifies {
+                        let protocol_fee_share = SafeMath::proportion(
+                            prediction.amount,
+                            pool.total_stake,
+                            protocol_fee_total,
+                            RoundingMode::Neutral,
+                        )
+                        .map_err(|_| PredifiError::InvalidAmount)?;
+                        let referral_cut_bps = Self::read_referral_cut_bps(env) as i128;
+                        let referral_amount = SafeMath::percentage(
+                            protocol_fee_share,
+                            referral_cut_bps,
+                            RoundingMode::Neutral,
+                        )
+                        .map_err(|_| PredifiError::InvalidAmount)?;
+                        if referral_amount > 0 {
+                            token_client.transfer(
+                                &env.current_contract_address(),
+                                &referrer,
+                                &referral_amount,
+                            );
+                            ReferralPaidEvent {
+                                pool_id,
+                                referrer: referrer.clone(),
+                                referred_user: user.clone(),
+                                amount: referral_amount,
+                            }
+                            .publish(env);
                         }
-                        .publish(env);
                     }
                 }
             }
@@ -4448,9 +4615,20 @@ impl PredifiContract {
         let condition_key = DataKey::PriceCondition(pool_id);
         env.storage().persistent().set(
             &condition_key,
-            &(feed_pair, target_price, operator_type, tolerance_bps),
+            &(feed_pair.clone(), target_price, operator_type, tolerance_bps),
         );
         Self::extend_persistent(&env, &condition_key);
+
+        // Issue #1142: emit event for consistency with other setter functions.
+        PriceConditionSetEvent {
+            pool_id,
+            feed_pair,
+            target_price,
+            operator: operator_type,
+            tolerance_bps,
+        }
+        .publish(&env);
+
         Ok(())
     }
 
@@ -5006,6 +5184,198 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(())
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1125 — Storage TTL Renewal Helper
+// Issue #1128 — Referral Volume Threshold Logic
+// Issue #1137 — Contract Metadata Getter
+// Issue #1142 — Event Emission Consistency (new events wired in below)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[contractimpl]
+impl PredifiContract {
+    // ── Issue #1125: Storage TTL renewal helper ───────────────────────────────
+
+    /// Renew (bump) the storage TTL for all persistent entries associated with
+    /// a pool, keeping them alive for another full `BUMP_AMOUNT` ledger period.
+    ///
+    /// This is a permissionless, read-only-effect helper that any party
+    /// (keeper bot, front-end, pool participant) can call at any time to
+    /// prevent pool data from expiring on-chain. It does **not** alter any
+    /// pool state — it is a pure TTL maintenance operation.
+    ///
+    /// Entries renewed:
+    /// - `Pool(pool_id)` — core pool struct
+    /// - `PartCnt(pool_id)` — participant counter
+    /// - `OutStakes(pool_id)` — batch outcome stakes (if present)
+    ///
+    /// # Arguments
+    /// * `pool_id` - The ID of the pool whose TTLs should be renewed.
+    ///
+    /// # Errors
+    /// * `PoolNotFound` — no pool exists for `pool_id`.
+    ///
+    /// # Events
+    /// Emits `StorageTtlRenewedEvent` so off-chain monitors can track
+    /// renewal activity and verify keeper health.
+    pub fn renew_storage_ttl(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        let pool_key = DataKey::Pool(pool_id);
+
+        // Verify the pool exists before attempting any TTL extension.
+        if !env.storage().persistent().has(&pool_key) {
+            return Err(PredifiError::PoolNotFound);
+        }
+
+        // Bump the pool struct entry.
+        Self::bump_ttl(&env, &pool_key);
+
+        // Bump participant counter if present.
+        let pc_key = DataKey::PartCnt(pool_id);
+        if env.storage().persistent().has(&pc_key) {
+            Self::bump_ttl(&env, &pc_key);
+        }
+
+        // Bump batch outcome stakes entry if present.
+        let stakes_key = DataKey::OutStakes(pool_id);
+        if env.storage().persistent().has(&stakes_key) {
+            Self::extend_persistent(&env, &stakes_key);
+        }
+
+        StorageTtlRenewedEvent {
+            pool_id,
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    // ── Issue #1128: Referral volume threshold logic ──────────────────────────
+
+    /// Set the minimum referred volume (in base token units) that a referrer
+    /// must have accumulated in a pool before becoming eligible for a referral
+    /// reward on `claim_winnings`.
+    ///
+    /// A value of `0` disables the threshold — every referrer qualifies
+    /// regardless of volume (the original behaviour).
+    ///
+    /// This allows the protocol to filter out low-value or spam referrals that
+    /// might be created solely to extract small fee cuts without meaningful
+    /// traffic contribution.
+    ///
+    /// # Arguments
+    /// * `admin`      - Address with Admin role (0), must provide auth.
+    /// * `min_volume` - New threshold in base token units. Must be >= 0.
+    ///
+    /// # Errors
+    /// * `Unauthorized`   — caller does not hold the Admin role.
+    /// * `ContractPaused` — contract is currently paused.
+    pub fn set_referral_volume_threshold(
+        env: Env,
+        admin: Address,
+        min_volume: i128,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_referral_volume_threshold")?;
+
+        if min_volume < 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::ReferralMinVolumeBps, &min_volume);
+        Self::extend_instance(&env);
+
+        ReferralThresholdUpdatedEvent {
+            admin,
+            min_volume,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    /// Return the current referral volume threshold (in base token units).
+    ///
+    /// Returns `0` when no threshold has been configured (all referrers qualify).
+    pub fn get_referral_volume_threshold(env: Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::ReferralMinVolumeBps)
+            .unwrap_or(0i128)
+    }
+
+    // ── Issue #1137: Contract metadata getter ─────────────────────────────────
+
+    /// Return a comprehensive metadata snapshot of the contract's current
+    /// configuration and operational state.
+    ///
+    /// This is designed as a single-call alternative to individually querying
+    /// `get_contract_info`, `get_fees`, `get_fee_tiers`, `get_oracle_config`,
+    /// `get_active_pools_count`, and `get_referral_volume_threshold`.
+    /// Front-ends and tooling can bootstrap their state from one RPC call.
+    ///
+    /// # Returns
+    /// A `ContractMetadata` struct containing all protocol parameters.
+    pub fn get_contract_metadata(env: Env) -> ContractMetadata {
+        let config = Self::get_config(&env);
+        let current_admin = Self::get_access_control_admin(&env, &config.access_control)
+            .unwrap_or_else(|_| env.current_contract_address());
+
+        let total_pools: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PoolIdCtr)
+            .unwrap_or(0u64);
+
+        let active_pools_count: u32 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ActivePoolCtr)
+            .unwrap_or(0u32);
+
+        let fee_tiers = Self::get_fee_tiers(env.clone());
+        let fee_tiers_count = fee_tiers.len();
+
+        let oracle_initialized = env
+            .storage()
+            .persistent()
+            .has(&DataKey::OracleConfig);
+
+        let referral_min_volume: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::ReferralMinVolumeBps)
+            .unwrap_or(0i128);
+
+        ContractMetadata {
+            version: env
+                .storage()
+                .instance()
+                .get(&DataKey::Version)
+                .unwrap_or(0u32),
+            version_string: Symbol::new(&env, "0_0_0"),
+            current_admin,
+            is_paused: Self::is_paused(&env),
+            total_pools,
+            active_pools_count,
+            fee_bps: config.fee_bps,
+            referral_cut_bps: Self::read_referral_cut_bps(&env),
+            referral_min_volume,
+            treasury: config.treasury,
+            access_control: config.access_control,
+            resolution_delay: config.resolution_delay,
+            min_pool_duration: config.min_pool_duration,
+            min_stake: config.min_stake,
+            max_predictions_per_user: config.max_predictions_per_user,
+            prediction_cooldown_seconds: config.prediction_cooldown_seconds,
+            fee_tiers_count,
+            oracle_initialized,
+        }
     }
 }
 
