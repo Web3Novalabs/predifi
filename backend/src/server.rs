@@ -23,8 +23,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::{sleep, Duration as TokioDuration};
 use tokio::task::JoinHandle;
-#[cfg(not(test))]
-use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info, warn};
 
@@ -387,30 +385,8 @@ fn build_router_with_rate_period(
         .layer(build_cors(&config))
         .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
-    #[cfg(not(test))]
-    let router = {
-        let governor_conf = Arc::new(
-            GovernorConfigBuilder::default()
-                .period(period)
-                .burst_size(burst_size)
-                .error_handler(|_| {
-                    use crate::response::ApiResponse;
-                    use crate::response::error_codes;
-                    ApiResponse::<()>::error(
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        error_codes::RATE_LIMIT_EXCEEDED,
-                        "Too Many Requests"
-                    ).into_response()
-                })
-                .error_handler(|_| crate::response::rate_limit_error_response())
-                .finish()
-                .unwrap(),
-        );
-        router.layer(tower_governor::GovernorLayer {
-            config: governor_conf,
-        })
-    };
-
+    // Per-route rate limiting is applied inside `routes/v1.rs` via
+    // `crate::rate_limit::with_rate_limit`.  No global GovernorLayer here.
     router
 }
 
@@ -459,30 +435,8 @@ fn build_router_with_db(
         .layer(build_cors(&config))
         .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
 
-    #[cfg(not(test))]
-    let router = {
-        let governor_conf = Arc::new(
-            GovernorConfigBuilder::default()
-                .per_second(crate::constants::RATE_LIMIT_PERIOD_SECS)
-                .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
-                .error_handler(|_| {
-                    use crate::response::ApiResponse;
-                    use crate::response::error_codes;
-                    ApiResponse::<()>::error(
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        error_codes::RATE_LIMIT_EXCEEDED,
-                        "Too Many Requests"
-                    ).into_response()
-                })
-                .error_handler(|_| crate::response::rate_limit_error_response())
-                .finish()
-                .unwrap(),
-        );
-        router.layer(tower_governor::GovernorLayer {
-            config: governor_conf,
-        })
-    };
-
+    // Per-route rate limiting is applied inside `routes/v1.rs` via
+    // `crate::rate_limit::with_rate_limit`.  No global GovernorLayer here.
     router
 }
 
