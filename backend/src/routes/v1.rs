@@ -633,6 +633,102 @@ pub async fn ingest_prediction_placed(
     }
 }
 
+// ── Market Predictions (cursor-based) ────────────────────────────────────────
+
+/// Query parameters for `GET /api/v1/markets/:id/predictions`.
+#[derive(Debug, Deserialize)]
+pub struct MarketPredictionsQuery {
+    /// Opaque cursor: the `id` of the last item on the previous page.
+    /// Omit (or set to null) to start from the most recent prediction.
+    pub after: Option<i64>,
+    /// Page size (1–100, default 20).
+    pub limit: Option<i64>,
+}
+
+/// `GET /api/v1/markets/:id/predictions` — cursor-paginated list of predictions
+/// for a specific market (pool).
+///
+/// ## Pagination
+/// The response includes `next_cursor`: pass it as `?after=<cursor>` on the
+/// next request to fetch the following page. A `null` `next_cursor` means you
+/// have reached the last page.
+///
+/// ## 404 behaviour
+/// If the pool does not exist the handler returns 404 so callers can
+/// distinguish "market not found" from "market has no predictions".
+pub async fn get_market_predictions(
+    State(state): State<AppState>,
+    Path(market_id): Path<i64>,
+    Query(params): Query<MarketPredictionsQuery>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    // Clamp limit: 1..=100, default 20.
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let after = params.after;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    // Verify the market exists first so we can return 404 instead of an empty list.
+    match crate::db::get_pool_by_id(db, market_id).await {
+        Ok(None) => {
+            return ApiResponse::<()>::error(
+                StatusCode::NOT_FOUND,
+                error_codes::NOT_FOUND,
+                "market not found",
+            )
+            .into_response();
+        }
+        Err(e) => {
+            return ApiResponse::<()>::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_codes::INTERNAL_ERROR,
+                e.to_string(),
+            )
+            .into_response();
+        }
+        Ok(Some(_)) => {}
+    }
+
+    match tokio::try_join!(
+        crate::db::get_market_predictions(db, market_id, after, limit),
+        crate::db::count_market_predictions(db, market_id),
+    ) {
+        Ok((mut rows, total)) => {
+            // The query fetches limit+1 rows; if we got the extra one there is
+            // another page available.
+            let has_next = rows.len() as i64 > limit;
+            if has_next {
+                rows.truncate(limit as usize);
+            }
+            let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+            let response = serde_json::json!({
+                "market_id": market_id,
+                "predictions": rows,
+                "total": total,
+                "limit": limit,
+                "next_cursor": next_cursor,
+            });
+            ApiResponse::success(response).into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
 /// Build the version 1 API router.
 pub fn router(
     config: Arc<Config>,
@@ -671,6 +767,7 @@ pub fn router(
         )
         .route("/users/{address}/history", get(get_user_history))
         .route("/users/{address}/predictions", get(get_user_predictions))
+        .route("/markets/{id}/predictions", get(get_market_predictions))
         .route("/indexer/pool-created", post(ingest_pool_created))
         .route("/indexer/prediction-placed", post(ingest_prediction_placed))
         .route("/ws", get(crate::ws::ws_handler))
