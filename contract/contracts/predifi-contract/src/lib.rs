@@ -203,6 +203,8 @@ pub enum PredifiError {
     /// Callers should check `is_contract_paused()` before submitting a transaction,
     /// or listen for `PauseEvent` / `UnpauseEvent` on-chain to stay in sync.
     ContractPaused = 83,
+    /// Time constraint violated (e.g., claim window expired or resolution delay not met).
+    TimeConstraintError = 84,
 }
 
 /// Represents the current state of a prediction market.
