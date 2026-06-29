@@ -45,7 +45,7 @@ pub fn transition_pool_to_disputed(env: &Env, pool_id: u64) {
         .persistent()
         .get(&pool_key)
         .expect("Pool not found");
-    
+
     pool.state = MarketState::Disputed;
     env.storage().persistent().set(&pool_key, &pool);
 }

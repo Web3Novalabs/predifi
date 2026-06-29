@@ -1208,6 +1208,7 @@ pub struct ResolutionVoteCastEvent {
     pub required_resolutions: u32,
 }
 mod events;
+use events::ClaimWindowUpdateEvent;
 // pub use events::*; // Unused import
 
 // ── Issue #1142: Event emission consistency ───────────────────────────────────
@@ -1798,84 +1799,84 @@ impl PredifiContract {
         }
 
         // Enforce the same 30-day cap on resolution_delay that
-            // set_resolution_delay enforces, so the contract cannot be
-            // initialised with an unbounded delay.
-            if resolution_delay > MAX_RESOLUTION_DELAY {
-                soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
-            }
+        // set_resolution_delay enforces, so the contract cannot be
+        // initialised with an unbounded delay.
+        if resolution_delay > MAX_RESOLUTION_DELAY {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
+        }
 
-            // Validate fee_bps on init — consistent with set_fee_bps (INV-6)
-            if !Self::is_valid_fee_bps(fee_bps) {
-                soroban_sdk::panic_with_error!(&env, PredifiError::InvalidFeeBps);
-            }
+        // Validate fee_bps on init — consistent with set_fee_bps (INV-6)
+        if !Self::is_valid_fee_bps(fee_bps) {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidFeeBps);
+        }
 
-            let config = Config {
-                fee_bps,
-                treasury: treasury.clone(),
-                access_control: access_control.clone(),
-                resolution_delay,
-                min_pool_duration,
-                min_stake: DEFAULT_GLOBAL_MIN_STAKE,
-                max_predictions_per_user,
-                prediction_cooldown_seconds: DEFAULT_PREDICTION_COOLDOWN_SECONDS,
-                referral_bps: 5000, // default 50%
-                claim_window_seconds: 2_592_000, // default 30 days
-            };
-            env.storage().instance().set(&DataKey::Config, &config);
-            env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
-            env.storage()
-                .instance()
-                .set(&DataKey::Version, &CONTRACT_VERSION);
-            Self::extend_instance(&env);
+        let config = Config {
+            fee_bps,
+            treasury: treasury.clone(),
+            access_control: access_control.clone(),
+            resolution_delay,
+            min_pool_duration,
+            min_stake: DEFAULT_GLOBAL_MIN_STAKE,
+            max_predictions_per_user,
+            prediction_cooldown_seconds: DEFAULT_PREDICTION_COOLDOWN_SECONDS,
+            referral_bps: 5000,              // default 50%
+            claim_window_seconds: 2_592_000, // default 30 days
+        };
+        env.storage().instance().set(&DataKey::Config, &config);
+        env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::Version, &CONTRACT_VERSION);
+        Self::extend_instance(&env);
 
-            InitEvent {
-                access_control,
-                treasury,
-                fee_bps,
-                resolution_delay,
-                min_pool_duration,
-                max_predictions_per_user,
-            }
-            .publish(&env);
+        InitEvent {
+            access_control,
+            treasury,
+            fee_bps,
+            resolution_delay,
+            min_pool_duration,
+            max_predictions_per_user,
+        }
+        .publish(&env);
     }
 
-   /// Pause the contract.
-///
-/// # Authorization
-/// Requires authentication from a caller with the Admin role.
-///
-/// # Effects
-/// - Marks the contract as paused.
-/// - Emits `ContractPausedAlertEvent`.
-/// - Emits `PauseEvent`.
-///
-/// While paused, administrative checks continue to work, but
-/// state-changing operations guarded by the pause flag are rejected.
-pub fn pause(env: Env, admin: Address) {
-    admin.require_auth();
-    if Self::require_admin_role(&env, &admin, "pause").is_err() {
-        panic!("Unauthorized: missing required role");
-    }
-    env.storage().instance().set(&DataKey::Paused, &true);
-    Self::extend_instance(&env);
+    /// Pause the contract.
+    ///
+    /// # Authorization
+    /// Requires authentication from a caller with the Admin role.
+    ///
+    /// # Effects
+    /// - Marks the contract as paused.
+    /// - Emits `ContractPausedAlertEvent`.
+    /// - Emits `PauseEvent`.
+    ///
+    /// While paused, administrative checks continue to work, but
+    /// state-changing operations guarded by the pause flag are rejected.
+    pub fn pause(env: Env, admin: Address) {
+        admin.require_auth();
+        if Self::require_admin_role(&env, &admin, "pause").is_err() {
+            panic!("Unauthorized: missing required role");
+        }
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Self::extend_instance(&env);
 
-    ContractPausedAlertEvent {
-        admin: admin.clone(),
-        timestamp: env.ledger().timestamp(),
-    }
-    .publish(&env);
+        ContractPausedAlertEvent {
+            admin: admin.clone(),
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
 
-    PauseEvent { admin }.publish(&env);
-}
+        PauseEvent { admin }.publish(&env);
+    }
 
     /// Resume normal contract operation.
-///
-/// # Authorization
-/// Requires authentication from a caller with the Admin role.
-///
-/// # Effects
-/// - Clears the paused state.
-/// - Emits `UnpauseEvent`.
+    ///
+    /// # Authorization
+    /// Requires authentication from a caller with the Admin role.
+    ///
+    /// # Effects
+    /// - Clears the paused state.
+    /// - Emits `UnpauseEvent`.
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         if Self::require_admin_role(&env, &admin, "unpause").is_err() {
@@ -2038,11 +2039,11 @@ pub fn pause(env: Env, admin: Address) {
         Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_claim_window")?;
-        
+
         if claim_window_seconds < MIN_CLAIM_WINDOW || claim_window_seconds > MAX_CLAIM_WINDOW {
             return Err(PredifiError::InvalidData);
         }
-        
+
         let mut config = Self::get_config(&env);
         config.claim_window_seconds = claim_window_seconds;
         env.storage().instance().set(&DataKey::Config, &config);
@@ -2053,7 +2054,7 @@ pub fn pause(env: Env, admin: Address) {
             claim_window_seconds,
         }
         .publish(&env);
-        
+
         Ok(())
     }
 
@@ -3716,11 +3717,11 @@ pub fn pause(env: Env, admin: Address) {
                 let config = Self::get_config(env);
                 let claim_deadline = resolution_timestamp
                     .checked_add(config.claim_window_seconds)
-                    .ok_or(PredifiError::TimeConstraintError)?;
+                    .ok_or(PredifiError::InvalidTimestamp)?;
                 let current_time = env.ledger().timestamp();
-                
+
                 if current_time > claim_deadline {
-                    return Err(PredifiError::TimeConstraintError);
+                    return Err(PredifiError::InvalidTimestamp);
                 }
             }
 
@@ -4512,6 +4513,8 @@ pub fn pause(env: Env, admin: Address) {
             return Err(PredifiError::InvalidTargetPrice);
         }
 
+        Self::validate_price_condition_match_params(operator_type, tolerance_bps)?;
+
         let pool_key = DataKey::Pool(pool_id);
         if !env.storage().persistent().has(&pool_key) {
             return Err(PredifiError::PoolNotFound);
@@ -4520,7 +4523,12 @@ pub fn pause(env: Env, admin: Address) {
         let condition_key = DataKey::PriceCondition(pool_id);
         env.storage().persistent().set(
             &condition_key,
-            &(feed_pair.clone(), target_price, operator_type, tolerance_bps),
+            &(
+                feed_pair.clone(),
+                target_price,
+                operator_type,
+                tolerance_bps,
+            ),
         );
         Self::extend_persistent(&env, &condition_key);
 
@@ -4667,29 +4675,80 @@ pub fn pause(env: Env, admin: Address) {
         Ok(())
     }
 
-    fn load_price_resolution_condition(env: &Env, pool_id: u64) -> (Symbol, i128, u32, u32) {
+    fn load_price_resolution_condition(
+        env: &Env,
+        pool_id: u64,
+    ) -> Result<(Symbol, i128, u32, u32), PredifiError> {
         let condition_key = DataKey::PriceCondition(pool_id);
         env.storage()
             .persistent()
             .get(&condition_key)
-            .expect("Price condition not found")
+            .ok_or(PredifiError::PriceConditionNotSet)
     }
 
-    /// Convert the evaluated price condition into the pool outcome convention.
-    ///
-    /// ComparisonOp: 0=LT, 1=GT. Outcome: 0=No, 1=Yes.
-    fn price_resolution_outcome(price: i128, target_price: i128, comparison_op: u32) -> u32 {
-        if comparison_op == 1 {
-            if price > target_price {
-                1
-            } else {
-                0
-            }
-        } else if price < target_price {
-            0
-        } else {
-            1
+    fn validate_price_condition_match_params(
+        comparison_op: u32,
+        tolerance_bps: u32,
+    ) -> Result<(), PredifiError> {
+        if comparison_op > 2 || tolerance_bps > MAX_TOLERANCE {
+            return Err(PredifiError::InvalidData);
         }
+
+        Ok(())
+    }
+
+    fn price_tolerance_amount(
+        target_price: i128,
+        tolerance_bps: u32,
+    ) -> Result<i128, PredifiError> {
+        target_price
+            .checked_mul(tolerance_bps as i128)
+            .and_then(|amount| amount.checked_div(MAX_TOLERANCE as i128))
+            .ok_or(PredifiError::ArithmeticError)
+    }
+
+    /// Match a stored price condition in a fixed, explicitly bounded number of checks.
+    ///
+    /// Operators: 0=Equal, 1=Greater, 2=Less. Outcome: 0=No, 1=Yes.
+    fn price_resolution_outcome(
+        price: i128,
+        target_price: i128,
+        comparison_op: u32,
+        tolerance_bps: u32,
+    ) -> Result<u32, PredifiError> {
+        Self::validate_price_condition_match_params(comparison_op, tolerance_bps)?;
+
+        let tolerance_amount = Self::price_tolerance_amount(target_price, tolerance_bps)?;
+        let lower_bound = target_price
+            .checked_sub(tolerance_amount)
+            .ok_or(PredifiError::ArithmeticError)?;
+        let upper_bound = target_price
+            .checked_add(tolerance_amount)
+            .ok_or(PredifiError::ArithmeticError)?;
+
+        let mut steps = 0u32;
+        let condition_met = match comparison_op {
+            0 => {
+                steps += 2;
+                price >= lower_bound && price <= upper_bound
+            }
+            1 => {
+                steps += 1;
+                price > upper_bound
+            }
+            2 => {
+                steps += 1;
+                price < lower_bound
+            }
+            _ => return Err(PredifiError::InvalidData),
+        };
+
+        steps += 2;
+        if steps > MAX_PRICE_CONDITION_MATCH_STEPS {
+            return Err(PredifiError::RateLimitOrSuspiciousActivity);
+        }
+
+        Ok(if condition_met { 1 } else { 0 })
     }
 
     /// Load the pool and validate all non-outcome preconditions for price resolution.
@@ -4778,12 +4837,13 @@ pub fn pause(env: Env, admin: Address) {
     pub fn resolve_pool_from_price(env: Env, pool_id: u64) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
 
-        let (feed_pair, target_price, comparison_op, _tolerance_bps) =
-            Self::load_price_resolution_condition(&env, pool_id);
+        let (feed_pair, target_price, comparison_op, tolerance_bps) =
+            Self::load_price_resolution_condition(&env, pool_id)?;
         let (price, expires_at) = Self::load_price_feed_for_resolution(&env, feed_pair);
         Self::require_fresh_price_feed(&env, expires_at)?;
 
-        let outcome = Self::price_resolution_outcome(price, target_price, comparison_op);
+        let outcome =
+            Self::price_resolution_outcome(price, target_price, comparison_op, tolerance_bps)?;
         let (pool_key, pool) = Self::load_resolvable_price_pool(&env, pool_id)?;
         Self::validate_price_resolution_outcome(&env, pool_id, outcome, pool.options_count)?;
         Self::persist_price_resolution(&env, &pool_key, pool_id, pool, outcome);
@@ -5197,11 +5257,7 @@ impl PredifiContract {
             .set(&DataKey::ReferralMinVolumeBps, &min_volume);
         Self::extend_instance(&env);
 
-        ReferralThresholdUpdatedEvent {
-            admin,
-            min_volume,
-        }
-        .publish(&env);
+        ReferralThresholdUpdatedEvent { admin, min_volume }.publish(&env);
 
         Ok(())
     }
@@ -5248,10 +5304,7 @@ impl PredifiContract {
         let fee_tiers = Self::get_fee_tiers(env.clone());
         let fee_tiers_count = fee_tiers.len();
 
-        let oracle_initialized = env
-            .storage()
-            .persistent()
-            .has(&DataKey::OracleConfig);
+        let oracle_initialized = env.storage().persistent().has(&DataKey::OracleConfig);
 
         let referral_min_volume: i128 = env
             .storage()
