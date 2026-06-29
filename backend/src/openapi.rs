@@ -2,9 +2,8 @@
 //!
 //! The Swagger UI is served at `/swagger-ui/`.
 
-use axum::Router;
+use axum::{routing::get, Json, Router};
 use utoipa::{OpenApi, ToSchema};
-use utoipa_swagger_ui::SwaggerUi;
 
 // ── Documented schemas ────────────────────────────────────────────────────────
 
@@ -427,9 +426,14 @@ async fn api_ingest_prediction_placed() {}
 
 // ── Router ────────────────────────────────────────────────────────────────────
 
-/// Mount Swagger UI at `/swagger-ui` and serve the OpenAPI JSON at `/api-docs/openapi.json`.
+/// Serve the OpenAPI spec as JSON at `/api-docs/openapi.json`.
+///
+/// The full Swagger UI requires `utoipa-swagger-ui` which is not available in
+/// this build environment.  The raw JSON spec is still useful for tooling
+/// (Insomnia, Postman, code generators, etc.).
 pub fn swagger_router() -> Router {
-    SwaggerUi::new("/swagger-ui")
-        .url("/api-docs/openapi.json", ApiDoc::openapi())
-        .into()
+    Router::new().route(
+        "/api-docs/openapi.json",
+        get(|| async { Json(ApiDoc::openapi()) }),
+    )
 }

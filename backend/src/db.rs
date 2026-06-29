@@ -3,7 +3,7 @@ use std::{future::Future, time::Duration};
 use chrono::{DateTime, Utc};
 use sqlx::{postgres::PgPoolOptions, Executor, PgPool, Postgres};
 use tokio::time::sleep;
-use tracing::{info, warn};
+use tracing::{info, instrument, warn};
 
 use crate::config::Config;
 
@@ -443,6 +443,8 @@ pub struct UserWinnings {
 /// Fetch active pools with optional category filter and sort order.
 ///
 /// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"`.
+#[instrument(skip(pool), name = "db.get_active_pools",
+    fields(sort_by = sort_by, category = ?category, limit = limit, offset = offset))]
 pub async fn get_active_pools(
     pool: &PgPool,
     sort_by: &str,
@@ -792,6 +794,8 @@ pub async fn get_users_by_winnings(
 }
 
 /// Run `operation` inside a database transaction, committing on success.
+#[instrument(skip(pool), name = "db.insert_prediction_from_event_with_pool",
+    fields(pool_id = event.pool_id, user_address = %event.user_address))]
 pub async fn insert_prediction_from_event_with_pool(
     pool: &PgPool,
     event: &PredictionPlacedEvent,
@@ -803,6 +807,8 @@ pub async fn insert_prediction_from_event_with_pool(
 }
 
 /// Mark a pool as settled and record the winning outcome.
+#[instrument(skip(executor), name = "db.resolve_pool_in_db",
+    fields(pool_id = pool_id, winning_outcome = winning_outcome))]
 pub async fn resolve_pool_in_db<'e, E>(
     executor: E,
     pool_id: u64,
@@ -820,6 +826,7 @@ where
 }
 
 /// Mark a pool as closed (cancelled on-chain).
+#[instrument(skip(executor), name = "db.cancel_pool_in_db", fields(pool_id = pool_id))]
 pub async fn cancel_pool_in_db<'e, E>(executor: E, pool_id: u64) -> Result<(), sqlx::Error>
 where
     E: Executor<'e, Database = Postgres>,
@@ -832,6 +839,8 @@ where
 }
 
 /// Insert a new pool record decoded from a `PoolCreated` contract event.
+#[instrument(skip(executor), name = "db.insert_pool_from_event",
+    fields(pool_id = event.pool_id, creator = %event.creator))]
 pub async fn insert_pool_from_event<'e, E>(
     executor: E,
     event: &PoolCreatedEvent,
@@ -862,6 +871,8 @@ where
 /// Must run inside a transaction so the prediction insert and pool stake update
 /// stay atomic. Use [`insert_prediction_from_event_with_pool`] or pass an open
 /// transaction reference.
+#[instrument(skip(tx), name = "db.insert_prediction_from_event",
+    fields(pool_id = event.pool_id, user_address = %event.user_address))]
 pub async fn insert_prediction_from_event(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     event: &PredictionPlacedEvent,
