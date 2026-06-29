@@ -1930,6 +1930,14 @@ pub fn pause(env: Env, admin: Address) {
         Ok(())
     }
 
+    #[contractevent(topics = ["referral_cut_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralCutUpdateEvent {
+    pub admin: Address,
+    pub referral_cut_bps: u32,
+}
+
     /// Set treasury address. Caller must have Admin role (0).
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
@@ -2071,6 +2079,12 @@ pub fn pause(env: Env, admin: Address) {
             .instance()
             .set(&DataKey::ReferralCutBps, &referral_cut_bps);
         Self::extend_instance(&env);
+
+        ReferralCutUpdateEvent {
+    admin,
+    referral_cut_bps,
+}
+.publish(&env);
         Ok(())
     }
 
