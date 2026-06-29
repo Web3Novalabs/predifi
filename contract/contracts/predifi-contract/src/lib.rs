@@ -107,6 +107,12 @@ pub const CATEGORY_TECH: Symbol = symbol_short!("Tech");
 /// Maximum allowed resolution delay: 30 days in seconds
 pub const MAX_RESOLUTION_DELAY: u64 = 2_592_000;
 
+/// Minimum claim window: 1 day in seconds
+pub const MIN_CLAIM_WINDOW: u64 = 86_400;
+
+/// Maximum claim window: 365 days in seconds
+pub const MAX_CLAIM_WINDOW: u64 = 31_536_000;
+
 /// Miscellaneous predictions that don't fit other categories
 pub const CATEGORY_OTHER: Symbol = symbol_short!("Other");
 
@@ -318,6 +324,9 @@ pub struct Pool {
     pub fee_bps: u32,
     /// Number of unique addresses that have placed at least one prediction in this pool.
     pub participants_count: u32,
+    /// Unix timestamp when the pool was resolved. None for pools created before this feature.
+    /// Used to enforce claim window expiration. Set when pool transitions to MarketState::Resolved.
+    pub resolution_timestamp: Option<u64>,
 }
 
 /// Configuration parameters for creating a prediction pool.
@@ -413,6 +422,10 @@ pub struct Config {
     /// Represents the share of the protocol fee paid to referrers.
     /// Default: 500 (5%). Can be raised to 1000 (10%) for referral seasons.
     pub referral_bps: u32,
+    /// Claim window duration in seconds after pool resolution.
+    /// Users must claim winnings within this time period after resolution.
+    /// Default: 2,592,000 seconds (30 days). Range: 86,400-31,536,000 (1-365 days).
+    pub claim_window_seconds: u64,
 }
 
 /// Fee percentages returned by [`PredifiContract::get_fees`].
@@ -1806,6 +1819,7 @@ impl PredifiContract {
                 max_predictions_per_user,
                 prediction_cooldown_seconds: DEFAULT_PREDICTION_COOLDOWN_SECONDS,
                 referral_bps: 5000, // default 50%
+                claim_window_seconds: 2_592_000, // default 30 days
             };
             env.storage().instance().set(&DataKey::Config, &config);
             env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
@@ -2001,6 +2015,45 @@ pub fn pause(env: Env, admin: Address) {
         Self::extend_instance(&env);
 
         ResolutionDelayUpdateEvent { admin, delay }.publish(&env);
+        Ok(())
+    }
+
+    /// Set claim window in seconds. Caller must have Admin role (0).
+    ///
+    /// The claim window defines how long after pool resolution users can claim winnings.
+    /// Must be between MIN_CLAIM_WINDOW (1 day) and MAX_CLAIM_WINDOW (365 days).
+    ///
+    /// # Arguments
+    /// * `admin` - Address with Admin role (0).
+    /// * `claim_window_seconds` - Claim window duration in seconds.
+    ///
+    /// # Errors
+    /// * `PredifiError::InvalidData` if claim_window_seconds is outside allowed range
+    /// * `PredifiError::Unauthorized` if caller doesn't have Admin role
+    pub fn set_claim_window(
+        env: Env,
+        admin: Address,
+        claim_window_seconds: u64,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "set_claim_window")?;
+        
+        if claim_window_seconds < MIN_CLAIM_WINDOW || claim_window_seconds > MAX_CLAIM_WINDOW {
+            return Err(PredifiError::InvalidData);
+        }
+        
+        let mut config = Self::get_config(&env);
+        config.claim_window_seconds = claim_window_seconds;
+        env.storage().instance().set(&DataKey::Config, &config);
+        Self::extend_instance(&env);
+
+        ClaimWindowUpdateEvent {
+            admin,
+            claim_window_seconds,
+        }
+        .publish(&env);
+        
         Ok(())
     }
 
@@ -2696,6 +2749,7 @@ pub fn pause(env: Env, admin: Address) {
             outcome_descriptions: config.outcome_descriptions.clone(),
             fee_bps: 0, // Will be set at resolution
             participants_count: 0,
+            resolution_timestamp: None, // Set when pool is resolved
         };
 
         Self::validate_pool_invariants(&pool);
@@ -3081,6 +3135,7 @@ pub fn pause(env: Env, admin: Address) {
             pool.state = MarketState::Resolved;
             pool.outcome = outcome;
             pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
+            pool.resolution_timestamp = Some(env.ledger().timestamp()); // Record resolution time
 
             env.storage().persistent().set(&pool_key, &pool);
 
@@ -3654,6 +3709,19 @@ pub fn pause(env: Env, admin: Address) {
             // Check if pool is properly resolved
             if !Self::is_pool_resolved(&pool) {
                 return Err(PredifiError::PoolNotResolved);
+            }
+
+            // Check claim window expiration if resolution timestamp exists
+            if let Some(resolution_timestamp) = pool.resolution_timestamp {
+                let config = Self::get_config(env);
+                let claim_deadline = resolution_timestamp
+                    .checked_add(config.claim_window_seconds)
+                    .ok_or(PredifiError::TimeConstraintError)?;
+                let current_time = env.ledger().timestamp();
+                
+                if current_time > claim_deadline {
+                    return Err(PredifiError::TimeConstraintError);
+                }
             }
 
             if prediction.outcome != pool.outcome {
@@ -4692,6 +4760,7 @@ pub fn pause(env: Env, admin: Address) {
         pool.state = MarketState::Resolved;
         pool.outcome = outcome;
         pool.fee_bps = Self::calculate_dynamic_fee(env, &pool);
+        pool.resolution_timestamp = Some(env.ledger().timestamp()); // Record resolution time
 
         env.storage().persistent().set(pool_key, &pool);
         Self::bump_ttl(env, pool_key);
@@ -4939,6 +5008,7 @@ impl OracleCallback for PredifiContract {
             pool.state = MarketState::Resolved;
             pool.outcome = outcome;
             pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
+            pool.resolution_timestamp = Some(env.ledger().timestamp()); // Record resolution time
 
             env.storage().persistent().set(&pool_key, &pool);
             Self::bump_ttl(&env, &pool_key);

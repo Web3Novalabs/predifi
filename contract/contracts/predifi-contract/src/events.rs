@@ -59,6 +59,15 @@ pub struct ResolutionDelayUpdateEvent {
     pub admin: Address,
     pub delay: u64,
 }
+
+#[contractevent(topics = ["claim_window_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimWindowUpdateEvent {
+    pub admin: Address,
+    pub claim_window_seconds: u64,
+}
+
 #[contractevent(topics = ["min_pool_duration_update"])]
 #[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
