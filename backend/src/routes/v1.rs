@@ -648,7 +648,16 @@ pub async fn ingest_prediction_placed(
     }
 }
 
-/// Build the version 1 API router.
+/// Build the version 1 API router with per-route rate limiting.
+///
+/// Routes are grouped into four rate-limit tiers (see [`crate::rate_limit`]):
+///
+/// | Tier  | Endpoints                                       | Burst / period |
+/// |-------|-------------------------------------------------|----------------|
+/// | Light | `/`, `/health`, `/fees`, `/prices`, `/ws`       | 120 / 60 s     |
+/// | Read  | `/pools`, `/pools/:id`, `/stats`, `/leaderboard`, `/referrals/*` | 60 / 60 s |
+/// | User  | `/users/*`                                      | 30 / 60 s      |
+/// | Write | `/indexer/*`                                    | 20 / 60 s      |
 pub fn router(
     config: Arc<Config>,
     cache: PriceCache,
@@ -657,6 +666,8 @@ pub fn router(
     metrics: SharedMetrics,
     event_bus: crate::ws::EventBus,
 ) -> Router {
+    use crate::rate_limit::{RateLimitTier, with_rate_limit};
+
     let state = AppState {
         config,
         cache,
@@ -666,30 +677,55 @@ pub fn router(
         event_bus,
     };
 
+    // Light tier — cheap, stateless, polling-friendly endpoints.
+    let light = with_rate_limit(
+        Router::new()
+            .route("/", get(index))
+            .route("/health", get(health))
+            .route("/fees", get(get_fees))
+            .route("/prices", get(crate::price_cache::get_prices))
+            .route("/ws", get(crate::ws::ws_handler))
+            .with_state(state.clone()),
+        RateLimitTier::Light,
+    );
+
+    // Read tier — public, database-backed read endpoints.
+    let read = with_rate_limit(
+        Router::new()
+            .route("/pools", get(get_pools))
+            .route("/pools/:id", get(get_pool_by_id_handler))
+            .route("/stats", get(get_stats))
+            .route("/leaderboard", get(get_leaderboard))
+            .route("/referrals/{address}", get(referrals_handler))
+            .route("/referrals/{address}/estimate", get(referral_estimate_handler))
+            .with_state(state.clone()),
+        RateLimitTier::Read,
+    );
+
+    // User tier — per-user history and predictions.
+    let user = with_rate_limit(
+        Router::new()
+            .route("/users/{address}/history", get(get_user_history))
+            .route("/users/{address}/predictions", get(get_user_predictions))
+            .route("/users/{address}/referrals", get(user_referral_earnings_handler))
+            .with_state(state.clone()),
+        RateLimitTier::User,
+    );
+
+    // Write tier — indexer ingest (typically internal, strictest limit).
+    let write = with_rate_limit(
+        Router::new()
+            .route("/indexer/pool-created", post(ingest_pool_created))
+            .route("/indexer/prediction-placed", post(ingest_prediction_placed))
+            .with_state(state),
+        RateLimitTier::Write,
+    );
+
     Router::new()
-        .route("/", get(index))
-        .route("/health", get(health))
-        .route("/pools", get(get_pools))
-        .route("/pools/:id", get(get_pool_by_id_handler))
-        .route("/stats", get(get_stats))
-        .route("/leaderboard", get(get_leaderboard))
-        .route("/fees", get(get_fees))
-        .route("/prices", get(crate::price_cache::get_prices))
-        .route("/referrals/{address}", get(referrals_handler))
-        .route(
-            "/referrals/{address}/estimate",
-            get(referral_estimate_handler),
-        )
-        .route(
-            "/users/{address}/referrals",
-            get(user_referral_earnings_handler),
-        )
-        .route("/users/{address}/history", get(get_user_history))
-        .route("/users/{address}/predictions", get(get_user_predictions))
-        .route("/indexer/pool-created", post(ingest_pool_created))
-        .route("/indexer/prediction-placed", post(ingest_prediction_placed))
-        .route("/ws", get(crate::ws::ws_handler))
-        .with_state(state)
+        .merge(light)
+        .merge(read)
+        .merge(user)
+        .merge(write)
 }
 
 /// `GET /api/v1/fees` — reads fee config from the shared AppState.
