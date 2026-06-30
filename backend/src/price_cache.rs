@@ -30,6 +30,7 @@ use tracing::{error, info, info_span, Instrument};
 
 use crate::metrics::SharedMetrics;
 use crate::response::ApiResponse;
+use crate::tracing_context;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
