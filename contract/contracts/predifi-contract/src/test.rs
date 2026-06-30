@@ -5137,7 +5137,8 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
 
     // Propose a 10% protocol fee (1000 bps) and apply it after the timelock.
     client.set_fee_bps(&admin, &1000u32);
-    env.ledger().with_mut(|li| li.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    env.ledger()
+        .with_mut(|li| li.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
     client.apply_fee_bps(&admin);
 
     // Create two pools with different tokens
@@ -10554,7 +10555,8 @@ fn test_get_fees_returns_treasury_and_referral_fee_bps() {
     // set_fee_bps now queues a proposal; apply it after the timelock.
     c.set_fee_bps(&admin, &750u32);
     c.set_referral_cut_bps(&admin, &2000u32);
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
     c.apply_fee_bps(&admin);
 
     let fees = c.get_fees();
@@ -10611,7 +10613,8 @@ fn test_get_contract_info_returns_config_and_stats() {
 
     // set_fee_bps queues a proposal; advance past the timelock then apply.
     client.set_fee_bps(&admin, &250u32);
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
     client.apply_fee_bps(&admin);
     client.set_treasury(&admin, &treasury);
     client.set_resolution_delay(&admin, &60u64);
@@ -13254,7 +13257,11 @@ fn test_payout_never_exceeds_pool() {
     assert_eq!(loser_payout, 0);
 
     // INV-4: Payout must not exceed total stake
-    assert!(winner_payout <= 5000, "Payout {} exceeds total stake 5000", winner_payout);
+    assert!(
+        winner_payout <= 5000,
+        "Payout {} exceeds total stake 5000",
+        winner_payout
+    );
 
     // Winner should get all of payout pool (3750)
     assert_eq!(winner_payout, 3750);

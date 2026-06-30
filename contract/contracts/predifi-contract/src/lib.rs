@@ -224,8 +224,10 @@ pub enum PredifiError {
     /// Callers should check `is_contract_paused()` before submitting a transaction,
     /// or listen for `PauseEvent` / `UnpauseEvent` on-chain to stay in sync.
     ContractPaused = 83,
-    /// Time constraint violated (e.g., claim window expired or resolution delay not met).
-    TimeConstraintError = 84,
+    InvalidAddressOrToken = 94,
+    FeeChangePending = 95,
+    NoFeeChangePending = 96,
+    TimelockNotExpired = 97,
 }
 
 /// Represents the current state of a prediction market.
@@ -1544,34 +1546,16 @@ impl PredifiContract {
             return Err(PredifiError::InvalidAmount);
         }
 
-        // Validate token address is not null/default
-        let zero_addr = Address::from_contract_id(
-            env,
-            &BytesN::<32>::from_array(env, &[0u8; 32]),
-        );
-        if token == &zero_addr {
-            return Err(PredifiError::InvalidAddressOrToken);
-        }
-
         // Validate sender and recipient are distinct
         if from == to {
-            return Err(PredifiError::InvalidAddressOrToken);
-        }
-
-        // Validate sender and recipient are not null
-        if from == &zero_addr || to == &zero_addr {
             return Err(PredifiError::InvalidAddressOrToken);
         }
 
         // Verify token contract is callable by attempting to get its balance
         // This ensures the token contract is valid and responsive
         let token_client = token::Client::new(env, token);
-        match token_client.balance(from) {
-            _ => {
-                // If balance check succeeds, token contract is callable and valid
-                Ok(())
-            }
-        }
+        let _ = token_client.balance(from);
+        Ok(())
     }
 
     /// Validate stake limit modifications to ensure consistency and safety.
@@ -1591,7 +1575,7 @@ impl PredifiContract {
     /// - Err(PredifiError::StakeAboveMaximum) if constraints are violated
     /// - Err(PredifiError::InvalidAmount) if amounts are invalid
     fn validate_stake_limits(
-        env: &Env,
+        _env: &Env,
         pool: &Pool,
         new_min_stake: i128,
         new_max_stake: i128,
@@ -1625,7 +1609,9 @@ impl PredifiContract {
         // Check 6: Prevent extreme ratio between min and max (prevent usability issues)
         if new_max_stake > 0 {
             // Ensure max is at least 10x min to allow reasonable participation range
-            let min_reasonable_ratio = new_min_stake.checked_mul(10).ok_or(PredifiError::ArithmeticError)?;
+            let min_reasonable_ratio = new_min_stake
+                .checked_mul(10)
+                .ok_or(PredifiError::ArithmeticError)?;
             if new_max_stake < min_reasonable_ratio {
                 return Err(PredifiError::InvalidAmount);
             }
@@ -1644,7 +1630,6 @@ impl PredifiContract {
         }
         stakes
     }
-
 
     /// Get outcome stakes for a pool using optimized batch storage.
     /// Falls back to individual storage keys for backward compatibility.
@@ -2357,7 +2342,7 @@ impl PredifiContract {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_claim_window")?;
 
-        if claim_window_seconds < MIN_CLAIM_WINDOW || claim_window_seconds > MAX_CLAIM_WINDOW {
+        if !(MIN_CLAIM_WINDOW..=MAX_CLAIM_WINDOW).contains(&claim_window_seconds) {
             return Err(PredifiError::InvalidData);
         }
 
@@ -4302,6 +4287,7 @@ impl PredifiContract {
                             referred_user: user.clone(),
                             amount: referral_amount,
                         }
+                        .publish(env);
                     }
                 }
             }

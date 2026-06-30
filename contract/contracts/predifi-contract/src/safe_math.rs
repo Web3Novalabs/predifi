@@ -379,7 +379,11 @@ impl PayoutRoundingAudit {
 
     /// Calculate the protocol fee with protocol-favor rounding
     pub fn calculate_protocol_fee(&self) -> Result<i128, PrediFiError> {
-        SafeMath::percentage(self.pool_total_stake, self.protocol_fee_bps, RoundingMode::ProtocolFavor)
+        SafeMath::percentage(
+            self.pool_total_stake,
+            self.protocol_fee_bps,
+            RoundingMode::ProtocolFavor,
+        )
     }
 
     /// Calculate the payout pool (total stake minus protocol fee)
@@ -444,7 +448,11 @@ impl PayoutRoundingAudit {
         winning_stake: i128,
     ) -> Result<i128, PrediFiError> {
         // Calculate payout pool once
-        let protocol_fee = SafeMath::percentage(pool_total_stake, protocol_fee_bps, RoundingMode::ProtocolFavor)?;
+        let protocol_fee = SafeMath::percentage(
+            pool_total_stake,
+            protocol_fee_bps,
+            RoundingMode::ProtocolFavor,
+        )?;
         let payout_pool = pool_total_stake
             .checked_sub(protocol_fee)
             .ok_or(PrediFiError::ArithmeticError)?;
@@ -1029,9 +1037,9 @@ mod tests {
         // Realistic token amounts with 7 decimals
         let audit = PayoutRoundingAudit::new(
             10_000_000_000_000, // 1M tokens
-            250,               // 2.5% fee
-            2_500_000_000_000, // 250K tokens
-            5_000_000_000_000, // 500K tokens on winning side
+            250,                // 2.5% fee
+            2_500_000_000_000,  // 250K tokens
+            5_000_000_000_000,  // 500K tokens on winning side
         )
         .unwrap();
 
@@ -1073,10 +1081,10 @@ mod tests {
         // Test batch payouts ensure sum doesn't exceed pool
         let user_stakes = vec![1, 1, 1];
         let total_payout = PayoutRoundingAudit::validate_batch_payouts(
-            3,     // total stake
-            1000,  // 10% fee
+            3,    // total stake
+            1000, // 10% fee
             &user_stakes,
-            3,     // all winners
+            3, // all winners
         )
         .unwrap();
 
@@ -1093,8 +1101,8 @@ mod tests {
         // Create a scenario where we'd exceed the pool
         let user_stakes = vec![500, 500];
         let result = PayoutRoundingAudit::validate_batch_payouts(
-            100,  // small total stake
-            0,    // no fee
+            100, // small total stake
+            0,   // no fee
             &user_stakes,
             1000, // winning stake > total stake (invalid)
         );
@@ -1106,9 +1114,7 @@ mod tests {
     #[test]
     fn test_audit_batch_payouts_with_negative_stake() {
         let user_stakes = vec![100, -50];
-        let result = PayoutRoundingAudit::validate_batch_payouts(
-            1000, 100, &user_stakes, 500,
-        );
+        let result = PayoutRoundingAudit::validate_batch_payouts(1000, 100, &user_stakes, 500);
 
         // Should fail due to negative stake
         assert_eq!(result, Err(PrediFiError::ArithmeticError));
@@ -1118,10 +1124,10 @@ mod tests {
     fn test_audit_payout_never_exceeds_total_stake() {
         // Core invariant: payout must not exceed total stake
         let audit = PayoutRoundingAudit::new(
-            100_000,         // total stake
-            9900,            // 99% fee (leave only 1000 for payouts)
-            500,             // user stake
-            50_000,          // winning stake (half of total)
+            100_000, // total stake
+            9900,    // 99% fee (leave only 1000 for payouts)
+            500,     // user stake
+            50_000,  // winning stake (half of total)
         )
         .unwrap();
 
@@ -1138,18 +1144,24 @@ mod tests {
     fn test_audit_fee_calculation_precision() {
         // Test fee calculation with various percentages
         let test_cases = vec![
-            (1000, 100, 10),       // 1%
-            (1000, 500, 50),       // 5%
-            (1000, 2500, 250),     // 25%
-            (1000, 5000, 500),     // 50%
-            (1000, 9900, 990),     // 99%
-            (999, 333, 3),         // 3.33% with rounding
+            (1000, 100, 10),   // 1%
+            (1000, 500, 50),   // 5%
+            (1000, 2500, 250), // 25%
+            (1000, 5000, 500), // 50%
+            (1000, 9900, 990), // 99%
+            (999, 333, 3),     // 3.33% with rounding
         ];
 
         for (total, bps, expected_fee) in test_cases {
             let audit = PayoutRoundingAudit::new(total, bps, 100, 100).unwrap();
             let fee = audit.calculate_protocol_fee().unwrap();
-            assert_eq!(fee, expected_fee, "Fee mismatch for {}% of {}", bps / 100, total);
+            assert_eq!(
+                fee,
+                expected_fee,
+                "Fee mismatch for {}% of {}",
+                bps / 100,
+                total
+            );
         }
     }
 }
