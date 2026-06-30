@@ -5412,8 +5412,10 @@ fn test_pool_end_time_on_leap_day() {
 
 /// Creating a pool whose end time is the leap day, but the ledger is already
 /// past Mar 1, must be rejected because the end time is in the past.
+/// Issue #1130 — now surfaces the typed `DeadlineInPast` error (132) instead
+/// of the legacy assert message.
 #[test]
-#[should_panic(expected = "end_time must be in the future")]
+#[should_panic(expected = "#132")]
 fn test_pool_end_time_at_leap_day_already_past() {
     let env = Env::default();
     env.mock_all_auths();
@@ -12773,4 +12775,319 @@ fn test_delisted_token_prevents_prediction() {
 
     // User places prediction - should panic with TokenNotWhitelisted (Error 48)
     client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ISSUES #1119, #1122, #1130, #1131
+// ════════════════════════════════════════════════════════════════════════════
+
+/// Pool config helper for the new validation tests — keeps each test focused
+/// on the field it's actually exercising rather than on plumbing.
+fn baseline_pool_config(env: &Env) -> PoolConfig {
+    PoolConfig {
+        start_time: 0,
+        description: String::from_str(env, "Validation pool"),
+        metadata_url: String::from_str(env, "ipfs://validation"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 0i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: soroban_sdk::vec![
+            env,
+            String::from_str(env, "No"),
+            String::from_str(env, "Yes"),
+        ],
+    }
+}
+
+// ── Issue #1122 — outcome description bounds ─────────────────────────────────
+
+#[test]
+#[should_panic(expected = "outcome description exceeds")]
+fn issue_1122_rejects_outcome_description_too_long() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let mut cfg = baseline_pool_config(&env);
+    // 129-char description — one past the 128 cap.
+    let too_long = String::from_str(
+        &env,
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    cfg.outcome_descriptions = soroban_sdk::vec![&env, too_long, String::from_str(&env, "Yes")];
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+#[test]
+#[should_panic(expected = "outcome description must be non-empty")]
+fn issue_1122_rejects_empty_outcome_description() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let mut cfg = baseline_pool_config(&env);
+    cfg.outcome_descriptions =
+        soroban_sdk::vec![&env, String::from_str(&env, ""), String::from_str(&env, "Yes")];
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+#[test]
+fn issue_1122_accepts_descriptions_within_bounds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let mut cfg = baseline_pool_config(&env);
+    // 64-char description — comfortably below the 128 cap and above the
+    // 1-char minimum.
+    let mid = String::from_str(
+        &env,
+        "Team A wins by more than three goals in regulation play today.",
+    );
+    cfg.outcome_descriptions = soroban_sdk::vec![&env, mid, String::from_str(&env, "Yes")];
+    let _pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+// ── Issue #1130 — staking deadlines in the future ────────────────────────────
+
+#[test]
+#[should_panic(expected = "#132")]
+fn issue_1130_rejects_end_time_strictly_in_past() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let cfg = baseline_pool_config(&env);
+    // end_time = 500 < current_time = 1_000 → DeadlineInPast (132)
+    client.create_pool(
+        &creator,
+        &500u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+#[test]
+#[should_panic(expected = "#132")]
+fn issue_1130_rejects_start_time_strictly_in_past() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 10_000);
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let mut cfg = baseline_pool_config(&env);
+    cfg.start_time = 5_000; // strictly < current_time and non-zero
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+#[test]
+fn issue_1130_accepts_start_time_zero_sentinel() {
+    // start_time == 0 is the "open immediately" sentinel; must not trip the
+    // future-deadline check.
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 10_000);
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let cfg = baseline_pool_config(&env); // start_time = 0
+    let _pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+// ── Issue #1131 — initial-liquidity safety margin ────────────────────────────
+
+#[test]
+#[should_panic(expected = "#133")]
+fn issue_1131_rejects_initial_liquidity_below_safety_margin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, token, token_admin_client, _, _, creator) = setup(&env);
+    token_admin_client.mint(&creator, &1_000_000_000i128);
+    let mut cfg = baseline_pool_config(&env);
+    // max_total_stake = 1_000_000_000; 1% safety margin = 10_000_000.
+    // initial_liquidity = 9_999_999 is below the margin → 133.
+    cfg.max_total_stake = 1_000_000_000;
+    cfg.initial_liquidity = 9_999_999;
+    let _ = token; // suppress unused warning
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+#[test]
+fn issue_1131_accepts_initial_liquidity_at_or_above_safety_margin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, _token, token_admin_client, _, _, creator) = setup(&env);
+    token_admin_client.mint(&creator, &1_000_000_000i128);
+    let mut cfg = baseline_pool_config(&env);
+    cfg.max_total_stake = 1_000_000_000;
+    cfg.initial_liquidity = 10_000_000; // exactly at the 1% margin
+    let _pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+#[test]
+fn issue_1131_skips_safety_margin_when_max_total_stake_is_unlimited() {
+    // max_total_stake == 0 means "no cap"; safety-margin check should not
+    // apply because there's no cap to compute a percentage of.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, _token, token_admin_client, _, _, creator) = setup(&env);
+    token_admin_client.mint(&creator, &1_000i128);
+    let mut cfg = baseline_pool_config(&env);
+    cfg.max_total_stake = 0;
+    cfg.initial_liquidity = 1; // trivially small but allowed
+    let _pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+}
+
+// ── Issue #1119 — multi-sig emergency cancellation ───────────────────────────
+
+#[test]
+fn issue_1119_single_approval_keeps_pool_active() {
+    // First approver records intent; pool stays Active until threshold met.
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let cfg = baseline_pool_config(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+    let _ = ac_client; // operator/admin roles already granted in setup()
+
+    client.emergency_cancel_pool(
+        &operator,
+        &pool_id,
+        &String::from_str(&env, "incident-2026-06-29"),
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Active);
+    let approvers = client.get_emergency_cancel_approvals(&pool_id);
+    assert_eq!(approvers.len(), 1);
+}
+
+#[test]
+fn issue_1119_second_approval_executes_cancellation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let cfg = baseline_pool_config(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+
+    client.emergency_cancel_pool(&operator, &pool_id, &String::from_str(&env, "halt"));
+    client.emergency_cancel_pool(&admin, &pool_id, &String::from_str(&env, "halt"));
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Canceled);
+    // Approvers set is cleaned up post-execution.
+    let approvers = client.get_emergency_cancel_approvals(&pool_id);
+    assert_eq!(approvers.len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "#135")]
+fn issue_1119_double_approval_by_same_address_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let cfg = baseline_pool_config(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+    client.emergency_cancel_pool(&operator, &pool_id, &String::from_str(&env, "halt"));
+    // Same address approves again → EmergencyCancelAlreadyApproved (135)
+    client.emergency_cancel_pool(&operator, &pool_id, &String::from_str(&env, "halt"));
+}
+
+#[test]
+#[should_panic(expected = "#10")]
+fn issue_1119_unprivileged_caller_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let stranger = Address::generate(&env);
+    let cfg = baseline_pool_config(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &cfg,
+    );
+    client.emergency_cancel_pool(&stranger, &pool_id, &String::from_str(&env, "halt"));
 }
