@@ -224,15 +224,8 @@ pub enum PredifiError {
     /// Callers should check `is_contract_paused()` before submitting a transaction,
     /// or listen for `PauseEvent` / `UnpauseEvent` on-chain to stay in sync.
     ContractPaused = 83,
-    /// A fee change proposal is already pending.
-    /// Call `cancel_fee_proposal` before queuing a new one.
-    FeeChangePending = 202,
-    /// No fee change proposal is currently pending.
-    /// Call `set_fee_bps` first to queue a proposal.
-    NoFeeChangePending = 203,
-    /// The timelock period for the pending fee change has not yet elapsed.
-    /// Wait until `PendingFeeChange.effective_at` before calling `apply_fee_bps`.
-    TimelockNotExpired = 204,
+    /// Time constraint violated (e.g., claim window expired or resolution delay not met).
+    TimeConstraintError = 84,
 }
 
 /// Represents the current state of a prediction market.
