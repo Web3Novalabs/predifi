@@ -56,6 +56,29 @@ pub const UNRESOLVED_OUTCOME: u32 = u32::MAX;
 /// Pools with end_time beyond current_time + MAX_POOL_DURATION are rejected.
 pub const MAX_POOL_DURATION: u64 = 31_536_000;
 
+/// Maximum length (in bytes/chars) of a single outcome description.
+/// Issue #1122 — bounds outcome descriptions so a pool with N outcomes
+/// cannot blow up persistent storage with arbitrarily long strings.
+pub const MAX_OUTCOME_DESCRIPTION_LEN: u32 = 128;
+
+/// Minimum length (in bytes/chars) of a single outcome description.
+/// Issue #1122 — rejects whitespace-only / empty outcome labels.
+pub const MIN_OUTCOME_DESCRIPTION_LEN: u32 = 1;
+
+/// Initial-liquidity safety margin in basis points relative to
+/// `max_total_stake` (issue #1131). When a creator sets a non-zero
+/// `max_total_stake`, the seeded initial liquidity must be at least
+/// `(max_total_stake * INITIAL_LIQUIDITY_SAFETY_MARGIN_BPS) / 10_000`
+/// — otherwise the pool can be drained on the first few large bets
+/// before the creator's house money meaningfully covers payout risk.
+/// 100 bps = 1%.
+pub const INITIAL_LIQUIDITY_SAFETY_MARGIN_BPS: u32 = 100;
+
+/// Multisig threshold for the emergency-cancel flow (issue #1119).
+/// At least this many distinct operator/admin approvals are required
+/// before `emergency_cancel_pool` can finalize a cancellation.
+pub const EMERGENCY_CANCEL_MULTISIG_THRESHOLD: u32 = 2;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MONITORING & ALERT THRESHOLDS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -83,6 +106,14 @@ pub const MAX_PRICE_CONDITION_MATCH_STEPS: u32 = 4;
 /// Current contract version. Bump on each release to support safe migrations.
 /// This is stored in contract instance storage during initialization and upgrades.
 pub const CONTRACT_VERSION: u32 = 1;
+
+/// Minimum timelock delay in seconds for protocol fee changes (1 day = 86 400 s).
+///
+/// After an admin calls `set_fee_bps` to queue a proposal, at least this many
+/// seconds must elapse before `apply_fee_bps` can commit the new value.
+/// The delay gives users and integrators time to observe the pending change and
+/// react (e.g. withdraw positions) before the fee takes effect.
+pub const FEE_CHANGE_TIMELOCK_SECONDS: u64 = 86_400;
 
 #[cfg(test)]
 #[allow(clippy::assertions_on_constants)]

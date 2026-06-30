@@ -3,13 +3,13 @@ use http_body_util::BodyExt;
 use tower::ServiceExt; // provides `.oneshot()`
 
 use crate::config::Config;
-use crate::test_support::setup_healthy_test_env;
+use crate::mock_rpc_helpers::setup_healthy_test_env;
 use crate::{build_router, price_cache::PriceCache, redis_cache::RedisCache};
 
 /// Build a router backed by a mock Stellar RPC and populated price cache.
 async fn build_healthy_router() -> (
     axum::Router,
-    crate::test_support::MockRpcServer,
+    crate::mock_rpc_helpers::MockRpcServer,
 ) {
     let (config, cache, mock) = setup_healthy_test_env().await;
     let router = build_router(
