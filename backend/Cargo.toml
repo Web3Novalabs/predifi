@@ -16,7 +16,7 @@ name = "predifi-seed"
 path = "src/bin/seed.rs"
 
 [dependencies]
-axum = { version = "0.7", features = ["macros", "ws"] }
+axum = { version = "0.7.9", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.4"
 http = "1"
@@ -27,12 +27,10 @@ tower-http = { version = "0.6.8", features = ["cors"] }
 dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
-tracing-opentelemetry = "0.22"
-opentelemetry = { version = "0.21", features = ["trace"] }
-opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
-opentelemetry-jaeger = { version = "0.20", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.14", features = ["grpc-tonic"] }
-opentelemetry-semantic-conventions = "0.13"
+tracing-opentelemetry = "0.25"
+opentelemetry = { version = "0.24", features = ["trace"] }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic"] }
 sqlx = { version = "0.8", default-features = false, features = [
     "runtime-tokio-rustls",
     "postgres",
@@ -43,22 +41,24 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 prometheus = "0.13"
-sentry = "0.33"
-sentry-tracing = "0.33"
-# OpenAPI / Swagger documentation (#563)
-utoipa = { version = "4", features = ["axum_extras", "chrono"] }
-utoipa-swagger-ui = { version = "7", features = ["axum"] }
-tower_governor = { version = "0.5.0", features = ["axum"] }
-# Redis caching for hot data (#714)
-redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
-sysinfo = "0.29"
+# OpenAPI / Swagger documentation
+utoipa = { version = "5.4.0", features = ["axum_extras", "chrono"] }
+# Redis caching for hot data
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+sysinfo = "0.37"
 uuid = { version = "1", features = ["v4", "serde"] }
 predifi-errors = { path = "../contract/contracts/predifi-errors", features = ["std"] }
 jsonwebtoken = "9"
+governor = "0.8"
 
+[features]
+integration-tests = []
+
+[[test]]
+name = "migration_roundtrip"
+path = "tests/migration_roundtrip.rs"
+required-features = ["integration-tests"]
 
 [dev-dependencies]
 http-body-util = "0.1"
 tower = { version = "0.4", features = ["util"] }
-testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }
