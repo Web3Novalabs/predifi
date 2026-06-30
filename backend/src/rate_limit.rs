@@ -22,8 +22,8 @@ impl RateLimitTier {
         use crate::constants::*;
         match self {
             RateLimitTier::Light => (RATE_LIMIT_LIGHT_BURST, RATE_LIMIT_LIGHT_PERIOD_SECS),
-            RateLimitTier::Read  => (RATE_LIMIT_READ_BURST,  RATE_LIMIT_READ_PERIOD_SECS),
-            RateLimitTier::User  => (RATE_LIMIT_USER_BURST,  RATE_LIMIT_USER_PERIOD_SECS),
+            RateLimitTier::Read => (RATE_LIMIT_READ_BURST, RATE_LIMIT_READ_PERIOD_SECS),
+            RateLimitTier::User => (RATE_LIMIT_USER_BURST, RATE_LIMIT_USER_PERIOD_SECS),
             RateLimitTier::Write => (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS),
         }
     }
@@ -66,7 +66,10 @@ mod tests {
         use crate::constants::*;
 
         let (b, p) = RateLimitTier::Light.burst_and_period();
-        assert_eq!((b, p), (RATE_LIMIT_LIGHT_BURST, RATE_LIMIT_LIGHT_PERIOD_SECS));
+        assert_eq!(
+            (b, p),
+            (RATE_LIMIT_LIGHT_BURST, RATE_LIMIT_LIGHT_PERIOD_SECS)
+        );
 
         let (b, p) = RateLimitTier::Read.burst_and_period();
         assert_eq!((b, p), (RATE_LIMIT_READ_BURST, RATE_LIMIT_READ_PERIOD_SECS));
@@ -75,7 +78,10 @@ mod tests {
         assert_eq!((b, p), (RATE_LIMIT_USER_BURST, RATE_LIMIT_USER_PERIOD_SECS));
 
         let (b, p) = RateLimitTier::Write.burst_and_period();
-        assert_eq!((b, p), (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS));
+        assert_eq!(
+            (b, p),
+            (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS)
+        );
     }
 
     #[test]
@@ -89,7 +95,10 @@ mod tests {
         // Each tier should be unique
         for i in 0..configs.len() {
             for j in (i + 1)..configs.len() {
-                assert_ne!(configs[i], configs[j], "tiers {i} and {j} share the same config");
+                assert_ne!(
+                    configs[i], configs[j],
+                    "tiers {i} and {j} share the same config"
+                );
             }
         }
     }

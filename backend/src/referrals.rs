@@ -42,8 +42,8 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::db::ReferralEarningRow;
-use crate::response::ApiResponse;
 use crate::response::error_codes;
+use crate::response::ApiResponse;
 
 /// Summary statistics for a single referrer address.
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -162,7 +162,8 @@ pub async fn estimate_referral_rewards(
     .await?
     .unwrap_or(0);
 
-    let estimated_reward = estimate_referral_reward(total_volume, treasury_fee_bps, referral_fee_bps);
+    let estimated_reward =
+        estimate_referral_reward(total_volume, treasury_fee_bps, referral_fee_bps);
 
     Ok(ApiResponse::success(ReferralRewardEstimate {
         referrer: address,

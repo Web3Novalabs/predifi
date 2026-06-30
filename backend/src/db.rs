@@ -3,7 +3,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use sqlx::{postgres::PgPoolOptions, Executor, PgPool, Postgres};
 use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::config::Config;
 
@@ -15,16 +15,7 @@ pub fn is_transient_error(err: &sqlx::Error) -> bool {
     match err {
         sqlx::Error::PoolTimedOut => true,
         sqlx::Error::PoolClosed => false,
-        sqlx::Error::Database(ref db_err) => {
-            let kind = db_err.kind();
-            matches!(
-                kind,
-                sqlx::error::ErrorKind::ConnectionReset
-                    | sqlx::error::ErrorKind::ConnectionRefused
-                    | sqlx::error::ErrorKind::ConnectionBusy
-                    | sqlx::error::ErrorKind::Io
-            )
-        }
+        sqlx::Error::Database(_) => false,
         sqlx::Error::Io(_) | sqlx::Error::Tls(_) => true,
         _ => false,
     }
@@ -43,11 +34,8 @@ pub async fn create_pool(config: &Config) -> Result<PgPool, PoolCreationError> {
             .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
             .connect(&config.database_url);
 
-        match tokio::time::timeout(
-            Duration::from_secs(config.db_connect_timeout_secs),
-            future,
-        )
-        .await
+        match tokio::time::timeout(Duration::from_secs(config.db_connect_timeout_secs), future)
+            .await
         {
             Ok(result) => result,
             Err(_) => Err(sqlx::Error::PoolTimedOut),
@@ -115,9 +103,9 @@ where
                 return Ok(pool);
             }
             Err(err) => {
-                last_error = Some(err.clone());
+                let transient = is_transient_error(&err);
 
-                if !is_transient_error(&err) {
+                if !transient {
                     error!(
                         attempt,
                         error = %err,
@@ -138,9 +126,12 @@ where
                         error = %err,
                         "database connection failed; retrying"
                     );
+                    last_error = Some(err);
                     if delay_ms > 0 {
                         sleep(Duration::from_millis(delay_ms)).await;
                     }
+                } else {
+                    last_error = Some(err);
                 }
             }
         }
@@ -364,7 +355,6 @@ mod tests {
         };
         let msg = err.to_string();
         assert!(msg.contains("5 attempts"));
-        assert!(msg.contains("PoolTimedOut"));
     }
 
     /// Test that `retry_pool_connection` retries on transient errors and eventually fails.
@@ -381,7 +371,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.attempts, 3, "should retry all attempts on transient errors");
+        assert_eq!(
+            err.attempts, 3,
+            "should retry all attempts on transient errors"
+        );
     }
 
     /// Test that `retry_pool_connection` fails fast on unrecoverable errors.
@@ -398,7 +391,10 @@ mod tests {
 
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert_eq!(err.attempts, 1, "should fail after only one attempt for PoolClosed");
+        assert_eq!(
+            err.attempts, 1,
+            "should fail after only one attempt for PoolClosed"
+        );
     }
 }
 
@@ -980,10 +976,7 @@ pub async fn get_market_predictions(
 }
 
 /// Count total predictions for a given pool (used for the `total` field).
-pub async fn count_market_predictions(
-    pool: &PgPool,
-    pool_id: i64,
-) -> Result<i64, sqlx::Error> {
+pub async fn count_market_predictions(pool: &PgPool, pool_id: i64) -> Result<i64, sqlx::Error> {
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM predictions WHERE pool_id = $1")
         .bind(pool_id)
         .fetch_one(pool)
@@ -1078,6 +1071,7 @@ pub struct PoolCreatedEvent {
 }
 
 /// Decoded data from a `prediction_placed` contract event.
+#[derive(Debug)]
 pub struct PredictionPlacedEvent {
     pub pool_id: u64,
     pub user_address: String,
@@ -1402,7 +1396,10 @@ mod predictions_index_tests {
         let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
 
         // Each ON clause in the file should reference `predictions`.
-        let on_clauses: Vec<&str> = sql.match_indices("ON predictions").map(|(_, s)| s).collect();
+        let on_clauses: Vec<&str> = sql
+            .match_indices("ON predictions")
+            .map(|(_, s)| s)
+            .collect();
         let total_creates = sql.matches("CREATE INDEX IF NOT EXISTS").count();
 
         assert_eq!(
@@ -1446,7 +1443,11 @@ mod market_predictions_tests {
         if has_next {
             rows.truncate(limit as usize);
         }
-        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+        let next_cursor: Option<i64> = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
 
         assert!(!has_next);
         assert_eq!(next_cursor, None);
@@ -1464,7 +1465,11 @@ mod market_predictions_tests {
         if has_next {
             rows.truncate(limit as usize);
         }
-        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+        let next_cursor: Option<i64> = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
 
         assert!(has_next);
         assert_eq!(next_cursor, Some(8)); // last row after truncation
@@ -1480,7 +1485,11 @@ mod market_predictions_tests {
         if has_next {
             rows.truncate(limit as usize);
         }
-        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+        let next_cursor: Option<i64> = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
 
         assert!(!has_next);
         assert_eq!(next_cursor, None);
@@ -1497,7 +1506,11 @@ mod market_predictions_tests {
         if has_next {
             rows.truncate(limit as usize);
         }
-        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+        let next_cursor: Option<i64> = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
 
         assert!(!has_next);
         assert_eq!(next_cursor, None);

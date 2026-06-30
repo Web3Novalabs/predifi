@@ -219,7 +219,10 @@ impl RedisCache {
         // Delete all matching keys
         if let Err(err) = conn.del::<_, ()>(&keys).await {
             if is_connection_error(err.kind()) {
-                warn!("Redis connection dropout on DEL pattern {}: {}", pattern, err);
+                warn!(
+                    "Redis connection dropout on DEL pattern {}: {}",
+                    pattern, err
+                );
             } else {
                 error!("Redis DEL error for pattern {}: {}", pattern, err);
             }
@@ -283,10 +286,8 @@ impl RedisCache {
         };
 
         let mut conn = manager.clone();
-        redis::cmd("PING")
-            .query_async::<String>(&mut conn)
-            .await
-            .is_ok()
+        let r: Result<String, _> = redis::cmd("PING").query_async(&mut conn).await;
+        r.is_ok()
     }
 }
 
@@ -489,7 +490,10 @@ mod tests {
     fn pool_details_keys_differ_by_id() {
         let key_a = pool_details_cache_key(1);
         let key_b = pool_details_cache_key(2);
-        assert_ne!(key_a, key_b, "different pool IDs must produce different keys");
+        assert_ne!(
+            key_a, key_b,
+            "different pool IDs must produce different keys"
+        );
     }
 
     /// Different user addresses must produce distinct cache keys.

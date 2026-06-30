@@ -50,6 +50,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 predifi-errors = { path = "../contract/contracts/predifi-errors", features = ["std"] }
 jsonwebtoken = "9"
 governor = "0.8"
+tower_governor = "0.4"
 
 [features]
 integration-tests = []

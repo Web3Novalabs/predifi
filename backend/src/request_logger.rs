@@ -166,44 +166,43 @@ where
         let metrics = self.metrics.clone();
         let inner_future = self.inner.call(req);
 
-        Box::pin(async move {
-            let result = inner_future.await;
-            let elapsed = start.elapsed();
-            let elapsed_ms = elapsed.as_millis();
+        Box::pin(
+            async move {
+                let result = inner_future.await;
+                let elapsed = start.elapsed();
+                let elapsed_ms = elapsed.as_millis();
 
-            match &result {
-                Ok(response) => {
-                    let status = response.status();
-                    let status_label = status.as_u16().to_string();
-                    info!(
-                        http.status_code = status.as_u16(),
-                        http.duration_ms = elapsed_ms,
-                        "request complete"
-                    );
-                    if let Some(metrics) = metrics {
-                        metrics
-                            .http_request_duration_seconds
-                            .with_label_values(&[&method, &path, &status_label])
-                            .observe(elapsed.as_secs_f64());
+                match &result {
+                    Ok(response) => {
+                        let status = response.status();
+                        let status_label = status.as_u16().to_string();
+                        info!(
+                            http.status_code = status.as_u16(),
+                            http.duration_ms = elapsed_ms,
+                            "request complete"
+                        );
+                        if let Some(metrics) = metrics {
+                            metrics
+                                .http_request_duration_seconds
+                                .with_label_values(&[&method, &path, &status_label])
+                                .observe(elapsed.as_secs_f64());
+                        }
+                    }
+                    Err(_) => {
+                        error!(http.duration_ms = elapsed_ms, "request failed");
+                        if let Some(metrics) = metrics {
+                            metrics
+                                .http_request_duration_seconds
+                                .with_label_values(&[&method, &path, "error"])
+                                .observe(elapsed.as_secs_f64());
+                        }
                     }
                 }
-                Err(_) => {
-                    error!(
-                        http.duration_ms = elapsed_ms,
-                        "request failed"
-                    );
-                    if let Some(metrics) = metrics {
-                        metrics
-                            .http_request_duration_seconds
-                            .with_label_values(&[&method, &path, "error"])
-                            .observe(elapsed.as_secs_f64());
-                    }
-                }
+
+                result
             }
-
-            result
-        }
-        .instrument(span))
+            .instrument(span),
+        )
     }
 }
 
@@ -223,12 +222,7 @@ mod tests {
             .layer(LoggingLayer::with_metrics(metrics.clone()));
 
         let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/ping")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
             .await
             .expect("request should succeed");
 

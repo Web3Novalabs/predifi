@@ -1,4 +1,6 @@
-use prometheus::{CounterVec, Encoder, Gauge, Histogram, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder};
+use prometheus::{
+    CounterVec, Encoder, Gauge, Histogram, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder,
+};
 use std::sync::Arc;
 
 /// Shared application metrics exposed to Prometheus.

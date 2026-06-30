@@ -7,10 +7,7 @@ use crate::mock_rpc_helpers::setup_healthy_test_env;
 use crate::{build_router, price_cache::PriceCache, redis_cache::RedisCache};
 
 /// Build a router backed by a mock Stellar RPC and populated price cache.
-async fn build_healthy_router() -> (
-    axum::Router,
-    crate::mock_rpc_helpers::MockRpcServer,
-) {
+async fn build_healthy_router() -> (axum::Router, crate::mock_rpc_helpers::MockRpcServer) {
     let (config, cache, mock) = setup_healthy_test_env().await;
     let router = build_router(
         config,
@@ -1358,7 +1355,9 @@ async fn graceful_shutdown_drains_inflight_request() {
     sleep(Duration::from_millis(150)).await;
 
     // Trigger graceful shutdown while the request is still in flight.
-    shutdown_tx.send(()).expect("shutdown trigger must be sendable");
+    shutdown_tx
+        .send(())
+        .expect("shutdown trigger must be sendable");
 
     // The in-flight request must still complete successfully.
     let response = tokio::time::timeout(Duration::from_secs(3), in_flight)

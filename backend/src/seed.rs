@@ -131,7 +131,7 @@ pub fn build_seed_pools(num_pools: usize) -> Vec<SeedPool> {
             } else if i < num_pools / 2 {
                 ("closed".to_string(), None)
             } else {
-                let winning = ((pool_id % 2) as i32) ^ 0;
+                let winning = (pool_id % 2) as i32;
                 ("settled".to_string(), Some(winning))
             };
 
@@ -158,7 +158,7 @@ pub fn build_seed_predictions(pools: &[SeedPool]) -> Vec<SeedPrediction> {
     for pool in pools {
         let n_predictions = 2 + ((pool.pool_id % 3) as usize); // 2..=4
         for j in 0..n_predictions {
-            let wallet = SEED_WALLETS[(j as usize) % SEED_WALLETS.len()];
+            let wallet = SEED_WALLETS[j % SEED_WALLETS.len()];
             let outcome = ((j as u64 + pool.pool_id) % 2) as i32;
             let amount = 100 + ((pool.pool_id as i64) * 50) + (j as i64 * 25);
             out.push(SeedPrediction {
@@ -213,10 +213,7 @@ pub async fn truncate_all(pool: &PgPool) -> Result<(), sqlx::Error> {
 ///
 /// Uses `ON CONFLICT (pool_id) DO UPDATE` so re-running the seeder refreshes
 /// state, category, and result rather than silently skipping.
-pub async fn insert_seed_pools(
-    pool: &PgPool,
-    pools: &[SeedPool],
-) -> Result<u64, sqlx::Error> {
+pub async fn insert_seed_pools(pool: &PgPool, pools: &[SeedPool]) -> Result<u64, sqlx::Error> {
     let mut inserted = 0u64;
     for p in pools {
         let result_str = p.result.map(|r| r.to_string());
@@ -350,10 +347,7 @@ pub fn seed_referral_to_event(r: &SeedReferral) -> ReferralPaidEvent {
 /// Run the full seed pipeline against a live pool.
 ///
 /// Returns counts of each kind of row written so callers can log a summary.
-pub async fn run_seed(
-    pool: &PgPool,
-    config: &SeedConfig,
-) -> Result<SeedSummary, sqlx::Error> {
+pub async fn run_seed(pool: &PgPool, config: &SeedConfig) -> Result<SeedSummary, sqlx::Error> {
     if config.fresh {
         info!("--fresh: truncating existing seed tables");
         truncate_all(pool).await?;
@@ -432,7 +426,15 @@ mod tests {
         let a = build_seed_pools(12);
         let b = build_seed_pools(12);
         // end_time depends on `now()` so we compare everything except end_time.
-        let strip = |p: &SeedPool| (p.pool_id, p.creator.clone(), p.category.clone(), p.state.clone(), p.result);
+        let strip = |p: &SeedPool| {
+            (
+                p.pool_id,
+                p.creator.clone(),
+                p.category.clone(),
+                p.state.clone(),
+                p.result,
+            )
+        };
         let a_stripped: Vec<_> = a.iter().map(strip).collect();
         let b_stripped: Vec<_> = b.iter().map(strip).collect();
         assert_eq!(a_stripped, b_stripped);
@@ -444,7 +446,12 @@ mod tests {
         let preds = build_seed_predictions(&pools);
         for p in &pools {
             let count = preds.iter().filter(|x| x.pool_id == p.pool_id).count();
-            assert!(count >= 2 && count <= 4, "pool {} got {} predictions", p.pool_id, count);
+            assert!(
+                count >= 2 && count <= 4,
+                "pool {} got {} predictions",
+                p.pool_id,
+                count
+            );
         }
     }
 

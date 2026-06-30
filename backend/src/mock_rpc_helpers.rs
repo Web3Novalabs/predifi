@@ -68,7 +68,11 @@ impl MockRpcServer {
             }
         });
 
-        Self { url, shutdown_tx, handle }
+        Self {
+            url,
+            shutdown_tx,
+            handle,
+        }
     }
 
     /// Base URL to assign to [`Config::stellar_rpc_url`].

@@ -13,7 +13,7 @@ use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
-use crate::response::{ApiResponse, error_codes};
+use crate::response::{error_codes, ApiResponse};
 use crate::validated_types::{BoundedI64, NonEmptyString, PoolSortBy, PoolStatus, StellarAddress};
 
 /// Struct representing fee information, matching the contract structure.
@@ -230,8 +230,9 @@ pub async fn get_pool_by_id_handler(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     match crate::db::get_pool_with_odds(db, pool_id).await {
@@ -239,13 +240,15 @@ pub async fn get_pool_by_id_handler(
         Ok(None) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
-            "pool not found"
-        ).into_response(),
+            "pool not found",
+        )
+        .into_response(),
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -276,14 +279,13 @@ pub async fn get_stats(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
-    let cache_key = crate::redis_cache::stats_cache_key(
-        params.category.as_deref(),
-        params.status.as_deref(),
-    );
+    let cache_key =
+        crate::redis_cache::stats_cache_key(params.category.as_deref(), params.status.as_deref());
 
     if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
         return (StatusCode::OK, Json(cached)).into_response();
@@ -296,15 +298,20 @@ pub async fn get_stats(
             let json_response = serde_json::json!(&stats);
             state
                 .redis
-                .set(&cache_key, &json_response, crate::redis_cache::STATS_CACHE_TTL)
+                .set(
+                    &cache_key,
+                    &json_response,
+                    crate::redis_cache::STATS_CACHE_TTL,
+                )
                 .await;
             ApiResponse::success(stats).into_response()
         }
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
@@ -343,8 +350,9 @@ pub async fn get_pools(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     // Cache-aside pattern: Step 1 — Check cache
@@ -393,8 +401,9 @@ pub async fn get_pools(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -425,8 +434,9 @@ pub async fn get_user_history(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     match crate::db::get_user_prediction_history(db, &address, limit, offset).await {
@@ -442,8 +452,9 @@ pub async fn get_user_history(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -463,8 +474,9 @@ pub async fn get_user_predictions(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     match crate::db::get_user_predictions(db, &address, limit, offset).await {
@@ -481,8 +493,9 @@ pub async fn get_user_predictions(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -513,8 +526,9 @@ pub async fn get_leaderboard(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     match rank_by {
@@ -531,8 +545,9 @@ pub async fn get_leaderboard(
             Err(e) => ApiResponse::<()>::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 error_codes::INTERNAL_ERROR,
-                e.to_string()
-            ).into_response(),
+                e.to_string(),
+            )
+            .into_response(),
         },
         _ => {
             // Default to volume ranking
@@ -549,8 +564,9 @@ pub async fn get_leaderboard(
                 Err(e) => ApiResponse::<()>::error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     error_codes::INTERNAL_ERROR,
-                    e.to_string()
-                ).into_response(),
+                    e.to_string(),
+                )
+                .into_response(),
             }
         }
     }
@@ -586,8 +602,9 @@ pub async fn ingest_pool_created(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     let event = PoolCreatedEvent {
@@ -609,8 +626,9 @@ pub async fn ingest_pool_created(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -635,8 +653,9 @@ pub async fn ingest_prediction_placed(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     let event = PredictionPlacedEvent {
@@ -662,8 +681,9 @@ pub async fn ingest_prediction_placed(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -743,7 +763,11 @@ pub async fn get_market_predictions(
             if has_next {
                 rows.truncate(limit as usize);
             }
-            let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+            let next_cursor: Option<i64> = if has_next {
+                rows.last().map(|r| r.id)
+            } else {
+                None
+            };
 
             let response = serde_json::json!({
                 "market_id": market_id,
@@ -772,7 +796,7 @@ pub fn router(
     metrics: SharedMetrics,
     event_bus: crate::ws::EventBus,
 ) -> Router {
-    use crate::rate_limit::{RateLimitTier, with_rate_limit};
+    use crate::rate_limit::{with_rate_limit, RateLimitTier};
 
     let state = AppState {
         config,
@@ -803,7 +827,11 @@ pub fn router(
             .route("/stats", get(get_stats))
             .route("/leaderboard", get(get_leaderboard))
             .route("/referrals/{address}", get(referrals_handler))
-            .route("/referrals/{address}/estimate", get(referral_estimate_handler))
+            .route(
+                "/referrals/{address}/estimate",
+                get(referral_estimate_handler),
+            )
+            .route("/markets/:id/predictions", get(get_market_predictions))
             .with_state(state.clone()),
         RateLimitTier::Read,
     );
@@ -813,7 +841,10 @@ pub fn router(
         Router::new()
             .route("/users/{address}/history", get(get_user_history))
             .route("/users/{address}/predictions", get(get_user_predictions))
-            .route("/users/{address}/referrals", get(user_referral_earnings_handler))
+            .route(
+                "/users/{address}/referrals",
+                get(user_referral_earnings_handler),
+            )
             .with_state(state.clone()),
         RateLimitTier::User,
     );
@@ -828,30 +859,10 @@ pub fn router(
     );
 
     Router::new()
-        .route("/", get(index))
-        .route("/health", get(health))
-        .route("/pools", get(get_pools))
-        .route("/pools/:id", get(get_pool_by_id_handler))
-        .route("/stats", get(get_stats))
-        .route("/leaderboard", get(get_leaderboard))
-        .route("/fees", get(get_fees))
-        .route("/prices", get(crate::price_cache::get_prices))
-        .route("/referrals/{address}", get(referrals_handler))
-        .route(
-            "/referrals/{address}/estimate",
-            get(referral_estimate_handler),
-        )
-        .route(
-            "/users/{address}/referrals",
-            get(user_referral_earnings_handler),
-        )
-        .route("/users/{address}/history", get(get_user_history))
-        .route("/users/{address}/predictions", get(get_user_predictions))
-        .route("/markets/{id}/predictions", get(get_market_predictions))
-        .route("/indexer/pool-created", post(ingest_pool_created))
-        .route("/indexer/prediction-placed", post(ingest_prediction_placed))
-        .route("/ws", get(crate::ws::ws_handler))
-        .with_state(state)
+        .merge(light)
+        .merge(read)
+        .merge(user)
+        .merge(write)
 }
 
 /// `GET /api/v1/fees` — reads fee config from the shared AppState.
@@ -876,22 +887,20 @@ async fn referrals_handler(
         Some(pool) => {
             match crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => {
-                    ApiResponse::<()>::error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        error_codes::INTERNAL_ERROR,
-                        e.to_string()
-                    ).into_response()
-                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
             }
         }
-        None => {
-            ApiResponse::<()>::error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                error_codes::DATABASE_UNAVAILABLE,
-                "database not configured"
-            ).into_response()
-        }
+        None => ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not configured",
+        )
+        .into_response(),
     }
 }
 
@@ -916,22 +925,20 @@ async fn referral_estimate_handler(
             .await
             {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => {
-                    ApiResponse::<()>::error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        error_codes::INTERNAL_ERROR,
-                        e.to_string()
-                    ).into_response()
-                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
             }
         }
-        None => {
-            ApiResponse::<()>::error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                error_codes::DATABASE_UNAVAILABLE,
-                "database not configured"
-            ).into_response()
-        }
+        None => ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not configured",
+        )
+        .into_response(),
     }
 }
 
@@ -952,22 +959,20 @@ async fn user_referral_earnings_handler(
             .await
             {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => {
-                    ApiResponse::<()>::error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        error_codes::INTERNAL_ERROR,
-                        e.to_string()
-                    ).into_response()
-                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
             }
         }
-        None => {
-            ApiResponse::<()>::error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                error_codes::DATABASE_UNAVAILABLE,
-                "database not configured"
-            ).into_response()
-        }
+        None => ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not configured",
+        )
+        .into_response(),
     }
 }
 

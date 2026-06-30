@@ -48,15 +48,14 @@ use tracing::{info, warn};
 /// On non-Unix platforms only `SIGINT` is registered.
 #[cfg(unix)]
 pub async fn wait_for_signal() {
-    let mut terminate_signal = match tokio::signal::unix::signal(
-        tokio::signal::unix::SignalKind::terminate(),
-    ) {
-        Ok(signal) => Some(signal),
-        Err(error) => {
-            warn!(error = %error, "failed to install SIGTERM handler; skipping");
-            None
-        }
-    };
+    let mut terminate_signal =
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(signal) => Some(signal),
+            Err(error) => {
+                warn!(error = %error, "failed to install SIGTERM handler; skipping");
+                None
+            }
+        };
 
     let mut hangup_signal =
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {

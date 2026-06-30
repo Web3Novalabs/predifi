@@ -67,10 +67,9 @@ impl std::fmt::Display for JwtSecretError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Empty => write!(f, "JWT signing secret must not be empty"),
-            Self::TooShort { min_length } => write!(
-                f,
-                "JWT signing secret must be at least {min_length} bytes"
-            ),
+            Self::TooShort { min_length } => {
+                write!(f, "JWT signing secret must be at least {min_length} bytes")
+            }
         }
     }
 }
@@ -188,9 +187,7 @@ fn map_decode_error(error: jsonwebtoken::errors::Error) -> JwtVerifyError {
 
 /// Extract a bearer token from an `Authorization` header value.
 pub fn extract_bearer_token(header_value: &str) -> Option<&str> {
-    let mut parts = header_value.splitn(2, ' ');
-    let scheme = parts.next()?;
-    let token = parts.next()?;
+    let (scheme, token) = header_value.split_once(' ')?;
     if scheme.eq_ignore_ascii_case("bearer") && !token.is_empty() {
         Some(token)
     } else {

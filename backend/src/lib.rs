@@ -340,11 +340,11 @@ pub async fn run_server(config: Config) {
 
 #[cfg(all(test, feature = "integration-tests"))]
 mod db_integration_tests;
+#[cfg(test)]
+mod mock_rpc_helpers;
 #[cfg(all(test, feature = "integration-tests"))]
 mod redis_integration_tests;
 #[cfg(all(test, feature = "integration-tests"))]
 mod test_support;
-#[cfg(test)]
-mod mock_rpc_helpers;
 #[cfg(test)]
 mod tests;

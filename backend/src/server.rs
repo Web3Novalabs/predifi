@@ -161,7 +161,10 @@ async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::respon
     }
 
     let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
-        ("not_configured", Some("Redis is not configured".to_string()))
+        (
+            "not_configured",
+            Some("Redis is not configured".to_string()),
+        )
     } else if !state.redis.ping().await {
         ("unreachable", Some("Redis ping failed".to_string()))
     } else {
@@ -293,7 +296,10 @@ pub fn build_router_with_rate_limit(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
+        .layer(from_fn_with_state(
+            prometheus_metrics.clone(),
+            metrics_middleware,
+        ))
         .layer(build_cors(&config))
         .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
 }
@@ -335,7 +341,10 @@ fn build_router_with_db(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
+        .layer(from_fn_with_state(
+            prometheus_metrics.clone(),
+            metrics_middleware,
+        ))
         .layer(build_cors(&config))
         .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
 }
@@ -443,7 +452,9 @@ where
             timeout_secs = drain_timeout.as_secs(),
             "HTTP server drained in-flight requests cleanly"
         ),
-        Ok(Err(error)) => warn!(error = %error, "HTTP server returned an error during shutdown drain"),
+        Ok(Err(error)) => {
+            warn!(error = %error, "HTTP server returned an error during shutdown drain")
+        }
         Err(_) => warn!(
             component = "http server drain",
             timeout_secs = drain_timeout.as_secs(),

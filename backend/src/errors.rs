@@ -59,26 +59,35 @@ impl From<sqlx::Error> for AppError {
 
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        use crate::response::ApiResponse;
         use crate::response::error_codes;
+        use crate::response::ApiResponse;
         use axum::http::StatusCode;
 
         match self {
             AppError::NotFound(msg) => {
-                ApiResponse::<()>::error(StatusCode::NOT_FOUND, error_codes::NOT_FOUND, msg).into_response()
+                ApiResponse::<()>::error(StatusCode::NOT_FOUND, error_codes::NOT_FOUND, msg)
+                    .into_response()
             }
             AppError::Conflict(msg) => {
-                ApiResponse::<()>::error(StatusCode::CONFLICT, error_codes::CONFLICT, msg).into_response()
+                ApiResponse::<()>::error(StatusCode::CONFLICT, error_codes::CONFLICT, msg)
+                    .into_response()
             }
             AppError::InvalidInput(msg) => {
-                ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, msg).into_response()
+                ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, msg)
+                    .into_response()
             }
-            AppError::ServiceUnavailable(msg) => {
-                ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, error_codes::SERVICE_UNAVAILABLE, msg).into_response()
-            }
-            AppError::Internal(msg) => {
-                ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, error_codes::INTERNAL_ERROR, msg).into_response()
-            }
+            AppError::ServiceUnavailable(msg) => ApiResponse::<()>::error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                error_codes::SERVICE_UNAVAILABLE,
+                msg,
+            )
+            .into_response(),
+            AppError::Internal(msg) => ApiResponse::<()>::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_codes::INTERNAL_ERROR,
+                msg,
+            )
+            .into_response(),
         }
     }
 }

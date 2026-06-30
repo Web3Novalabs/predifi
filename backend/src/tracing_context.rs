@@ -93,9 +93,7 @@ mod tests {
         init_test_subscriber();
 
         let worker_id = spawn_worker("test_worker", async {
-            tracing::Span::current()
-                .metadata()
-                .map(|meta| meta.name())
+            tracing::Span::current().metadata().map(|meta| meta.name())
         })
         .await
         .expect("worker task should complete");

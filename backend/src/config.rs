@@ -632,20 +632,13 @@ fn to_number_error(key: &'static str, value: &str, err: ParseIntError) -> Config
 }
 
 /// Ensure `url` begins with one of the allowed schemes.
-fn validate_url_scheme(
-    url: &str,
-    key: &'static str,
-    schemes: &[&str],
-) -> Result<(), ConfigError> {
+fn validate_url_scheme(url: &str, key: &'static str, schemes: &[&str]) -> Result<(), ConfigError> {
     if schemes.iter().any(|scheme| url.starts_with(scheme)) {
         Ok(())
     } else {
         Err(ConfigError::InvalidValue {
             key,
-            reason: format!(
-                "must start with one of: {}",
-                schemes.join(", ")
-            ),
+            reason: format!("must start with one of: {}", schemes.join(", ")),
         })
     }
 }
