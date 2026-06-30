@@ -62,4 +62,6 @@ required-features = ["integration-tests"]
 
 [dev-dependencies]
 http-body-util = "0.1"
+testcontainers = "0.27.3"
+testcontainers-modules = { version = "0.15.0", features = ["redis", "postgres"] }
 tower = { version = "0.4", features = ["util"] }

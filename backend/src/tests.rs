@@ -1395,12 +1395,11 @@ async fn graceful_shutdown_drains_inflight_request() {
     )
     .await;
 
-    match after_shutdown {
-        Ok(Ok(_)) => panic!(
+    if let Ok(Ok(_)) = after_shutdown {
+        panic!(
             "new connections after shutdown must fail, but got: {:?}",
             after_shutdown
-        ),
-        _ => {}
+        );
     }
 }
 

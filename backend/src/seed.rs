@@ -447,7 +447,7 @@ mod tests {
         for p in &pools {
             let count = preds.iter().filter(|x| x.pool_id == p.pool_id).count();
             assert!(
-                count >= 2 && count <= 4,
+                (2..=4).contains(&count),
                 "pool {} got {} predictions",
                 p.pool_id,
                 count

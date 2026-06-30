@@ -1342,7 +1342,7 @@ mod predictions_index_tests {
     #[test]
     fn leaderboard_rank_respects_page_offset() {
         let offset: i64 = 20;
-        let rank_of_first_row = offset + 0 + 1; // index 0 in the result set
+        let rank_of_first_row = offset + 1; // index 0 in the result set
         let rank_of_second_row = offset + 1 + 1;
 
         assert_eq!(rank_of_first_row, 21);

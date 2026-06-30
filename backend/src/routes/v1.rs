@@ -978,7 +978,6 @@ async fn user_referral_earnings_handler(
 
 #[cfg(test)]
 mod cache_aside_tests {
-    use super::*;
     use crate::redis_cache::{pools_cache_key, POOLS_CACHE_TTL};
 
     /// Test the cache-aside pattern: cache miss, database fetch, and cache population

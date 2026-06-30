@@ -63,6 +63,7 @@ pub async fn setup_redis() -> (RedisCache, testcontainers::ContainerAsync<Redis>
 }
 
 /// Default asset prices used to satisfy health-check readiness in tests.
+#[allow(dead_code)]
 pub fn default_test_prices() -> HashMap<String, f64> {
     HashMap::from([
         ("BTC".to_string(), 60_000.0),
@@ -75,6 +76,7 @@ pub fn default_test_prices() -> HashMap<String, f64> {
 ///
 /// Call [`MockRpcServer::shutdown`] when the test finishes so the ephemeral port
 /// is released before the next test runs.
+#[allow(dead_code)]
 pub async fn setup_healthy_test_env() -> (Config, PriceCache, MockRpcServer) {
     let mock = MockRpcServer::start().await;
     let mut config = Config::default_for_test();
