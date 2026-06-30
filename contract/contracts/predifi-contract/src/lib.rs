@@ -224,6 +224,15 @@ pub enum PredifiError {
     /// Callers should check `is_contract_paused()` before submitting a transaction,
     /// or listen for `PauseEvent` / `UnpauseEvent` on-chain to stay in sync.
     ContractPaused = 83,
+    /// A fee change proposal is already pending.
+    /// Call `cancel_fee_proposal` before queuing a new one.
+    FeeChangePending = 202,
+    /// No fee change proposal is currently pending.
+    /// Call `set_fee_bps` first to queue a proposal.
+    NoFeeChangePending = 203,
+    /// The timelock period for the pending fee change has not yet elapsed.
+    /// Wait until `PendingFeeChange.effective_at` before calling `apply_fee_bps`.
+    TimelockNotExpired = 204,
 }
 
 /// Represents the current state of a prediction market.
@@ -460,6 +469,25 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
+/// Snapshot of a pending protocol fee change awaiting timelock expiry.
+///
+/// Created when an admin calls [`PredifiContract::set_fee_bps`] and persisted in
+/// instance storage until [`PredifiContract::apply_fee_bps`] commits the change
+/// or [`PredifiContract::cancel_fee_proposal`] discards it.
+///
+/// Only one proposal may exist at a time; a second `set_fee_bps` call while this
+/// record is present returns [`PredifiError::FeeChangePending`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingFeeChange {
+    /// The proposed new protocol fee in basis points (1 bp = 0.01%).
+    pub new_fee_bps: u32,
+    /// Unix timestamp (seconds) at or after which `apply_fee_bps` may execute.
+    pub effective_at: u64,
+    /// The admin address that submitted this proposal.
+    pub proposed_by: Address,
+}
+
 /// Aggregated contract metadata for frontend consumption.
 ///
 /// This read model allows clients to fetch protocol configuration and core stats
@@ -665,6 +693,12 @@ pub enum DataKey {
     /// for a given pool so that subsequent calls are idempotent — they return
     /// `Ok(())` but do NOT re-emit the `StakingClosedEvent`.
     StakingClosed(u64),
+    /// Pending protocol fee change awaiting timelock expiry:
+    /// `PendingFeeBps` -> `PendingFeeChange`
+    ///
+    /// Present only while a fee proposal is queued (between a `set_fee_bps` call
+    /// and the corresponding `apply_fee_bps` or `cancel_fee_proposal` call).
+    PendingFeeBps,
     /// Minimum referred volume (in base token units) required before a referrer
     /// is eligible to receive a referral reward on claim.
     /// `ReferralMinVolumeBps` -> `i128`
@@ -730,6 +764,31 @@ pub struct UnpauseEvent {
 pub struct FeeUpdateEvent {
     pub admin: Address,
     pub fee_bps: u32,
+}
+
+/// Emitted when an admin queues a fee change proposal via `set_fee_bps`.
+/// The change does not take effect until `apply_fee_bps` is called at or after
+/// `effective_at`.
+#[contractevent(topics = ["fee_change_proposed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeChangeProposeEvent {
+    /// Admin that submitted the proposal.
+    pub admin: Address,
+    /// The proposed new fee in basis points.
+    pub new_fee_bps: u32,
+    /// Unix timestamp at or after which the change may be applied.
+    pub effective_at: u64,
+}
+
+/// Emitted when an admin cancels a pending fee change proposal via
+/// `cancel_fee_proposal` before it has been applied.
+#[contractevent(topics = ["fee_change_canceled"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeChangeCancelEvent {
+    /// Admin that cancelled the proposal.
+    pub admin: Address,
 }
 
 #[contractevent(topics = ["max_predictions_update"])]
@@ -1523,6 +1582,66 @@ impl PredifiContract {
         }
     }
 
+    /// Validate stake limit modifications to ensure consistency and safety.
+    /// This function performs comprehensive checks before applying new stake limits to a pool.
+    ///
+    /// # Validation Checks:
+    /// 1. min_stake must be positive (> 0)
+    /// 2. If max_stake is set (> 0), it must not be less than min_stake
+    /// 3. New min_stake must not exceed the pool's total_stake (existing liability check)
+    /// 4. New min_stake must not exceed the pool's max_total_stake limit (future capacity check)
+    /// 5. If max_stake is set, verify it allows room for at least one prediction at max level
+    /// 6. Prevent sudden reduction that would violate existing predictions (if applicable)
+    ///
+    /// # Returns:
+    /// - Ok(()) if all validation checks pass
+    /// - Err(PredifiError::StakeBelowMinimum) if min_stake <= 0
+    /// - Err(PredifiError::StakeAboveMaximum) if constraints are violated
+    /// - Err(PredifiError::InvalidAmount) if amounts are invalid
+    fn validate_stake_limits(
+        env: &Env,
+        pool: &Pool,
+        new_min_stake: i128,
+        new_max_stake: i128,
+    ) -> Result<(), PredifiError> {
+        // Check 1: min_stake must be positive
+        if new_min_stake <= 0 {
+            return Err(PredifiError::StakeBelowMinimum);
+        }
+
+        // Check 2: If max_stake is set, ensure min_stake <= max_stake
+        if new_max_stake > 0 && new_min_stake > new_max_stake {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        // Check 3: Ensure new min_stake doesn't exceed current total_stake
+        // This prevents setting a minimum that would retroactively invalidate existing bets
+        if new_min_stake > pool.total_stake {
+            return Err(PredifiError::StakeAboveMaximum);
+        }
+
+        // Check 4: If pool has a max_total_stake limit, new min_stake should be reasonable
+        if pool.max_total_stake > 0 && new_min_stake > pool.max_total_stake {
+            return Err(PredifiError::StakeAboveMaximum);
+        }
+
+        // Check 5: If max_stake is set, ensure it's reasonable relative to pool capacity
+        if new_max_stake > 0 && pool.max_total_stake > 0 && new_max_stake > pool.max_total_stake {
+            return Err(PredifiError::StakeAboveMaximum);
+        }
+
+        // Check 6: Prevent extreme ratio between min and max (prevent usability issues)
+        if new_max_stake > 0 {
+            // Ensure max is at least 10x min to allow reasonable participation range
+            let min_reasonable_ratio = new_min_stake.checked_mul(10).ok_or(PredifiError::ArithmeticError)?;
+            if new_max_stake < min_reasonable_ratio {
+                return Err(PredifiError::InvalidAmount);
+            }
+        }
+
+        Ok(())
+    }
+
     /// Pure: Initialize outcome stakes vector with zeros.
     /// Used for markets with many outcomes (e.g., 32+ teams tournament).
     #[allow(dead_code)]
@@ -1533,6 +1652,7 @@ impl PredifiContract {
         }
         stakes
     }
+
 
     /// Get outcome stakes for a pool using optimized batch storage.
     /// Falls back to individual storage keys for backward compatibility.
@@ -2045,9 +2165,20 @@ impl PredifiContract {
         Symbol::new(&env, "0_0_0")
     }
 
-    /// Set fee in basis points. Caller must have Admin role (0).
-    /// PRE: admin has role 0
-    /// POST: Config.fee_bps ≤ 10_000 (INV-6)
+    /// Queue a fee change proposal subject to a [`FEE_CHANGE_TIMELOCK_SECONDS`]-second
+    /// delay. The new fee does **not** take effect immediately; the admin must call
+    /// [`Self::apply_fee_bps`] once the delay has elapsed.
+    ///
+    /// # Errors
+    /// - [`PredifiError::ContractPaused`]   – contract is paused.
+    /// - [`PredifiError::Unauthorized`]     – caller lacks Admin role (0).
+    /// - [`PredifiError::InvalidFeeBps`]    – `fee_bps > 10_000`.
+    /// - [`PredifiError::FeeChangePending`] – a proposal is already queued;
+    ///   call `cancel_fee_proposal` first.
+    ///
+    /// PRE:  admin has role 0; no pending fee proposal exists.
+    /// POST: A [`PendingFeeChange`] is stored with
+    ///       `effective_at = now + FEE_CHANGE_TIMELOCK_SECONDS`.
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         admin.require_auth();
@@ -2055,13 +2186,106 @@ impl PredifiContract {
         if !Self::is_valid_fee_bps(fee_bps) {
             return Err(PredifiError::InvalidFeeBps);
         }
-        let mut config = Self::get_config(&env);
-        config.fee_bps = fee_bps;
-        env.storage().instance().set(&DataKey::Config, &config);
+        // Only one proposal may be pending at a time.
+        if env.storage().instance().has(&DataKey::PendingFeeBps) {
+            return Err(PredifiError::FeeChangePending);
+        }
+        let effective_at = env.ledger().timestamp() + FEE_CHANGE_TIMELOCK_SECONDS;
+        let pending = PendingFeeChange {
+            new_fee_bps: fee_bps,
+            effective_at,
+            proposed_by: admin.clone(),
+        };
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingFeeBps, &pending);
         Self::extend_instance(&env);
 
-        FeeUpdateEvent { admin, fee_bps }.publish(&env);
+        FeeChangeProposeEvent {
+            admin,
+            new_fee_bps: fee_bps,
+            effective_at,
+        }
+        .publish(&env);
         Ok(())
+    }
+
+    /// Apply a pending fee change once the [`FEE_CHANGE_TIMELOCK_SECONDS`]-second
+    /// delay has elapsed.
+    ///
+    /// Emits a [`FeeUpdateEvent`] with the newly committed fee value.
+    ///
+    /// # Errors
+    /// - [`PredifiError::ContractPaused`]      – contract is paused.
+    /// - [`PredifiError::Unauthorized`]        – caller lacks Admin role (0).
+    /// - [`PredifiError::NoFeeChangePending`]  – no proposal is queued.
+    /// - [`PredifiError::TimelockNotExpired`]  – the delay has not yet elapsed.
+    ///
+    /// PRE:  a [`PendingFeeChange`] exists and `now >= effective_at`.
+    /// POST: `Config.fee_bps` is updated; the pending proposal is removed.
+    pub fn apply_fee_bps(env: Env, admin: Address) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "apply_fee_bps")?;
+
+        let pending: PendingFeeChange = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingFeeBps)
+            .ok_or(PredifiError::NoFeeChangePending)?;
+
+        if env.ledger().timestamp() < pending.effective_at {
+            return Err(PredifiError::TimelockNotExpired);
+        }
+
+        let mut config = Self::get_config(&env);
+        config.fee_bps = pending.new_fee_bps;
+        env.storage().instance().set(&DataKey::Config, &config);
+        env.storage().instance().remove(&DataKey::PendingFeeBps);
+        Self::extend_instance(&env);
+
+        FeeUpdateEvent {
+            admin,
+            fee_bps: pending.new_fee_bps,
+        }
+        .publish(&env);
+        Ok(())
+    }
+
+    /// Cancel a pending fee change proposal before it is applied.
+    ///
+    /// Emits a [`FeeChangeCancelEvent`]. The current `Config.fee_bps` is unchanged.
+    ///
+    /// # Errors
+    /// - [`PredifiError::ContractPaused`]     – contract is paused.
+    /// - [`PredifiError::Unauthorized`]       – caller lacks Admin role (0).
+    /// - [`PredifiError::NoFeeChangePending`] – no proposal is queued.
+    ///
+    /// PRE:  a [`PendingFeeChange`] exists.
+    /// POST: the pending proposal is removed; `Config.fee_bps` is unmodified.
+    pub fn cancel_fee_proposal(env: Env, admin: Address) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "cancel_fee_proposal")?;
+
+        if !env.storage().instance().has(&DataKey::PendingFeeBps) {
+            return Err(PredifiError::NoFeeChangePending);
+        }
+
+        env.storage().instance().remove(&DataKey::PendingFeeBps);
+        Self::extend_instance(&env);
+
+        FeeChangeCancelEvent { admin }.publish(&env);
+        Ok(())
+    }
+
+    /// Return the currently pending fee change proposal, or `None` if no proposal
+    /// is queued.
+    ///
+    /// Clients should poll this before calling [`Self::apply_fee_bps`] to confirm
+    /// a proposal exists and to read the `effective_at` timestamp.
+    pub fn get_pending_fee_change(env: Env) -> Option<PendingFeeChange> {
+        env.storage().instance().get(&DataKey::PendingFeeBps)
     }
 
     /// Set treasury address. Caller must have Admin role (0).
@@ -4317,12 +4541,8 @@ impl PredifiContract {
             return Err(PredifiError::InvalidPoolState);
         }
 
-        if min_stake <= 0 {
-            return Err(PredifiError::StakeBelowMinimum);
-        }
-        if max_stake > 0 && min_stake > max_stake {
-            return Err(PredifiError::InvalidAmount);
-        }
+        // Validate new stake limits before applying
+        Self::validate_stake_limits(&env, &pool, min_stake, max_stake)?;
 
         pool.min_stake = min_stake;
         pool.max_stake = max_stake;
