@@ -2279,14 +2279,13 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Return the currently pending fee change proposal, or `None` if no proposal
-    /// is queued.
-    ///
-    /// Clients should poll this before calling [`Self::apply_fee_bps`] to confirm
-    /// a proposal exists and to read the `effective_at` timestamp.
-    pub fn get_pending_fee_change(env: Env) -> Option<PendingFeeChange> {
-        env.storage().instance().get(&DataKey::PendingFeeBps)
-    }
+    #[contractevent(topics = ["referral_cut_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralCutUpdateEvent {
+    pub admin: Address,
+    pub referral_cut_bps: u32,
+}
 
     /// Set treasury address. Caller must have Admin role (0).
     pub fn set_treasury(env: Env, admin: Address, treasury: Address) -> Result<(), PredifiError> {
@@ -2468,6 +2467,12 @@ impl PredifiContract {
             .instance()
             .set(&DataKey::ReferralCutBps, &referral_cut_bps);
         Self::extend_instance(&env);
+
+        ReferralCutUpdateEvent {
+    admin,
+    referral_cut_bps,
+}
+.publish(&env);
         Ok(())
     }
 
