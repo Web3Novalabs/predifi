@@ -1617,6 +1617,144 @@ fn test_removed_oracle_cannot_update_price_feed() {
 }
 
 #[test]
+fn test_set_price_condition_rejects_invalid_match_operator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Invalid operator"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let result = client.try_set_price_condition(
+        &operator,
+        &pool_id,
+        &Symbol::new(&env, "BTCUSD"),
+        &50_000i128,
+        &3u32,
+        &100u32,
+    );
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_set_price_condition_rejects_tolerance_above_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Invalid tolerance"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let result = client.try_set_price_condition(
+        &operator,
+        &pool_id,
+        &Symbol::new(&env, "BTCUSD"),
+        &50_000i128,
+        &1u32,
+        &(MAX_TOLERANCE + 1),
+    );
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_resolve_pool_from_price_applies_tolerance_bounded_match() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.add_oracle(&admin, &oracle);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &5_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 1_000,
+            description: String::from_str(&env, "Tolerance match"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let feed_pair = Symbol::new(&env, "ETHUSD");
+    client.set_price_condition(&operator, &pool_id, &feed_pair, &1_000i128, &1u32, &100u32);
+    client.update_price_feed(&oracle, &feed_pair, &1_005i128, &1i128, &999u64, &10_000u64);
+
+    env.ledger().with_mut(|li| li.timestamp = 8_600);
+    client.resolve_pool_from_price(&pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 0);
+}
+
+#[test]
 fn test_oracle_resolve_long_proof() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4997,8 +5135,10 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
     let token_admin_client2 = token::StellarAssetClient::new(&env, &token_contract2);
     client.add_token_to_whitelist(&admin, &token_contract2);
 
-    // Set protocol fee to 10% (1000 bps) for clear fee calculation
+    // Propose a 10% protocol fee (1000 bps) and apply it after the timelock.
     client.set_fee_bps(&admin, &1000u32);
+    env.ledger().with_mut(|li| li.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
 
     // Create two pools with different tokens
     let pool1_id = client.create_pool(
@@ -5412,8 +5552,10 @@ fn test_pool_end_time_on_leap_day() {
 
 /// Creating a pool whose end time is the leap day, but the ledger is already
 /// past Mar 1, must be rejected because the end time is in the past.
+/// Issue #1130 — now surfaces the typed `DeadlineInPast` error (132) instead
+/// of the legacy assert message.
 #[test]
-#[should_panic(expected = "end_time must be in the future")]
+#[should_panic(expected = "#132")]
 fn test_pool_end_time_at_leap_day_already_past() {
     let env = Env::default();
     env.mock_all_auths();
@@ -10408,9 +10550,12 @@ fn test_get_fees_returns_treasury_and_referral_fee_bps() {
     assert_eq!(fees.treasury_fee_bps, 300);
     assert_eq!(fees.referral_fee_bps, 5000); // default
 
-    // Update both and verify get_fees reflects the changes
+    // Update both and verify get_fees reflects the changes.
+    // set_fee_bps now queues a proposal; apply it after the timelock.
     c.set_fee_bps(&admin, &750u32);
     c.set_referral_cut_bps(&admin, &2000u32);
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    c.apply_fee_bps(&admin);
 
     let fees = c.get_fees();
     assert_eq!(fees.treasury_fee_bps, 750);
@@ -10464,7 +10609,10 @@ fn test_get_contract_info_returns_config_and_stats() {
         &pool_config,
     );
 
+    // set_fee_bps queues a proposal; advance past the timelock then apply.
     client.set_fee_bps(&admin, &250u32);
+    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
     client.set_treasury(&admin, &treasury);
     client.set_resolution_delay(&admin, &60u64);
     client.set_min_pool_duration(&admin, &7200u64);
@@ -12723,10 +12871,10 @@ fn test_already_initialized_panics() {
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(&env, &contract_id);
     let treasury = Address::generate(&env);
-    
+
     // First initialization should succeed
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
-    
+
     // Second initialization should panic with AlreadyInitializedOrConfigNotSet
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 }
@@ -12736,13 +12884,14 @@ fn test_already_initialized_panics() {
 fn test_delisted_token_prevents_prediction() {
     let env = Env::default();
     env.mock_all_auths();
-    
-    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) = setup(&env);
-    
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
+
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-    
+
     token_admin_client.mint(&creator, &10000);
     token_admin_client.mint(&user, &10000);
 
@@ -12766,7 +12915,14 @@ fn test_delisted_token_prevents_prediction() {
             soroban_sdk::String::from_str(&env, "Outcome 1"),
         ],
     };
-    let pool_id = client.create_pool(&creator, &end_time, &token_address, &2u32, &soroban_sdk::Symbol::new(&env, "Sports"), &config);
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &soroban_sdk::Symbol::new(&env, "Sports"),
+        &config,
+    );
 
     // Remove token from whitelist
     client.remove_token_from_whitelist(&admin, &token_address);

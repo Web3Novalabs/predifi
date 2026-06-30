@@ -1,18 +1,41 @@
-use std::{future::Future, time::Duration};
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use sqlx::{postgres::PgPoolOptions, Executor, PgPool, Postgres};
 use tokio::time::sleep;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::config::Config;
+
+/// Check if a database error is transient and should be retried during pool creation.
+///
+/// Transient errors include connection issues (refused, timeout, reset).
+/// Unrecoverable errors (invalid credentials, missing database) fail immediately.
+pub fn is_transient_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::PoolTimedOut => true,
+        sqlx::Error::PoolClosed => false,
+        sqlx::Error::Database(ref db_err) => {
+            let kind = db_err.kind();
+            matches!(
+                kind,
+                sqlx::error::ErrorKind::ConnectionReset
+                    | sqlx::error::ErrorKind::ConnectionRefused
+                    | sqlx::error::ErrorKind::ConnectionBusy
+                    | sqlx::error::ErrorKind::Io
+            )
+        }
+        sqlx::Error::Io(_) | sqlx::Error::Tls(_) => true,
+        _ => false,
+    }
+}
 
 /// Create a PostgreSQL connection pool using conservative defaults.
 ///
 /// This uses a retry loop on startup with exponential backoff, so transient
 /// database downtime (e.g. container still starting) does not crash the service
 /// immediately.
-pub async fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
+pub async fn create_pool(config: &Config) -> Result<PgPool, PoolCreationError> {
     let connect = || async {
         let future = PgPoolOptions::new()
             .max_connections(config.db_max_connections)
@@ -20,12 +43,6 @@ pub async fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
             .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
             .connect(&config.database_url);
 
-        // `db_connect_timeout_secs` bounds the time spent on the initial TCP/TLS
-        // handshake for each individual connection attempt.  This is distinct from
-        // `acquire_timeout`, which limits how long a caller waits for a slot in an
-        // already-healthy pool.  sqlx 0.8 does not expose a separate
-        // `connect_timeout` on `PgPoolOptions`, so we wrap the connect future in a
-        // `tokio::time::timeout` to achieve the same effect.
         match tokio::time::timeout(
             Duration::from_secs(config.db_connect_timeout_secs),
             future,
@@ -37,11 +54,10 @@ pub async fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
         }
     };
 
-    retry_with_backoff(
+    retry_pool_connection(
         config.db_connect_max_attempts,
         config.db_connect_base_delay_ms,
         config.db_connect_max_delay_ms,
-        "postgres",
         connect,
     )
     .await
@@ -53,53 +69,93 @@ fn backoff_delay_ms(attempt: u32, base_delay_ms: u64, max_delay_ms: u64) -> u64 
     delay.min(max_delay_ms)
 }
 
-async fn retry_with_backoff<T, E, Fut, F>(
+/// Error type for database pool creation failures.
+#[derive(Debug)]
+pub struct PoolCreationError {
+    /// The last error encountered during connection attempts.
+    pub last_error: sqlx::Error,
+    /// Number of attempts made before giving up.
+    pub attempts: u32,
+}
+
+impl std::fmt::Display for PoolCreationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "failed to create database pool after {} attempts: {}",
+            self.attempts, self.last_error
+        )
+    }
+}
+
+impl std::error::Error for PoolCreationError {}
+
+async fn retry_pool_connection<Fut, F>(
     max_attempts: u32,
     base_delay_ms: u64,
     max_delay_ms: u64,
-    target: &'static str,
     mut op: F,
-) -> Result<T, E>
+) -> Result<PgPool, PoolCreationError>
 where
     F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
+    Fut: std::future::Future<Output = Result<PgPool, sqlx::Error>>,
 {
     let max_attempts = max_attempts.max(1);
+    let mut last_error: Option<sqlx::Error> = None;
 
     for attempt in 1..=max_attempts {
         match op().await {
-            Ok(value) => {
+            Ok(pool) => {
                 if attempt > 1 {
                     info!(
-                        target,
                         attempts = attempt,
-                        "connection established after retries"
+                        "database connection established after retries"
                     );
                 }
-                return Ok(value);
+                return Ok(pool);
             }
-            Err(error) if attempt < max_attempts => {
-                let delay_ms = backoff_delay_ms(attempt, base_delay_ms, max_delay_ms);
-                warn!(
-                    target,
-                    attempt,
-                    max_attempts,
-                    delay_ms,
-                    error = %error,
-                    "startup connection attempt failed; retrying"
-                );
-                if delay_ms > 0 {
-                    sleep(Duration::from_millis(delay_ms)).await;
+            Err(err) => {
+                last_error = Some(err.clone());
+
+                if !is_transient_error(&err) {
+                    error!(
+                        attempt,
+                        error = %err,
+                        "database connection failed with unrecoverable error; aborting"
+                    );
+                    return Err(PoolCreationError {
+                        last_error: err,
+                        attempts: attempt,
+                    });
                 }
-            }
-            Err(error) => {
-                return Err(error);
+
+                if attempt < max_attempts {
+                    let delay_ms = backoff_delay_ms(attempt, base_delay_ms, max_delay_ms);
+                    warn!(
+                        attempt,
+                        max_attempts,
+                        delay_ms,
+                        error = %err,
+                        "database connection failed; retrying"
+                    );
+                    if delay_ms > 0 {
+                        sleep(Duration::from_millis(delay_ms)).await;
+                    }
+                }
             }
         }
     }
 
-    unreachable!("loop covers attempt range")
+    let last_error = last_error.expect("at least one error should exist after retry loop");
+    error!(
+        attempts = max_attempts,
+        error = %last_error,
+        "database connection retries exhausted"
+    );
+    Err(PoolCreationError {
+        last_error,
+        attempts: max_attempts,
+    })
 }
 
 /// A single row returned by the user prediction history query.
@@ -259,39 +315,6 @@ mod tests {
         Arc,
     };
 
-    #[tokio::test]
-    async fn retry_with_backoff_succeeds_after_transient_failures() {
-        let attempts = Arc::new(AtomicU32::new(0));
-        let attempts_clone = attempts.clone();
-        let result: Result<&'static str, &'static str> =
-            retry_with_backoff(5, 0, 0, "test", || async {
-                let current = attempts_clone.fetch_add(1, Ordering::SeqCst) + 1;
-                if current < 3 {
-                    Err("nope")
-                } else {
-                    Ok("ok")
-                }
-            })
-            .await;
-
-        assert_eq!(result, Ok("ok"));
-        assert_eq!(attempts.load(Ordering::SeqCst), 3);
-    }
-
-    #[tokio::test]
-    async fn retry_with_backoff_gives_up_after_max_attempts() {
-        let attempts = Arc::new(AtomicU32::new(0));
-        let attempts_clone = attempts.clone();
-        let result: Result<(), &'static str> = retry_with_backoff(3, 0, 0, "test", || async {
-            attempts_clone.fetch_add(1, Ordering::SeqCst);
-            Err("still down")
-        })
-        .await;
-
-        assert_eq!(result, Err("still down"));
-        assert_eq!(attempts.load(Ordering::SeqCst), 3);
-    }
-
     #[test]
     fn backoff_delay_is_exponential_and_capped() {
         assert_eq!(backoff_delay_ms(1, 200, 5_000), 200);
@@ -302,62 +325,19 @@ mod tests {
 
     #[test]
     fn backoff_delay_with_zero_base_is_zero() {
-        // When base delay is 0, every attempt should return 0 (no delay)
         assert_eq!(backoff_delay_ms(1, 0, 5_000), 0);
         assert_eq!(backoff_delay_ms(5, 0, 5_000), 0);
     }
 
     #[test]
     fn backoff_delay_saturates_at_max() {
-        // For large attempt counts the delay should be capped at max_delay_ms
         assert_eq!(backoff_delay_ms(30, 100, 1_000), 1_000);
         assert_eq!(backoff_delay_ms(64, 1, 500), 500);
     }
 
-    /// Verify that `retry_with_backoff` treats `max_attempts = 0` as `1`
-    /// (the floor guard prevents zero-iteration loops).
-    #[tokio::test]
-    async fn retry_with_backoff_treats_zero_max_as_one() {
-        let calls = Arc::new(AtomicU32::new(0));
-        let calls_clone = calls.clone();
-        let result: Result<(), &'static str> =
-            retry_with_backoff(0, 0, 0, "test", || async {
-                calls_clone.fetch_add(1, Ordering::SeqCst);
-                Err("fail")
-            })
-            .await;
-
-        // Should attempt exactly once (0 is clamped to 1)
-        assert_eq!(result, Err("fail"));
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    /// Ensure that a successful first attempt is returned immediately without
-    /// any retries, confirming the fast path works correctly.
-    #[tokio::test]
-    async fn retry_with_backoff_succeeds_on_first_attempt() {
-        let calls = Arc::new(AtomicU32::new(0));
-        let calls_clone = calls.clone();
-        let result: Result<&'static str, &'static str> =
-            retry_with_backoff(5, 0, 0, "test", || async {
-                calls_clone.fetch_add(1, Ordering::SeqCst);
-                Ok("immediate")
-            })
-            .await;
-
-        assert_eq!(result, Ok("immediate"));
-        // Must have called exactly once — no unnecessary retries
-        assert_eq!(calls.load(Ordering::SeqCst), 1);
-    }
-
-    /// Verify that the configurable connect delay fields in [`Config`] are
-    /// properly wired: `db_connect_timeout_secs` must be independent from
-    /// `db_acquire_timeout_secs` and both must be readable.
     #[test]
     fn config_connect_timeout_is_independent_from_acquire_timeout() {
         let config = crate::config::Config::default_for_test();
-        // The two timeouts serve different purposes and must be independently
-        // configurable — a change to one must not imply a change to the other.
         assert!(
             config.db_connect_timeout_secs > 0,
             "connect timeout must be > 0"
@@ -366,7 +346,59 @@ mod tests {
             config.db_acquire_timeout_secs > 0,
             "acquire timeout must be > 0"
         );
-        // They are allowed to be equal but are independently specified
+    }
+
+    /// Test that `is_transient_error` correctly identifies transient connection errors.
+    #[test]
+    fn is_transient_error_identifies_pool_timeout() {
+        assert!(is_transient_error(&sqlx::Error::PoolTimedOut));
+        assert!(!is_transient_error(&sqlx::Error::PoolClosed));
+    }
+
+    /// Test that `PoolCreationError` formats correctly.
+    #[test]
+    fn pool_creation_error_formats_last_error_and_attempts() {
+        let err = PoolCreationError {
+            last_error: sqlx::Error::PoolTimedOut,
+            attempts: 5,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("5 attempts"));
+        assert!(msg.contains("PoolTimedOut"));
+    }
+
+    /// Test that `retry_pool_connection` retries on transient errors and eventually fails.
+    #[tokio::test]
+    async fn retry_pool_connection_retries_on_transient_errors() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+
+        let result = retry_pool_connection(3, 0, 0, || async {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            Err(sqlx::Error::PoolTimedOut)
+        })
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.attempts, 3, "should retry all attempts on transient errors");
+    }
+
+    /// Test that `retry_pool_connection` fails fast on unrecoverable errors.
+    #[tokio::test]
+    async fn retry_pool_connection_fails_fast_on_unrecoverable_error() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+
+        let result = retry_pool_connection(5, 0, 0, || async {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            Err(sqlx::Error::PoolClosed)
+        })
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.attempts, 1, "should fail after only one attempt for PoolClosed");
     }
 }
 
@@ -443,6 +475,8 @@ pub struct UserWinnings {
 /// Fetch active pools with optional category filter and sort order.
 ///
 /// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"`.
+#[instrument(skip(pool), name = "db.get_active_pools",
+    fields(sort_by = sort_by, category = ?category, limit = limit, offset = offset))]
 pub async fn get_active_pools(
     pool: &PgPool,
     sort_by: &str,
@@ -792,6 +826,8 @@ pub async fn get_users_by_winnings(
 }
 
 /// Run `operation` inside a database transaction, committing on success.
+#[instrument(skip(pool), name = "db.insert_prediction_from_event_with_pool",
+    fields(pool_id = event.pool_id, user_address = %event.user_address))]
 pub async fn insert_prediction_from_event_with_pool(
     pool: &PgPool,
     event: &PredictionPlacedEvent,
@@ -803,6 +839,8 @@ pub async fn insert_prediction_from_event_with_pool(
 }
 
 /// Mark a pool as settled and record the winning outcome.
+#[instrument(skip(executor), name = "db.resolve_pool_in_db",
+    fields(pool_id = pool_id, winning_outcome = winning_outcome))]
 pub async fn resolve_pool_in_db<'e, E>(
     executor: E,
     pool_id: u64,
@@ -820,6 +858,7 @@ where
 }
 
 /// Mark a pool as closed (cancelled on-chain).
+#[instrument(skip(executor), name = "db.cancel_pool_in_db", fields(pool_id = pool_id))]
 pub async fn cancel_pool_in_db<'e, E>(executor: E, pool_id: u64) -> Result<(), sqlx::Error>
 where
     E: Executor<'e, Database = Postgres>,
@@ -832,6 +871,8 @@ where
 }
 
 /// Insert a new pool record decoded from a `PoolCreated` contract event.
+#[instrument(skip(executor), name = "db.insert_pool_from_event",
+    fields(pool_id = event.pool_id, creator = %event.creator))]
 pub async fn insert_pool_from_event<'e, E>(
     executor: E,
     event: &PoolCreatedEvent,
@@ -862,6 +903,8 @@ where
 /// Must run inside a transaction so the prediction insert and pool stake update
 /// stay atomic. Use [`insert_prediction_from_event_with_pool`] or pass an open
 /// transaction reference.
+#[instrument(skip(tx), name = "db.insert_prediction_from_event",
+    fields(pool_id = event.pool_id, user_address = %event.user_address))]
 pub async fn insert_prediction_from_event(
     tx: &mut sqlx::Transaction<'_, Postgres>,
     event: &PredictionPlacedEvent,
@@ -886,6 +929,66 @@ pub async fn insert_prediction_from_event(
         .await?;
 
     Ok(())
+}
+
+// ── Market Predictions (cursor-based pagination) ──────────────────────────────
+
+/// A single prediction within a market (pool), returned by the market predictions list.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct MarketPredictionRow {
+    /// Stable row ID, also used as the pagination cursor.
+    pub id: i64,
+    pub pool_id: i64,
+    pub user_address: String,
+    pub outcome: i32,
+    pub amount: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Fetch a cursor-paginated page of predictions for a given pool.
+///
+/// `after_id` is the opaque cursor from the previous page (`data.next_cursor`).
+/// Pass `None` (or omit the query param) to start from the most recent prediction.
+///
+/// Results are ordered `id DESC` (newest first), which is stable under
+/// concurrent inserts because new rows always get larger IDs.
+pub async fn get_market_predictions(
+    pool: &PgPool,
+    pool_id: i64,
+    after_id: Option<i64>,
+    limit: i64,
+) -> Result<Vec<MarketPredictionRow>, sqlx::Error> {
+    // Requesting one extra row lets us detect whether a next page exists
+    // without a separate COUNT query on the hot path.
+    let fetch_limit = limit + 1;
+
+    let sql = r#"
+        SELECT id, pool_id, user_address, outcome, amount, created_at
+        FROM predictions
+        WHERE pool_id = $1
+          AND ($2::bigint IS NULL OR id < $2)
+        ORDER BY id DESC
+        LIMIT $3
+    "#;
+
+    sqlx::query_as::<_, MarketPredictionRow>(sql)
+        .bind(pool_id)
+        .bind(after_id)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await
+}
+
+/// Count total predictions for a given pool (used for the `total` field).
+pub async fn count_market_predictions(
+    pool: &PgPool,
+    pool_id: i64,
+) -> Result<i64, sqlx::Error> {
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM predictions WHERE pool_id = $1")
+        .bind(pool_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
 }
 
 /// A single row in the referral earnings breakdown — one entry per pool.
@@ -1082,7 +1185,7 @@ where
     Ok(())
 }
 
-// Tests live near the top-level helpers (see `retry_with_backoff` tests).
+// Tests live near the top-level helpers (see `retry_pool_connection` tests).
 
 #[cfg(test)]
 mod write_helper_tests {
@@ -1309,5 +1412,104 @@ mod predictions_index_tests {
              (found {total_creates} CREATE INDEX IF NOT EXISTS but only {} ON predictions clauses)",
             on_clauses.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod market_predictions_tests {
+    use super::*;
+    use chrono::Utc;
+
+    /// Helper: build a page of `MarketPredictionRow` with sequential IDs,
+    /// descending (newest-first) to match the query order.
+    fn make_rows(ids: &[i64]) -> Vec<MarketPredictionRow> {
+        ids.iter()
+            .map(|&id| MarketPredictionRow {
+                id,
+                pool_id: 1,
+                user_address: format!("G{id:055}"),
+                outcome: 0,
+                amount: 100,
+                created_at: Utc::now(),
+            })
+            .collect()
+    }
+
+    // ── has_next / next_cursor logic (mirrors the handler) ──────────────────
+
+    /// When the DB returns exactly `limit` rows there is no next page.
+    #[test]
+    fn no_next_page_when_rows_equal_limit() {
+        let limit = 3i64;
+        let mut rows = make_rows(&[10, 9, 8]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// When the DB returns `limit + 1` rows there IS a next page; the extra
+    /// row is trimmed and the cursor points to the last remaining row's ID.
+    #[test]
+    fn has_next_page_when_rows_exceed_limit() {
+        let limit = 3i64;
+        // Query fetches limit+1 = 4 rows
+        let mut rows = make_rows(&[10, 9, 8, 7]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+        assert!(has_next);
+        assert_eq!(next_cursor, Some(8)); // last row after truncation
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// An empty result set produces no next cursor and returns an empty slice.
+    #[test]
+    fn empty_result_produces_no_cursor() {
+        let limit = 20i64;
+        let mut rows: Vec<MarketPredictionRow> = vec![];
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+        assert!(rows.is_empty());
+    }
+
+    /// A single-row result with limit=1 should NOT show has_next.
+    /// (limit+1 = 2 fetched, only 1 returned → no next page)
+    #[test]
+    fn single_row_within_limit_has_no_next() {
+        let limit = 1i64;
+        let mut rows = make_rows(&[5]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+    }
+
+    /// `clamp(1, 100)` must reject zero and cap at 100.
+    #[test]
+    fn limit_clamp_boundaries() {
+        assert_eq!(0i64.clamp(1, 100), 1);
+        assert_eq!((-5i64).clamp(1, 100), 1);
+        assert_eq!(100i64.clamp(1, 100), 100);
+        assert_eq!(9999i64.clamp(1, 100), 100);
+        assert_eq!(50i64.clamp(1, 100), 50);
     }
 }
