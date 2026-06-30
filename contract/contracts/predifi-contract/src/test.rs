@@ -1617,6 +1617,144 @@ fn test_removed_oracle_cannot_update_price_feed() {
 }
 
 #[test]
+fn test_set_price_condition_rejects_invalid_match_operator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Invalid operator"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let result = client.try_set_price_condition(
+        &operator,
+        &pool_id,
+        &Symbol::new(&env, "BTCUSD"),
+        &50_000i128,
+        &3u32,
+        &100u32,
+    );
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_set_price_condition_rejects_tolerance_above_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Invalid tolerance"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let result = client.try_set_price_condition(
+        &operator,
+        &pool_id,
+        &Symbol::new(&env, "BTCUSD"),
+        &50_000i128,
+        &1u32,
+        &(MAX_TOLERANCE + 1),
+    );
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_resolve_pool_from_price_applies_tolerance_bounded_match() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.add_oracle(&admin, &oracle);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &5_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 1_000,
+            description: String::from_str(&env, "Tolerance match"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let feed_pair = Symbol::new(&env, "ETHUSD");
+    client.set_price_condition(&operator, &pool_id, &feed_pair, &1_000i128, &1u32, &100u32);
+    client.update_price_feed(&oracle, &feed_pair, &1_005i128, &1i128, &999u64, &10_000u64);
+
+    env.ledger().with_mut(|li| li.timestamp = 8_600);
+    client.resolve_pool_from_price(&pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 0);
+}
+
+#[test]
 fn test_oracle_resolve_long_proof() {
     let env = Env::default();
     env.mock_all_auths();

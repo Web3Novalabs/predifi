@@ -93,6 +93,12 @@ pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000_000;
 /// This represents 100% (10,000 basis points = 100%).
 pub const MAX_TOLERANCE: u32 = 10_000;
 
+/// Maximum number of primitive checks allowed while matching a price condition.
+///
+/// Price resolution is intentionally O(1). Keeping this bound explicit prevents
+/// future condition matching changes from adding unbounded work to resolution.
+pub const MAX_PRICE_CONDITION_MATCH_STEPS: u32 = 4;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // VERSION CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
