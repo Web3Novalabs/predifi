@@ -15,6 +15,7 @@ pub struct Metrics {
     pub memory_used_bytes: Gauge,
     pub memory_total_bytes: Gauge,
     pub active_pools: Gauge,
+    pub http_server_errors_total: prometheus::Counter,
 }
 
 /// Type alias for a reference-counted [`Metrics`] instance shared across handlers.
@@ -93,6 +94,11 @@ impl Metrics {
             "Number of currently active prediction market pools.",
         ))?;
 
+        let http_server_errors_total = prometheus::Counter::with_opts(Opts::new(
+            "app_http_500_errors_total",
+            "Total number of HTTP 500 (Internal Server Error) responses.",
+        ))?;
+
         registry.register(Box::new(http_requests_total.clone()))?;
         registry.register(Box::new(http_request_duration_seconds.clone()))?;
         registry.register(Box::new(price_cache_fetch_total.clone()))?;
@@ -103,6 +109,7 @@ impl Metrics {
         registry.register(Box::new(memory_used_bytes.clone()))?;
         registry.register(Box::new(memory_total_bytes.clone()))?;
         registry.register(Box::new(active_pools.clone()))?;
+        registry.register(Box::new(http_server_errors_total.clone()))?;
 
         Ok(Self {
             registry,
@@ -116,6 +123,7 @@ impl Metrics {
             memory_used_bytes,
             memory_total_bytes,
             active_pools,
+            http_server_errors_total,
         })
     }
 
