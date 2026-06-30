@@ -10,7 +10,7 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time::interval;
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::redis_cache::RedisCache;
 
@@ -56,6 +56,7 @@ pub struct StellarEvent {
 // ── Ledger cursor persistence ─────────────────────────────────────────────────
 
 /// Load the last processed ledger from the database.
+#[instrument(skip(pool), name = "stellar_listener.load_cursor")]
 async fn load_cursor(pool: &PgPool) -> Option<u64> {
     sqlx::query_scalar::<_, String>("SELECT value FROM app_state WHERE key = $1")
         .bind(STATE_KEY)
@@ -67,6 +68,7 @@ async fn load_cursor(pool: &PgPool) -> Option<u64> {
 }
 
 /// Persist the latest processed ledger to the database.
+#[instrument(skip(pool), name = "stellar_listener.save_cursor", fields(ledger = ledger))]
 async fn save_cursor(pool: &PgPool, ledger: u64) {
     let result = sqlx::query(
         "INSERT INTO app_state (key, value) VALUES ($1, $2)
@@ -84,6 +86,12 @@ async fn save_cursor(pool: &PgPool, ledger: u64) {
 
 // ── RPC call ──────────────────────────────────────────────────────────────────
 
+/// Fetch a batch of Stellar contract events starting from `start_ledger`.
+///
+/// Each call is wrapped in its own OTel span so RPC latency and failures are
+/// visible in the trace backend.
+#[instrument(skip(client), name = "stellar_listener.fetch_events",
+    fields(rpc_url = %rpc_url, start_ledger = start_ledger))]
 async fn fetch_events(
     client: &reqwest::Client,
     rpc_url: &str,
@@ -123,6 +131,10 @@ async fn fetch_events(
 /// (typically [`crate::server::run`]) can abort it as part of the graceful
 /// shutdown sequence.  Aborting the handle cancels the in-flight RPC poll
 /// and prevents the listener from blocking process exit.
+///
+/// > **Note:** prefer calling [`run_worker`] directly inside a
+/// > [`crate::tracing_context::spawn_worker`] closure so the task inherits a
+/// > named root span in the OTel trace backend.
 pub fn spawn(
     rpc_url: String,
     db: PgPool,
@@ -131,8 +143,8 @@ pub fn spawn(
     timeout: Duration,
     max_batch_size: usize,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        run(rpc_url, db, event_bus, redis, timeout, max_batch_size).await;
+    crate::tracing_context::spawn_worker("stellar_listener", async move {
+        run_worker(rpc_url, db, event_bus, redis, timeout, max_batch_size).await;
     })
 }
 
@@ -147,7 +159,12 @@ fn reconnect_delay_secs(consecutive_failures: u32) -> u64 {
         .min(MAX_RECONNECT_DELAY_SECS)
 }
 
-async fn run(
+/// The main polling loop for the Stellar event listener.
+///
+/// Exposed as `pub` so [`crate::server::run_with_signal`] can invoke it
+/// inside a [`crate::tracing_context::spawn_worker`] closure, which roots the
+/// entire listener under a named OTel span without double-spawning.
+pub async fn run_worker(
     rpc_url: String,
     db: PgPool,
     event_bus: crate::ws::EventBus,
@@ -227,6 +244,12 @@ async fn run(
     }
 }
 
+/// Process a batch of Stellar events, dispatching each to the appropriate handler.
+///
+/// Each call is wrapped in its own OTel span so per-batch latency is visible
+/// in the trace backend.
+#[instrument(skip_all, name = "stellar_listener.process_event_batch",
+    fields(event_count = events.len()))]
 async fn process_event_batch(
     db: &PgPool,
     redis: &RedisCache,

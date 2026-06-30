@@ -21,19 +21,13 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::sleep;
 use tokio::task::JoinHandle;
+use tokio::time::sleep;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info, warn};
 
-/// Build the CORS middleware layer from the validated origin list in `config`.
-///
-/// Only the origins listed in [`Config::cors_allowed_origins`] are permitted.
-/// The list is validated at startup (see `config::parse_cors_origins`), so any
-/// entry that reaches this function is already a well-formed `http://` or
-/// `https://` origin.  Entries that cannot be parsed into a [`HeaderValue`] are
-/// silently skipped (this should never happen in practice given the prior
-/// validation).
+// ── CORS ─────────────────────────────────────────────────────────────────────
+
 fn build_cors(config: &Config) -> CorsLayer {
     let origins: Vec<HeaderValue> = config
         .cors_allowed_origins
@@ -57,23 +51,17 @@ fn build_cors(config: &Config) -> CorsLayer {
         ])
 }
 
-/// Lightweight liveness probe — confirms the HTTP server process is running.
-///
-/// This endpoint performs **no** dependency checks and always returns `200 OK`
-/// when the Axum process can respond. Use it as the Kubernetes `livenessProbe`
-/// so transient dependency failures do not trigger pod restarts.
+// ── Handlers ─────────────────────────────────────────────────────────────────
+
 async fn live() -> axum::response::Response {
     use axum::http::StatusCode;
-
-    let body = json!({
-        "status": "alive",
-        "service": "predifi-backend",
-    });
-
-    (StatusCode::OK, Json(body)).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({ "status": "alive", "service": "predifi-backend" })),
+    )
+        .into_response()
 }
 
-/// Health-check handler — full dependency diagnostic endpoint.
 async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
 
@@ -95,38 +83,25 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
 
-    // Try RPC health check with retry logic
     let mut rpc_attempts = 0;
     let max_attempts = state.config.rpc_health_retry_count as usize;
-
     while rpc_attempts < max_attempts {
         rpc_attempts += 1;
-
-        let rpc_req = client
+        let ok = client
             .post(&state.config.stellar_rpc_url)
-            .json(&serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getHealth"
-            }))
+            .json(&serde_json::json!({"jsonrpc":"2.0","id":1,"method":"getHealth"}))
             .send()
-            .await;
-
-        match rpc_req {
-            Ok(res) if res.status().is_success() => {
-                break;
-            }
-            Ok(_res) => {}
-            Err(_e) => {}
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if ok {
+            break;
         }
-
-        // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
         if rpc_attempts < max_attempts {
-            let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
-            sleep(Duration::from_secs(backoff_duration)).await;
+            let backoff = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
+            sleep(Duration::from_secs(backoff)).await;
         }
     }
-
     if rpc_attempts >= max_attempts {
         rpc_status = "unreachable";
         all_healthy = false;
@@ -166,13 +141,6 @@ async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::respo
     }
 }
 
-/// Readiness probe handler — signals whether the service can accept traffic.
-///
-/// Unlike the lightweight `/live` liveness endpoint, this probe verifies that
-/// critical runtime dependencies (database, Redis, and price cache) are ready.
-/// Kubernetes (and similar orchestrators) use readiness probes to decide
-/// whether to route traffic to a pod; returning `503` here temporarily removes
-/// the instance from the load-balancer rotation until dependencies recover.
 async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
 
@@ -193,15 +161,9 @@ async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::respon
     }
 
     let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
-        (
-            "not_configured",
-            Some("Redis is not configured".to_string()),
-        )
+        ("not_configured", Some("Redis is not configured".to_string()))
     } else if !state.redis.ping().await {
-        (
-            "unreachable",
-            Some("Redis ping failed — connection may be lost".to_string()),
-        )
+        ("unreachable", Some("Redis ping failed".to_string()))
     } else {
         ("ok", None)
     };
@@ -211,10 +173,7 @@ async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::respon
 
     let (price_cache_status, price_cache_error): (&str, Option<String>) =
         if state.cache.snapshot().is_empty() {
-            (
-                "not_ready",
-                Some("price cache is empty — oracle data not yet loaded".to_string()),
-            )
+            ("not_ready", Some("price cache is empty".to_string()))
         } else {
             ("ok", None)
         };
@@ -224,16 +183,8 @@ async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::respon
 
     let body = json!({
         "status": if ready { "ready" } else { "not_ready" },
-        "dependencies": {
-            "db": db_status,
-            "redis": redis_status,
-            "price_cache": price_cache_status,
-        },
-        "errors": {
-            "db": db_error,
-            "redis": redis_error,
-            "price_cache": price_cache_error,
-        }
+        "dependencies": { "db": db_status, "redis": redis_status, "price_cache": price_cache_status },
+        "errors":       { "db": db_error, "redis": redis_error,   "price_cache": price_cache_error  }
     });
 
     if ready {
@@ -243,16 +194,11 @@ async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::respon
     }
 }
 
-/// Root handler — returns a welcome message.
 async fn root() -> Json<serde_json::Value> {
-    Json(json!({
-        "message": "Welcome to the PrediFi backend",
-        "api": "/api/v1"
-    }))
+    Json(json!({ "message": "Welcome to the PrediFi backend", "api": "/api/v1" }))
 }
 
-/// Metrics endpoint exposed to Prometheus.
-async fn metrics(State(state): State<crate::routes::v1::AppState>) -> impl IntoResponse {
+async fn metrics_handler(State(state): State<crate::routes::v1::AppState>) -> impl IntoResponse {
     match state.metrics.gather_text() {
         Ok(body) => (
             axum::http::StatusCode::OK,
@@ -274,76 +220,45 @@ async fn metrics_middleware(
 ) -> axum::response::Response {
     let method = request.method().to_string();
     let path = request.uri().path().to_string();
-
     let response = next.run(request).await;
     let status = response.status().as_u16().to_string();
-
     metrics
         .http_requests_total
         .with_label_values(&[&method, &path, &status])
         .inc();
-
     response
 }
 
-/// Build the Axum router with CORS, logging, and rate limiting middleware.
+// ── Router builders ───────────────────────────────────────────────────────────
+
+/// Build the full router without a DB pool (for tests / rate-limit tests).
+///
+/// Rate limiting is excluded here; use [`build_router_with_rate_limit`] when
+/// you need it in non-test contexts.
 pub fn build_router(
     config: Config,
     cache: crate::price_cache::PriceCache,
     redis: crate::redis_cache::RedisCache,
     event_bus: crate::ws::EventBus,
 ) -> Router {
-    if cfg!(test) {
-        // Unit tests run in parallel and share the same Governor key extractor,
-        // which can cause unrelated tests to rate-limit each other. Use an
-        // effectively-unlimited quota for tests.
-        build_router_with_rate_period(
-            config,
-            cache,
-            redis,
-            event_bus,
-            std::time::Duration::from_secs(1),
-            u32::MAX,
-        )
-    } else {
-        build_router_with_rate_limit(
-            config,
-            cache,
-            redis,
-            event_bus,
-            crate::constants::RATE_LIMIT_PERIOD_SECS,
-            crate::constants::RATE_LIMIT_BURST_SIZE,
-        )
-    }
+    build_router_with_rate_limit(
+        config,
+        cache,
+        redis,
+        event_bus,
+        crate::constants::RATE_LIMIT_PERIOD_SECS,
+        crate::constants::RATE_LIMIT_BURST_SIZE,
+    )
 }
 
-/// Build the Axum router with explicit rate limit settings.
+/// Build the Axum router with explicit rate-limit settings (no DB pool).
 pub fn build_router_with_rate_limit(
     config: Config,
     cache: crate::price_cache::PriceCache,
     redis: crate::redis_cache::RedisCache,
     event_bus: crate::ws::EventBus,
-    per_second: u64,
-    burst_size: u32,
-) -> Router {
-    build_router_with_rate_period(
-        config,
-        cache,
-        redis,
-        event_bus,
-        std::time::Duration::from_secs(per_second),
-        burst_size,
-    )
-}
-
-#[allow(unused_variables)]
-fn build_router_with_rate_period(
-    config: Config,
-    cache: crate::price_cache::PriceCache,
-    redis: crate::redis_cache::RedisCache,
-    event_bus: crate::ws::EventBus,
-    period: std::time::Duration,
-    burst_size: u32,
+    _per_second: u64,
+    _burst_size: u32,
 ) -> Router {
     let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
         eprintln!("failed to initialize Prometheus metrics: {error}");
@@ -359,12 +274,12 @@ fn build_router_with_rate_period(
         event_bus: event_bus.clone(),
     };
 
-    let router = Router::new()
+    Router::new()
         .route("/", get(root))
         .route("/live", get(live))
         .route("/health", get(health))
         .route("/ready", get(ready))
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(metrics_handler))
         .with_state(state)
         .nest(
             "/api",
@@ -378,16 +293,9 @@ fn build_router_with_rate_period(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(
-            prometheus_metrics.clone(),
-            metrics_middleware,
-        ))
+        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
         .layer(build_cors(&config))
-        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
-
-    // Per-route rate limiting is applied inside `routes/v1.rs` via
-    // `crate::rate_limit::with_rate_limit`.  No global GovernorLayer here.
-    router
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
 }
 
 /// Build the Axum router with a live database pool.
@@ -399,7 +307,6 @@ fn build_router_with_db(
     event_bus: crate::ws::EventBus,
     prometheus_metrics: SharedMetrics,
 ) -> Router {
-
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
@@ -409,12 +316,12 @@ fn build_router_with_db(
         event_bus: event_bus.clone(),
     };
 
-    let router = Router::new()
+    Router::new()
         .route("/", get(root))
         .route("/live", get(live))
         .route("/health", get(health))
         .route("/ready", get(ready))
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(metrics_handler))
         .with_state(state)
         .nest(
             "/api",
@@ -428,49 +335,30 @@ fn build_router_with_db(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(
-            prometheus_metrics.clone(),
-            metrics_middleware,
-        ))
+        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
         .layer(build_cors(&config))
-        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
-
-    // Per-route rate limiting is applied inside `routes/v1.rs` via
-    // `crate::rate_limit::with_rate_limit`.  No global GovernorLayer here.
-    router
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
 }
 
+// ── Server entry points ───────────────────────────────────────────────────────
+
 /// Initialise all dependencies, build the router, and start serving.
-///
-/// This delegates to [`run_with_signal`] using [`crate::shutdown::wait_for_signal`]
-/// so that SIGINT, SIGTERM and (on Unix) SIGHUP cause a graceful drain of
-/// in-flight requests before the process exits.
 pub async fn run(config: Config) {
     run_with_signal(config, shutdown::wait_for_signal()).await;
 }
 
 /// Initialise all dependencies, build the router, start serving, and tear
-/// everything down again on `signal`.
+/// everything down again when `signal` resolves.
 ///
-/// The function is split out from [`run`] so the shutdown plumbing is
-/// testable: callers (notably the integration tests in [`crate::tests`])
-/// pass a hand-crafted future instead of relying on real OS signals.
+/// Split out from [`run`] so the shutdown plumbing is testable via a
+/// hand-crafted future rather than real OS signals.
 ///
-/// # Order of operations on shutdown
-///
-/// 1. The provided `signal` future resolves (this is what kicks off the
-///    drain — Axum then refuses new connections and waits for in-flight
-///    ones to finish).
-/// 2. The HTTP server future is awaited with [`shutdown::with_shutdown_timeout`]
-///    giving in-flight requests up to `config.shutdown_timeout_secs` to
-///    finish.  This protects the process from being held hostage by a
-///    stuck handler.
-/// 3. The PostgreSQL connection pool is closed via [`sqlx::Pool::close`].
-///    In-flight queries get a chance to finish because `close` waits for
-///    outstanding checkouts to be returned.
-/// 4. Background workers (the price-cache fetcher and the Stellar event
-///    listener) are aborted so they do not keep the runtime alive after
-///    the listener has gone away.
+/// # Shutdown order
+/// 1. `signal` resolves → Axum stops accepting new connections.
+/// 2. In-flight requests drain (bounded by `config.shutdown_timeout_secs`).
+/// 3. Background workers (price-cache fetcher, Stellar listener) are aborted.
+/// 4. PostgreSQL pool is closed.
+/// 5. OTel batch exporter is flushed via [`crate::telemetry::shutdown_tracer_provider`].
 pub async fn run_with_signal<F>(config: Config, signal: F)
 where
     F: Future<Output = ()> + Send + 'static,
@@ -492,19 +380,31 @@ where
         crate::price_cache::spawn_fetcher(cache.clone(), Some(prometheus_metrics.clone()));
 
     let event_bus = crate::ws::EventBus::new();
-
-    // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
-    // Initialize Redis cache
     let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
 
-    let listener_handle: JoinHandle<()> = crate::worker::stellar_listener::spawn(
-        config.stellar_rpc_url.clone(),
-        pool.clone(),
-        event_bus.clone(),
-        redis.clone(),
-        std::time::Duration::from_secs(config.rpc_timeout_secs),
-        config.indexer_max_batch_size,
-    );
+    // Clone before moving into the worker closure.
+    let listener_rpc_url = config.stellar_rpc_url.clone();
+    let listener_pool = pool.clone();
+    let listener_event_bus = event_bus.clone();
+    let listener_redis = redis.clone();
+    let listener_rpc_timeout = Duration::from_secs(config.rpc_timeout_secs);
+    let listener_batch_size = config.indexer_max_batch_size;
+
+    // spawn_worker roots the listener under a named OTel span so all Stellar
+    // sync traces are correlated in the trace backend.
+    let listener_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("stellar_listener", async move {
+            crate::worker::stellar_listener::run_worker(
+                listener_rpc_url,
+                listener_pool,
+                listener_event_bus,
+                listener_redis,
+                listener_rpc_timeout,
+                listener_batch_size,
+            )
+            .await;
+        });
+
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
@@ -521,7 +421,6 @@ where
     );
 
     let bind_addr = config.bind_address();
-
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
         .unwrap_or_else(|error| {
@@ -539,88 +438,54 @@ where
 
     let drain_timeout = Duration::from_secs(config.shutdown_timeout_secs.max(1));
 
-    // `axum::serve().with_graceful_shutdown(...)` resolves with
-    // `Result<(), std::io::Error>` so we cannot reuse the
-    // `shutdown::with_shutdown_timeout` helper directly — instead inline a
-    // short match so every branch records whether the drain completed,
-    // the handler returned an error, or we blew the deadline.
     match tokio::time::timeout(drain_timeout, server).await {
-        Ok(Ok(())) => {
-            info!(
-                timeout_secs = drain_timeout.as_secs(),
-                "HTTP server drained in-flight requests cleanly"
-            );
-        }
-        Ok(Err(error)) => {
-            warn!(
-                error = %error,
-                "HTTP server returned an error during shutdown drain"
-            );
-        }
-        Err(_) => {
-            warn!(
-                component = "http server drain",
-                timeout_secs = drain_timeout.as_secs(),
-                "HTTP drain exceeded shutdown timeout; aborting in-flight handlers"
-            );
-        }
+        Ok(Ok(())) => info!(
+            timeout_secs = drain_timeout.as_secs(),
+            "HTTP server drained in-flight requests cleanly"
+        ),
+        Ok(Err(error)) => warn!(error = %error, "HTTP server returned an error during shutdown drain"),
+        Err(_) => warn!(
+            component = "http server drain",
+            timeout_secs = drain_timeout.as_secs(),
+            "HTTP drain exceeded shutdown timeout; aborting in-flight handlers"
+        ),
     }
 
-    // Stop the background workers *before* closing the database pool so
-    // they cannot race the close by acquiring a fresh connection from the
-    // pool between `pool.close().await` starting and completing.  The
-    // listeners' loops are stateless w.r.t. in-flight work — the ledger
-    // cursor persists to the database after every successful poll — so a
-    // restarted worker will resume from the last persisted position.
+    // Abort workers before closing the pool so they cannot race it.
     fetcher_handle.abort();
     listener_handle.abort();
 
-    // Close the database pool last so any in-flight query the listener was
-    // already running gets a chance to finish, and no NEW query can be
-    // submitted because the workers were already aborted above.
-    shutdown::with_shutdown_timeout(
-        drain_timeout,
-        "database pool close",
-        pool.close(),
-    )
-    .await;
+    // Close the pool after aborting workers.
+    shutdown::with_shutdown_timeout(drain_timeout, "database pool close", pool.close()).await;
+
+    // Flush the OTel batch exporter — must happen after all spans are done.
+    crate::telemetry::shutdown_tracer_provider();
 
     info!("graceful shutdown complete");
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::{Config, DEFAULT_CORS_ORIGINS};
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    /// Build a [`Config`] whose CORS origins are exactly `origins`.
     fn config_with_origins(origins: Vec<&str>) -> Config {
         let mut cfg = Config::default_for_test();
         cfg.cors_allowed_origins = origins.into_iter().map(|s| s.to_string()).collect();
         cfg
     }
 
-    // ── CORS whitelist tests ──────────────────────────────────────────────────
-
-    /// `build_cors` must accept origins that are already validated by the
-    /// config layer without panicking or silently dropping them.
     #[test]
     fn build_cors_accepts_valid_https_origin() {
         let cfg = config_with_origins(vec!["https://predifi.app"]);
-        // build_cors must not panic; it returns a CorsLayer
         let _layer = build_cors(&cfg);
     }
 
-    /// All three default origins must parse into valid header values, i.e.
-    /// none of them should be silently skipped by the `filter_map` in
-    /// `build_cors`.
     #[test]
     fn build_cors_default_origins_are_all_valid_header_values() {
         let cfg = config_with_origins(DEFAULT_CORS_ORIGINS.to_vec());
-        // If any default origin was malformed it would be silently dropped.
-        // We verify all of them survive the filter_map.
         let valid_count = cfg
             .cors_allowed_origins
             .iter()
@@ -633,19 +498,13 @@ mod tests {
         );
     }
 
-    /// An origin with a port should also parse correctly.
     #[test]
     fn build_cors_accepts_origin_with_port() {
         let cfg = config_with_origins(vec!["http://localhost:5173"]);
         let _layer = build_cors(&cfg);
-        // Verify the origin itself is parseable
-        assert!(
-            "http://localhost:5173".parse::<HeaderValue>().is_ok(),
-            "localhost origin with port must be a valid HeaderValue"
-        );
+        assert!("http://localhost:5173".parse::<HeaderValue>().is_ok());
     }
 
-    /// Multiple simultaneous origins must all be accepted.
     #[test]
     fn build_cors_accepts_multiple_origins() {
         let cfg = config_with_origins(vec![
@@ -656,33 +515,18 @@ mod tests {
         let _layer = build_cors(&cfg);
     }
 
-    /// An empty origins list produces a CORS layer that allows no origin
-    /// (all cross-origin requests will be rejected by the browser).
     #[test]
     fn build_cors_with_empty_origins_does_not_panic() {
         let cfg = config_with_origins(vec![]);
-        // Must not panic — the layer simply allows nothing.
         let _layer = build_cors(&cfg);
     }
 
-    /// Verifies that the CORS-allowed-origins field on [`Config`] is read
-    /// directly from the config struct, confirming that `build_cors` honours
-    /// the runtime configuration rather than hard-coding any origins.
     #[test]
     fn build_cors_uses_config_origins_not_hardcoded_list() {
         let cfg_a = config_with_origins(vec!["https://app-a.example.com"]);
         let cfg_b = config_with_origins(vec!["https://app-b.example.com"]);
-
-        // Both configs must produce valid CorsLayer instances — this confirms
-        // the function is parametric over the config rather than referencing
-        // a fixed list.
         let _layer_a = build_cors(&cfg_a);
         let _layer_b = build_cors(&cfg_b);
-
-        assert_ne!(
-            cfg_a.cors_allowed_origins,
-            cfg_b.cors_allowed_origins,
-            "the two configs must differ so the test is meaningful"
-        );
+        assert_ne!(cfg_a.cors_allowed_origins, cfg_b.cors_allowed_origins);
     }
 }

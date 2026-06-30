@@ -32,31 +32,22 @@ pub mod ws;
 use crate::config::Config;
 use crate::metrics::Metrics;
 use crate::request_logger::LoggingLayer;
+use axum::extract::State;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
 use http::HeaderValue;
-use sentry_tracing::layer as sentry_tracing_layer;
 use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration as TokioDuration;
 use tokio::time::sleep;
-#[cfg(not(test))]
-use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::EnvFilter;
 
 /// Build the CORS middleware layer from the validated origin list in `config`.
-///
-/// Only the origins listed in [`Config::cors_allowed_origins`] are permitted.
-/// The list is validated at startup (see `config::parse_cors_origins`), so any
-/// entry that reaches this function is already a well-formed `http://` or
-/// `https://` origin.  Entries that cannot be parsed into a [`HeaderValue`] are
-/// silently skipped (this should never happen in practice given the prior
-/// validation).
 pub fn build_cors(config: &Config) -> CorsLayer {
     let origins: Vec<HeaderValue> = config
         .cors_allowed_origins
@@ -79,8 +70,6 @@ pub fn build_cors(config: &Config) -> CorsLayer {
             http::header::ACCEPT,
         ])
 }
-
-use axum::extract::State;
 
 /// Check database health with a simple query.
 async fn check_db_health(db: &Option<sqlx::PgPool>) -> (String, String) {
@@ -127,10 +116,9 @@ async fn check_rpc_health(rpc_url: &str, timeout_secs: u64, retry_count: u8) -> 
             }
         }
 
-        // Exponential backoff: 2^(attempt) seconds, capped at 5 seconds
         if attempt < max_attempts - 1 {
-            let backoff_duration = std::cmp::min(2u64.pow(attempt as u32), 5);
-            sleep(TokioDuration::from_secs(backoff_duration)).await;
+            let backoff = std::cmp::min(2u64.pow(attempt as u32), 5);
+            sleep(TokioDuration::from_secs(backoff)).await;
         }
     }
 
@@ -157,7 +145,6 @@ async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Re
         all_healthy = false;
     }
 
-    /// Check Redis health and availability.
     async fn check_redis_health(redis: &redis_cache::RedisCache) -> (String, String) {
         if !redis.is_available() {
             return ("not_configured".to_string(), String::new());
@@ -168,7 +155,6 @@ async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Re
         ("ok".to_string(), String::new())
     }
 
-    /// Check price cache health.
     fn check_price_cache_health(cache: &price_cache::PriceCache) -> (String, String) {
         if cache.snapshot().is_empty() {
             return ("not_ready".to_string(), "price cache is empty".to_string());
@@ -235,7 +221,7 @@ async fn metrics(State(state): State<routes::v1::AppState>) -> impl IntoResponse
     }
 }
 
-/// Build the Axum router with CORS, logging, and rate limiting middleware.
+/// Build the Axum router (no DB pool, no rate limiting — for tests / health-only deployments).
 pub fn build_router(
     config: Config,
     cache: price_cache::PriceCache,
@@ -256,7 +242,7 @@ pub fn build_router(
         event_bus: event_bus.clone(),
     };
 
-    let router = Router::new()
+    Router::new()
         .route("/", get(root))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
@@ -274,30 +260,7 @@ pub fn build_router(
         )
         .merge(openapi::swagger_router())
         .layer(build_cors(&config))
-        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
-
-    #[cfg(not(test))]
-    let router = {
-        let governor_conf = Arc::new(
-            GovernorConfigBuilder::default()
-                .per_second(5)
-                .burst_size(50)
-                .error_handler(|_| {
-                    (
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
-                })
-                .finish()
-                .unwrap(),
-        );
-        router.layer(tower_governor::GovernorLayer {
-            config: governor_conf,
-        })
-    };
-
-    router
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
 }
 
 /// Build the Axum router with a live database pool.
@@ -322,23 +285,7 @@ pub fn build_router_with_db(
         event_bus: event_bus.clone(),
     };
 
-    #[cfg(not(test))]
-    let governor_conf = Arc::new(
-        GovernorConfigBuilder::default()
-            .per_second(5)
-            .burst_size(50)
-            .error_handler(|_| {
-                (
-                    axum::http::StatusCode::TOO_MANY_REQUESTS,
-                    "Too Many Requests",
-                )
-                    .into_response()
-            })
-            .finish()
-            .unwrap(),
-    );
-
-    let router = Router::new()
+    Router::new()
         .route("/", get(root))
         .route("/health", get(health))
         .route("/metrics", get(metrics))
@@ -356,14 +303,7 @@ pub fn build_router_with_db(
         )
         .merge(openapi::swagger_router())
         .layer(build_cors(&config))
-        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()));
-
-    #[cfg(not(test))]
-    let router = router.layer(tower_governor::GovernorLayer {
-        config: governor_conf,
-    });
-
-    router
+        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
 }
 
 /// Initialise tracing, build the server, and run it to completion.
@@ -373,43 +313,24 @@ pub async fn run_server(config: Config) {
         std::process::exit(1);
     });
 
-    let filter = EnvFilter::new(config.log_level.clone());
-    let use_json = true;
+    // Try to initialise the OTel tracer provider.
+    // When TELEMETRY_ENABLED is not "true" (the default) this is a no-op and
+    // we fall back to a plain fmt subscriber so the server works without a
+    // collector configured.
+    let otel_tracer = telemetry::init_telemetry_from_env();
+    let log_level = config.log_level.clone();
 
-    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
-
-    let registry = tracing_subscriber::registry().with(filter);
-
-    if use_json {
-        let registry = registry.with(fmt_layer.json());
-        if let Some(dsn) = config.sentry_dsn.as_ref() {
-            let _guard = sentry::init((
-                dsn.as_str(),
-                sentry::ClientOptions {
-                    release: Some(env!("CARGO_PKG_VERSION").into()),
-                    ..Default::default()
-                },
-            ));
-            let registry = registry.with(sentry_tracing_layer());
-            registry.init();
-        } else {
-            registry.init();
-        }
+    if let Some(tracer) = otel_tracer {
+        // Full OTel stack: EnvFilter + OTel layer + fmt layer.
+        telemetry::init_tracing_subscriber(tracer, &log_level, true);
     } else {
-        let registry = registry.with(fmt_layer.compact());
-        if let Some(dsn) = config.sentry_dsn.as_ref() {
-            let _guard = sentry::init((
-                dsn.as_str(),
-                sentry::ClientOptions {
-                    release: Some(env!("CARGO_PKG_VERSION").into()),
-                    ..Default::default()
-                },
-            ));
-            let registry = registry.with(sentry_tracing_layer());
-            registry.init();
-        } else {
-            registry.init();
-        }
+        // No OTel — plain fmt subscriber.
+        let filter = EnvFilter::new(&log_level);
+        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(fmt_layer.json())
+            .init();
     }
 
     info!("starting predifi-backend server");
@@ -417,11 +338,13 @@ pub async fn run_server(config: Config) {
     server::run(config).await;
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "integration-tests"))]
 mod db_integration_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "integration-tests"))]
 mod redis_integration_tests;
-#[cfg(test)]
+#[cfg(all(test, feature = "integration-tests"))]
 mod test_support;
+#[cfg(test)]
+mod mock_rpc_helpers;
 #[cfg(test)]
 mod tests;
