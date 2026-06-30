@@ -12747,7 +12747,8 @@ fn test_delisted_token_prevents_prediction() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) = setup(&env);
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
@@ -12776,7 +12777,14 @@ fn test_delisted_token_prevents_prediction() {
             soroban_sdk::String::from_str(&env, "Outcome 1"),
         ],
     };
-    let pool_id = client.create_pool(&creator, &end_time, &token_address, &2u32, &soroban_sdk::Symbol::new(&env, "Sports"), &config);
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &soroban_sdk::Symbol::new(&env, "Sports"),
+        &config,
+    );
 
     // Remove token from whitelist
     client.remove_token_from_whitelist(&admin, &token_address);
@@ -12785,9 +12793,514 @@ fn test_delisted_token_prevents_prediction() {
     client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// FEE TIMELOCK TESTS
-// ═══════════════════════════════════════════════════════════════════════════
+// ==============================================================================
+// Batch Whitelist Tests
+// ==============================================================================
+
+#[test]
+fn test_batch_add_to_whitelist_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+    let user_3 = Address::generate(&env);
+
+    // Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Batch add users to whitelist
+    let users = vec![&env, user_1.clone(), user_2.clone(), user_3.clone()];
+    let added_count = client.batch_add_to_whitelist(&creator, &pool_id, &users);
+
+    // Verify all users were added
+    assert_eq!(added_count, 3);
+    assert!(client.is_whitelisted(&pool_id, &user_1));
+    assert!(client.is_whitelisted(&pool_id, &user_2));
+    assert!(client.is_whitelisted(&pool_id, &user_3));
+}
+
+#[test]
+fn test_batch_add_to_whitelist_skips_duplicates() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+
+    // Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // First batch add
+    let users = vec![&env, user_1.clone(), user_2.clone()];
+    let added_count_1 = client.batch_add_to_whitelist(&creator, &pool_id, &users);
+    assert_eq!(added_count_1, 2);
+
+    // Second batch add with same users (should skip them)
+    let added_count_2 = client.batch_add_to_whitelist(&creator, &pool_id, &users);
+    assert_eq!(added_count_2, 0);
+
+    // Users should still be whitelisted
+    assert!(client.is_whitelisted(&pool_id, &user_1));
+    assert!(client.is_whitelisted(&pool_id, &user_2));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_batch_add_to_whitelist_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let non_creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+
+    // Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Try to batch add with non-creator (should panic)
+    let users = vec![&env, user_1];
+    client.batch_add_to_whitelist(&non_creator, &pool_id, &users);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #24)")]
+fn test_batch_add_to_whitelist_non_private_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+
+    // Create a public pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Public Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false, // Public pool
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Try to batch add to public pool (should panic)
+    let users = vec![&env, user_1];
+    client.batch_add_to_whitelist(&creator, &pool_id, &users);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #90)")]
+fn test_batch_add_to_whitelist_empty_vector() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+
+    // Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Try to batch add with empty vector (should panic)
+    let users = vec![&env];
+    client.batch_add_to_whitelist(&creator, &pool_id, &users);
+}
+
+#[test]
+fn test_batch_remove_from_whitelist_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+    let user_3 = Address::generate(&env);
+
+    // Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Batch add users
+    let users = vec![&env, user_1.clone(), user_2.clone(), user_3.clone()];
+    client.batch_add_to_whitelist(&creator, &pool_id, &users);
+
+    // Verify all users are whitelisted
+    assert!(client.is_whitelisted(&pool_id, &user_1));
+    assert!(client.is_whitelisted(&pool_id, &user_2));
+    assert!(client.is_whitelisted(&pool_id, &user_3));
+
+    // Batch remove users
+    let removed_count = client.batch_remove_from_whitelist(&creator, &pool_id, &users);
+    assert_eq!(removed_count, 3);
+
+    // Verify all users are no longer whitelisted
+    assert!(!client.is_whitelisted(&pool_id, &user_1));
+    assert!(!client.is_whitelisted(&pool_id, &user_2));
+    assert!(!client.is_whitelisted(&pool_id, &user_3));
+}
+
+#[test]
+fn test_batch_remove_from_whitelist_skips_non_whitelisted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+
+    // Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Only add user_1 to whitelist
+    let users_to_add = vec![&env, user_1.clone()];
+    client.batch_add_to_whitelist(&creator, &pool_id, &users_to_add);
+
+    // Try to remove both users (only user_1 is whitelisted)
+    let users_to_remove = vec![&env, user_1.clone(), user_2.clone()];
+    let removed_count = client.batch_remove_from_whitelist(&creator, &pool_id, &users_to_remove);
+
+    // Only user_1 should have been removed
+    assert_eq!(removed_count, 1);
+    assert!(!client.is_whitelisted(&pool_id, &user_1));
+}
+
+#[test]
+fn test_batch_check_whitelist_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+    let user_3 = Address::generate(&env);
+
+    // Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Add only user_1 and user_2 to whitelist
+    let users_to_add = vec![&env, user_1.clone(), user_2.clone()];
+    client.batch_add_to_whitelist(&creator, &pool_id, &users_to_add);
+
+    // Batch check all three users
+    let users_to_check = vec![&env, user_1.clone(), user_2.clone(), user_3.clone()];
+    let results = client.batch_check_whitelist(&pool_id, &users_to_check);
+
+    // Verify results
+    assert_eq!(results.len(), 3);
+    assert_eq!(results.get(0).unwrap(), true); // user_1 is whitelisted
+    assert_eq!(results.get(1).unwrap(), true); // user_2 is whitelisted
+    assert_eq!(results.get(2).unwrap(), false); // user_3 is not whitelisted
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #90)")]
+fn test_batch_check_whitelist_empty_vector() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+
+    // Try to batch check with empty vector (should panic)
+    let users = vec![&env];
+    client.batch_check_whitelist(&0u64, &users);
+}
+
+#[test]
+fn test_batch_check_whitelist_all_not_whitelisted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+
+    // Create a private pool without adding anyone to whitelist
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Batch check users (none should be whitelisted)
+    let users_to_check = vec![&env, user_1, user_2];
+    let results = client.batch_check_whitelist(&pool_id, &users_to_check);
+
+    // Verify all are false
+    assert_eq!(results.len(), 2);
+    assert_eq!(results.get(0).unwrap(), false);
+    assert_eq!(results.get(1).unwrap(), false);
+}
+
+#[test]
+fn test_batch_whitelist_operations_emit_events() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, _) = setup(&env);
+    let creator = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+
+    // Create a private pool
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &crate::PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Private Pool"),
+            metadata_url: String::from_str(&env, "ipfs://meta"),
+            min_stake: 1,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 0,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: true,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    // Batch add users and verify events are emitted
+    let users = vec![&env, user_1.clone(), user_2.clone()];
+    client.batch_add_to_whitelist(&creator, &pool_id, &users);
+
+    // Check that AddedToWhitelistEvent was emitted for each user
+    let events = env.events().all();
+    let whitelist_events: Vec<_> = events
+        .iter()
+        .filter(|(_, topic, _)| {
+            topic
+                .last()
+                .map_or(false, |t| t.to_string().contains("AddedToWhitelistEvent"))
+        })
+        .collect();
+
+    // Should have 2 AddedToWhitelistEvent events
+    assert!(whitelist_events.len() >= 2);
+
+// ============================================================================
+// TESTS FOR CUSTOM TOKEN TRANSFER VALIDATION CHECKS
+// ============================================================================
 
 #[test]
 fn test_propose_fee_bps_stores_pending_change() {

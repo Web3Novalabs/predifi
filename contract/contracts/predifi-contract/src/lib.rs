@@ -2020,16 +2020,34 @@ impl PredifiContract {
         }
 
         // Enforce the same 30-day cap on resolution_delay that
-            // set_resolution_delay enforces, so the contract cannot be
-            // initialised with an unbounded delay.
-            if resolution_delay > MAX_RESOLUTION_DELAY {
-                soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
-            }
+        // set_resolution_delay enforces, so the contract cannot be
+        // initialised with an unbounded delay.
+        if resolution_delay > MAX_RESOLUTION_DELAY {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidData);
+        }
 
-            // Validate fee_bps on init — consistent with set_fee_bps (INV-6)
-            if !Self::is_valid_fee_bps(fee_bps) {
-                soroban_sdk::panic_with_error!(&env, PredifiError::InvalidFeeBps);
-            }
+        // Validate fee_bps on init — consistent with set_fee_bps (INV-6)
+        if !Self::is_valid_fee_bps(fee_bps) {
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidFeeBps);
+        }
+
+        let config = Config {
+            fee_bps,
+            treasury: treasury.clone(),
+            access_control: access_control.clone(),
+            resolution_delay,
+            min_pool_duration,
+            min_stake: DEFAULT_GLOBAL_MIN_STAKE,
+            max_predictions_per_user,
+            prediction_cooldown_seconds: DEFAULT_PREDICTION_COOLDOWN_SECONDS,
+            referral_bps: 5000, // default 50%
+        };
+        env.storage().instance().set(&DataKey::Config, &config);
+        env.storage().instance().set(&DataKey::PoolIdCtr, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::Version, &CONTRACT_VERSION);
+        Self::extend_instance(&env);
 
             let config = Config {
                 fee_bps,
@@ -2061,43 +2079,43 @@ impl PredifiContract {
             .publish(&env);
     }
 
-   /// Pause the contract.
-///
-/// # Authorization
-/// Requires authentication from a caller with the Admin role.
-///
-/// # Effects
-/// - Marks the contract as paused.
-/// - Emits `ContractPausedAlertEvent`.
-/// - Emits `PauseEvent`.
-///
-/// While paused, administrative checks continue to work, but
-/// state-changing operations guarded by the pause flag are rejected.
-pub fn pause(env: Env, admin: Address) {
-    admin.require_auth();
-    if Self::require_admin_role(&env, &admin, "pause").is_err() {
-        panic!("Unauthorized: missing required role");
-    }
-    env.storage().instance().set(&DataKey::Paused, &true);
-    Self::extend_instance(&env);
+    /// Pause the contract.
+    ///
+    /// # Authorization
+    /// Requires authentication from a caller with the Admin role.
+    ///
+    /// # Effects
+    /// - Marks the contract as paused.
+    /// - Emits `ContractPausedAlertEvent`.
+    /// - Emits `PauseEvent`.
+    ///
+    /// While paused, administrative checks continue to work, but
+    /// state-changing operations guarded by the pause flag are rejected.
+    pub fn pause(env: Env, admin: Address) {
+        admin.require_auth();
+        if Self::require_admin_role(&env, &admin, "pause").is_err() {
+            panic!("Unauthorized: missing required role");
+        }
+        env.storage().instance().set(&DataKey::Paused, &true);
+        Self::extend_instance(&env);
 
-    ContractPausedAlertEvent {
-        admin: admin.clone(),
-        timestamp: env.ledger().timestamp(),
-    }
-    .publish(&env);
+        ContractPausedAlertEvent {
+            admin: admin.clone(),
+            timestamp: env.ledger().timestamp(),
+        }
+        .publish(&env);
 
-    PauseEvent { admin }.publish(&env);
-}
+        PauseEvent { admin }.publish(&env);
+    }
 
     /// Resume normal contract operation.
-///
-/// # Authorization
-/// Requires authentication from a caller with the Admin role.
-///
-/// # Effects
-/// - Clears the paused state.
-/// - Emits `UnpauseEvent`.
+    ///
+    /// # Authorization
+    /// Requires authentication from a caller with the Admin role.
+    ///
+    /// # Effects
+    /// - Clears the paused state.
+    /// - Emits `UnpauseEvent`.
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         if Self::require_admin_role(&env, &admin, "unpause").is_err() {
@@ -4895,6 +4913,231 @@ pub fn pause(env: Env, admin: Address) {
         is_whitelisted
     }
 
+    /// Batch add multiple users to a private pool's whitelist.
+    ///
+    /// This optimized function reduces storage operations by processing
+    /// multiple users in a single transaction, improving gas efficiency.
+    ///
+    /// # Arguments
+    /// * `creator` - The pool creator (must match pool.creator)
+    /// * `pool_id` - The pool identifier
+    /// * `users` - Vector of addresses to add to the whitelist
+    ///
+    /// # Returns
+    /// Result indicating success or a PredifiError
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If caller is not the pool creator
+    /// * `PoolNotFound` - If the pool doesn't exist
+    /// * `InvalidPoolState` - If pool is not private
+    /// * `InvalidData` - If users vector is empty or exceeds max batch size
+    pub fn batch_add_to_whitelist(
+        env: Env,
+        creator: Address,
+        pool_id: u64,
+        users: Vec<Address>,
+    ) -> Result<u32, PredifiError> {
+        const MAX_BATCH_SIZE: u32 = 100;
+
+        Self::require_not_paused(&env)?;
+        creator.require_auth();
+
+        // Validate batch size
+        let batch_size = users.len();
+        if batch_size == 0 {
+            return Err(PredifiError::InvalidData);
+        }
+        if batch_size > MAX_BATCH_SIZE {
+            return Err(PredifiError::InvalidData);
+        }
+
+        // Load and validate pool
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .ok_or(PredifiError::PoolNotFound)?;
+        Self::extend_persistent(&env, &pool_key);
+
+        // Authorization check
+        if pool.creator != creator {
+            return Err(PredifiError::Unauthorized);
+        }
+
+        // Pool must be private
+        if !pool.private {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Batch process: add all users to whitelist
+        let mut added_count: u32 = 0;
+        let timestamp = env.ledger().timestamp();
+
+        for user in users.iter() {
+            let whitelist_key = DataKey::Whitelist(pool_id, user.clone());
+
+            // Only add if not already whitelisted
+            let already_whitelisted = env
+                .storage()
+                .persistent()
+                .get(&whitelist_key)
+                .unwrap_or(false);
+
+            if !already_whitelisted {
+                env.storage().persistent().set(&whitelist_key, &true);
+                Self::extend_persistent(&env, &whitelist_key);
+                added_count += 1;
+
+                // Emit event for each user
+                AddedToWhitelistEvent {
+                    pool_id,
+                    user,
+                    added_by: creator.clone(),
+                    timestamp,
+                }
+                .publish(&env);
+            }
+        }
+
+        Ok(added_count)
+    }
+
+    /// Batch remove multiple users from a private pool's whitelist.
+    ///
+    /// This optimized function reduces storage operations by processing
+    /// multiple users in a single transaction, improving gas efficiency.
+    ///
+    /// # Arguments
+    /// * `creator` - The pool creator (must match pool.creator)
+    /// * `pool_id` - The pool identifier
+    /// * `users` - Vector of addresses to remove from the whitelist
+    ///
+    /// # Returns
+    /// Result indicating success or a PredifiError
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If caller is not the pool creator
+    /// * `PoolNotFound` - If the pool doesn't exist
+    /// * `InvalidPoolState` - If pool is not private
+    /// * `InvalidData` - If users vector is empty or exceeds max batch size
+    pub fn batch_remove_from_whitelist(
+        env: Env,
+        creator: Address,
+        pool_id: u64,
+        users: Vec<Address>,
+    ) -> Result<u32, PredifiError> {
+        const MAX_BATCH_SIZE: u32 = 100;
+
+        Self::require_not_paused(&env)?;
+        creator.require_auth();
+
+        // Validate batch size
+        let batch_size = users.len();
+        if batch_size == 0 {
+            return Err(PredifiError::InvalidData);
+        }
+        if batch_size > MAX_BATCH_SIZE {
+            return Err(PredifiError::InvalidData);
+        }
+
+        // Load and validate pool
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .ok_or(PredifiError::PoolNotFound)?;
+        Self::extend_persistent(&env, &pool_key);
+
+        // Authorization check
+        if pool.creator != creator {
+            return Err(PredifiError::Unauthorized);
+        }
+
+        // Pool must be private
+        if !pool.private {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Batch process: remove all users from whitelist
+        let mut removed_count: u32 = 0;
+        let timestamp = env.ledger().timestamp();
+
+        for user in users.iter() {
+            let whitelist_key = DataKey::Whitelist(pool_id, user.clone());
+
+            // Only remove if currently whitelisted
+            if env.storage().persistent().has(&whitelist_key) {
+                env.storage().persistent().remove(&whitelist_key);
+                removed_count += 1;
+
+                // Emit event for each user
+                RemovedFromWhitelistEvent {
+                    pool_id,
+                    user,
+                    removed_by: creator.clone(),
+                    timestamp,
+                }
+                .publish(&env);
+            }
+        }
+
+        Ok(removed_count)
+    }
+
+    /// Batch check whitelist status for multiple users.
+    ///
+    /// This optimized function checks whitelist status for multiple users
+    /// in a single call, reducing RPC overhead for frontends.
+    ///
+    /// # Arguments
+    /// * `pool_id` - The pool identifier
+    /// * `users` - Vector of addresses to check
+    ///
+    /// # Returns
+    /// Vector of boolean values indicating whitelist status for each user
+    ///
+    /// # Errors
+    /// * `InvalidData` - If users vector is empty or exceeds max batch size
+    pub fn batch_check_whitelist(
+        env: Env,
+        pool_id: u64,
+        users: Vec<Address>,
+    ) -> Result<Vec<bool>, PredifiError> {
+        const MAX_BATCH_SIZE: u32 = 200;
+
+        // Validate batch size
+        let batch_size = users.len();
+        if batch_size == 0 {
+            return Err(PredifiError::InvalidData);
+        }
+        if batch_size > MAX_BATCH_SIZE {
+            return Err(PredifiError::InvalidData);
+        }
+
+        // Build result vector
+        let mut results = Vec::new(&env);
+
+        for user in users.iter() {
+            let whitelist_key = DataKey::Whitelist(pool_id, user);
+            let is_whitelisted = env
+                .storage()
+                .persistent()
+                .get(&whitelist_key)
+                .unwrap_or(false);
+
+            // Extend TTL for accessed keys
+            if env.storage().persistent().has(&whitelist_key) {
+                Self::extend_persistent(&env, &whitelist_key);
+            }
+
+            results.push_back(is_whitelisted);
+        }
+
+        Ok(results)
+    }
+
     /// Return the number of unique participants in a pool.
     ///
     /// A participant is any address that has placed at least one prediction.
@@ -5038,7 +5281,12 @@ pub fn pause(env: Env, admin: Address) {
         let condition_key = DataKey::PriceCondition(pool_id);
         env.storage().persistent().set(
             &condition_key,
-            &(feed_pair.clone(), target_price, operator_type, tolerance_bps),
+            &(
+                feed_pair.clone(),
+                target_price,
+                operator_type,
+                tolerance_bps,
+            ),
         );
         Self::extend_persistent(&env, &condition_key);
 
@@ -5724,11 +5972,7 @@ impl PredifiContract {
             .set(&DataKey::ReferralMinVolumeBps, &min_volume);
         Self::extend_instance(&env);
 
-        ReferralThresholdUpdatedEvent {
-            admin,
-            min_volume,
-        }
-        .publish(&env);
+        ReferralThresholdUpdatedEvent { admin, min_volume }.publish(&env);
 
         Ok(())
     }
@@ -5775,10 +6019,7 @@ impl PredifiContract {
         let fee_tiers = Self::get_fee_tiers(env.clone());
         let fee_tiers_count = fee_tiers.len();
 
-        let oracle_initialized = env
-            .storage()
-            .persistent()
-            .has(&DataKey::OracleConfig);
+        let oracle_initialized = env.storage().persistent().has(&DataKey::OracleConfig);
 
         let referral_min_volume: i128 = env
             .storage()
