@@ -14,6 +14,7 @@ use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
 use crate::response::{ApiResponse, error_codes};
+use crate::validated_types::{BoundedI64, NonEmptyString, PoolSortBy, PoolStatus, StellarAddress};
 
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
@@ -195,13 +196,15 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
 #[derive(Debug, Deserialize)]
 pub struct PoolsQuery {
     /// Sort order: "popular" | "ending_soon" | "new" (default)
-    pub sort_by: Option<String>,
+    pub sort_by: Option<PoolSortBy>,
     /// Category filter, e.g. "Sports", "Crypto"
-    pub category: Option<String>,
+    pub category: Option<NonEmptyString>,
     /// Status filter: "active" | "closed" | "settled" (default: "active")
-    pub status: Option<String>,
-    pub limit: Option<i64>,
-    pub offset: Option<i64>,
+    pub status: Option<PoolStatus>,
+    /// Page size, clamped to [1, 100].
+    pub limit: Option<BoundedI64<1, 100>>,
+    /// Zero-based page offset, minimum 0.
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -257,10 +260,11 @@ pub struct StatsQuery {
 
 /// `GET /api/v1/stats` — protocol-wide aggregate statistics.
 ///
-/// Returns total value locked, total bets placed, and total pools created.
-/// Optional `category` and `status` query parameters scope the aggregates to
-/// the matching pools. Responds with a database-unavailable error if no pool
-/// is configured.
+/// Implements the **cache-aside pattern**:
+/// 1. Check Redis for a cached result keyed by `category` and `status`.
+/// 2. On cache hit: return the cached value.
+/// 3. On cache miss: fetch from the database and cache for
+///    [`STATS_CACHE_TTL`](crate::redis_cache::STATS_CACHE_TTL) seconds.
 pub async fn get_stats(
     State(state): State<AppState>,
     Query(params): Query<StatsQuery>,
@@ -276,10 +280,26 @@ pub async fn get_stats(
         ).into_response();
     };
 
+    let cache_key = crate::redis_cache::stats_cache_key(
+        params.category.as_deref(),
+        params.status.as_deref(),
+    );
+
+    if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+        return (StatusCode::OK, Json(cached)).into_response();
+    }
+
     match crate::db::get_protocol_stats(db, params.category.as_deref(), params.status.as_deref())
         .await
     {
-        Ok(stats) => ApiResponse::success(stats).into_response(),
+        Ok(stats) => {
+            let json_response = serde_json::json!(&stats);
+            state
+                .redis
+                .set(&cache_key, &json_response, crate::redis_cache::STATS_CACHE_TTL)
+                .await;
+            ApiResponse::success(stats).into_response()
+        }
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
@@ -313,11 +333,11 @@ pub async fn get_pools(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let sort_by = params.sort_by.as_deref().unwrap_or("new");
-    let category = params.category.as_deref();
-    let status = params.status.as_deref().unwrap_or("active");
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let sort_by = params.sort_by.map(|s| s.as_str()).unwrap_or("new");
+    let category = params.category.as_ref().map(|s| s.as_str());
+    let status = params.status.map(|s| s.as_str()).unwrap_or("active");
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -384,9 +404,9 @@ pub async fn get_pools(
 #[derive(Debug, Deserialize)]
 pub struct PaginationQuery {
     /// Maximum number of results to return (capped at 100, default 20).
-    pub limit: Option<i64>,
+    pub limit: Option<BoundedI64<1, 100>>,
     /// Zero-based offset for pagination (default 0).
-    pub offset: Option<i64>,
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
 }
 
 /// `GET /api/v1/users/:address/history` — paginated prediction history for a user.
@@ -398,8 +418,8 @@ pub async fn get_user_history(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -436,8 +456,8 @@ pub async fn get_user_predictions(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -470,9 +490,9 @@ pub async fn get_user_predictions(
 #[derive(Debug, Deserialize)]
 pub struct LeaderboardQuery {
     /// Maximum number of results to return (capped at 100, default 20).
-    pub limit: Option<i64>,
+    pub limit: Option<BoundedI64<1, 100>>,
     /// Zero-based offset for pagination (default 0).
-    pub offset: Option<i64>,
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
     /// Ranking type: "volume" | "winnings" (default: "volume")
     pub rank_by: Option<String>,
 }
@@ -485,8 +505,8 @@ pub async fn get_leaderboard(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let limit = params.limit.unwrap_or(20).min(100);
-    let offset = params.offset.unwrap_or(0);
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
     let rank_by = params.rank_by.as_deref().unwrap_or("volume");
 
     let Some(db) = &state.db else {
@@ -545,12 +565,12 @@ pub async fn get_leaderboard(
 #[derive(Debug, Deserialize)]
 pub struct PoolCreatedPayload {
     pub pool_id: u64,
-    pub creator: String,
+    pub creator: StellarAddress,
     pub end_time: u64,
-    pub token: String,
-    pub category: String,
+    pub token: NonEmptyString,
+    pub category: NonEmptyString,
     /// Pool description / name decoded from the event data.
-    pub description: String,
+    pub description: NonEmptyString,
 }
 
 /// `POST /api/v1/indexer/pool-created` — ingest a decoded `PoolCreated` event
@@ -572,16 +592,17 @@ pub async fn ingest_pool_created(
 
     let event = PoolCreatedEvent {
         pool_id: payload.pool_id,
-        creator: payload.creator,
+        creator: payload.creator.into(),
         end_time: payload.end_time,
-        token: payload.token,
-        category: payload.category,
-        description: payload.description,
+        token: payload.token.into(),
+        category: payload.category.into(),
+        description: payload.description.into(),
     };
 
     match crate::db::insert_pool_from_event(db, &event).await {
         Ok(()) => {
             state.redis.invalidate_pools_cache().await;
+            state.redis.invalidate_stats_cache().await;
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
             ApiResponse::success(response).into_response()
         }
@@ -597,7 +618,7 @@ pub async fn ingest_pool_created(
 #[derive(Debug, Deserialize)]
 pub struct PredictionPlacedPayload {
     pub pool_id: u64,
-    pub user_address: String,
+    pub user_address: StellarAddress,
     pub outcome: i32,
     pub amount: i64,
 }
@@ -620,7 +641,7 @@ pub async fn ingest_prediction_placed(
 
     let event = PredictionPlacedEvent {
         pool_id: payload.pool_id,
-        user_address: payload.user_address,
+        user_address: payload.user_address.into(),
         amount: payload.amount,
         outcome: payload.outcome,
     };
@@ -634,6 +655,7 @@ pub async fn ingest_prediction_placed(
                 "outcome": event.outcome,
                 "amount": event.amount,
             }));
+            state.redis.invalidate_stats_cache().await;
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
             ApiResponse::success(response).into_response()
         }
@@ -645,7 +667,16 @@ pub async fn ingest_prediction_placed(
     }
 }
 
-/// Build the version 1 API router.
+/// Build the version 1 API router with per-route rate limiting.
+///
+/// Routes are grouped into four rate-limit tiers (see [`crate::rate_limit`]):
+///
+/// | Tier  | Endpoints                                       | Burst / period |
+/// |-------|-------------------------------------------------|----------------|
+/// | Light | `/`, `/health`, `/fees`, `/prices`, `/ws`       | 120 / 60 s     |
+/// | Read  | `/pools`, `/pools/:id`, `/stats`, `/leaderboard`, `/referrals/*` | 60 / 60 s |
+/// | User  | `/users/*`                                      | 30 / 60 s      |
+/// | Write | `/indexer/*`                                    | 20 / 60 s      |
 pub fn router(
     config: Arc<Config>,
     cache: PriceCache,
@@ -654,6 +685,8 @@ pub fn router(
     metrics: SharedMetrics,
     event_bus: crate::ws::EventBus,
 ) -> Router {
+    use crate::rate_limit::{RateLimitTier, with_rate_limit};
+
     let state = AppState {
         config,
         cache,
@@ -663,30 +696,55 @@ pub fn router(
         event_bus,
     };
 
+    // Light tier — cheap, stateless, polling-friendly endpoints.
+    let light = with_rate_limit(
+        Router::new()
+            .route("/", get(index))
+            .route("/health", get(health))
+            .route("/fees", get(get_fees))
+            .route("/prices", get(crate::price_cache::get_prices))
+            .route("/ws", get(crate::ws::ws_handler))
+            .with_state(state.clone()),
+        RateLimitTier::Light,
+    );
+
+    // Read tier — public, database-backed read endpoints.
+    let read = with_rate_limit(
+        Router::new()
+            .route("/pools", get(get_pools))
+            .route("/pools/:id", get(get_pool_by_id_handler))
+            .route("/stats", get(get_stats))
+            .route("/leaderboard", get(get_leaderboard))
+            .route("/referrals/{address}", get(referrals_handler))
+            .route("/referrals/{address}/estimate", get(referral_estimate_handler))
+            .with_state(state.clone()),
+        RateLimitTier::Read,
+    );
+
+    // User tier — per-user history and predictions.
+    let user = with_rate_limit(
+        Router::new()
+            .route("/users/{address}/history", get(get_user_history))
+            .route("/users/{address}/predictions", get(get_user_predictions))
+            .route("/users/{address}/referrals", get(user_referral_earnings_handler))
+            .with_state(state.clone()),
+        RateLimitTier::User,
+    );
+
+    // Write tier — indexer ingest (typically internal, strictest limit).
+    let write = with_rate_limit(
+        Router::new()
+            .route("/indexer/pool-created", post(ingest_pool_created))
+            .route("/indexer/prediction-placed", post(ingest_prediction_placed))
+            .with_state(state),
+        RateLimitTier::Write,
+    );
+
     Router::new()
-        .route("/", get(index))
-        .route("/health", get(health))
-        .route("/pools", get(get_pools))
-        .route("/pools/:id", get(get_pool_by_id_handler))
-        .route("/stats", get(get_stats))
-        .route("/leaderboard", get(get_leaderboard))
-        .route("/fees", get(get_fees))
-        .route("/prices", get(crate::price_cache::get_prices))
-        .route("/referrals/{address}", get(referrals_handler))
-        .route(
-            "/referrals/{address}/estimate",
-            get(referral_estimate_handler),
-        )
-        .route(
-            "/users/{address}/referrals",
-            get(user_referral_earnings_handler),
-        )
-        .route("/users/{address}/history", get(get_user_history))
-        .route("/users/{address}/predictions", get(get_user_predictions))
-        .route("/indexer/pool-created", post(ingest_pool_created))
-        .route("/indexer/prediction-placed", post(ingest_prediction_placed))
-        .route("/ws", get(crate::ws::ws_handler))
-        .with_state(state)
+        .merge(light)
+        .merge(read)
+        .merge(user)
+        .merge(write)
 }
 
 /// `GET /api/v1/fees` — reads fee config from the shared AppState.
@@ -923,5 +981,57 @@ mod cache_aside_tests {
         assert_eq!(sort_new, "pools:new:all:active:20:0");
         assert_eq!(sort_popular, "pools:popular:all:active:20:0");
         assert_eq!(sort_ending, "pools:ending_soon:all:active:20:0");
+    }
+
+    /// Test stats cache-aside pattern: miss, populate, verify no-op on disabled cache.
+    #[tokio::test]
+    async fn test_stats_cache_aside_pattern() {
+        use crate::redis_cache::{stats_cache_key, RedisCache, STATS_CACHE_TTL};
+
+        let cache = RedisCache::disabled();
+        let key = stats_cache_key(None, None);
+
+        // Cache miss
+        let cached: Option<serde_json::Value> = cache.get(&key).await;
+        assert!(cached.is_none());
+
+        // Populate (no-ops on disabled cache)
+        let data = serde_json::json!({
+            "total_value_locked": 1000,
+            "total_bets": 50,
+            "total_pools": 10
+        });
+        cache.set(&key, &data, STATS_CACHE_TTL).await;
+
+        // Still None — disabled cache always returns None
+        let cached: Option<serde_json::Value> = cache.get(&key).await;
+        assert!(cached.is_none());
+    }
+
+    /// Test that stats cache keys are unique per filter combination.
+    #[test]
+    fn test_stats_cache_key_uniqueness() {
+        use crate::redis_cache::stats_cache_key;
+
+        let k1 = stats_cache_key(None, None);
+        let k2 = stats_cache_key(Some("sports"), None);
+        let k3 = stats_cache_key(None, Some("active"));
+        let k4 = stats_cache_key(Some("crypto"), Some("closed"));
+
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k1, k4);
+        assert_ne!(k2, k3);
+        assert_ne!(k2, k4);
+    }
+
+    /// Test stats cache invalidation no-ops on a disabled cache.
+    #[tokio::test]
+    async fn test_stats_cache_invalidation_on_new_data() {
+        use crate::redis_cache::RedisCache;
+
+        let cache = RedisCache::disabled();
+        // Should not panic
+        cache.invalidate_stats_cache().await;
     }
 }

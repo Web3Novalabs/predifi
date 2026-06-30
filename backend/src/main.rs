@@ -5,7 +5,7 @@
 //! `predifi-seed`).  This file only wires environment loading to
 //! [`predifi_backend::run_server`].
 
-use predifi_backend::config::Config;
+use predifi_backend::{config::Config, run_server};
 
 #[tokio::main]
 async fn main() {
@@ -16,5 +16,5 @@ async fn main() {
         std::process::exit(1);
     });
 
-    predifi_backend::run_server(config).await;
+    run_server(config).await;
 }
