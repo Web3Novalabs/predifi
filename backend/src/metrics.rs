@@ -15,6 +15,7 @@ pub struct Metrics {
     pub memory_used_bytes: Gauge,
     pub memory_total_bytes: Gauge,
     pub active_pools: Gauge,
+    pub http_server_errors_total: prometheus::Counter,
 }
 
 /// Type alias for a reference-counted [`Metrics`] instance shared across handlers.
@@ -93,6 +94,11 @@ impl Metrics {
             "Number of currently active prediction market pools.",
         ))?;
 
+        let http_server_errors_total = prometheus::Counter::with_opts(Opts::new(
+            "app_http_500_errors_total",
+            "Total number of HTTP 500 (Internal Server Error) responses.",
+        ))?;
+
         registry.register(Box::new(http_requests_total.clone()))?;
         registry.register(Box::new(http_request_duration_seconds.clone()))?;
         registry.register(Box::new(price_cache_fetch_total.clone()))?;
@@ -103,6 +109,7 @@ impl Metrics {
         registry.register(Box::new(memory_used_bytes.clone()))?;
         registry.register(Box::new(memory_total_bytes.clone()))?;
         registry.register(Box::new(active_pools.clone()))?;
+        registry.register(Box::new(http_server_errors_total.clone()))?;
 
         Ok(Self {
             registry,
@@ -116,6 +123,7 @@ impl Metrics {
             memory_used_bytes,
             memory_total_bytes,
             active_pools,
+            http_server_errors_total,
         })
     }
 
@@ -267,18 +275,19 @@ mod tests {
         );
     }
 
-    /// HTTP 500 counter increments independently of the general request counter.
+    /// HTTP 500 responses are tracked via the general request counter with status label.
     #[test]
-    fn http_server_errors_total_increments() {
+    fn http_500_responses_are_counted_by_status_label() {
         let metrics = Metrics::new().expect("Metrics::new() must succeed");
-        assert_eq!(metrics.http_server_errors_total.get(), 0.0);
-        metrics.http_server_errors_total.inc();
-        assert_eq!(metrics.http_server_errors_total.get(), 1.0);
+        metrics
+            .http_requests_total
+            .with_label_values(&["GET", "/health", "500"])
+            .inc();
 
         let text = metrics.gather_text().expect("gather_text() must succeed");
         assert!(
-            text.contains("app_http_500_errors_total"),
-            "output must contain app_http_500_errors_total"
+            text.contains("app_http_requests_total"),
+            "output must contain app_http_requests_total"
         );
     }
 

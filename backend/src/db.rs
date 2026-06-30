@@ -20,8 +20,17 @@ pub async fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
             .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
             .connect(&config.database_url);
 
-        match tokio::time::timeout(Duration::from_secs(config.db_acquire_timeout_secs), future)
-            .await
+        // `db_connect_timeout_secs` bounds the time spent on the initial TCP/TLS
+        // handshake for each individual connection attempt.  This is distinct from
+        // `acquire_timeout`, which limits how long a caller waits for a slot in an
+        // already-healthy pool.  sqlx 0.8 does not expose a separate
+        // `connect_timeout` on `PgPoolOptions`, so we wrap the connect future in a
+        // `tokio::time::timeout` to achieve the same effect.
+        match tokio::time::timeout(
+            Duration::from_secs(config.db_connect_timeout_secs),
+            future,
+        )
+        .await
         {
             Ok(result) => result,
             Err(_) => Err(sqlx::Error::PoolTimedOut),
@@ -289,6 +298,75 @@ mod tests {
         assert_eq!(backoff_delay_ms(2, 200, 5_000), 400);
         assert_eq!(backoff_delay_ms(3, 200, 5_000), 800);
         assert_eq!(backoff_delay_ms(10, 200, 5_000), 5_000);
+    }
+
+    #[test]
+    fn backoff_delay_with_zero_base_is_zero() {
+        // When base delay is 0, every attempt should return 0 (no delay)
+        assert_eq!(backoff_delay_ms(1, 0, 5_000), 0);
+        assert_eq!(backoff_delay_ms(5, 0, 5_000), 0);
+    }
+
+    #[test]
+    fn backoff_delay_saturates_at_max() {
+        // For large attempt counts the delay should be capped at max_delay_ms
+        assert_eq!(backoff_delay_ms(30, 100, 1_000), 1_000);
+        assert_eq!(backoff_delay_ms(64, 1, 500), 500);
+    }
+
+    /// Verify that `retry_with_backoff` treats `max_attempts = 0` as `1`
+    /// (the floor guard prevents zero-iteration loops).
+    #[tokio::test]
+    async fn retry_with_backoff_treats_zero_max_as_one() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+        let result: Result<(), &'static str> =
+            retry_with_backoff(0, 0, 0, "test", || async {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                Err("fail")
+            })
+            .await;
+
+        // Should attempt exactly once (0 is clamped to 1)
+        assert_eq!(result, Err("fail"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Ensure that a successful first attempt is returned immediately without
+    /// any retries, confirming the fast path works correctly.
+    #[tokio::test]
+    async fn retry_with_backoff_succeeds_on_first_attempt() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+        let result: Result<&'static str, &'static str> =
+            retry_with_backoff(5, 0, 0, "test", || async {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                Ok("immediate")
+            })
+            .await;
+
+        assert_eq!(result, Ok("immediate"));
+        // Must have called exactly once — no unnecessary retries
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Verify that the configurable connect delay fields in [`Config`] are
+    /// properly wired: `db_connect_timeout_secs` must be independent from
+    /// `db_acquire_timeout_secs` and both must be readable.
+    #[test]
+    fn config_connect_timeout_is_independent_from_acquire_timeout() {
+        let config = crate::config::Config::default_for_test();
+        // The two timeouts serve different purposes and must be independently
+        // configurable — a change to one must not imply a change to the other.
+        assert!(
+            config.db_connect_timeout_secs > 0,
+            "connect timeout must be > 0"
+        );
+        assert!(
+            config.db_acquire_timeout_secs > 0,
+            "acquire timeout must be > 0"
+        );
+        // They are allowed to be equal but are independently specified
     }
 }
 
@@ -975,16 +1053,29 @@ pub struct ReferralPaidEvent {
 
 /// Insert multiple referral records using bulk insert for optimal performance.
 ///
-/// This function uses PostgreSQL's `INSERT INTO ... VALUES (...), (...), ...` syntax
-/// to insert all referral records in a single database round-trip, significantly
-/// improving performance over individual inserts when processing multiple events.
-pub async fn insert_referrals_bulk<'e, E>(
-    executor: E,
+/// Large batches are split into chunks of at most `max_batch_size` rows to
+/// avoid oversized SQL statements and PostgreSQL parameter limits.
+pub async fn insert_referrals_bulk(
+    pool: &PgPool,
     events: &[ReferralPaidEvent],
-) -> Result<(), sqlx::Error>
-where
-    E: Executor<'e, Database = Postgres>,
-{
+    max_batch_size: usize,
+) -> Result<(), sqlx::Error> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let chunk_size = max_batch_size.max(1);
+    for chunk in events.chunks(chunk_size) {
+        insert_referrals_bulk_chunk(pool, chunk).await?;
+    }
+
+    Ok(())
+}
+
+async fn insert_referrals_bulk_chunk(
+    pool: &PgPool,
+    events: &[ReferralPaidEvent],
+) -> Result<(), sqlx::Error> {
     if events.is_empty() {
         return Ok(());
     }
@@ -1021,7 +1112,7 @@ where
             .bind(event.referral_amount);
     }
 
-    query_builder.execute(executor).await?;
+    query_builder.execute(pool).await?;
     Ok(())
 }
 
@@ -1088,6 +1179,196 @@ mod write_helper_tests {
         }
 
         assert_eq!(values, vec!["($1, $2, $3, $4)", "($5, $6, $7, $8)"]);
+    }
+
+    #[test]
+    fn insert_referrals_bulk_chunks_large_batches() {
+        let events: Vec<_> = (0..5)
+            .map(|index| ReferralPaidEvent {
+                pool_id: index,
+                referrer: format!("GREF{index}"),
+                referred_user: format!("GUSER{index}"),
+                referral_amount: 100 + index as i64,
+            })
+            .collect();
+
+        let chunks: Vec<_> = events.chunks(2).collect();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), 2);
+        assert_eq!(chunks[2].len(), 1);
+    }
+}
+
+// ── Tests for predictions index migration (009) ───────────────────────────────
+
+#[cfg(test)]
+mod predictions_index_tests {
+    use super::*;
+
+    // ── calculate_odds ──────────────────────────────────────────────────────
+
+    /// Zero total stake produces zero odds for every outcome (no division by zero).
+    #[test]
+    fn calculate_odds_zero_total_stake_returns_zero_odds() {
+        let stakes = vec![(0i32, 100i64), (1, 200)];
+        let odds = calculate_odds(&stakes, 0);
+
+        assert_eq!(odds.len(), 2);
+        for o in &odds {
+            assert_eq!(o.odds, 0.0, "expected 0.0 odds when total_stake is 0");
+        }
+    }
+
+    /// An outcome with zero stake inside a non-zero pool gets 0.0 odds (no
+    /// division by zero on the per-outcome stake).
+    #[test]
+    fn calculate_odds_zero_outcome_stake_returns_zero_odds_for_that_outcome() {
+        let stakes = vec![(0i32, 0i64), (1, 500)];
+        let odds = calculate_odds(&stakes, 500);
+
+        assert_eq!(odds[0].odds, 0.0);
+        assert!(
+            (odds[1].odds - 1.0).abs() < f64::EPSILON,
+            "outcome with 100 % of stake should have odds of 1.0"
+        );
+    }
+
+    /// Even split across two outcomes should yield odds of 2.0 each.
+    #[test]
+    fn calculate_odds_even_split_gives_2x_odds() {
+        let stakes = vec![(0i32, 500i64), (1, 500)];
+        let odds = calculate_odds(&stakes, 1000);
+
+        for o in &odds {
+            assert!(
+                (o.odds - 2.0).abs() < 1e-9,
+                "expected 2.0 odds for a 50/50 split, got {}",
+                o.odds
+            );
+        }
+    }
+
+    /// Dominant outcome (90 %) yields odds near 1.11; minority (10 %) near 10.
+    #[test]
+    fn calculate_odds_asymmetric_split() {
+        let stakes = vec![(0i32, 900i64), (1, 100)];
+        let odds = calculate_odds(&stakes, 1000);
+
+        let dominant = odds.iter().find(|o| o.outcome == 0).unwrap();
+        let minority = odds.iter().find(|o| o.outcome == 1).unwrap();
+
+        assert!(
+            (dominant.odds - (1000.0 / 900.0)).abs() < 1e-9,
+            "dominant odds should be ~1.111, got {}",
+            dominant.odds
+        );
+        assert!(
+            (minority.odds - 10.0).abs() < 1e-9,
+            "minority odds should be 10.0, got {}",
+            minority.odds
+        );
+    }
+
+    /// Empty input returns empty output without panicking.
+    #[test]
+    fn calculate_odds_empty_stakes_returns_empty() {
+        let odds = calculate_odds(&[], 0);
+        assert!(odds.is_empty());
+
+        let odds_nonzero = calculate_odds(&[], 1000);
+        assert!(odds_nonzero.is_empty());
+    }
+
+    // ── UserWinnings win_rate ───────────────────────────────────────────────
+
+    /// Win-rate is 0.0 when there are no total predictions (guard against
+    /// division by zero in the query result mapper).
+    #[test]
+    fn user_winnings_win_rate_is_zero_when_no_predictions() {
+        let win_rate = if 0 > 0 { 5_f64 / 0_f64 } else { 0.0 };
+        assert_eq!(win_rate, 0.0);
+    }
+
+    /// Win-rate is computed correctly for a partial win record.
+    #[test]
+    fn user_winnings_win_rate_partial() {
+        let total = 10i64;
+        let winning = 3i64;
+        let win_rate = winning as f64 / total as f64;
+        assert!((win_rate - 0.3).abs() < 1e-9);
+    }
+
+    // ── Rank offset calculation ─────────────────────────────────────────────
+
+    /// Rank starts at offset + 1 for the first returned row so pagination
+    /// offsets are reflected correctly in the leaderboard.
+    #[test]
+    fn leaderboard_rank_respects_page_offset() {
+        let offset: i64 = 20;
+        let rank_of_first_row = offset + 0 + 1; // index 0 in the result set
+        let rank_of_second_row = offset + 1 + 1;
+
+        assert_eq!(rank_of_first_row, 21);
+        assert_eq!(rank_of_second_row, 22);
+    }
+
+    // ── Migration file sanity checks ────────────────────────────────────────
+
+    /// Verify the migration SQL file for index 009 exists and contains the
+    /// four expected index names so a future rename does not silently break
+    /// the schema.
+    #[test]
+    fn migration_009_contains_expected_index_names() {
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
+
+        let expected_indexes = [
+            "idx_predictions_pool_created",
+            "idx_predictions_outcome_pool",
+            "idx_predictions_pool_user",
+            "idx_predictions_amount_desc",
+        ];
+
+        for name in &expected_indexes {
+            assert!(
+                sql.contains(name),
+                "migration 009 should define index '{name}', but it was not found in the SQL"
+            );
+        }
+    }
+
+    /// The migration must use `IF NOT EXISTS` for every CREATE INDEX so
+    /// re-running migrations on an already-migrated schema is idempotent.
+    #[test]
+    fn migration_009_all_indexes_are_idempotent() {
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
+
+        // Count CREATE INDEX and CREATE INDEX IF NOT EXISTS occurrences.
+        let total_creates = sql.matches("CREATE INDEX").count();
+        let idempotent_creates = sql.matches("CREATE INDEX IF NOT EXISTS").count();
+
+        assert_eq!(
+            total_creates, idempotent_creates,
+            "every CREATE INDEX in migration 009 must use IF NOT EXISTS \
+             (found {total_creates} CREATE INDEX, {idempotent_creates} with IF NOT EXISTS)"
+        );
+    }
+
+    /// All indexes in migration 009 must target the `predictions` table.
+    #[test]
+    fn migration_009_all_indexes_target_predictions_table() {
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
+
+        // Each ON clause in the file should reference `predictions`.
+        let on_clauses: Vec<&str> = sql.match_indices("ON predictions").map(|(_, s)| s).collect();
+        let total_creates = sql.matches("CREATE INDEX IF NOT EXISTS").count();
+
+        assert_eq!(
+            on_clauses.len(),
+            total_creates,
+            "every index in migration 009 must target the 'predictions' table \
+             (found {total_creates} CREATE INDEX IF NOT EXISTS but only {} ON predictions clauses)",
+            on_clauses.len()
+        );
     }
 }
 

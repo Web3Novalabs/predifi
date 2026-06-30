@@ -1160,11 +1160,37 @@ async fn api_v1_stats_returns_error_without_db() {
     .await
     .expect("request failed");
 
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body = body_string(response.into_body()).await;
     assert!(
-        body.contains("\"error\""),
+        body.contains("database not available") || body.contains("\"error\""),
         "should report error when db is absent, got: {body}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Liveness Probe Tests (/live)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// GET /live must always return HTTP 200 without checking dependencies.
+#[tokio::test]
+async fn live_returns_200_without_dependency_checks() {
+    let response = crate::server::build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/live"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"alive\""),
+        "liveness probe should report alive, got: {body}"
     );
 }
 
@@ -1204,6 +1230,10 @@ async fn ready_returns_503_when_redis_disabled() {
     assert!(
         body.contains("\"redis\":\"not_configured\""),
         "redis dependency should be 'not_configured', got: {body}"
+    );
+    assert!(
+        body.contains("\"price_cache\""),
+        "readiness probe should include price_cache dependency, got: {body}"
     );
 }
 

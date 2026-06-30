@@ -11,44 +11,38 @@
 /// replenishment window (see [`RATE_LIMIT_PERIOD_SECS`]) before receiving a
 /// **429 Too Many Requests** response.
 ///
-/// ## Configuration
-///
-/// - **Limit:** 100 requests
-/// - **Window:** 15 minutes (900 seconds)
-/// - **Rate:** Approximately 1 token replenished every 9 seconds
-///
 /// The rate limiter uses a **token-bucket algorithm**. Each successful request
 /// consumes one token; tokens are replenished at a constant rate derived from
 /// `period / burst`. Once the bucket is empty, subsequent requests are rejected
 /// with `HTTP 429` until tokens are replenished.
-///
-/// ## Use Case
-///
-/// This conservative default protects public endpoints from brute-force attacks,
-/// credential stuffing, DDoS attempts, and accidental API abuse, without
-/// significantly impacting legitimate users.
 pub const RATE_LIMIT_BURST_SIZE: u32 = 100;
 
 /// Replenishment period for the token-bucket rate limiter (15 minutes in seconds).
 ///
-/// This defines the time window over which [`RATE_LIMIT_BURST_SIZE`] tokens are
-/// made available. The replenishment rate is calculated as:
-///
-/// ```text
-/// tokens_per_second = RATE_LIMIT_PERIOD_SECS / RATE_LIMIT_BURST_SIZE
-///                   = 900 / 100
-///                   = 1 token every 9 seconds
-/// ```
-///
-/// ## Rationale
-///
-/// A 15-minute window strikes a balance between:
-/// - **Allowing legitimate bursts** (e.g., a user rapidly navigating the UI)
-/// - **Preventing sustained abuse** (e.g., scrapers or DDoS traffic)
-///
-/// The window is long enough to prevent false positives from legitimate users
-/// while short enough to quickly mitigate attacks.
+/// Replenishment rate: `RATE_LIMIT_PERIOD_SECS / RATE_LIMIT_BURST_SIZE` = 1 token every 9 s.
 pub const RATE_LIMIT_PERIOD_SECS: u64 = 900;
+
+// ── Per-route rate limit tiers ────────────────────────────────────────────────
+
+/// **Read tier** — public read endpoints (`/pools`, `/stats`, `/leaderboard`, etc.).
+/// 60 requests / 60 s window (~1 req/s sustained, burst up to 60).
+pub const RATE_LIMIT_READ_BURST: u32 = 60;
+pub const RATE_LIMIT_READ_PERIOD_SECS: u64 = 60;
+
+/// **Write tier** — indexer ingest endpoints (`/indexer/*`).
+/// 20 requests / 60 s window (~1 req/3 s sustained, burst up to 20).
+pub const RATE_LIMIT_WRITE_BURST: u32 = 20;
+pub const RATE_LIMIT_WRITE_PERIOD_SECS: u64 = 60;
+
+/// **User tier** — per-user history / predictions endpoints.
+/// 30 requests / 60 s window — slightly more permissive than writes.
+pub const RATE_LIMIT_USER_BURST: u32 = 30;
+pub const RATE_LIMIT_USER_PERIOD_SECS: u64 = 60;
+
+/// **Light tier** — cheap, stateless endpoints (`/fees`, `/prices`, `/health`).
+/// 120 requests / 60 s window — generous for polling-friendly endpoints.
+pub const RATE_LIMIT_LIGHT_BURST: u32 = 120;
+pub const RATE_LIMIT_LIGHT_PERIOD_SECS: u64 = 60;
 
 // ── Pagination ────────────────────────────────────────────────────────────────
 
@@ -69,6 +63,14 @@ pub const JWT_PARTS_COUNT: usize = 3;
 /// dots.  Anything shorter is trivially invalid and can be rejected cheaply
 /// before attempting base64 decoding.
 pub const JWT_MIN_LENGTH: usize = 20;
+
+/// Minimum length (in bytes) required for the JWT signing secret.
+///
+/// HS256 requires a sufficiently long secret to resist brute-force attacks.
+pub const JWT_SECRET_MIN_LENGTH: usize = 32;
+
+/// Default maximum number of events processed per indexer poll cycle.
+pub const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = 500;
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 

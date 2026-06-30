@@ -97,6 +97,7 @@ pub async fn get_referrals(
         })),
         Ok(None) => Ok(ApiResponse::error(
             StatusCode::NOT_FOUND,
+            error_codes::NOT_FOUND,
             format!("no referrals found for {address}"),
         )),
         Err(err) => {
