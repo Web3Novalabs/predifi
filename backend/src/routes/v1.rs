@@ -260,10 +260,11 @@ pub struct StatsQuery {
 
 /// `GET /api/v1/stats` — protocol-wide aggregate statistics.
 ///
-/// Returns total value locked, total bets placed, and total pools created.
-/// Optional `category` and `status` query parameters scope the aggregates to
-/// the matching pools. Responds with a database-unavailable error if no pool
-/// is configured.
+/// Implements the **cache-aside pattern**:
+/// 1. Check Redis for a cached result keyed by `category` and `status`.
+/// 2. On cache hit: return the cached value.
+/// 3. On cache miss: fetch from the database and cache for
+///    [`STATS_CACHE_TTL`](crate::redis_cache::STATS_CACHE_TTL) seconds.
 pub async fn get_stats(
     State(state): State<AppState>,
     Query(params): Query<StatsQuery>,
@@ -279,10 +280,26 @@ pub async fn get_stats(
         ).into_response();
     };
 
+    let cache_key = crate::redis_cache::stats_cache_key(
+        params.category.as_deref(),
+        params.status.as_deref(),
+    );
+
+    if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+        return (StatusCode::OK, Json(cached)).into_response();
+    }
+
     match crate::db::get_protocol_stats(db, params.category.as_deref(), params.status.as_deref())
         .await
     {
-        Ok(stats) => ApiResponse::success(stats).into_response(),
+        Ok(stats) => {
+            let json_response = serde_json::json!(&stats);
+            state
+                .redis
+                .set(&cache_key, &json_response, crate::redis_cache::STATS_CACHE_TTL)
+                .await;
+            ApiResponse::success(stats).into_response()
+        }
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
@@ -585,6 +602,7 @@ pub async fn ingest_pool_created(
     match crate::db::insert_pool_from_event(db, &event).await {
         Ok(()) => {
             state.redis.invalidate_pools_cache().await;
+            state.redis.invalidate_stats_cache().await;
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
             ApiResponse::success(response).into_response()
         }
@@ -637,6 +655,7 @@ pub async fn ingest_prediction_placed(
                 "outcome": event.outcome,
                 "amount": event.amount,
             }));
+            state.redis.invalidate_stats_cache().await;
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
             ApiResponse::success(response).into_response()
         }
@@ -962,5 +981,57 @@ mod cache_aside_tests {
         assert_eq!(sort_new, "pools:new:all:active:20:0");
         assert_eq!(sort_popular, "pools:popular:all:active:20:0");
         assert_eq!(sort_ending, "pools:ending_soon:all:active:20:0");
+    }
+
+    /// Test stats cache-aside pattern: miss, populate, verify no-op on disabled cache.
+    #[tokio::test]
+    async fn test_stats_cache_aside_pattern() {
+        use crate::redis_cache::{stats_cache_key, RedisCache, STATS_CACHE_TTL};
+
+        let cache = RedisCache::disabled();
+        let key = stats_cache_key(None, None);
+
+        // Cache miss
+        let cached: Option<serde_json::Value> = cache.get(&key).await;
+        assert!(cached.is_none());
+
+        // Populate (no-ops on disabled cache)
+        let data = serde_json::json!({
+            "total_value_locked": 1000,
+            "total_bets": 50,
+            "total_pools": 10
+        });
+        cache.set(&key, &data, STATS_CACHE_TTL).await;
+
+        // Still None — disabled cache always returns None
+        let cached: Option<serde_json::Value> = cache.get(&key).await;
+        assert!(cached.is_none());
+    }
+
+    /// Test that stats cache keys are unique per filter combination.
+    #[test]
+    fn test_stats_cache_key_uniqueness() {
+        use crate::redis_cache::stats_cache_key;
+
+        let k1 = stats_cache_key(None, None);
+        let k2 = stats_cache_key(Some("sports"), None);
+        let k3 = stats_cache_key(None, Some("active"));
+        let k4 = stats_cache_key(Some("crypto"), Some("closed"));
+
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k1, k4);
+        assert_ne!(k2, k3);
+        assert_ne!(k2, k4);
+    }
+
+    /// Test stats cache invalidation no-ops on a disabled cache.
+    #[tokio::test]
+    async fn test_stats_cache_invalidation_on_new_data() {
+        use crate::redis_cache::RedisCache;
+
+        let cache = RedisCache::disabled();
+        // Should not panic
+        cache.invalidate_stats_cache().await;
     }
 }
