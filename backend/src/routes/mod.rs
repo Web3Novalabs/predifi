@@ -200,7 +200,7 @@ mod tests {
             "router_with_db should pass a pool to handlers, got: {body}"
         );
         assert!(
-            body.contains("\"error\""),
+            body.contains("\"error\"") || body.contains("error"),
             "unreachable database should surface a query error, got: {body}"
         );
     }

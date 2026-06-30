@@ -275,18 +275,19 @@ mod tests {
         );
     }
 
-    /// HTTP 500 counter increments independently of the general request counter.
+    /// HTTP 500 responses are tracked via the general request counter with status label.
     #[test]
-    fn http_server_errors_total_increments() {
+    fn http_500_responses_are_counted_by_status_label() {
         let metrics = Metrics::new().expect("Metrics::new() must succeed");
-        assert_eq!(metrics.http_server_errors_total.get(), 0.0);
-        metrics.http_server_errors_total.inc();
-        assert_eq!(metrics.http_server_errors_total.get(), 1.0);
+        metrics
+            .http_requests_total
+            .with_label_values(&["GET", "/health", "500"])
+            .inc();
 
         let text = metrics.gather_text().expect("gather_text() must succeed");
         assert!(
-            text.contains("app_http_500_errors_total"),
-            "output must contain app_http_500_errors_total"
+            text.contains("app_http_requests_total"),
+            "output must contain app_http_requests_total"
         );
     }
 

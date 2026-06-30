@@ -5412,8 +5412,10 @@ fn test_pool_end_time_on_leap_day() {
 
 /// Creating a pool whose end time is the leap day, but the ledger is already
 /// past Mar 1, must be rejected because the end time is in the past.
+/// Issue #1130 — now surfaces the typed `DeadlineInPast` error (132) instead
+/// of the legacy assert message.
 #[test]
-#[should_panic(expected = "end_time must be in the future")]
+#[should_panic(expected = "#132")]
 fn test_pool_end_time_at_leap_day_already_past() {
     let env = Env::default();
     env.mock_all_auths();
@@ -12712,4 +12714,418 @@ fn test_close_staking_fails_for_resolved_pool() {
         result.is_err(),
         "close_staking should fail for an already-resolved pool"
     );
+}
+
+#[should_panic(expected = "Error(Contract, #2)")]
+#[test]
+fn test_already_initialized_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    let treasury = Address::generate(&env);
+    
+    // First initialization should succeed
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    
+    // Second initialization should panic with AlreadyInitializedOrConfigNotSet
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+}
+
+#[should_panic(expected = "Error(Contract, #91)")]
+#[test]
+fn test_delisted_token_prevents_prediction() {
+    let env = Env::default();
+    env.mock_all_auths();
+    
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) = setup(&env);
+    
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    
+    token_admin_client.mint(&creator, &10000);
+    token_admin_client.mint(&user, &10000);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = crate::PoolConfig {
+        start_time: 0,
+        description: soroban_sdk::String::from_str(&env, "Test Pool"),
+        metadata_url: soroban_sdk::String::from_str(&env, "ipfs://test"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 100000i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: soroban_sdk::vec![
+            &env,
+            soroban_sdk::String::from_str(&env, "Outcome 0"),
+            soroban_sdk::String::from_str(&env, "Outcome 1"),
+        ],
+    };
+    let pool_id = client.create_pool(&creator, &end_time, &token_address, &2u32, &soroban_sdk::Symbol::new(&env, "Sports"), &config);
+
+    // Remove token from whitelist
+    client.remove_token_from_whitelist(&admin, &token_address);
+
+    // User places prediction - should panic with TokenNotWhitelisted (Error 48)
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+}
+
+
+// ============================================================================
+// TESTS FOR CUSTOM TOKEN TRANSFER VALIDATION CHECKS
+// ============================================================================
+
+#[test]
+fn test_validate_token_transfer_zero_amount_fails() {
+    let env = Env::default();
+    let (ac_client, client, token_address, _, token_admin_client, treasury, operator, creator) =
+        setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    // Create a pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Test Pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 100000i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &config,
+    );
+
+    // Try to place prediction with zero amount - should fail
+    let result = client.try_place_prediction(&user, &pool_id, &0i128, &0u32, &None, &None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_validate_token_transfer_negative_amount_fails() {
+    let env = Env::default();
+    let (ac_client, client, token_address, _, token_admin_client, treasury, operator, creator) =
+        setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    // Create a pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Test Pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 100000i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &config,
+    );
+
+    // Try to place prediction with negative amount - should fail
+    let result = client.try_place_prediction(&user, &pool_id, &-100i128, &0u32, &None, &None);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_validate_token_transfer_same_sender_recipient_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let token_address = token_contract;
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    // Try invalid treasury withdrawal to itself - should eventually fail on transfer validation
+    let result = client.try_withdraw_treasury(&admin, &admin, &token_address, &100i128, &admin);
+    // This tests that address validation is applied to withdrawal operations
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_validate_token_transfer_on_claim_winnings() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    token_admin_client.mint(&user, &10000);
+
+    // Create and resolve a pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Test Pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 100000i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &config,
+    );
+
+    // User places prediction
+    client.place_prediction(&user, &pool_id, &100i128, &1u32, &None, &None);
+
+    // Move time forward and resolve pool
+    env.ledger().set_timestamp(end_time + 1);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    // Claim winnings - should succeed with validation checks
+    let result = client.try_claim_winnings(&user, &pool_id);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_validate_token_transfer_on_claim_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    token_admin_client.mint(&user, &10000);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Test Pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 100000i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &config,
+    );
+
+    // User places prediction
+    client.place_prediction(&user, &pool_id, &100i128, &1u32, &None, &None);
+
+    // Cancel pool
+    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, "test"));
+
+    // Claim refund - should succeed with validation checks
+    let result = client.try_claim_refund(&user, &pool_id);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_validate_token_transfer_on_treasury_withdrawal() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let token_address = token_contract;
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let recipient = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+
+    // Mint tokens to contract for treasury
+    token_admin_client.mint(&contract_id, &10000);
+
+    // Withdraw treasury - should succeed with validation checks
+    let result = client.try_withdraw_treasury(&admin, &admin, &token_address, &100i128, &recipient);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_validate_token_transfer_on_emergency_withdraw() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin.clone());
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let token_address = token_contract;
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let destination = Address::generate(&env);
+
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    // Mint tokens to contract
+    token_admin_client.mint(&contract_id, &10000);
+
+    // Emergency withdraw - should succeed with validation checks
+    let result = client.try_emergency_withdraw(&admin, &admin, &token_address, &destination, &100i128);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_multiple_predictions_with_token_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
+
+    let user = Address::generate(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    token_admin_client.mint(&user, &50000);
+
+    // Create two pools
+    let end_time1 = env.ledger().timestamp() + 3600;
+    let config1 = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Pool 1"),
+        metadata_url: String::from_str(&env, "ipfs://test1"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 100000i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id1 = client.create_pool(
+        &creator,
+        &end_time1,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sport"),
+        &config1,
+    );
+
+    let end_time2 = env.ledger().timestamp() + 5400;
+    let pool_id2 = client.create_pool(
+        &creator,
+        &end_time2,
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &config1,
+    );
+
+    // Place predictions on both pools - validates token transfer multiple times
+    client.place_prediction(&user, &pool_id1, &1000i128, &0u32, &None, &None);
+    client.place_prediction(&user, &pool_id2, &2000i128, &1u32, &None, &None);
+
+    // Verify all transfers were validated and successful
+    let predictions = client.get_user_predictions(&user, &0u32, &10u32);
+    assert_eq!(predictions.len(), 2);
 }
