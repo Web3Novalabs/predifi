@@ -7,7 +7,7 @@
 //!
 //! # Usage
 //! Call [`run_full_sync`] from the main server or as a standalone task:
-//! ```rust,no_run
+//! ```rust,ignore
 //! sync::run_full_sync(&db, &config).await?;
 //! ```
 

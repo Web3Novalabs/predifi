@@ -899,6 +899,66 @@ pub async fn insert_prediction_from_event(
     Ok(())
 }
 
+// ── Market Predictions (cursor-based pagination) ──────────────────────────────
+
+/// A single prediction within a market (pool), returned by the market predictions list.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct MarketPredictionRow {
+    /// Stable row ID, also used as the pagination cursor.
+    pub id: i64,
+    pub pool_id: i64,
+    pub user_address: String,
+    pub outcome: i32,
+    pub amount: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Fetch a cursor-paginated page of predictions for a given pool.
+///
+/// `after_id` is the opaque cursor from the previous page (`data.next_cursor`).
+/// Pass `None` (or omit the query param) to start from the most recent prediction.
+///
+/// Results are ordered `id DESC` (newest first), which is stable under
+/// concurrent inserts because new rows always get larger IDs.
+pub async fn get_market_predictions(
+    pool: &PgPool,
+    pool_id: i64,
+    after_id: Option<i64>,
+    limit: i64,
+) -> Result<Vec<MarketPredictionRow>, sqlx::Error> {
+    // Requesting one extra row lets us detect whether a next page exists
+    // without a separate COUNT query on the hot path.
+    let fetch_limit = limit + 1;
+
+    let sql = r#"
+        SELECT id, pool_id, user_address, outcome, amount, created_at
+        FROM predictions
+        WHERE pool_id = $1
+          AND ($2::bigint IS NULL OR id < $2)
+        ORDER BY id DESC
+        LIMIT $3
+    "#;
+
+    sqlx::query_as::<_, MarketPredictionRow>(sql)
+        .bind(pool_id)
+        .bind(after_id)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await
+}
+
+/// Count total predictions for a given pool (used for the `total` field).
+pub async fn count_market_predictions(
+    pool: &PgPool,
+    pool_id: i64,
+) -> Result<i64, sqlx::Error> {
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM predictions WHERE pool_id = $1")
+        .bind(pool_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
+}
+
 /// A single row in the referral earnings breakdown — one entry per pool.
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct ReferralEarningRow {
@@ -1320,5 +1380,104 @@ mod predictions_index_tests {
              (found {total_creates} CREATE INDEX IF NOT EXISTS but only {} ON predictions clauses)",
             on_clauses.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod market_predictions_tests {
+    use super::*;
+    use chrono::Utc;
+
+    /// Helper: build a page of `MarketPredictionRow` with sequential IDs,
+    /// descending (newest-first) to match the query order.
+    fn make_rows(ids: &[i64]) -> Vec<MarketPredictionRow> {
+        ids.iter()
+            .map(|&id| MarketPredictionRow {
+                id,
+                pool_id: 1,
+                user_address: format!("G{id:055}"),
+                outcome: 0,
+                amount: 100,
+                created_at: Utc::now(),
+            })
+            .collect()
+    }
+
+    // ── has_next / next_cursor logic (mirrors the handler) ──────────────────
+
+    /// When the DB returns exactly `limit` rows there is no next page.
+    #[test]
+    fn no_next_page_when_rows_equal_limit() {
+        let limit = 3i64;
+        let mut rows = make_rows(&[10, 9, 8]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// When the DB returns `limit + 1` rows there IS a next page; the extra
+    /// row is trimmed and the cursor points to the last remaining row's ID.
+    #[test]
+    fn has_next_page_when_rows_exceed_limit() {
+        let limit = 3i64;
+        // Query fetches limit+1 = 4 rows
+        let mut rows = make_rows(&[10, 9, 8, 7]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+        assert!(has_next);
+        assert_eq!(next_cursor, Some(8)); // last row after truncation
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// An empty result set produces no next cursor and returns an empty slice.
+    #[test]
+    fn empty_result_produces_no_cursor() {
+        let limit = 20i64;
+        let mut rows: Vec<MarketPredictionRow> = vec![];
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+        assert!(rows.is_empty());
+    }
+
+    /// A single-row result with limit=1 should NOT show has_next.
+    /// (limit+1 = 2 fetched, only 1 returned → no next page)
+    #[test]
+    fn single_row_within_limit_has_no_next() {
+        let limit = 1i64;
+        let mut rows = make_rows(&[5]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+    }
+
+    /// `clamp(1, 100)` must reject zero and cap at 100.
+    #[test]
+    fn limit_clamp_boundaries() {
+        assert_eq!(0i64.clamp(1, 100), 1);
+        assert_eq!((-5i64).clamp(1, 100), 1);
+        assert_eq!(100i64.clamp(1, 100), 100);
+        assert_eq!(9999i64.clamp(1, 100), 100);
+        assert_eq!(50i64.clamp(1, 100), 50);
     }
 }

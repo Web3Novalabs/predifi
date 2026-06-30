@@ -48,6 +48,31 @@ pub struct PoolListResponse {
     pub sort_by: String,
 }
 
+/// OpenAPI schema for a single prediction in the market predictions list.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct MarketPredictionDoc {
+    /// Stable row ID; also used as the pagination cursor value.
+    pub id: i64,
+    pub pool_id: i64,
+    pub user_address: String,
+    pub outcome: i32,
+    pub amount: i64,
+    pub created_at: String,
+}
+
+/// OpenAPI schema for the cursor-paginated market predictions response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct MarketPredictionsResponse {
+    pub market_id: i64,
+    pub predictions: Vec<MarketPredictionDoc>,
+    /// Total number of predictions for this market (across all pages).
+    pub total: i64,
+    pub limit: i64,
+    /// Opaque cursor: pass as `?after=<value>` to retrieve the next page.
+    /// `null` when the current page is the last.
+    pub next_cursor: Option<i64>,
+}
+
 /// OpenAPI schema for a single prediction record.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PredictionDoc {
@@ -239,6 +264,7 @@ pub struct IndexerOkResponse {
         api_get_leaderboard,
         api_get_user_history,
         api_get_user_predictions,
+        api_get_market_predictions,
         api_get_referrals,
         api_get_user_referral_earnings,
         api_ingest_pool_created,
@@ -249,6 +275,8 @@ pub struct IndexerOkResponse {
         OutcomeOddsDoc,
         PoolWithOddsDoc,
         PoolListResponse,
+        MarketPredictionDoc,
+        MarketPredictionsResponse,
         PredictionDoc,
         PredictionHistoryResponse,
         UserPredictionDoc,
@@ -369,6 +397,21 @@ async fn api_get_leaderboard() {}
     )
 )]
 async fn api_get_user_history() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/markets/{market_id}/predictions", tag = "predictions",
+    params(
+        ("market_id" = i64, Path, description = "On-chain pool (market) identifier"),
+        ("after" = Option<i64>, Query, description = "Cursor from previous page's `next_cursor` field"),
+        ("limit" = Option<i64>, Query, description = "Page size (1–100, default 20)"),
+    ),
+    responses(
+        (status = 200, description = "Cursor-paginated predictions for the market", body = MarketPredictionsResponse),
+        (status = 404, description = "Market not found", body = ErrorResponse),
+        (status = 503, description = "Database not available", body = ErrorResponse),
+    )
+)]
+async fn api_get_market_predictions() {}
 
 #[allow(dead_code)]
 #[utoipa::path(get, path = "/api/v1/users/{address}/predictions", tag = "predictions",

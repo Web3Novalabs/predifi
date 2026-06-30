@@ -27,8 +27,10 @@ fn test_dynamic_fee_tiers_application() {
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
-    // Set global fee to 3%
+    // Propose global fee of 3% and apply it after the timelock.
     client.set_fee_bps(&admin, &300u32);
+    env.ledger().with_mut(|l| l.timestamp = crate::FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
 
     // Set up fee tiers
     // Threshold 1M (1,000,000 * 10^7) -> 1% (100 bps)

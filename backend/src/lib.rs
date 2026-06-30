@@ -13,6 +13,7 @@ pub mod jwt;
 pub mod metrics;
 pub mod openapi;
 pub mod price_cache;
+pub mod rate_limit;
 pub mod redis_cache;
 pub mod referrals;
 pub mod request_logger;
@@ -24,6 +25,7 @@ pub mod session;
 pub mod shutdown;
 pub mod telemetry;
 pub mod tracing_context;
+pub mod validated_types;
 pub mod worker;
 pub mod ws;
 

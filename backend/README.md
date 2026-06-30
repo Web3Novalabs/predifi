@@ -231,3 +231,57 @@ let app = Router::new()
     .route("/", get(handler))
     .layer(LoggingLayer);
 ```
+
+---
+
+## `GET /api/v1/markets/:id/predictions` — cursor-paginated predictions per market
+
+Returns the predictions placed in a specific prediction market (pool), ordered
+newest first, with cursor-based pagination.
+
+### Query parameters
+
+| Parameter | Type    | Required | Description                                                       |
+| :-------- | :------ | :------- | :---------------------------------------------------------------- |
+| `after`   | integer | No       | Cursor value from the previous page's `next_cursor` field         |
+| `limit`   | integer | No       | Page size, 1–100 (default 20)                                     |
+
+### Example — first page
+
+```bash
+curl "http://localhost:3000/api/v1/markets/42/predictions?limit=3"
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "market_id": 42,
+    "predictions": [
+      { "id": 305, "pool_id": 42, "user_address": "GABC...", "outcome": 1, "amount": 500, "created_at": "2026-06-29T08:00:00Z" },
+      { "id": 304, "pool_id": 42, "user_address": "GDEF...", "outcome": 0, "amount": 200, "created_at": "2026-06-28T22:30:00Z" },
+      { "id": 302, "pool_id": 42, "user_address": "GXYZ...", "outcome": 1, "amount": 100, "created_at": "2026-06-28T10:15:00Z" }
+    ],
+    "total": 47,
+    "limit": 3,
+    "next_cursor": 302
+  }
+}
+```
+
+### Example — next page
+
+```bash
+curl "http://localhost:3000/api/v1/markets/42/predictions?limit=3&after=302"
+```
+
+Pass `next_cursor` from the previous response as `after`. When `next_cursor` is
+`null` you have reached the last page.
+
+### Error responses
+
+| Status | Code                   | When                             |
+| :----- | :--------------------- | :------------------------------- |
+| 404    | `NOT_FOUND`            | The market ID does not exist     |
+| 503    | `DATABASE_UNAVAILABLE` | No database pool configured      |
+| 500    | `INTERNAL_ERROR`       | Unexpected database query error  |
