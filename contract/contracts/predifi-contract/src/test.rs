@@ -12946,12 +12946,11 @@ fn test_payout_rounding_audit_basic_scenario() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, creator, _, _, _, _) = setup(&env);
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
 
     // Mint tokens
-    let token_admin_client = token::Client::new(&env, &token_address);
     token_admin_client.mint(&user1, &5000);
     token_admin_client.mint(&user2, &5000);
 
@@ -13028,11 +13027,10 @@ fn test_payout_rounding_precision_with_fees() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, creator, _, _, _, _) = setup(&env);
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
     let user = Address::generate(&env);
 
     // Mint tokens
-    let token_admin_client = token::Client::new(&env, &token_address);
     token_admin_client.mint(&user, &10000);
 
     // Setup admin to set fee
@@ -13041,6 +13039,8 @@ fn test_payout_rounding_precision_with_fees() {
 
     // Set 10% fee (1000 bps)
     client.set_fee_bps(&admin, &1000u32);
+    env.ledger().with_mut(|li| li.timestamp += 86401);
+    client.apply_fee_bps(&admin);
 
     // Create pool
     let end_time = env.ledger().timestamp() + 3600;
@@ -13104,13 +13104,12 @@ fn test_payout_rounding_precision_three_winners() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, creator, _, _, _, _) = setup(&env);
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
     let user1 = Address::generate(&env);
     let user2 = Address::generate(&env);
     let user3 = Address::generate(&env);
 
     // Mint tokens
-    let token_admin_client = token::Client::new(&env, &token_address);
     token_admin_client.mint(&user1, &10000);
     token_admin_client.mint(&user2, &10000);
     token_admin_client.mint(&user3, &10000);
@@ -13183,12 +13182,11 @@ fn test_payout_never_exceeds_pool() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (ac_client, client, token_address, creator, _, _, _, _) = setup(&env);
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
     let winner = Address::generate(&env);
     let loser = Address::generate(&env);
 
     // Mint tokens
-    let token_admin_client = token::Client::new(&env, &token_address);
     token_admin_client.mint(&winner, &5000);
     token_admin_client.mint(&loser, &5000);
 
@@ -13196,6 +13194,8 @@ fn test_payout_never_exceeds_pool() {
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     client.set_fee_bps(&admin, &2500u32);
+    env.ledger().with_mut(|li| li.timestamp += 86401);
+    client.apply_fee_bps(&admin);
 
     // Create pool
     let end_time = env.ledger().timestamp() + 3600;

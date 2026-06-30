@@ -338,7 +338,7 @@ impl SafeMath {
 /// )?;
 /// audit.validate_payout()?;
 /// ```
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PayoutRoundingAudit {
     /// Total amount staked in the pool
     pub pool_total_stake: i128,
@@ -447,6 +447,10 @@ impl PayoutRoundingAudit {
         user_stakes: &[i128],
         winning_stake: i128,
     ) -> Result<i128, PrediFiError> {
+        if winning_stake > pool_total_stake {
+            return Err(PrediFiError::ArithmeticError);
+        }
+
         // Calculate payout pool once
         let protocol_fee = SafeMath::percentage(
             pool_total_stake,
@@ -1149,7 +1153,7 @@ mod tests {
             (1000, 2500, 250), // 25%
             (1000, 5000, 500), // 50%
             (1000, 9900, 990), // 99%
-            (999, 333, 3),     // 3.33% with rounding
+            (999, 333, 33),    // 3.33% with rounding
         ];
 
         for (total, bps, expected_fee) in test_cases {

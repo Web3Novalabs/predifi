@@ -1590,9 +1590,9 @@ impl PredifiContract {
             return Err(PredifiError::InvalidAmount);
         }
 
-        // Check 3: Ensure new min_stake doesn't exceed current total_stake
+        // Check 3: Ensure new min_stake doesn't exceed current total_stake if any
         // This prevents setting a minimum that would retroactively invalidate existing bets
-        if new_min_stake > pool.total_stake {
+        if pool.total_stake > 0 && new_min_stake > pool.total_stake {
             return Err(PredifiError::StakeAboveMaximum);
         }
 
@@ -1607,7 +1607,7 @@ impl PredifiContract {
         }
 
         // Check 6: Prevent extreme ratio between min and max (prevent usability issues)
-        if new_max_stake > 0 {
+        if new_max_stake > 0 && new_max_stake != new_min_stake {
             // Ensure max is at least 10x min to allow reasonable participation range
             let min_reasonable_ratio = new_min_stake
                 .checked_mul(10)
@@ -4292,16 +4292,18 @@ impl PredifiContract {
                 }
             }
 
-            // Validate main winnings transfer before execution
-            Self::validate_token_transfer(
-                env,
-                &pool.token,
-                &env.current_contract_address(),
-                user,
-                winnings,
-            )?;
+            if winnings > 0 {
+                // Validate main winnings transfer before execution
+                Self::validate_token_transfer(
+                    env,
+                    &pool.token,
+                    &env.current_contract_address(),
+                    user,
+                    winnings,
+                )?;
 
-            token_client.transfer(&env.current_contract_address(), user, &winnings);
+                token_client.transfer(&env.current_contract_address(), user, &winnings);
+            }
 
             WinningsClaimedEvent {
                 pool_id,
