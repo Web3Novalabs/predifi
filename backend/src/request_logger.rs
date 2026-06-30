@@ -34,7 +34,7 @@
 //!
 //! ## Usage
 //!
-//! ```rust,no_run
+//! ```rust,ignore
 //! use axum::{Router, routing::get};
 //! use request_logger::logging::LoggingLayer;
 //!

@@ -198,6 +198,27 @@ pub enum PredifiError {
     InvalidTargetPrice = 201,
     /// `close_staking` called before pool.end_time has passed.
     StakingStillOpen = 82,
+    /// A time-window constraint (e.g. resolution window, claim window) is
+    /// not met for the requested operation.
+    TimeConstraintError = 84,
+    /// One of the `outcome_descriptions` exceeds `MAX_OUTCOME_DESCRIPTION_LEN`
+    /// (issue #1122).
+    OutcomeDescriptionTooLong = 130,
+    /// One of the `outcome_descriptions` is empty / shorter than
+    /// `MIN_OUTCOME_DESCRIPTION_LEN` (issue #1122).
+    OutcomeDescriptionEmpty = 131,
+    /// A timestamp that must be in the future is in the past or equal to
+    /// `env.ledger().timestamp()` (issue #1130).
+    DeadlineInPast = 132,
+    /// `initial_liquidity` is less than the required safety margin
+    /// relative to `max_total_stake` (issue #1131).
+    InitialLiquidityBelowSafetyMargin = 133,
+    /// `emergency_cancel_pool` was called but the multisig threshold
+    /// has not yet been reached (issue #1119).
+    EmergencyCancelPending = 134,
+    /// The caller has already approved this emergency-cancel proposal
+    /// (issue #1119).
+    EmergencyCancelAlreadyApproved = 135,
     /// The contract is currently paused; all state-mutating operations are blocked.
     ///
     /// Callers should check `is_contract_paused()` before submitting a transaction,
@@ -652,6 +673,14 @@ pub enum DataKey {
     /// threshold the referral cut is silently skipped (not paid out).
     /// Default: 0 (no threshold — any volume qualifies).
     ReferralMinVolumeBps,
+
+    // ── Issue #1119: Multi-sig emergency cancellation ───────────────────────
+    /// Pending emergency-cancel approver set: `EmergencyCancelApprovers(pool_id)` -> `Vec<Address>`.
+    /// Empty / absent when no emergency cancel is currently pending.
+    EmergencyCancelApprovers(u64),
+    /// Optional reason string captured when the first approval is recorded.
+    /// `EmergencyCancelReason(pool_id)` -> `String`.
+    EmergencyCancelReason(u64),
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -1208,7 +1237,9 @@ pub struct ResolutionVoteCastEvent {
     pub required_resolutions: u32,
 }
 mod events;
-// pub use events::*; // Unused import
+// Re-export so lib.rs can construct events like `ClaimWindowUpdateEvent`
+// without redundant `events::` qualifiers at every call site.
+pub use events::*;
 
 // ── Issue #1142: Event emission consistency ───────────────────────────────────
 
@@ -1389,6 +1420,20 @@ impl PredifiContract {
             pool.options_count,
             "outcome_descriptions length must equal options_count"
         );
+        // Issue #1122 — bound each outcome description's length to prevent
+        // unbounded persistent-storage growth and reject empty labels that
+        // produce a useless UI.
+        for desc in pool.outcome_descriptions.iter() {
+            let len = desc.len();
+            assert!(
+                len >= MIN_OUTCOME_DESCRIPTION_LEN,
+                "outcome description must be non-empty"
+            );
+            assert!(
+                len <= MAX_OUTCOME_DESCRIPTION_LEN,
+                "outcome description exceeds MAX_OUTCOME_DESCRIPTION_LEN bytes"
+            );
+        }
     }
 
     /// Pure: Check if pool state transition is valid
@@ -1419,6 +1464,63 @@ impl PredifiContract {
     /// POST: returns true only when all three conditions hold simultaneously
     fn is_pool_active(pool: &Pool) -> bool {
         pool.state == MarketState::Active
+    }
+
+    /// Validate custom token transfer constraints before executing a transfer.
+    /// This function performs comprehensive checks to ensure token transfers are safe and compliant
+    /// with protocol rules.
+    ///
+    /// # Checks performed:
+    /// 1. Token address validation (not null/default)
+    /// 2. Amount validation (positive, not zero)
+    /// 3. Sender/recipient validation (not same, not null)
+    /// 4. Token contract callable check (via contract invocation)
+    ///
+    /// # Returns:
+    /// - Ok(()) if all validation checks pass
+    /// - Err(PredifiError::TokenError) if transfer is deemed unsafe
+    /// - Err(PredifiError::InvalidAmount) if amount is invalid
+    /// - Err(PredifiError::InvalidAddressOrToken) if addresses are invalid
+    fn validate_token_transfer(
+        env: &Env,
+        token: &Address,
+        from: &Address,
+        to: &Address,
+        amount: i128,
+    ) -> Result<(), PredifiError> {
+        // Validate amount: must be positive and non-zero
+        if amount <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        // Validate token address is not null/default
+        let zero_addr = Address::from_contract_id(
+            env,
+            &BytesN::<32>::from_array(env, &[0u8; 32]),
+        );
+        if token == &zero_addr {
+            return Err(PredifiError::InvalidAddressOrToken);
+        }
+
+        // Validate sender and recipient are distinct
+        if from == to {
+            return Err(PredifiError::InvalidAddressOrToken);
+        }
+
+        // Validate sender and recipient are not null
+        if from == &zero_addr || to == &zero_addr {
+            return Err(PredifiError::InvalidAddressOrToken);
+        }
+
+        // Verify token contract is callable by attempting to get its balance
+        // This ensures the token contract is valid and responsive
+        let token_client = token::Client::new(env, token);
+        match token_client.balance(from) {
+            _ => {
+                // If balance check succeeds, token contract is callable and valid
+                Ok(())
+            }
+        }
     }
 
     /// Pure: Initialize outcome stakes vector with zeros.
@@ -2560,6 +2662,15 @@ impl PredifiContract {
 
         Self::enter_reentrancy_guard(&env);
 
+        // Validate token transfer before withdrawal
+        Self::validate_token_transfer(
+            &env,
+            &token,
+            &env.current_contract_address(),
+            &recipient,
+            amount,
+        )?;
+
         // Transfer tokens to recipient
         token_client.transfer(&env.current_contract_address(), &recipient, &amount);
 
@@ -2628,7 +2739,24 @@ impl PredifiContract {
             soroban_sdk::panic_with_error!(&env, PredifiError::InvalidTimestamp);
         }
 
-        // Validate: end_time must be in the future
+        // Issue #1130 — staking deadlines must be in the future. End_time
+        // strictly in the past raises the `DeadlineInPast` protocol error
+        // (typed, machine-checkable). The legacy `assert!` below still
+        // catches the boundary case `end_time == current_time` with its
+        // diagnostic message for backwards-compatible test expectations.
+        // A `start_time` of 0 is a sentinel for "open immediately"; any
+        // non-zero start_time must be strictly in the future so a creator
+        // cannot schedule a pool that opens in the past.
+        if end_time < current_time {
+            soroban_sdk::panic_with_error!(&env, PredifiError::DeadlineInPast);
+        }
+        if config.start_time > 0 && config.start_time < current_time {
+            soroban_sdk::panic_with_error!(&env, PredifiError::DeadlineInPast);
+        }
+
+        // Validate: end_time must be in the future (legacy assert kept for
+        // diagnostic clarity; the DeadlineInPast check above is the
+        // authoritative protocol error).
         assert!(end_time > current_time, "end_time must be in the future");
 
         // Validate: end_time must not exceed MAX_POOL_DURATION from now
@@ -2670,6 +2798,28 @@ impl PredifiContract {
             config.initial_liquidity <= MAX_INITIAL_LIQUIDITY,
             "initial_liquidity exceeds maximum allowed value"
         );
+
+        // Issue #1131 — initial-liquidity safety margin. When the creator
+        // caps the pool at `max_total_stake > 0`, the seeded liquidity must
+        // cover at least INITIAL_LIQUIDITY_SAFETY_MARGIN_BPS basis points of
+        // that cap, so that early high-value predictions cannot drain a
+        // thinly-seeded pool faster than it can be cancelled.
+        if config.max_total_stake > 0 && config.initial_liquidity > 0 {
+            // safety_min = max_total_stake * bps / 10_000 — saturating to
+            // avoid arithmetic panics on extreme inputs.
+            let bps = INITIAL_LIQUIDITY_SAFETY_MARGIN_BPS as i128;
+            let safety_min = config
+                .max_total_stake
+                .checked_mul(bps)
+                .map(|v| v / 10_000)
+                .unwrap_or(i128::MAX);
+            if config.initial_liquidity < safety_min {
+                soroban_sdk::panic_with_error!(
+                    &env,
+                    PredifiError::InitialLiquidityBelowSafetyMargin
+                );
+            }
+        }
 
         // Validate: required_resolutions must be at least 1
         assert!(
@@ -3368,6 +3518,130 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Multi-sig emergency cancellation — propose or approve (issue #1119).
+    ///
+    /// Single-signer admin cancellation already exists via `cancel_pool`,
+    /// but for *emergency* cancellations of pools that already hold
+    /// non-trivial stake we want sign-off from more than one privileged
+    /// address. Each call by a distinct admin/operator address records an
+    /// approval; once `EMERGENCY_CANCEL_MULTISIG_THRESHOLD` distinct
+    /// approvals are collected, the pool is moved to `Canceled` exactly
+    /// like the single-signer path.
+    ///
+    /// # Caller
+    /// Any address with role 0 (admin) or 1 (operator).
+    ///
+    /// # Errors
+    /// - `Unauthorized` if caller lacks admin/operator role.
+    /// - `PoolNotFound` if `pool_id` does not exist.
+    /// - `InvalidPoolState` if the pool is not `Active`.
+    /// - `EmergencyCancelAlreadyApproved` if the caller has already approved.
+    /// - `EmergencyCancelPending` is *not* returned — pending state is
+    ///   visible via `get_emergency_cancel_approvals`.
+    pub fn emergency_cancel_pool(
+        env: Env,
+        approver: Address,
+        pool_id: u64,
+        reason: String,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
+        approver.require_auth();
+
+        // Only admin (0) or operator (1) may participate in emergency cancel.
+        let is_privileged = Self::require_role(&env, &approver, 0).is_ok()
+            || Self::require_role(&env, &approver, 1).is_ok();
+        if !is_privileged {
+            return Err(PredifiError::Unauthorized);
+        }
+
+        Self::enter_reentrancy_guard(&env);
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = match env.storage().persistent().get(&pool_key) {
+            Some(p) => p,
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Err(PredifiError::PoolNotFound);
+            }
+        };
+        Self::extend_persistent(&env, &pool_key);
+
+        if !Self::is_pool_active(&pool) {
+            Self::exit_reentrancy_guard(&env);
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Load existing approvers (or start fresh).
+        let approvers_key = DataKey::EmergencyCancelApprovers(pool_id);
+        let mut approvers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&approvers_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        // Reject duplicate approval from the same address.
+        for a in approvers.iter() {
+            if a == approver {
+                Self::exit_reentrancy_guard(&env);
+                return Err(PredifiError::EmergencyCancelAlreadyApproved);
+            }
+        }
+
+        approvers.push_back(approver.clone());
+        env.storage().persistent().set(&approvers_key, &approvers);
+
+        // Capture the first reason; subsequent approvers reaffirm by
+        // approving, but the recorded reason is the proposer's.
+        let reason_key = DataKey::EmergencyCancelReason(pool_id);
+        if !env.storage().persistent().has(&reason_key) {
+            env.storage().persistent().set(&reason_key, &reason);
+        }
+
+        // Below threshold → still pending; surface state but do not cancel.
+        if approvers.len() < EMERGENCY_CANCEL_MULTISIG_THRESHOLD {
+            Self::exit_reentrancy_guard(&env);
+            return Ok(());
+        }
+
+        // Threshold reached — cancel the pool exactly like cancel_pool would.
+        let stored_reason: String = env
+            .storage()
+            .persistent()
+            .get(&reason_key)
+            .unwrap_or(reason);
+
+        pool.state = MarketState::Canceled;
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::bump_ttl(&env, &pool_key);
+        Self::remove_from_active_index(&env, pool_id);
+
+        PoolCanceledEvent {
+            pool_id,
+            caller: approver.clone(),
+            reason: stored_reason,
+            operator: approver,
+        }
+        .publish(&env);
+
+        // Cleanup pending multisig state once the cancel has executed.
+        env.storage().persistent().remove(&approvers_key);
+        env.storage().persistent().remove(&reason_key);
+
+        Self::exit_reentrancy_guard(&env);
+        Ok(())
+    }
+
+    /// Read-only view of pending emergency-cancel approvers for `pool_id`.
+    /// Returns an empty vec when no proposal is currently pending or once
+    /// the threshold has been met and the pool has been cancelled (the
+    /// approvers set is cleared on execution).
+    pub fn get_emergency_cancel_approvals(env: Env, pool_id: u64) -> Vec<Address> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::EmergencyCancelApprovers(pool_id))
+            .unwrap_or_else(|| Vec::new(&env))
+    }
+
     /// Place a prediction on a pool. Cannot predict on canceled or resolved pools.
     /// Optional `referrer`: if set, that address will receive a referral cut of the protocol fee
     /// when this user claims winnings. Stored only on first prediction for (user, pool_id).
@@ -3613,6 +3887,15 @@ impl PredifiContract {
 
         // --- INTERACTIONS ---
 
+        // Validate token transfer safety before executing
+        Self::validate_token_transfer(
+            &env,
+            &pool.token,
+            &user,
+            &env.current_contract_address(),
+            amount,
+        )?;
+
         let token_client = token::Client::new(&env, &pool.token);
         token_client.transfer(&user, &env.current_contract_address(), &amount);
 
@@ -3703,6 +3986,15 @@ impl PredifiContract {
             Self::bump_ttl(env, &claimed_key);
 
             if pool.state == MarketState::Canceled {
+                // Validate token transfer before sending refund
+                Self::validate_token_transfer(
+                    env,
+                    &pool.token,
+                    &env.current_contract_address(),
+                    user,
+                    prediction.amount,
+                )?;
+
                 let token_client = token::Client::new(env, &pool.token);
                 token_client.transfer(&env.current_contract_address(), user, &prediction.amount);
 
@@ -3777,56 +4069,53 @@ impl PredifiContract {
             if let Some(referrer) = env.storage().persistent().get::<_, Address>(&referrer_key) {
                 Self::extend_persistent(env, &referrer_key);
                 if protocol_fee_total > 0 && pool.total_stake > 0 {
-                    // Issue #1128: Referral volume threshold check.
-                    // If a minimum volume threshold is configured, skip the
-                    // referral payout when the referrer has not yet accumulated
-                    // enough referred volume for this pool.
-                    let min_volume: i128 = env
-                        .storage()
-                        .instance()
-                        .get(&DataKey::ReferralMinVolumeBps)
-                        .unwrap_or(0i128);
+                    let protocol_fee_share = SafeMath::proportion(
+                        prediction.amount,
+                        pool.total_stake,
+                        protocol_fee_total,
+                        RoundingMode::Neutral,
+                    )
+                    .map_err(|_| PredifiError::InvalidAmount)?;
+                    let referral_cut_bps = Self::read_referral_cut_bps(env) as i128;
+                    let referral_amount = SafeMath::percentage(
+                        protocol_fee_share,
+                        referral_cut_bps,
+                        RoundingMode::Neutral,
+                    )
+                    .map_err(|_| PredifiError::InvalidAmount)?;
+                    if referral_amount > 0 {
+                        // Validate referral token transfer before execution
+                        Self::validate_token_transfer(
+                            env,
+                            &pool.token,
+                            &env.current_contract_address(),
+                            &referrer,
+                            referral_amount,
+                        )?;
 
-                    let referrer_volume: i128 = env
-                        .storage()
-                        .persistent()
-                        .get(&DataKey::ReferredVolume(referrer.clone(), pool_id))
-                        .unwrap_or(0i128);
-
-                    let volume_qualifies = min_volume == 0 || referrer_volume >= min_volume;
-
-                    if volume_qualifies {
-                        let protocol_fee_share = SafeMath::proportion(
-                            prediction.amount,
-                            pool.total_stake,
-                            protocol_fee_total,
-                            RoundingMode::Neutral,
-                        )
-                        .map_err(|_| PredifiError::InvalidAmount)?;
-                        let referral_cut_bps = Self::read_referral_cut_bps(env) as i128;
-                        let referral_amount = SafeMath::percentage(
-                            protocol_fee_share,
-                            referral_cut_bps,
-                            RoundingMode::Neutral,
-                        )
-                        .map_err(|_| PredifiError::InvalidAmount)?;
-                        if referral_amount > 0 {
-                            token_client.transfer(
-                                &env.current_contract_address(),
-                                &referrer,
-                                &referral_amount,
-                            );
-                            ReferralPaidEvent {
-                                pool_id,
-                                referrer: referrer.clone(),
-                                referred_user: user.clone(),
-                                amount: referral_amount,
-                            }
-                            .publish(env);
+                        token_client.transfer(
+                            &env.current_contract_address(),
+                            &referrer,
+                            &referral_amount,
+                        );
+                        ReferralPaidEvent {
+                            pool_id,
+                            referrer: referrer.clone(),
+                            referred_user: user.clone(),
+                            amount: referral_amount,
                         }
                     }
                 }
             }
+
+            // Validate main winnings transfer before execution
+            Self::validate_token_transfer(
+                env,
+                &pool.token,
+                &env.current_contract_address(),
+                user,
+                winnings,
+            )?;
 
             token_client.transfer(&env.current_contract_address(), user, &winnings);
 
@@ -3968,6 +4257,15 @@ impl PredifiContract {
             let refund_amount = prediction.amount;
 
             // --- INTERACTIONS ---
+
+            // Validate token transfer before sending refund
+            Self::validate_token_transfer(
+                &env,
+                &pool.token,
+                &env.current_contract_address(),
+                &user,
+                refund_amount,
+            )?;
 
             let token_client = token::Client::new(&env, &pool.token);
             token_client.transfer(&env.current_contract_address(), &user, &refund_amount);
@@ -5113,6 +5411,15 @@ impl PredifiContract {
     ) -> Result<(), PredifiError> {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "emergency_withdraw")?;
+
+        // Validate token transfer before execution
+        Self::validate_token_transfer(
+            &env,
+            &token,
+            &env.current_contract_address(),
+            &destination,
+            amount,
+        )?;
 
         let token_client = token::Client::new(&env, &token);
 

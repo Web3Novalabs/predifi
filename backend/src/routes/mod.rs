@@ -192,12 +192,7 @@ mod tests {
             .await
             .expect("request failed");
 
-        assert!(
-            response.status() == StatusCode::INTERNAL_SERVER_ERROR
-                || response.status() == StatusCode::SERVICE_UNAVAILABLE,
-            "unreachable database should return an error status, got: {}",
-            response.status()
-        );
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
         let body = body_string(response.into_body()).await;
         assert!(
