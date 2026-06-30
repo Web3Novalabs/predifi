@@ -13129,3 +13129,387 @@ fn test_multiple_predictions_with_token_validation() {
     let predictions = client.get_user_predictions(&user, &0u32, &10u32);
     assert_eq!(predictions.len(), 2);
 }
+
+
+// ============================================================================
+// TESTS FOR STAKE LIMIT MODIFICATION SAFETY CHECKS
+// ============================================================================
+
+#[test]
+fn test_set_stake_limits_zero_min_stake_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 3600),
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 1000i128,
+            max_total_stake: 100000i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Try to set min_stake to 0 - should fail
+    let result = client.try_set_stake_limits(&operator, &pool_id, &0i128, &1000i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_stake_limits_negative_min_stake_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 3600),
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 1000i128,
+            max_total_stake: 100000i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Try to set min_stake to negative - should fail
+    let result = client.try_set_stake_limits(&operator, &pool_id, &-100i128, &1000i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_stake_limits_min_exceeds_max_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 3600),
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 1000i128,
+            max_total_stake: 100000i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Try to set min_stake > max_stake - should fail
+    let result = client.try_set_stake_limits(&operator, &pool_id, &2000i128, &1000i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_stake_limits_min_exceeds_total_stake_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &10000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 3600),
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 0i128,
+            max_total_stake: 100000i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // User places prediction with 500 tokens
+    client.place_prediction(&user, &pool_id, &500i128, &0u32, &None, &None);
+
+    // Try to set min_stake > total_stake (500) - should fail
+    let result = client.try_set_stake_limits(&operator, &pool_id, &600i128, &0i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_stake_limits_successful_update() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 3600),
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 1000i128,
+            max_total_stake: 100000i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Successfully update stake limits
+    let result = client.try_set_stake_limits(&operator, &pool_id, &200i128, &2000i128);
+    assert!(result.is_ok());
+
+    // Verify limits were updated
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.min_stake, 200i128);
+    assert_eq!(pool.max_stake, 2000i128);
+}
+
+#[test]
+fn test_set_stake_limits_no_max_stake_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 3600),
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Set min_stake with no max_stake (0) - should succeed
+    let result = client.try_set_stake_limits(&operator, &pool_id, &150i128, &0i128);
+    assert!(result.is_ok());
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.min_stake, 150i128);
+    assert_eq!(pool.max_stake, 0i128);
+}
+
+#[test]
+fn test_set_stake_limits_ratio_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 3600),
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 1000i128,
+            max_total_stake: 100000i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Try to set max_stake < min_stake * 10 (extreme ratio) - should fail
+    let result = client.try_set_stake_limits(&operator, &pool_id, &100i128, &500i128);
+    assert!(result.is_err());
+
+    // Set with reasonable ratio (10x min) - should succeed
+    let result = client.try_set_stake_limits(&operator, &pool_id, &100i128, &1000i128);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_set_stake_limits_on_inactive_pool_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, operator, creator) =
+        setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let end_time = env.ledger().timestamp() + 3600;
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 1000i128,
+            max_total_stake: 100000i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Move time forward and resolve pool
+    env.ledger().set_timestamp(end_time + 1);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Try to set stake limits on resolved pool - should fail
+    let result = client.try_set_stake_limits(&operator, &pool_id, &200i128, &2000i128);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_set_stake_limits_requires_operator_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(&env);
+
+    let unauthorized_user = Address::generate(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 3600),
+        &token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 1000i128,
+            max_total_stake: 100000i128,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Try to set stake limits without operator role - should fail
+    let result = client.try_set_stake_limits(&unauthorized_user, &pool_id, &200i128, &2000i128);
+    assert!(result.is_err());
+}
