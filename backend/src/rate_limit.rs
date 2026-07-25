@@ -3,6 +3,12 @@
 //! Each route group in `routes/v1.rs` wraps its sub-router with the
 //! appropriate tier from this module. In test builds the layer is a no-op so
 //! parallel tests do not cross-contaminate each other's token buckets.
+//!
+//! Rate limiting uses client IP addresses as the key, with support for
+//! proxy headers (X-Forwarded-For, X-Real-IP) to identify clients behind
+//! reverse proxies.
+
+use tower_governor::key_extractor::SmartIpKeyExtractor;
 
 /// Rate-limit tier — maps to a `(burst_size, period_secs)` pair.
 #[derive(Clone, Copy, Debug)]
@@ -44,6 +50,7 @@ pub fn with_rate_limit(router: axum::Router, tier: RateLimitTier) -> axum::Route
         GovernorConfigBuilder::default()
             .period(std::time::Duration::from_secs(period_secs))
             .burst_size(burst_size)
+            .key_extractor(SmartIpKeyExtractor)
             .error_handler(|_| crate::response::rate_limit_error_response())
             .finish()
             .expect("invalid governor config"),

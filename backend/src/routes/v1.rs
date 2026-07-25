@@ -256,9 +256,9 @@ pub async fn get_pool_by_id_handler(
 #[derive(Debug, Deserialize)]
 pub struct StatsQuery {
     /// Category filter, e.g. "Sports", "Crypto"
-    pub category: Option<String>,
+    pub category: Option<NonEmptyString>,
     /// Pool state filter: "active" | "closed" | "settled"
-    pub status: Option<String>,
+    pub status: Option<PoolStatus>,
 }
 
 /// `GET /api/v1/stats` — protocol-wide aggregate statistics.
@@ -284,16 +284,16 @@ pub async fn get_stats(
         .into_response();
     };
 
-    let cache_key =
-        crate::redis_cache::stats_cache_key(params.category.as_deref(), params.status.as_deref());
+    let category = params.category.as_ref().map(|s| s.as_str());
+    let status = params.status.map(|s| s.as_str());
+
+    let cache_key = crate::redis_cache::stats_cache_key(category, status);
 
     if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
         return (StatusCode::OK, Json(cached)).into_response();
     }
 
-    match crate::db::get_protocol_stats(db, params.category.as_deref(), params.status.as_deref())
-        .await
-    {
+    match crate::db::get_protocol_stats(db, category, status).await {
         Ok(stats) => {
             let json_response = serde_json::json!(&stats);
             state
@@ -421,7 +421,7 @@ pub struct PaginationQuery {
 /// `GET /api/v1/users/:address/history` — paginated prediction history for a user.
 pub async fn get_user_history(
     State(state): State<AppState>,
-    Path(address): Path<String>,
+    Path(address): Path<StellarAddress>,
     Query(params): Query<PaginationQuery>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
@@ -439,7 +439,7 @@ pub async fn get_user_history(
         .into_response();
     };
 
-    match crate::db::get_user_prediction_history(db, &address, limit, offset).await {
+    match crate::db::get_user_prediction_history(db, address.as_str(), limit, offset).await {
         Ok(rows) => {
             let response = json!({
                 "address": address,
@@ -461,7 +461,7 @@ pub async fn get_user_history(
 /// `GET /api/v1/users/:address/predictions` — enhanced user predictions with current pool status.
 pub async fn get_user_predictions(
     State(state): State<AppState>,
-    Path(address): Path<String>,
+    Path(address): Path<StellarAddress>,
     Query(params): Query<PaginationQuery>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
@@ -479,7 +479,7 @@ pub async fn get_user_predictions(
         .into_response();
     };
 
-    match crate::db::get_user_predictions(db, &address, limit, offset).await {
+    match crate::db::get_user_predictions(db, address.as_str(), limit, offset).await {
         Ok(predictions) => {
             let response = json!({
                 "address": address,
@@ -507,7 +507,7 @@ pub struct LeaderboardQuery {
     /// Zero-based offset for pagination (default 0).
     pub offset: Option<BoundedI64<0, 9223372036854775807>>,
     /// Ranking type: "volume" | "winnings" (default: "volume")
-    pub rank_by: Option<String>,
+    pub rank_by: Option<NonEmptyString>,
 }
 
 /// `GET /api/v1/leaderboard` — user rankings by betting volume or winnings.
@@ -520,7 +520,7 @@ pub async fn get_leaderboard(
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
-    let rank_by = params.rank_by.as_deref().unwrap_or("volume");
+    let rank_by = params.rank_by.as_ref().map(|s| s.as_str()).unwrap_or("volume");
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -877,15 +877,17 @@ async fn get_fees(State(state): State<AppState>) -> Json<FeeInfo> {
 ///
 /// Requires a live DB pool; returns 503 if the pool is not configured.
 async fn referrals_handler(
-    axum::extract::Path(address): axum::extract::Path<String>,
+    axum::extract::Path(address): axum::extract::Path<StellarAddress>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    let address_str = address.as_str().to_string();
+
     match state.db {
         Some(pool) => {
-            match crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await {
+            match crate::referrals::get_referrals(axum::extract::Path(address_str), State(pool)).await {
                 Ok((status, body)) => (status, body).into_response(),
                 Err(e) => ApiResponse::<()>::error(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -908,16 +910,18 @@ async fn referrals_handler(
 ///
 /// Requires a live DB pool; returns 503 if the pool is not configured.
 async fn referral_estimate_handler(
-    axum::extract::Path(address): axum::extract::Path<String>,
+    axum::extract::Path(address): axum::extract::Path<StellarAddress>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    let address_str = address.as_str().to_string();
+
     match state.db {
         Some(pool) => {
             match crate::referrals::estimate_referral_rewards(
-                address,
+                address_str,
                 &pool,
                 state.config.treasury_fee_bps,
                 state.config.referral_fee_bps,
@@ -944,16 +948,18 @@ async fn referral_estimate_handler(
 
 /// `GET /api/v1/users/:address/referrals` — per-pool referral earnings for a user.
 async fn user_referral_earnings_handler(
-    axum::extract::Path(address): axum::extract::Path<String>,
+    axum::extract::Path(address): axum::extract::Path<StellarAddress>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    let address_str = address.as_str().to_string();
+
     match state.db {
         Some(pool) => {
             match crate::referrals::get_user_referral_earnings(
-                axum::extract::Path(address),
+                axum::extract::Path(address_str),
                 State(pool),
             )
             .await
