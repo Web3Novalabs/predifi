@@ -5,7 +5,7 @@
 //! signing secret meets minimum security requirements. [`verify_jwt_token`]
 //! combines both checks and verifies the token signature and claims.
 
-use crate::constants::{JWT_MIN_LENGTH, JWT_PARTS_COUNT, JWT_SECRET_MIN_LENGTH};
+use crate::constants::{JWT_ACCESS_TOKEN_EXPIRY_SECS, JWT_MIN_LENGTH, JWT_PARTS_COUNT, JWT_SECRET_MIN_LENGTH};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 
@@ -110,6 +110,10 @@ impl std::error::Error for JwtVerifyError {}
 pub struct PredifiClaims {
     /// Subject — the authenticated user's wallet address.
     pub sub: String,
+    /// Expiration time as a Unix timestamp (seconds since epoch).
+    /// Required for all issued tokens; validated on every call to
+    /// `verify_jwt_token`.
+    pub exp: u64,
 }
 
 /// Validate that the configured JWT signing secret meets minimum requirements.
@@ -157,9 +161,9 @@ pub fn verify_jwt_token(token: &str, secret: &str) -> Result<PredifiClaims, JwtV
     verify_jwt_secret(secret).map_err(JwtVerifyError::InvalidSecret)?;
     validate_jwt_format(token).map_err(JwtVerifyError::InvalidFormat)?;
 
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.validate_exp = false;
-    validation.required_spec_claims.clear();
+    // Pin algorithm to HS256 — prevents alg:none and algorithm confusion attacks.
+    // validate_exp defaults to true; do NOT override it so expired tokens are rejected.
+    let validation = Validation::new(Algorithm::HS256);
 
     let token_data = decode::<PredifiClaims>(
         token,
@@ -195,14 +199,41 @@ pub fn extract_bearer_token(header_value: &str) -> Option<&str> {
     }
 }
 
+/// Issue a signed JWT for `sub` with a standard expiry window.
+///
+/// The token expires in [`JWT_ACCESS_TOKEN_EXPIRY_SECS`] seconds from the
+/// current system time.  Returns an error string if signing fails.
+pub fn sign_jwt(sub: &str, secret: &str, now_unix: u64) -> Result<String, String> {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+
+    let claims = PredifiClaims {
+        sub: sub.to_string(),
+        exp: now_unix + JWT_ACCESS_TOKEN_EXPIRY_SECS,
+    };
+
+    encode(
+        &Header::new(Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 pub fn sign_jwt_for_test(sub: &str, secret: &str) -> String {
     use jsonwebtoken::{encode, EncodingKey, Header};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("time went backwards")
+        .as_secs();
 
     encode(
         &Header::new(Algorithm::HS256),
         &PredifiClaims {
             sub: sub.to_string(),
+            exp: now + JWT_ACCESS_TOKEN_EXPIRY_SECS,
         },
         &EncodingKey::from_secret(secret.as_bytes()),
     )
@@ -344,6 +375,24 @@ mod tests {
     fn verify_jwt_token_rejects_malformed_token_before_crypto() {
         let error = verify_jwt_token("not-a-jwt", TEST_SECRET).expect_err("malformed token");
         assert!(matches!(error, JwtVerifyError::InvalidFormat(_)));
+    }
+
+    #[test]
+    fn verify_jwt_token_rejects_expired_token() {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        // Build a token with exp in the past (Unix epoch 1 = 1970-01-01T00:00:01Z).
+        let expired_claims = PredifiClaims {
+            sub: "GABC123".to_string(),
+            exp: 1,
+        };
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &expired_claims,
+            &EncodingKey::from_secret(TEST_SECRET.as_bytes()),
+        )
+        .expect("signed expired token");
+        let error = verify_jwt_token(&token, TEST_SECRET).expect_err("expired token");
+        assert_eq!(error, JwtVerifyError::Expired);
     }
 
     #[test]
