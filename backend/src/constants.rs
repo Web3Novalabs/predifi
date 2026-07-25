@@ -69,6 +69,9 @@ pub const JWT_MIN_LENGTH: usize = 20;
 /// HS256 requires a sufficiently long secret to resist brute-force attacks.
 pub const JWT_SECRET_MIN_LENGTH: usize = 32;
 
+/// Access token lifetime in seconds (1 hour).
+pub const JWT_ACCESS_TOKEN_EXPIRY_SECS: u64 = 3_600;
+
 /// Default maximum number of events processed per indexer poll cycle.
 pub const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = 500;
 
