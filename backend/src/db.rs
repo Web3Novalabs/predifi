@@ -194,7 +194,7 @@ pub struct PoolDetails {
 }
 
 /// Outcome odds information.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct OutcomeOdds {
     pub outcome: i32,
     pub stake: i64,
@@ -202,7 +202,7 @@ pub struct OutcomeOdds {
 }
 
 /// Complete pool information with odds.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PoolWithOdds {
     pub pool_id: i64,
     pub name: String,
@@ -480,30 +480,40 @@ pub async fn get_users_by_winnings(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<UserWinnings>, sqlx::Error> {
+    // Previously this computed each winning pool's total winning-outcome
+    // stake via a correlated subquery re-executed once per winning
+    // prediction row (an N+1-shaped query within a single SQL statement).
+    // `pool_winning_totals` pre-aggregates that sum once per pool instead,
+    // and `winning_predictions` joins against it directly (#1370).
     let sql = r#"
-        WITH winning_predictions AS (
-            SELECT 
+        WITH pool_winning_totals AS (
+            SELECT pl.pool_id, SUM(p.amount) AS winning_stake_total
+            FROM predictions p
+            JOIN pools pl ON pl.pool_id = p.pool_id
+            WHERE pl.state = 'settled'
+              AND pl.result IS NOT NULL
+              AND p.outcome = CAST(pl.result AS INTEGER)
+            GROUP BY pl.pool_id
+        ),
+        winning_predictions AS (
+            SELECT
                 p.user_address,
                 p.amount,
                 pl.total_stake,
-                pl.pool_id
+                pwt.winning_stake_total
             FROM predictions p
             JOIN pools pl ON pl.pool_id = p.pool_id
-            WHERE pl.state = 'settled' 
+            JOIN pool_winning_totals pwt ON pwt.pool_id = pl.pool_id
+            WHERE pl.state = 'settled'
               AND pl.result IS NOT NULL
               AND p.outcome = CAST(pl.result AS INTEGER)
         ),
         user_winnings AS (
-            SELECT 
+            SELECT
                 user_address,
-                SUM(amount * (total_stake::FLOAT / 
-                    (SELECT SUM(amount) FROM predictions p2 
-                     WHERE p2.pool_id = wp.pool_id 
-                       AND p2.outcome = CAST((SELECT result FROM pools WHERE pool_id = wp.pool_id) AS INTEGER)
-                    )
-                )) as total_winnings,
+                SUM(amount * (total_stake::FLOAT / NULLIF(winning_stake_total, 0))) as total_winnings,
                 COUNT(*) as winning_predictions
-            FROM winning_predictions wp
+            FROM winning_predictions
             GROUP BY user_address
         ),
         user_totals AS (
@@ -577,6 +587,9 @@ pub async fn insert_pool_from_event(
     )
     .execute(pool)
     .await?;
+
+    record_pool_created_for_creator(pool, &event.creator).await?;
+
     Ok(())
 }
 
@@ -623,6 +636,256 @@ pub struct PoolCreatedEvent {
     pub token: String,
     pub category: String,
     pub description: String,
+}
+
+// ── Pool creator incentive system (#1366) ───────────────────────────────────
+
+/// Aggregate reputation / quality metrics for a pool creator, tracked across
+/// every pool they've created — used to gauge creator trustworthiness and
+/// pool quality independent of any single pool's outcome.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct CreatorStats {
+    pub creator: String,
+    pub pools_created: i64,
+    pub pools_reward_eligible: i64,
+    pub total_volume: i64,
+}
+
+/// Upsert creator stats after a new pool is indexed, incrementing
+/// `pools_created`. Called from [`insert_pool_from_event`].
+pub async fn record_pool_created_for_creator(
+    pool: &PgPool,
+    creator: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO creator_stats (creator, pools_created, pools_reward_eligible, total_volume, updated_at)
+        VALUES ($1, 1, 0, 0, NOW())
+        ON CONFLICT (creator) DO UPDATE
+        SET pools_created = creator_stats.pools_created + 1,
+            updated_at = NOW()
+        "#,
+    )
+    .bind(creator)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Fetch aggregate reputation / quality metrics for a pool creator.
+pub async fn get_creator_stats(
+    pool: &PgPool,
+    creator: &str,
+) -> Result<Option<CreatorStats>, sqlx::Error> {
+    sqlx::query_as::<_, CreatorStats>(
+        "SELECT creator, pools_created, pools_reward_eligible, total_volume FROM creator_stats WHERE creator = $1",
+    )
+    .bind(creator)
+    .fetch_optional(pool)
+    .await
+}
+
+/// Check whether a pool has reached its configured minimum participation
+/// threshold (measured in total stake) and its creator reward has not
+/// already been paid out.
+pub async fn is_creator_reward_eligible(pool: &PgPool, pool_id: i64) -> Result<bool, sqlx::Error> {
+    let row: Option<(bool,)> = sqlx::query_as(
+        r#"
+        SELECT (total_stake >= min_participation_threshold AND NOT creator_reward_paid)
+        FROM pools
+        WHERE pool_id = $1
+        "#,
+    )
+    .bind(pool_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(eligible,)| eligible).unwrap_or(false))
+}
+
+/// Calculate the creator's incentive amount: a share (in basis points) of
+/// the protocol's treasury fee, itself a share of the pool's total stake.
+pub fn calculate_creator_incentive(
+    total_stake: i64,
+    treasury_fee_bps: u32,
+    creator_reward_bps: i32,
+) -> i64 {
+    let treasury_fee = (total_stake as i128 * treasury_fee_bps as i128) / 10_000;
+    let creator_share = (treasury_fee * creator_reward_bps.max(0) as i128) / 10_000;
+    creator_share as i64
+}
+
+/// Pay out the creator incentive for a pool that has reached its
+/// participation threshold. Idempotent: returns `Ok(None)` if the pool
+/// doesn't exist, isn't yet eligible, or has already been paid.
+pub async fn pay_creator_incentive(
+    pool: &PgPool,
+    pool_id: i64,
+    treasury_fee_bps: u32,
+) -> Result<Option<i64>, sqlx::Error> {
+    if !is_creator_reward_eligible(pool, pool_id).await? {
+        return Ok(None);
+    }
+
+    let Some(details) = get_pool_by_id(pool, pool_id).await? else {
+        return Ok(None);
+    };
+
+    let creator_reward_bps: i32 =
+        sqlx::query_scalar("SELECT creator_reward_bps FROM pools WHERE pool_id = $1")
+            .bind(pool_id)
+            .fetch_one(pool)
+            .await?;
+
+    let amount =
+        calculate_creator_incentive(details.total_stake, treasury_fee_bps, creator_reward_bps);
+
+    // Guard the update with `NOT creator_reward_paid` so a concurrent call
+    // can't double-pay the same pool.
+    let updated = sqlx::query(
+        r#"
+        UPDATE pools
+        SET creator_reward_paid = TRUE, creator_reward_amount = $2
+        WHERE pool_id = $1 AND NOT creator_reward_paid
+        "#,
+    )
+    .bind(pool_id)
+    .bind(amount)
+    .execute(pool)
+    .await?;
+
+    if updated.rows_affected() == 0 {
+        return Ok(None);
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE creator_stats
+        SET pools_reward_eligible = pools_reward_eligible + 1,
+            total_volume = total_volume + $2,
+            updated_at = NOW()
+        WHERE creator = $1
+        "#,
+    )
+    .bind(&details.creator)
+    .bind(details.total_stake)
+    .execute(pool)
+    .await?;
+
+    Ok(Some(amount))
+}
+
+// ── Pool templates for recurring markets (#1368) ────────────────────────────
+
+/// A saved pool configuration that can be reused to spin up new pools on a
+/// recurring schedule (e.g. "weekly BTC price prediction").
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct PoolTemplate {
+    pub id: i64,
+    pub creator: String,
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub token: String,
+    pub duration_seconds: i64,
+    pub recurrence_interval_seconds: i64,
+    pub next_run_at: DateTime<Utc>,
+    pub active: bool,
+}
+
+const POOL_TEMPLATE_COLUMNS: &str = "id, creator, name, category, description, token, \
+     duration_seconds, recurrence_interval_seconds, next_run_at, active";
+
+/// Create a new recurring pool template.
+#[allow(clippy::too_many_arguments)]
+pub async fn create_pool_template(
+    pool: &PgPool,
+    creator: &str,
+    name: &str,
+    category: &str,
+    description: &str,
+    token: &str,
+    duration_seconds: i64,
+    recurrence_interval_seconds: i64,
+) -> Result<PoolTemplate, sqlx::Error> {
+    let next_run_at = Utc::now() + chrono::Duration::seconds(recurrence_interval_seconds);
+    let sql = format!(
+        r#"
+        INSERT INTO pool_templates
+            (creator, name, category, description, token, duration_seconds, recurrence_interval_seconds, next_run_at, active)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)
+        RETURNING {POOL_TEMPLATE_COLUMNS}
+        "#
+    );
+
+    sqlx::query_as::<_, PoolTemplate>(&sql)
+        .bind(creator)
+        .bind(name)
+        .bind(category)
+        .bind(description)
+        .bind(token)
+        .bind(duration_seconds)
+        .bind(recurrence_interval_seconds)
+        .bind(next_run_at)
+        .fetch_one(pool)
+        .await
+}
+
+/// List all templates owned by a creator, most recently created first.
+pub async fn list_pool_templates(
+    pool: &PgPool,
+    creator: &str,
+) -> Result<Vec<PoolTemplate>, sqlx::Error> {
+    let sql = format!(
+        r#"
+        SELECT {POOL_TEMPLATE_COLUMNS}
+        FROM pool_templates
+        WHERE creator = $1
+        ORDER BY created_at DESC
+        "#
+    );
+
+    sqlx::query_as::<_, PoolTemplate>(&sql)
+        .bind(creator)
+        .fetch_all(pool)
+        .await
+}
+
+/// Fetch all active templates whose scheduled `next_run_at` has passed —
+/// these are due for a new pool to be created from them.
+///
+/// Note: this backend is a read-only indexer for the on-chain PrediFi
+/// contract (see [`crate::worker::sync`]) and does not itself submit Soroban
+/// transactions, so actually creating the on-chain pool from a due template
+/// is the responsibility of the frontend/operator tooling that submits
+/// transactions. This function only surfaces which templates are due; call
+/// [`advance_pool_template`] once the caller has submitted that transaction.
+pub async fn get_due_pool_templates(pool: &PgPool) -> Result<Vec<PoolTemplate>, sqlx::Error> {
+    let sql = format!(
+        r#"
+        SELECT {POOL_TEMPLATE_COLUMNS}
+        FROM pool_templates
+        WHERE active AND next_run_at <= NOW()
+        ORDER BY next_run_at ASC
+        "#
+    );
+
+    sqlx::query_as::<_, PoolTemplate>(&sql).fetch_all(pool).await
+}
+
+/// Advance a template's `next_run_at` by its recurrence interval after a
+/// pool has been created from it.
+pub async fn advance_pool_template(pool: &PgPool, template_id: i64) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE pool_templates
+        SET next_run_at = next_run_at + (recurrence_interval_seconds * INTERVAL '1 second')
+        WHERE id = $1
+        "#,
+    )
+    .bind(template_id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 #[cfg(test)]

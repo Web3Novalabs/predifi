@@ -5,6 +5,7 @@
 pub mod config;
 pub mod db;
 pub mod openapi;
+pub mod pool_cache;
 pub mod price_cache;
 pub mod referrals;
 pub mod request_logger;
@@ -142,6 +143,7 @@ pub fn build_router(config: Config, cache: price_cache::PriceCache) -> Router {
     let state = routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
+        pool_cache: pool_cache::PoolCache::new(),
         db: None,
     };
 
@@ -182,6 +184,7 @@ pub fn build_router_with_db(
     let state = routes::v1::AppState {
         config: config.clone(),
         cache: cache.clone(),
+        pool_cache: pool_cache::PoolCache::new(),
         db: Some(pool.clone()),
     };
 
