@@ -1,17 +1,27 @@
 import type { Metadata } from "next";
 import { DM_Mono } from "next/font/google";
 import "./globals.css";
+import { SWRProvider } from "@/components/providers/SWRProvider";
+import { NetworkGuardProvider } from "@/components/providers/NetworkGuardProvider";
+import { ToastProvider } from "@/components/ui";
+
+const SITE_DESCRIPTION =
+  "PrediFi is a decentralized prediction market protocol built on the Stellar network with Soroban smart contracts.";
 
 const dmMono = DM_Mono({
   subsets: ["latin"],
   weight: ["300", "400", "500"],
   variable: "--font-dm-mono",
-   preload: false,
+  display: "swap",
+  preload: true,
 });
 
 export const metadata: Metadata = {
-  title: "Predifi",
-  description: "Decentralized prediction protocol built on the Stellar. ",
+  title: {
+    default: "Predifi | Web3 Prediction Markets",
+    template: "%s | Predifi",
+  },
+  description: SITE_DESCRIPTION,
   keywords: [
     "decentralized prediction",
     "predifi",
@@ -28,8 +38,7 @@ export const metadata: Metadata = {
   ],
   openGraph: {
     title: "Predifi- Decentralized prediction protocol built on the Stellar",
-    description:
-      "PrediFi is a decentralized prediction protocol built on the Stellar network using Soroban smart contracts. ",
+    description: SITE_DESCRIPTION,
     url: "https://predifi.app",
     siteName: "nevo",
     images: [
@@ -46,8 +55,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Predifi - Decentralized prediction protocol built on the Stellarr",
-    description:
-      "PrediFi is a decentralized prediction protocol built on the Stellar network using Soroban smart contracts.",
+    description: SITE_DESCRIPTION,
     images: ["https://predifi.app/logo.jpeg"],
     creator: "@nevoapp",
   },
@@ -83,8 +91,20 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
+      <head>
+        {/* Preload critical hero images to improve LCP */}
+        <link rel="preload" as="image" href="/swirl-pattern.webp" />
+        <link rel="preload" as="image" href="/gradient.webp" />
+
+        {/* Inline minimal critical CSS for hero to paint immediately */}
+        <style>{`.hero-critical{min-height:calc(100vh - 40px);display:flex;flex-direction:column;align-items:center;text-align:center}`}</style>
+      </head>
       <body className={`antialiased text-sm ${dmMono.variable}`}>
-        {children}
+        <SWRProvider>
+          <NetworkGuardProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </NetworkGuardProvider>
+        </SWRProvider>
       </body>
     </html>
   );

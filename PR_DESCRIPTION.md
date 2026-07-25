@@ -1,119 +1,36 @@
-# 🔒 Security Fix: Enforce Strict State Validation in `cancel_pool`
+# Health Check Enhancements
 
-## 🐛 Problem
+This PR implements several health check enhancements to improve system reliability and observability.
 
-The `cancel_pool` function had a critical security vulnerability where it did not strictly enforce that only pools in the `Active` state could be canceled. This created a potential attack vector where:
+## Changes
 
-1. An operator could call `cancel_pool` on a pool that has already been **resolved**
-2. The pool state would change from `Resolved` → `Canceled`
-3. Users could claim **refunds** for a pool that was already resolved
-4. This could lead to **double-spending** if some users already claimed winnings
+- Added Redis cache health checking to both `/health` and `/api/v1/health` endpoints
+- Added price cache health checking to both `/health` and `/api/v1/health` endpoints
+- Added configurable RPC health check timeout settings
+- Added retry logic with exponential backoff for RPC health checks
+- Enhanced error reporting with detailed error information in health responses
 
-Additionally, the code had redundant checks and returned incorrect error codes, making the logic confusing and error-prone.
+## Related Issues
 
-## ✅ Solution
+- Fixes #1003: Add Redis cache health check
+- Fixes #984: Implement enhanced error handling and retry logic
+- Fixes #986: Implement configurable timeout settings
+- Fixes #991: Add price cache health check
 
-This PR simplifies and strengthens the state validation in `cancel_pool`:
+## Testing
 
-### Code Changes
+- Added comprehensive tests for all new health check functionality
+- Verified that health endpoints return appropriate status codes (200 for healthy, 503 for degraded)
+- Verified that dependency status is correctly reported in the response body
+- Verified that error details are included when dependencies are unreachable
 
-**Before (Vulnerable):**
-```rust
-// Ensure resolved pools cannot be canceled
-if pool.state == MarketState::Resolved {
-    Self::exit_reentrancy_guard(&env);
-    return Err(PredifiError::PoolNotResolved);  // ❌ Wrong error code
-}
+## Configuration
 
-if !Self::is_pool_active(&pool) {
-    Self::exit_reentrancy_guard(&env);
-    return Err(PredifiError::InvalidPoolState);
-}
-```
+New environment variables added:
 
-**After (Secure):**
-```rust
-// Ensure only Active pools can be canceled
-// This prevents canceling pools that are already Resolved or Canceled
-if !Self::is_pool_active(&pool) {
-    Self::exit_reentrancy_guard(&env);
-    return Err(PredifiError::InvalidPoolState);
-}
-```
+- `RPC_HEALTH_TIMEOUT_SECS`: Configurable timeout for RPC health checks (default: 2)
+- `RPC_HEALTH_RETRY_COUNT`: Configurable retry count for RPC health checks (default: 3)
 
-### Key Improvements
+## Impact
 
-1. ✅ **Single, clear validation** - Removed redundant checks
-2. ✅ **Correct error code** - Returns `InvalidPoolState` (#24) consistently
-3. ✅ **Comprehensive protection** - Blocks cancellation of both `Resolved` and `Canceled` pools
-4. ✅ **Enforces invariant** - Strictly enforces state transition invariant (INV-2): `Active → {Resolved | Canceled}` (never reversed)
-
-## 🧪 Testing
-
-### Updated Tests
-- `test_cannot_cancel_resolved_pool_by_operator` - Now expects error #24
-- `test_cannot_cancel_resolved_pool` - Now expects error #24
-
-### New Comprehensive Test
-Added `test_cancel_pool_after_resolution_returns_invalid_pool_state`:
-```rust
-// 1. Create a pool
-// 2. Resolve the pool with outcome 0
-// 3. Verify pool is in Resolved state
-// 4. Attempt to cancel the resolved pool
-// 5. ✅ Expect InvalidPoolState error (code #24)
-```
-
-This test explicitly validates the security requirement and includes detailed comments explaining the vulnerability being prevented.
-
-## 🔐 Security Impact
-
-### State Transition Protection
-
-```
-✅ ALLOWED:
-Active ──resolve_pool──> Resolved (FINAL)
-Active ──cancel_pool───> Canceled (FINAL)
-
-❌ BLOCKED (by this fix):
-Resolved ──cancel_pool──> Canceled
-Canceled ──cancel_pool──> Canceled
-```
-
-### Protocol Invariants Enforced
-
-- **INV-2**: Pool.state transitions: `Active → {Resolved | Canceled}`, never reversed
-- **INV-5**: For resolved pools: Σ(claimed_winnings) ≤ Pool.total_stake
-
-## 📋 Checklist
-
-- [x] Code follows single responsibility principle
-- [x] Correct error codes returned
-- [x] Comprehensive test coverage added
-- [x] Security implications documented
-- [x] State transition invariants enforced
-- [x] Existing tests updated
-- [x] Code simplified while improving security
-
-## 🎯 Expected Behavior
-
-After this fix:
-- ✅ Only `Active` pools can be canceled
-- ✅ Attempting to cancel a `Resolved` pool returns `InvalidPoolState` (#24)
-- ✅ Attempting to cancel a `Canceled` pool returns `InvalidPoolState` (#24)
-- ✅ No way to reverse state transitions
-- ✅ Users cannot claim refunds for resolved pools
-
-## 📚 Related Documentation
-
-See `SECURITY_FIX_CANCEL_POOL.md` for detailed analysis including:
-- Root cause analysis
-- Security impact assessment
-- State transition diagrams
-- Verification checklist
-
----
-
-**Type:** Security Fix  
-**Priority:** High  
-**Breaking Changes:** None (only fixes incorrect behavior)
+These changes improve the reliability and observability of the health check system, making it easier to diagnose issues with dependencies like Redis cache, price cache, and Stellar RPC.

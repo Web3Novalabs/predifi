@@ -1,9 +1,10 @@
 #![allow(dead_code)]
-use soroban_sdk::{contractevent, Address, BytesN, String, Symbol, Vec};
+use soroban_sdk::{contractevent, contracttype, Address, BytesN, String, Symbol, Vec};
 
 // ── Events ───────────────────────────────────────────────────────────────────
 
 #[contractevent(topics = ["init"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitEvent {
     pub access_control: Address,
@@ -14,18 +15,21 @@ pub struct InitEvent {
 }
 
 #[contractevent(topics = ["pause"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PauseEvent {
     pub admin: Address,
 }
 
 #[contractevent(topics = ["unpause"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnpauseEvent {
     pub admin: Address,
 }
 
 #[contractevent(topics = ["fee_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeUpdateEvent {
     pub admin: Address,
@@ -33,6 +37,7 @@ pub struct FeeUpdateEvent {
 }
 
 #[contractevent(topics = ["fee_tiers_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FeeTiersUpdateEvent {
     pub admin: Address,
@@ -40,6 +45,7 @@ pub struct FeeTiersUpdateEvent {
 }
 
 #[contractevent(topics = ["treasury_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreasuryUpdateEvent {
     pub admin: Address,
@@ -47,12 +53,23 @@ pub struct TreasuryUpdateEvent {
 }
 
 #[contractevent(topics = ["resolution_delay_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolutionDelayUpdateEvent {
     pub admin: Address,
     pub delay: u64,
 }
+
+#[contractevent(topics = ["claim_window_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimWindowUpdateEvent {
+    pub admin: Address,
+    pub claim_window_seconds: u64,
+}
+
 #[contractevent(topics = ["min_pool_duration_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MinPoolDurationUpdateEvent {
     pub admin: Address,
@@ -60,6 +77,7 @@ pub struct MinPoolDurationUpdateEvent {
 }
 
 #[contractevent(topics = ["min_stake_update"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MinStakeUpdateEvent {
     pub admin: Address,
@@ -67,6 +85,7 @@ pub struct MinStakeUpdateEvent {
 }
 
 #[contractevent(topics = ["pool_ready"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolReadyForResolutionEvent {
     pub pool_id: u64,
@@ -74,6 +93,7 @@ pub struct PoolReadyForResolutionEvent {
 }
 
 #[contractevent(topics = ["pool_created"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolCreatedEvent {
     pub pool_id: u64,
@@ -91,6 +111,7 @@ pub struct PoolCreatedEvent {
 }
 
 #[contractevent(topics = ["initial_liquidity_provided"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InitialLiquidityProvidedEvent {
     pub pool_id: u64,
@@ -99,6 +120,7 @@ pub struct InitialLiquidityProvidedEvent {
 }
 
 #[contractevent(topics = ["pool_resolved"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolResolvedEvent {
     pub pool_id: u64,
@@ -107,6 +129,7 @@ pub struct PoolResolvedEvent {
 }
 
 #[contractevent(topics = ["oracle_resolved"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleResolvedEvent {
     pub pool_id: u64,
@@ -116,6 +139,7 @@ pub struct OracleResolvedEvent {
 }
 
 #[contractevent(topics = ["pool_canceled"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolCanceledEvent {
     pub pool_id: u64,
@@ -125,6 +149,7 @@ pub struct PoolCanceledEvent {
 }
 
 #[contractevent(topics = ["stake_limits_updated"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StakeLimitsUpdatedEvent {
     pub pool_id: u64,
@@ -134,6 +159,7 @@ pub struct StakeLimitsUpdatedEvent {
 }
 
 #[contractevent(topics = ["prediction_placed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PredictionPlacedEvent {
     pub pool_id: u64,
@@ -143,6 +169,7 @@ pub struct PredictionPlacedEvent {
 }
 
 #[contractevent(topics = ["winnings_claimed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WinningsClaimedEvent {
     pub pool_id: u64,
@@ -151,6 +178,7 @@ pub struct WinningsClaimedEvent {
 }
 
 #[contractevent(topics = ["referral_paid"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReferralPaidEvent {
     pub pool_id: u64,
@@ -168,6 +196,7 @@ pub struct ReferralPaidEvent {
 /// does not hold the Operator role.  Indicates a potential attack or
 /// misconfigured access-control contract.
 #[contractevent(topics = ["unauthorized_resolution"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnauthorizedResolveAttemptEvent {
     /// The address that attempted to resolve without authorization.
@@ -182,6 +211,7 @@ pub struct UnauthorizedResolveAttemptEvent {
 /// `set_treasury`, `pause`, `unpause`) is called by an address that does not
 /// hold the Admin role.
 #[contractevent(topics = ["unauthorized_admin_op"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UnauthorizedAdminAttemptEvent {
     /// The address that attempted the restricted operation.
@@ -196,6 +226,7 @@ pub struct UnauthorizedAdminAttemptEvent {
 /// already been claimed for the same (user, pool) pair.  Repeated attempts may
 /// indicate a re-entrancy probe or a front-end bug worth investigating.
 #[contractevent(topics = ["double_claim_attempt"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SuspiciousDoubleClaimEvent {
     /// The address that attempted to double-claim.
@@ -210,6 +241,7 @@ pub struct SuspiciousDoubleClaimEvent {
 /// successfully paused.  Having a dedicated alert topic makes it easy to set
 /// a zero-tolerance PagerDuty rule that fires on any pause.
 #[contractevent(topics = ["contract_paused_alert"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractPausedAlertEvent {
     /// The admin that triggered the pause.
@@ -222,6 +254,7 @@ pub struct ContractPausedAlertEvent {
 /// meets or exceeds `HIGH_VALUE_THRESHOLD`.  Useful for liquidity monitoring
 /// and detecting unusual betting patterns.
 #[contractevent(topics = ["high_value_prediction"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HighValuePredictionEvent {
     pub pool_id: u64,
@@ -236,6 +269,7 @@ pub struct HighValuePredictionEvent {
 /// context so monitors can calculate implied payouts and flag anomalies
 /// (e.g., winning_stake == 0 meaning no winners).
 #[contractevent(topics = ["pool_resolved_diag"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolResolvedDiagEvent {
     pub pool_id: u64,
@@ -252,6 +286,7 @@ pub struct PoolResolvedDiagEvent {
 /// Useful for markets with many outcomes (e.g., 32+ teams tournament) where
 /// emitting individual events per outcome would be impractical.
 #[contractevent(topics = ["outcome_stakes_updated"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OutcomeStakesUpdatedEvent {
     pub pool_id: u64,
@@ -262,6 +297,7 @@ pub struct OutcomeStakesUpdatedEvent {
 }
 
 #[contractevent(topics = ["token_whitelist_added"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenWhitelistAddedEvent {
     pub admin: Address,
@@ -269,6 +305,7 @@ pub struct TokenWhitelistAddedEvent {
 }
 
 #[contractevent(topics = ["token_whitelist_removed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenWhitelistRemovedEvent {
     pub admin: Address,
@@ -276,6 +313,7 @@ pub struct TokenWhitelistRemovedEvent {
 }
 
 #[contractevent(topics = ["treasury_withdrawn"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreasuryWithdrawnEvent {
     pub admin: Address,
@@ -286,6 +324,7 @@ pub struct TreasuryWithdrawnEvent {
     pub timestamp: u64,
 }
 #[contractevent(topics = ["refund_claimed"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RefundClaimedEvent {
     pub pool_id: u64,
@@ -294,6 +333,7 @@ pub struct RefundClaimedEvent {
 }
 
 #[contractevent(topics = ["upgrade"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UpgradeEvent {
     pub admin: Address,
@@ -301,6 +341,7 @@ pub struct UpgradeEvent {
 }
 
 #[contractevent(topics = ["contract_upgraded"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContractUpgradedEvent {
     pub old_version: u32,
@@ -309,6 +350,7 @@ pub struct ContractUpgradedEvent {
 }
 
 #[contractevent(topics = ["oracle_init"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OracleInitEvent {
     pub admin: Address,
@@ -318,6 +360,7 @@ pub struct OracleInitEvent {
 }
 
 #[contractevent(topics = ["price_feed_updated"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceFeedUpdatedEvent {
     pub oracle: Address,
@@ -329,6 +372,7 @@ pub struct PriceFeedUpdatedEvent {
 }
 
 #[contractevent(topics = ["price_condition_set"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceConditionSetEvent {
     pub pool_id: u64,
@@ -339,6 +383,7 @@ pub struct PriceConditionSetEvent {
 }
 
 #[contractevent(topics = ["price_resolved"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PriceResolvedEvent {
     pub pool_id: u64,
@@ -349,6 +394,7 @@ pub struct PriceResolvedEvent {
 }
 
 #[contractevent(topics = ["resolution_conflict"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ResolutionConflictEvent {
     pub pool_id: u64,
@@ -358,6 +404,7 @@ pub struct ResolutionConflictEvent {
 }
 
 #[contractevent(topics = ["added_to_whitelist"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AddedToWhitelistEvent {
     pub pool_id: u64,
@@ -367,6 +414,7 @@ pub struct AddedToWhitelistEvent {
 }
 
 #[contractevent(topics = ["removed_from_whitelist"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RemovedFromWhitelistEvent {
     pub pool_id: u64,

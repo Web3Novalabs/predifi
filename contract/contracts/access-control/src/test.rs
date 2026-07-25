@@ -713,3 +713,263 @@ fn test_get_operator_count_stable_on_transfer_role() {
     assert!(!client.has_role(&op_from, &Role::Operator));
     assert!(client.has_role(&op_to, &Role::Operator));
 }
+
+// ─── Admin removal tests ──────────────────────────────────────────────────────
+//
+// These tests verify that an admin can be successfully removed from the
+// Admin role through the various available mechanisms, and that the
+// removal is correctly reflected in both `has_role` and `is_admin`.
+
+/// The admin can revoke the Admin role from a secondary address that was
+/// explicitly granted Admin via `assign_role`.
+///
+/// Flow: init → assign Admin to user → revoke Admin from user
+/// Expected: user loses Admin role; original admin is unaffected.
+#[test]
+fn test_admin_can_revoke_admin_role_from_another_address() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let second_admin = Address::generate(&env);
+    client.init(&admin);
+
+    // Grant Admin role to a second address.
+    client.assign_role(&admin, &second_admin, &Role::Admin);
+    assert!(client.has_role(&second_admin, &Role::Admin));
+    assert!(client.is_admin(&second_admin) || client.has_role(&second_admin, &Role::Admin));
+
+    // Remove the Admin role from the second address.
+    client.revoke_role(&admin, &second_admin, &Role::Admin);
+
+    // The second address must no longer hold the Admin role.
+    assert!(
+        !client.has_role(&second_admin, &Role::Admin),
+        "Admin role should be removed from second_admin after revoke_role"
+    );
+
+    // The original admin must be unaffected.
+    assert!(
+        client.has_role(&admin, &Role::Admin),
+        "Original admin should still hold the Admin role"
+    );
+    assert!(
+        client.is_admin(&admin),
+        "Original admin should still be the contract admin"
+    );
+}
+
+/// `revoke_all_roles` removes the Admin role from a target address that
+/// holds it, along with any other roles that address may have.
+///
+/// Flow: init → assign Admin + Operator to user → revoke_all_roles
+/// Expected: user loses both roles; original admin is unaffected.
+#[test]
+fn test_revoke_all_roles_removes_admin_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let target = Address::generate(&env);
+    client.init(&admin);
+
+    // Give the target both Admin and Operator roles.
+    client.assign_role(&admin, &target, &Role::Admin);
+    client.assign_role(&admin, &target, &Role::Operator);
+    assert!(client.has_role(&target, &Role::Admin));
+    assert!(client.has_role(&target, &Role::Operator));
+
+    // Strip all roles from the target.
+    client.revoke_all_roles(&admin, &target);
+
+    assert!(
+        !client.has_role(&target, &Role::Admin),
+        "Admin role should be removed by revoke_all_roles"
+    );
+    assert!(
+        !client.has_role(&target, &Role::Operator),
+        "Operator role should also be removed by revoke_all_roles"
+    );
+
+    // The original admin must be unaffected.
+    assert!(
+        client.has_role(&admin, &Role::Admin),
+        "Original admin should still hold the Admin role"
+    );
+}
+
+/// After `transfer_admin`, the old admin's Admin role is removed from
+/// persistent storage and `is_admin` returns false for them.
+///
+/// This is the primary "admin removal" path: transferring admin rights
+/// atomically removes the role from the previous holder.
+#[test]
+fn test_transfer_admin_removes_admin_role_from_old_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let old_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.init(&old_admin);
+
+    // Confirm initial state.
+    assert!(client.has_role(&old_admin, &Role::Admin));
+    assert!(client.is_admin(&old_admin));
+    assert!(!client.has_role(&new_admin, &Role::Admin));
+
+    client.transfer_admin(&old_admin, &new_admin);
+
+    // Old admin must have lost the Admin role entirely.
+    assert!(
+        !client.has_role(&old_admin, &Role::Admin),
+        "Old admin should no longer hold the Admin role after transfer_admin"
+    );
+    assert!(
+        !client.is_admin(&old_admin),
+        "is_admin should return false for the old admin after transfer_admin"
+    );
+
+    // New admin must hold the Admin role.
+    assert!(
+        client.has_role(&new_admin, &Role::Admin),
+        "New admin should hold the Admin role after transfer_admin"
+    );
+    assert!(
+        client.is_admin(&new_admin),
+        "is_admin should return true for the new admin after transfer_admin"
+    );
+}
+
+/// After the two-step propose/accept flow, the proposing admin's Admin role
+/// is removed and the accepting address becomes the sole admin.
+#[test]
+fn test_accept_admin_role_removes_admin_role_from_proposer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let old_admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.init(&old_admin);
+
+    client.propose_new_admin(&old_admin, &new_admin);
+    client.accept_admin_role(&new_admin);
+
+    // Old admin must have lost the Admin role.
+    assert!(
+        !client.has_role(&old_admin, &Role::Admin),
+        "Old admin should no longer hold the Admin role after accept_admin_role"
+    );
+    assert!(
+        !client.is_admin(&old_admin),
+        "is_admin should return false for the old admin after accept_admin_role"
+    );
+
+    // New admin must hold the Admin role.
+    assert!(
+        client.has_role(&new_admin, &Role::Admin),
+        "New admin should hold the Admin role after accept_admin_role"
+    );
+    assert!(
+        client.is_admin(&new_admin),
+        "is_admin should return true for the new admin after accept_admin_role"
+    );
+}
+
+/// A non-admin cannot remove the Admin role from any address.
+/// `revoke_role` must return `Unauthorized` when called by a non-admin.
+#[test]
+fn test_non_admin_cannot_revoke_admin_role() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let attacker = Address::generate(&env);
+    client.init(&admin);
+
+    // Attacker attempts to strip the admin of their Admin role.
+    let result = client.try_revoke_role(&attacker, &admin, &Role::Admin);
+    assert_eq!(
+        result,
+        Err(Ok(PrediFiError::Unauthorized)),
+        "Non-admin must not be able to revoke the Admin role"
+    );
+
+    // Admin role must be intact.
+    assert!(
+        client.has_role(&admin, &Role::Admin),
+        "Admin role must remain after an unauthorized revoke attempt"
+    );
+    assert!(
+        client.is_admin(&admin),
+        "is_admin must still return true after an unauthorized revoke attempt"
+    );
+}
+
+/// Revoking the Admin role from an address that never held it returns
+/// `InsufficientPermissions` — consistent with how other roles behave.
+#[test]
+fn test_revoke_admin_role_from_address_without_it_returns_error() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.init(&admin);
+
+    // `user` was never granted the Admin role.
+    let result = client.try_revoke_role(&admin, &user, &Role::Admin);
+    assert_eq!(
+        result,
+        Err(Ok(PrediFiError::InsufficientPermissions)),
+        "Revoking Admin role from an address that never held it should return InsufficientPermissions"
+    );
+}
+
+/// After the Admin role is removed from a secondary address, that address
+/// can no longer perform admin-only operations such as assigning roles.
+#[test]
+fn test_removed_admin_cannot_assign_roles() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let ex_admin = Address::generate(&env);
+    let victim = Address::generate(&env);
+    client.init(&admin);
+
+    // Grant Admin role to ex_admin, then immediately revoke it.
+    client.assign_role(&admin, &ex_admin, &Role::Admin);
+    assert!(client.has_role(&ex_admin, &Role::Admin));
+
+    client.revoke_role(&admin, &ex_admin, &Role::Admin);
+    assert!(!client.has_role(&ex_admin, &Role::Admin));
+
+    // ex_admin must no longer be able to assign roles.
+    let result = client.try_assign_role(&ex_admin, &victim, &Role::Operator);
+    assert_eq!(
+        result,
+        Err(Ok(PrediFiError::Unauthorized)),
+        "An address whose Admin role was revoked must not be able to assign roles"
+    );
+}

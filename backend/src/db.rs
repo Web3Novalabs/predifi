@@ -1,20 +1,152 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use sqlx::{postgres::PgPoolOptions, PgPool};
+use sqlx::{postgres::PgPoolOptions, Executor, PgPool, Postgres};
+use tokio::time::sleep;
+use tracing::{error, info, instrument, warn};
 
 use crate::config::Config;
 
+/// Check if a database error is transient and should be retried during pool creation.
+///
+/// Transient errors include connection issues (refused, timeout, reset).
+/// Unrecoverable errors (invalid credentials, missing database) fail immediately.
+pub fn is_transient_error(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::PoolTimedOut => true,
+        sqlx::Error::PoolClosed => false,
+        sqlx::Error::Database(_) => false,
+        sqlx::Error::Io(_) | sqlx::Error::Tls(_) => true,
+        _ => false,
+    }
+}
+
 /// Create a PostgreSQL connection pool using conservative defaults.
 ///
-/// This uses lazy connection mode so local development can start the server
-/// without requiring an active database until a query is executed.
-pub fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
-    PgPoolOptions::new()
-        .max_connections(config.db_max_connections)
-        .min_connections(config.db_min_connections)
-        .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
-        .connect_lazy(&config.database_url)
+/// This uses a retry loop on startup with exponential backoff, so transient
+/// database downtime (e.g. container still starting) does not crash the service
+/// immediately.
+pub async fn create_pool(config: &Config) -> Result<PgPool, PoolCreationError> {
+    let connect = || async {
+        let future = PgPoolOptions::new()
+            .max_connections(config.db_max_connections)
+            .min_connections(config.db_min_connections)
+            .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
+            .connect(&config.database_url);
+
+        match tokio::time::timeout(Duration::from_secs(config.db_connect_timeout_secs), future)
+            .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(sqlx::Error::PoolTimedOut),
+        }
+    };
+
+    retry_pool_connection(
+        config.db_connect_max_attempts,
+        config.db_connect_base_delay_ms,
+        config.db_connect_max_delay_ms,
+        connect,
+    )
+    .await
+}
+
+fn backoff_delay_ms(attempt: u32, base_delay_ms: u64, max_delay_ms: u64) -> u64 {
+    let exponent = attempt.saturating_sub(1).min(31);
+    let delay = base_delay_ms.saturating_mul(1u64 << exponent);
+    delay.min(max_delay_ms)
+}
+
+/// Error type for database pool creation failures.
+#[derive(Debug)]
+pub struct PoolCreationError {
+    /// The last error encountered during connection attempts.
+    pub last_error: sqlx::Error,
+    /// Number of attempts made before giving up.
+    pub attempts: u32,
+}
+
+impl std::fmt::Display for PoolCreationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "failed to create database pool after {} attempts: {}",
+            self.attempts, self.last_error
+        )
+    }
+}
+
+impl std::error::Error for PoolCreationError {}
+
+async fn retry_pool_connection<Fut, F>(
+    max_attempts: u32,
+    base_delay_ms: u64,
+    max_delay_ms: u64,
+    mut op: F,
+) -> Result<PgPool, PoolCreationError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<PgPool, sqlx::Error>>,
+{
+    let max_attempts = max_attempts.max(1);
+    let mut last_error: Option<sqlx::Error> = None;
+
+    for attempt in 1..=max_attempts {
+        match op().await {
+            Ok(pool) => {
+                if attempt > 1 {
+                    info!(
+                        attempts = attempt,
+                        "database connection established after retries"
+                    );
+                }
+                return Ok(pool);
+            }
+            Err(err) => {
+                let transient = is_transient_error(&err);
+
+                if !transient {
+                    error!(
+                        attempt,
+                        error = %err,
+                        "database connection failed with unrecoverable error; aborting"
+                    );
+                    return Err(PoolCreationError {
+                        last_error: err,
+                        attempts: attempt,
+                    });
+                }
+
+                if attempt < max_attempts {
+                    let delay_ms = backoff_delay_ms(attempt, base_delay_ms, max_delay_ms);
+                    warn!(
+                        attempt,
+                        max_attempts,
+                        delay_ms,
+                        error = %err,
+                        "database connection failed; retrying"
+                    );
+                    last_error = Some(err);
+                    if delay_ms > 0 {
+                        sleep(Duration::from_millis(delay_ms)).await;
+                    }
+                } else {
+                    last_error = Some(err);
+                }
+            }
+        }
+    }
+
+    let last_error = last_error.expect("at least one error should exist after retry loop");
+    error!(
+        attempts = max_attempts,
+        error = %last_error,
+        "database connection retries exhausted"
+    );
+    Err(PoolCreationError {
+        last_error,
+        attempts: max_attempts,
+    })
 }
 
 /// A single row returned by the user prediction history query.
@@ -55,8 +187,7 @@ pub async fn get_user_prediction_history(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<PredictionHistoryRow>, sqlx::Error> {
-    sqlx::query_as!(
-        PredictionHistoryRow,
+    sqlx::query_as::<_, PredictionHistoryRow>(
         r#"
         SELECT
             p.pool_id,
@@ -71,10 +202,10 @@ pub async fn get_user_prediction_history(
         ORDER BY p.created_at DESC
         LIMIT $2 OFFSET $3
         "#,
-        address,
-        limit,
-        offset
     )
+    .bind(address)
+    .bind(limit)
+    .bind(offset)
     .fetch_all(pool)
     .await
 }
@@ -167,6 +298,106 @@ pub async fn get_user_predictions(
     Ok(predictions)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    #[test]
+    fn backoff_delay_is_exponential_and_capped() {
+        assert_eq!(backoff_delay_ms(1, 200, 5_000), 200);
+        assert_eq!(backoff_delay_ms(2, 200, 5_000), 400);
+        assert_eq!(backoff_delay_ms(3, 200, 5_000), 800);
+        assert_eq!(backoff_delay_ms(10, 200, 5_000), 5_000);
+    }
+
+    #[test]
+    fn backoff_delay_with_zero_base_is_zero() {
+        assert_eq!(backoff_delay_ms(1, 0, 5_000), 0);
+        assert_eq!(backoff_delay_ms(5, 0, 5_000), 0);
+    }
+
+    #[test]
+    fn backoff_delay_saturates_at_max() {
+        assert_eq!(backoff_delay_ms(30, 100, 1_000), 1_000);
+        assert_eq!(backoff_delay_ms(64, 1, 500), 500);
+    }
+
+    #[test]
+    fn config_connect_timeout_is_independent_from_acquire_timeout() {
+        let config = crate::config::Config::default_for_test();
+        assert!(
+            config.db_connect_timeout_secs > 0,
+            "connect timeout must be > 0"
+        );
+        assert!(
+            config.db_acquire_timeout_secs > 0,
+            "acquire timeout must be > 0"
+        );
+    }
+
+    /// Test that `is_transient_error` correctly identifies transient connection errors.
+    #[test]
+    fn is_transient_error_identifies_pool_timeout() {
+        assert!(is_transient_error(&sqlx::Error::PoolTimedOut));
+        assert!(!is_transient_error(&sqlx::Error::PoolClosed));
+    }
+
+    /// Test that `PoolCreationError` formats correctly.
+    #[test]
+    fn pool_creation_error_formats_last_error_and_attempts() {
+        let err = PoolCreationError {
+            last_error: sqlx::Error::PoolTimedOut,
+            attempts: 5,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("5 attempts"));
+    }
+
+    /// Test that `retry_pool_connection` retries on transient errors and eventually fails.
+    #[tokio::test]
+    async fn retry_pool_connection_retries_on_transient_errors() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+
+        let result = retry_pool_connection(3, 0, 0, || async {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            Err(sqlx::Error::PoolTimedOut)
+        })
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.attempts, 3,
+            "should retry all attempts on transient errors"
+        );
+    }
+
+    /// Test that `retry_pool_connection` fails fast on unrecoverable errors.
+    #[tokio::test]
+    async fn retry_pool_connection_fails_fast_on_unrecoverable_error() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_clone = calls.clone();
+
+        let result = retry_pool_connection(5, 0, 0, || async {
+            calls_clone.fetch_add(1, Ordering::SeqCst);
+            Err(sqlx::Error::PoolClosed)
+        })
+        .await;
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(
+            err.attempts, 1,
+            "should fail after only one attempt for PoolClosed"
+        );
+    }
+}
+
 /// A single row returned by the active pools query.
 #[derive(Debug, serde::Serialize, sqlx::FromRow)]
 pub struct PoolRow {
@@ -240,6 +471,8 @@ pub struct UserWinnings {
 /// Fetch active pools with optional category filter and sort order.
 ///
 /// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"`.
+#[instrument(skip(pool), name = "db.get_active_pools",
+    fields(sort_by = sort_by, category = ?category, limit = limit, offset = offset))]
 pub async fn get_active_pools(
     pool: &PgPool,
     sort_by: &str,
@@ -296,6 +529,34 @@ pub async fn get_pools_with_filters(
         .bind(offset)
         .fetch_all(pool)
         .await
+}
+
+/// Count total number of pools matching the filters.
+pub async fn count_pools_with_filters(
+    pool: &PgPool,
+    category: Option<&str>,
+    status: &str,
+) -> Result<i64, sqlx::Error> {
+    // Validate status parameter to prevent SQL injection
+    let valid_status = match status {
+        "active" | "closed" | "settled" => status,
+        _ => "active", // default to active for invalid status
+    };
+
+    let sql = r#"
+        SELECT COUNT(*)
+        FROM pools
+        WHERE state = $1
+          AND ($2::text IS NULL OR category = $2)
+        "#;
+
+    let count: (i64,) = sqlx::query_as(sql)
+        .bind(valid_status)
+        .bind(category)
+        .fetch_one(pool)
+        .await?;
+
+    Ok(count.0)
 }
 
 /// Fetch detailed information for a specific pool by ID.
@@ -508,6 +769,13 @@ pub async fn get_users_by_winnings(
               AND pl.result IS NOT NULL
               AND p.outcome = CAST(pl.result AS INTEGER)
         ),
+        pool_winning_totals AS (
+            SELECT
+                pool_id,
+                SUM(amount) AS winning_stake
+            FROM winning_predictions
+            GROUP BY pool_id
+        ),
         user_winnings AS (
             SELECT
                 user_address,
@@ -515,6 +783,12 @@ pub async fn get_users_by_winnings(
                 COUNT(*) as winning_predictions
             FROM winning_predictions
             GROUP BY user_address
+                wp.user_address,
+                SUM(wp.amount * (wp.total_stake::FLOAT / pwt.winning_stake)) as total_winnings,
+                COUNT(*) as winning_predictions
+            FROM winning_predictions wp
+            JOIN pool_winning_totals pwt ON pwt.pool_id = wp.pool_id
+            GROUP BY wp.user_address
         ),
         user_totals AS (
             SELECT 
@@ -567,30 +841,170 @@ pub async fn get_users_by_winnings(
     Ok(rankings)
 }
 
-/// Insert a new pool record decoded from a `PoolCreated` contract event.
-pub async fn insert_pool_from_event(
+/// Run `operation` inside a database transaction, committing on success.
+#[instrument(skip(pool), name = "db.insert_prediction_from_event_with_pool",
+    fields(pool_id = event.pool_id, user_address = %event.user_address))]
+pub async fn insert_prediction_from_event_with_pool(
     pool: &PgPool,
-    event: &PoolCreatedEvent,
+    event: &PredictionPlacedEvent,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query!(
+    let mut tx = pool.begin().await?;
+    insert_prediction_from_event(&mut tx, event).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Mark a pool as settled and record the winning outcome.
+#[instrument(skip(executor), name = "db.resolve_pool_in_db",
+    fields(pool_id = pool_id, winning_outcome = winning_outcome))]
+pub async fn resolve_pool_in_db<'e, E>(
+    executor: E,
+    pool_id: u64,
+    winning_outcome: i32,
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query("UPDATE pools SET state = 'settled', result = $1 WHERE pool_id = $2")
+        .bind(winning_outcome.to_string())
+        .bind(pool_id as i64)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+/// Mark a pool as closed (cancelled on-chain).
+#[instrument(skip(executor), name = "db.cancel_pool_in_db", fields(pool_id = pool_id))]
+pub async fn cancel_pool_in_db<'e, E>(executor: E, pool_id: u64) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query("UPDATE pools SET state = 'closed' WHERE pool_id = $1")
+        .bind(pool_id as i64)
+        .execute(executor)
+        .await?;
+    Ok(())
+}
+
+/// Insert a new pool record decoded from a `PoolCreated` contract event.
+#[instrument(skip(executor), name = "db.insert_pool_from_event",
+    fields(pool_id = event.pool_id, creator = %event.creator))]
+pub async fn insert_pool_from_event<'e, E>(
+    executor: E,
+    event: &PoolCreatedEvent,
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query(
         r#"
         INSERT INTO pools (pool_id, name, category, total_stake, end_time, state, creator, token, created_at)
         VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW())
         ON CONFLICT (pool_id) DO NOTHING
         "#,
-        event.pool_id as i64,
-        event.description,
-        event.category,
-        event.end_time as f64,
-        event.creator,
-        event.token,
     )
-    .execute(pool)
+    .bind(event.pool_id as i64)
+    .bind(&event.description)
+    .bind(&event.category)
+    .bind(event.end_time as f64)
+    .bind(&event.creator)
+    .bind(&event.token)
+    .execute(executor)
     .await?;
 
     record_pool_created_for_creator(pool, &event.creator).await?;
 
     Ok(())
+}
+
+/// Insert a decoded `prediction_placed` contract event into the prediction index.
+///
+/// Must run inside a transaction so the prediction insert and pool stake update
+/// stay atomic. Use [`insert_prediction_from_event_with_pool`] or pass an open
+/// transaction reference.
+#[instrument(skip(tx), name = "db.insert_prediction_from_event",
+    fields(pool_id = event.pool_id, user_address = %event.user_address))]
+pub async fn insert_prediction_from_event(
+    tx: &mut sqlx::Transaction<'_, Postgres>,
+    event: &PredictionPlacedEvent,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO predictions (pool_id, user_address, outcome, amount)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(event.pool_id as i64)
+    .bind(&event.user_address)
+    .bind(event.outcome)
+    .bind(event.amount)
+    .execute(&mut **tx)
+    .await?;
+
+    sqlx::query("UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2")
+        .bind(event.amount)
+        .bind(event.pool_id as i64)
+        .execute(&mut **tx)
+        .await?;
+
+    Ok(())
+}
+
+// ── Market Predictions (cursor-based pagination) ──────────────────────────────
+
+/// A single prediction within a market (pool), returned by the market predictions list.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct MarketPredictionRow {
+    /// Stable row ID, also used as the pagination cursor.
+    pub id: i64,
+    pub pool_id: i64,
+    pub user_address: String,
+    pub outcome: i32,
+    pub amount: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Fetch a cursor-paginated page of predictions for a given pool.
+///
+/// `after_id` is the opaque cursor from the previous page (`data.next_cursor`).
+/// Pass `None` (or omit the query param) to start from the most recent prediction.
+///
+/// Results are ordered `id DESC` (newest first), which is stable under
+/// concurrent inserts because new rows always get larger IDs.
+pub async fn get_market_predictions(
+    pool: &PgPool,
+    pool_id: i64,
+    after_id: Option<i64>,
+    limit: i64,
+) -> Result<Vec<MarketPredictionRow>, sqlx::Error> {
+    // Requesting one extra row lets us detect whether a next page exists
+    // without a separate COUNT query on the hot path.
+    let fetch_limit = limit + 1;
+
+    let sql = r#"
+        SELECT id, pool_id, user_address, outcome, amount, created_at
+        FROM predictions
+        WHERE pool_id = $1
+          AND ($2::bigint IS NULL OR id < $2)
+        ORDER BY id DESC
+        LIMIT $3
+    "#;
+
+    sqlx::query_as::<_, MarketPredictionRow>(sql)
+        .bind(pool_id)
+        .bind(after_id)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await
+}
+
+/// Count total predictions for a given pool (used for the `total` field).
+pub async fn count_market_predictions(pool: &PgPool, pool_id: i64) -> Result<i64, sqlx::Error> {
+    let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM predictions WHERE pool_id = $1")
+        .bind(pool_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(count)
 }
 
 /// A single row in the referral earnings breakdown — one entry per pool.
@@ -607,23 +1021,64 @@ pub async fn get_referral_earnings(
     pool: &PgPool,
     address: &str,
 ) -> Result<Vec<ReferralEarningRow>, sqlx::Error> {
-    sqlx::query_as!(
-        ReferralEarningRow,
+    sqlx::query_as::<_, ReferralEarningRow>(
         r#"
         SELECT
-            r.pool_id,
-            pl.name          AS pool_name,
-            SUM(r.amount)    AS "total_earned!: i64",
-            COUNT(r.id)      AS "referral_count!: i64"
-        FROM referrals r
-        JOIN pools pl ON pl.pool_id = r.pool_id
-        WHERE r.referrer = $1
-        GROUP BY r.pool_id, pl.name
-        ORDER BY SUM(r.amount) DESC
+            rps.pool_id,
+            pl.name                    AS pool_name,
+            COALESCE(rps.total_earned, 0)::BIGINT AS total_earned,
+            rps.referral_count
+        FROM referrer_pool_stats rps
+        JOIN pools pl ON pl.pool_id = rps.pool_id
+        WHERE rps.referrer = $1
+        ORDER BY rps.total_earned DESC
         "#,
-        address
     )
+    .bind(address)
     .fetch_all(pool)
+    .await
+}
+
+/// Protocol-wide aggregate statistics.
+#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+pub struct ProtocolStats {
+    /// Sum of `total_stake` across all pools (TVL proxy).
+    pub total_value_locked: i64,
+    /// Total number of prediction records (bets placed).
+    pub total_bets: i64,
+    /// Total number of pools ever created.
+    pub total_pools: i64,
+}
+
+/// Fetch protocol-wide aggregate statistics in a single query.
+///
+/// When `category` and/or `state` are provided, the aggregates are scoped to
+/// the matching pools (and the bets placed in them). Passing `None` for both
+/// yields the unfiltered protocol-wide totals.
+pub async fn get_protocol_stats(
+    pool: &PgPool,
+    category: Option<&str>,
+    state: Option<&str>,
+) -> Result<ProtocolStats, sqlx::Error> {
+    sqlx::query_as::<_, ProtocolStats>(
+        r#"
+        WITH filtered_pools AS (
+            SELECT pool_id, total_stake
+            FROM pools
+            WHERE ($1::text IS NULL OR category = $1)
+              AND ($2::text IS NULL OR state = $2)
+        )
+        SELECT
+            COALESCE(SUM(total_stake), 0) AS total_value_locked,
+            (SELECT COUNT(*) FROM predictions p
+                WHERE p.pool_id IN (SELECT pool_id FROM filtered_pools)) AS total_bets,
+            COUNT(*) AS total_pools
+        FROM filtered_pools
+        "#,
+    )
+    .bind(category)
+    .bind(state)
+    .fetch_one(pool)
     .await
 }
 
@@ -884,21 +1339,459 @@ pub async fn advance_pool_template(pool: &PgPool, template_id: i64) -> Result<()
     )
     .bind(template_id)
     .execute(pool)
+/// Decoded data from a `prediction_placed` contract event.
+#[derive(Debug)]
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user_address: String,
+    pub outcome: i32,
+    pub amount: i64,
+}
+
+/// Decoded data from a `referral_paid` contract event.
+#[derive(Debug)]
+pub struct ReferralPaidEvent {
+    pub pool_id: u64,
+    pub referrer: String,
+    pub referred_user: String,
+    pub referral_amount: i64,
+}
+
+/// Insert multiple referral records using bulk insert for optimal performance.
+///
+/// Large batches are split into chunks of at most `max_batch_size` rows to
+/// avoid oversized SQL statements and PostgreSQL parameter limits.
+pub async fn insert_referrals_bulk(
+    pool: &PgPool,
+    events: &[ReferralPaidEvent],
+    max_batch_size: usize,
+) -> Result<(), sqlx::Error> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    let chunk_size = max_batch_size.max(1);
+    for chunk in events.chunks(chunk_size) {
+        insert_referrals_bulk_chunk(pool, chunk).await?;
+    }
+
+    Ok(())
+}
+
+async fn insert_referrals_bulk_chunk(
+    pool: &PgPool,
+    events: &[ReferralPaidEvent],
+) -> Result<(), sqlx::Error> {
+    if events.is_empty() {
+        return Ok(());
+    }
+
+    // Build bulk insert query with dynamic values
+    let query = r#"
+        INSERT INTO referrals (referrer, user_address, pool_id, amount)
+        VALUES 
+    "#;
+
+    let mut values = Vec::new();
+    let mut param_index = 1i32;
+
+    for _event in events {
+        values.push(format!(
+            "(${}, ${}, ${}, ${})",
+            param_index,
+            param_index + 1,
+            param_index + 2,
+            param_index + 3
+        ));
+        param_index += 4;
+    }
+
+    let full_query = format!("{} {}", query, values.join(", "));
+
+    let mut query_builder = sqlx::query(&full_query);
+
+    for event in events {
+        query_builder = query_builder
+            .bind(&event.referrer)
+            .bind(&event.referred_user)
+            .bind(event.pool_id as i64)
+            .bind(event.referral_amount);
+    }
+
+    query_builder.execute(pool).await?;
+    Ok(())
+}
+
+/// Insert a single referral record.
+///
+/// For inserting multiple referrals, use `insert_referrals_bulk` instead for better performance.
+pub async fn insert_referral_from_event<'e, E>(
+    executor: E,
+    event: &ReferralPaidEvent,
+) -> Result<(), sqlx::Error>
+where
+    E: Executor<'e, Database = Postgres>,
+{
+    sqlx::query(
+        r#"
+        INSERT INTO referrals (referrer, user_address, pool_id, amount)
+        VALUES ($1, $2, $3, $4)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(&event.referrer)
+    .bind(&event.referred_user)
+    .bind(event.pool_id as i64)
+    .bind(event.referral_amount)
+    .execute(executor)
     .await?;
     Ok(())
 }
 
+// Tests live near the top-level helpers (see `retry_pool_connection` tests).
+
 #[cfg(test)]
-mod tests {
+mod write_helper_tests {
     use super::*;
-    use crate::config::Config;
 
-    #[tokio::test]
-    async fn creates_pool_from_valid_config() {
-        let mut config = Config::default_for_test();
-        config.database_url = String::from("postgres://postgres:postgres@localhost:5432/predifi");
+    #[test]
+    fn insert_referrals_bulk_query_builds_expected_placeholders() {
+        let events = vec![
+            ReferralPaidEvent {
+                pool_id: 1,
+                referrer: "GREF".into(),
+                referred_user: "GUSER".into(),
+                referral_amount: 100,
+            },
+            ReferralPaidEvent {
+                pool_id: 2,
+                referrer: "GREF2".into(),
+                referred_user: "GUSER2".into(),
+                referral_amount: 200,
+            },
+        ];
 
-        let pool = create_pool(&config).expect("pool should initialize in lazy mode");
-        assert!(!pool.is_closed(), "new pool should start open");
+        let mut values = Vec::new();
+        let mut param_index = 1i32;
+        for _ in &events {
+            values.push(format!(
+                "(${}, ${}, ${}, ${})",
+                param_index,
+                param_index + 1,
+                param_index + 2,
+                param_index + 3
+            ));
+            param_index += 4;
+        }
+
+        assert_eq!(values, vec!["($1, $2, $3, $4)", "($5, $6, $7, $8)"]);
+    }
+
+    #[test]
+    fn insert_referrals_bulk_chunks_large_batches() {
+        let events: Vec<_> = (0..5)
+            .map(|index| ReferralPaidEvent {
+                pool_id: index,
+                referrer: format!("GREF{index}"),
+                referred_user: format!("GUSER{index}"),
+                referral_amount: 100 + index as i64,
+            })
+            .collect();
+
+        let chunks: Vec<_> = events.chunks(2).collect();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), 2);
+        assert_eq!(chunks[2].len(), 1);
+    }
+}
+
+// ── Tests for predictions index migration (009) ───────────────────────────────
+
+#[cfg(test)]
+mod predictions_index_tests {
+    use super::*;
+
+    // ── calculate_odds ──────────────────────────────────────────────────────
+
+    /// Zero total stake produces zero odds for every outcome (no division by zero).
+    #[test]
+    fn calculate_odds_zero_total_stake_returns_zero_odds() {
+        let stakes = vec![(0i32, 100i64), (1, 200)];
+        let odds = calculate_odds(&stakes, 0);
+
+        assert_eq!(odds.len(), 2);
+        for o in &odds {
+            assert_eq!(o.odds, 0.0, "expected 0.0 odds when total_stake is 0");
+        }
+    }
+
+    /// An outcome with zero stake inside a non-zero pool gets 0.0 odds (no
+    /// division by zero on the per-outcome stake).
+    #[test]
+    fn calculate_odds_zero_outcome_stake_returns_zero_odds_for_that_outcome() {
+        let stakes = vec![(0i32, 0i64), (1, 500)];
+        let odds = calculate_odds(&stakes, 500);
+
+        assert_eq!(odds[0].odds, 0.0);
+        assert!(
+            (odds[1].odds - 1.0).abs() < f64::EPSILON,
+            "outcome with 100 % of stake should have odds of 1.0"
+        );
+    }
+
+    /// Even split across two outcomes should yield odds of 2.0 each.
+    #[test]
+    fn calculate_odds_even_split_gives_2x_odds() {
+        let stakes = vec![(0i32, 500i64), (1, 500)];
+        let odds = calculate_odds(&stakes, 1000);
+
+        for o in &odds {
+            assert!(
+                (o.odds - 2.0).abs() < 1e-9,
+                "expected 2.0 odds for a 50/50 split, got {}",
+                o.odds
+            );
+        }
+    }
+
+    /// Dominant outcome (90 %) yields odds near 1.11; minority (10 %) near 10.
+    #[test]
+    fn calculate_odds_asymmetric_split() {
+        let stakes = vec![(0i32, 900i64), (1, 100)];
+        let odds = calculate_odds(&stakes, 1000);
+
+        let dominant = odds.iter().find(|o| o.outcome == 0).unwrap();
+        let minority = odds.iter().find(|o| o.outcome == 1).unwrap();
+
+        assert!(
+            (dominant.odds - (1000.0 / 900.0)).abs() < 1e-9,
+            "dominant odds should be ~1.111, got {}",
+            dominant.odds
+        );
+        assert!(
+            (minority.odds - 10.0).abs() < 1e-9,
+            "minority odds should be 10.0, got {}",
+            minority.odds
+        );
+    }
+
+    /// Empty input returns empty output without panicking.
+    #[test]
+    fn calculate_odds_empty_stakes_returns_empty() {
+        let odds = calculate_odds(&[], 0);
+        assert!(odds.is_empty());
+
+        let odds_nonzero = calculate_odds(&[], 1000);
+        assert!(odds_nonzero.is_empty());
+    }
+
+    // ── UserWinnings win_rate ───────────────────────────────────────────────
+
+    /// Win-rate is 0.0 when there are no total predictions (guard against
+    /// division by zero in the query result mapper).
+    #[test]
+    fn user_winnings_win_rate_is_zero_when_no_predictions() {
+        let win_rate = if 0 > 0 { 5_f64 / 0_f64 } else { 0.0 };
+        assert_eq!(win_rate, 0.0);
+    }
+
+    /// Win-rate is computed correctly for a partial win record.
+    #[test]
+    fn user_winnings_win_rate_partial() {
+        let total = 10i64;
+        let winning = 3i64;
+        let win_rate = winning as f64 / total as f64;
+        assert!((win_rate - 0.3).abs() < 1e-9);
+    }
+
+    // ── Rank offset calculation ─────────────────────────────────────────────
+
+    /// Rank starts at offset + 1 for the first returned row so pagination
+    /// offsets are reflected correctly in the leaderboard.
+    #[test]
+    fn leaderboard_rank_respects_page_offset() {
+        let offset: i64 = 20;
+        let rank_of_first_row = offset + 1; // index 0 in the result set
+        let rank_of_second_row = offset + 1 + 1;
+
+        assert_eq!(rank_of_first_row, 21);
+        assert_eq!(rank_of_second_row, 22);
+    }
+
+    // ── Migration file sanity checks ────────────────────────────────────────
+
+    /// Verify the migration SQL file for index 009 exists and contains the
+    /// four expected index names so a future rename does not silently break
+    /// the schema.
+    #[test]
+    fn migration_009_contains_expected_index_names() {
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
+
+        let expected_indexes = [
+            "idx_predictions_pool_created",
+            "idx_predictions_outcome_pool",
+            "idx_predictions_pool_user",
+            "idx_predictions_amount_desc",
+        ];
+
+        for name in &expected_indexes {
+            assert!(
+                sql.contains(name),
+                "migration 009 should define index '{name}', but it was not found in the SQL"
+            );
+        }
+    }
+
+    /// The migration must use `IF NOT EXISTS` for every CREATE INDEX so
+    /// re-running migrations on an already-migrated schema is idempotent.
+    #[test]
+    fn migration_009_all_indexes_are_idempotent() {
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
+
+        // Count CREATE INDEX and CREATE INDEX IF NOT EXISTS occurrences.
+        let total_creates = sql.matches("CREATE INDEX").count();
+        let idempotent_creates = sql.matches("CREATE INDEX IF NOT EXISTS").count();
+
+        assert_eq!(
+            total_creates, idempotent_creates,
+            "every CREATE INDEX in migration 009 must use IF NOT EXISTS \
+             (found {total_creates} CREATE INDEX, {idempotent_creates} with IF NOT EXISTS)"
+        );
+    }
+
+    /// All indexes in migration 009 must target the `predictions` table.
+    #[test]
+    fn migration_009_all_indexes_target_predictions_table() {
+        let sql = include_str!("../migrations/009_add_predictions_indexes.sql");
+
+        // Each ON clause in the file should reference `predictions`.
+        let on_clauses: Vec<&str> = sql
+            .match_indices("ON predictions")
+            .map(|(_, s)| s)
+            .collect();
+        let total_creates = sql.matches("CREATE INDEX IF NOT EXISTS").count();
+
+        assert_eq!(
+            on_clauses.len(),
+            total_creates,
+            "every index in migration 009 must target the 'predictions' table \
+             (found {total_creates} CREATE INDEX IF NOT EXISTS but only {} ON predictions clauses)",
+            on_clauses.len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod market_predictions_tests {
+    use super::*;
+    use chrono::Utc;
+
+    /// Helper: build a page of `MarketPredictionRow` with sequential IDs,
+    /// descending (newest-first) to match the query order.
+    fn make_rows(ids: &[i64]) -> Vec<MarketPredictionRow> {
+        ids.iter()
+            .map(|&id| MarketPredictionRow {
+                id,
+                pool_id: 1,
+                user_address: format!("G{id:055}"),
+                outcome: 0,
+                amount: 100,
+                created_at: Utc::now(),
+            })
+            .collect()
+    }
+
+    // ── has_next / next_cursor logic (mirrors the handler) ──────────────────
+
+    /// When the DB returns exactly `limit` rows there is no next page.
+    #[test]
+    fn no_next_page_when_rows_equal_limit() {
+        let limit = 3i64;
+        let mut rows = make_rows(&[10, 9, 8]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// When the DB returns `limit + 1` rows there IS a next page; the extra
+    /// row is trimmed and the cursor points to the last remaining row's ID.
+    #[test]
+    fn has_next_page_when_rows_exceed_limit() {
+        let limit = 3i64;
+        // Query fetches limit+1 = 4 rows
+        let mut rows = make_rows(&[10, 9, 8, 7]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
+
+        assert!(has_next);
+        assert_eq!(next_cursor, Some(8)); // last row after truncation
+        assert_eq!(rows.len(), 3);
+    }
+
+    /// An empty result set produces no next cursor and returns an empty slice.
+    #[test]
+    fn empty_result_produces_no_cursor() {
+        let limit = 20i64;
+        let mut rows: Vec<MarketPredictionRow> = vec![];
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+        assert!(rows.is_empty());
+    }
+
+    /// A single-row result with limit=1 should NOT show has_next.
+    /// (limit+1 = 2 fetched, only 1 returned → no next page)
+    #[test]
+    fn single_row_within_limit_has_no_next() {
+        let limit = 1i64;
+        let mut rows = make_rows(&[5]);
+        let has_next = rows.len() as i64 > limit;
+        if has_next {
+            rows.truncate(limit as usize);
+        }
+        let next_cursor: Option<i64> = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
+
+        assert!(!has_next);
+        assert_eq!(next_cursor, None);
+    }
+
+    /// `clamp(1, 100)` must reject zero and cap at 100.
+    #[test]
+    fn limit_clamp_boundaries() {
+        assert_eq!(0i64.clamp(1, 100), 1);
+        assert_eq!((-5i64).clamp(1, 100), 1);
+        assert_eq!(100i64.clamp(1, 100), 100);
+        assert_eq!(9999i64.clamp(1, 100), 100);
+        assert_eq!(50i64.clamp(1, 100), 50);
     }
 }

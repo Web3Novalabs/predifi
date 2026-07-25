@@ -5,16 +5,18 @@ import { Send, Heart, Download } from "lucide-react";
 import {
   Button,
   Input,
+  SearchBar,
   Checkbox,
   Tooltip,
-  ToastProvider,
-  useToast,
+  CopyButton,
+  useToastActions,
 } from "@/components/ui";
 
 function ComponentShowcase() {
   const [checkedState, setCheckedState] = useState(false);
   const [indeterminateState, setIndeterminateState] = useState(true);
-  const { addToast } = useToast();
+  const [searchResult, setSearchResult] = useState("");
+  const { addToast } = useToastActions();
 
   const handleToastSuccess = () => {
     addToast({
@@ -138,28 +140,191 @@ function ComponentShowcase() {
           </div>
         </section>
 
+        {/* SearchBar Component */}
+        <section className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-semibold mb-2">SearchBar Component</h2>
+            <p className="text-muted-foreground mb-4">
+              Debounced search input — <code>onSearch</code> fires only after
+              the user stops typing (default 300 ms delay).
+            </p>
+          </div>
+
+          <div className="space-y-6 max-w-xl">
+            {/* Default (300 ms debounce) */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Default (300 ms debounce)</p>
+              <SearchBar
+                placeholder="Search pools..."
+                onSearch={(query) => setSearchResult(query)}
+              />
+            </div>
+
+            {/* Custom delay */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Custom delay (500 ms)</p>
+              <SearchBar
+                placeholder="Search predictions..."
+                debounceDelay={500}
+                onSearch={(query) => setSearchResult(query)}
+              />
+            </div>
+
+            {/* Disabled state */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Disabled</p>
+              <SearchBar
+                placeholder="Search disabled..."
+                disabled
+                onSearch={() => {}}
+              />
+            </div>
+
+            {/* Live feedback */}
+            {searchResult && (
+              <p className="text-sm text-muted-foreground">
+                Last debounced query:{" "}
+                <span className="text-foreground font-medium">
+                  &quot;{searchResult}&quot;
+                </span>
+              </p>
+            )}
+          </div>
+        </section>
+
         {/* Toast Component */}
         <section className="space-y-6">
           <div>
             <h2 className="text-2xl font-semibold mb-2">Toast Component</h2>
             <p className="text-muted-foreground mb-4">
-              Notification toasts with different variants
+              Notification toasts with slide-in/out animations, progress bar,
+              pause-on-hover, optional action button, and persistent mode.
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-4">
-            <Button onClick={handleToastSuccess} variant="primary">
-              Show Success Toast
-            </Button>
-            <Button onClick={handleToastError} variant="destructive">
-              Show Error Toast
-            </Button>
-            <Button onClick={handleToastWarning} variant="secondary">
-              Show Warning Toast
-            </Button>
-            <Button onClick={handleToastInfo} variant="tertiary">
-              Show Info Toast
-            </Button>
+          <div className="space-y-6">
+            {/* Variants */}
+            <div>
+              <p className="text-sm font-medium mb-3">Variants</p>
+              <div className="flex flex-wrap gap-3">
+                <Button onClick={handleToastSuccess} variant="primary" size="small">
+                  Success
+                </Button>
+                <Button onClick={handleToastError} variant="destructive" size="small">
+                  Error
+                </Button>
+                <Button onClick={handleToastWarning} variant="secondary" size="small">
+                  Warning
+                </Button>
+                <Button onClick={handleToastInfo} variant="tertiary" size="small">
+                  Info
+                </Button>
+              </div>
+            </div>
+
+            {/* With action button */}
+            <div>
+              <p className="text-sm font-medium mb-3">With action button</p>
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  size="small"
+                  variant="secondary"
+                  onClick={() =>
+                    addToast({
+                      variant: "success",
+                      title: "Pool created",
+                      description: "Your prediction pool is live.",
+                      action: { label: "View pool", onClick: () => {} },
+                      duration: 8000,
+                    })
+                  }
+                >
+                  With &quot;View pool&quot; action
+                </Button>
+                <Button
+                  size="small"
+                  variant="secondary"
+                  onClick={() =>
+                    addToast({
+                      variant: "warning",
+                      title: "Transaction pending",
+                      description: "Your stake is being processed.",
+                      action: { label: "Undo", onClick: () => {} },
+                      duration: 8000,
+                    })
+                  }
+                >
+                  With &quot;Undo&quot; action
+                </Button>
+              </div>
+            </div>
+
+            {/* Persistent (no auto-dismiss) */}
+            <div>
+              <p className="text-sm font-medium mb-3">Persistent (manual dismiss only)</p>
+              <Button
+                size="small"
+                variant="tertiary"
+                onClick={() =>
+                  addToast({
+                    variant: "error",
+                    title: "Wallet disconnected",
+                    description: "Reconnect your wallet to continue.",
+                    persistent: true,
+                  })
+                }
+              >
+                Persistent error toast
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        {/* CopyButton Component */}
+        <section className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-semibold mb-2">CopyButton Component</h2>
+            <p className="text-muted-foreground mb-4">
+              Copy-to-clipboard button with toast feedback and icon swap
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-8">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">Size xs</p>
+              <div className="flex items-center gap-2 font-mono text-sm">
+                0xA3B2...C19F
+                <CopyButton
+                  text="0xA3B2...C19F"
+                  size="xs"
+                  aria-label="Copy address"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">Size sm (default)</p>
+              <div className="flex items-center gap-2 font-mono text-sm">
+                REF-001
+                <CopyButton
+                  text="REF-001"
+                  size="sm"
+                  copyOptions={{ successDescription: "REF-001 copied to clipboard" }}
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-muted-foreground">Size md</p>
+              <div className="flex items-center gap-2 font-mono text-sm">
+                predifi.app/ref/abc123
+                <CopyButton
+                  text="https://predifi.app/ref/abc123"
+                  size="md"
+                  copyOptions={{ successTitle: "Link copied!", successDescription: "Share your referral link." }}
+                />
+              </div>
+            </div>
           </div>
         </section>
 
@@ -242,9 +407,5 @@ function ComponentShowcase() {
 }
 
 export default function ComponentsDemo() {
-  return (
-    <ToastProvider>
-      <ComponentShowcase />
-    </ToastProvider>
-  );
+  return <ComponentShowcase />;
 }

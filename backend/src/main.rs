@@ -1,6 +1,9 @@
-//! # predifi-backend
+//! `predifi-backend` — Axum HTTP server entry point.
 //!
-//! A minimal Axum HTTP server with CORS and request-logging middleware.
+//! All routers, handlers, and shared modules live in the `predifi_backend`
+//! library crate so they can be reused by other binaries (notably
+//! `predifi-seed`).  This file only wires environment loading to
+//! [`predifi_backend::run_server`].
 
 pub mod config;
 pub mod db;
@@ -201,6 +204,7 @@ pub fn build_router_with_db(
         .layer(build_cors())
         .layer(LoggingLayer)
 }
+use predifi_backend::{config::Config, run_server};
 
 #[tokio::main]
 async fn main() {
@@ -211,45 +215,5 @@ async fn main() {
         std::process::exit(1);
     });
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(config.log_level.clone()))
-        .with_target(false)
-        .compact()
-        .init();
-
-    let pool = db::create_pool(&config).unwrap_or_else(|error| {
-        error!(error = %error, "failed to initialize PostgreSQL pool");
-        std::process::exit(1);
-    });
-
-    let cache = price_cache::PriceCache::new();
-    price_cache::spawn_fetcher(cache.clone());
-
-    let app = build_router_with_db(config.clone(), cache, pool);
-
-    let bind_addr = config.bind_address();
-
-    let listener = tokio::net::TcpListener::bind(&bind_addr)
-        .await
-        .unwrap_or_else(|error| {
-            error!(address = %bind_addr, error = %error, "failed to bind TCP listener");
-            std::process::exit(1);
-        });
-
-    info!(address = %bind_addr, "backend server listening");
-
-    if let Err(error) = axum::serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
-    {
-        error!(error = %error, "server error");
-        std::process::exit(1);
-    }
+    run_server(config).await;
 }
-
-#[cfg(test)]
-mod db_integration_tests;
-#[cfg(test)]
-mod tests;

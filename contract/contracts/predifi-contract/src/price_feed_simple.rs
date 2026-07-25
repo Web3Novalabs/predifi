@@ -1,4 +1,4 @@
-use crate::{DataKey, PredifiError};
+use crate::{DataKey, PredifiError, MAX_TOLERANCE};
 use soroban_sdk::{contracttype, Address, Env, Symbol, Vec as SorobanVec};
 
 /// Oracle configuration stored under `DataKey::OracleConfig`.
@@ -189,7 +189,7 @@ impl PriceFeedAdapter {
             return Err(PredifiError::PriceDataInvalid);
         }
 
-        let tolerance_amount = (target_price * *tolerance_bps as i128) / 10000;
+        let tolerance_amount = (target_price * *tolerance_bps as i128) / MAX_TOLERANCE as i128;
 
         let result = match operator_type {
             0 => {

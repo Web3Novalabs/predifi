@@ -1,8 +1,8 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
-//! # PrediFi Errors
+//! # `PrediFi` Errors
 //!
-//! This crate provides a comprehensive error handling system for PrediFi smart contracts.
+//! This crate provides a comprehensive error handling system for `PrediFi` smart contracts.
 //!
 //! ## Features
 //!
@@ -55,3 +55,10 @@
 pub mod errors;
 
 pub use errors::PrediFiError;
+
+// Native (std) error types exposed to the backend when the `std` feature is enabled.
+#[cfg(feature = "std")]
+pub mod native_errors;
+
+#[cfg(feature = "std")]
+pub use native_errors::ConfigError;

@@ -268,6 +268,7 @@ fn test_increase_max_total_stake_auth_only_happens_at_entry_point() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cap Increase Pool"),
             metadata_url: String::from_str(&env, "ipfs://cap-increase"),
             min_stake: 1i128,
@@ -298,6 +299,249 @@ fn test_increase_max_total_stake_auth_only_happens_at_entry_point() {
 }
 
 #[test]
+fn test_create_pool_accepts_valid_referral_code() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(now + 3600u64),
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: now,
+            description: String::from_str(&env, "Valid referral code pool"),
+            metadata_url: String::from_str(&env, "ipfs://valid"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: Some(Symbol::new(&env, "ABC123")),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    assert_eq!(pool_id, 0u64);
+}
+
+#[test]
+fn test_create_pool_rejects_referral_code_too_short() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.create_pool(
+            &creator,
+            &(now + 3600u64),
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now,
+                description: String::from_str(&env, "Too short code pool"),
+                metadata_url: String::from_str(&env, "ipfs://short"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: true,
+                whitelist_key: Some(Symbol::new(&env, "A1B2")),
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_create_pool_rejects_referral_code_too_long() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.create_pool(
+            &creator,
+            &(now + 3600u64),
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now,
+                description: String::from_str(&env, "Too long code pool"),
+                metadata_url: String::from_str(&env, "ipfs://long"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: true,
+                whitelist_key: Some(Symbol::new(&env, "ABCDEFGHIJKLM")),
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_create_pool_rejects_referral_code_lowercase() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.create_pool(
+            &creator,
+            &(now + 3600u64),
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now,
+                description: String::from_str(&env, "Lowercase code pool"),
+                metadata_url: String::from_str(&env, "ipfs://lower"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: true,
+                whitelist_key: Some(Symbol::new(&env, "AbC123")),
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_create_pool_rejects_referral_code_special_characters() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let now = env.ledger().timestamp();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.create_pool(
+            &creator,
+            &(now + 3600u64),
+            &token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now,
+                description: String::from_str(&env, "Special char code pool"),
+                metadata_url: String::from_str(&env, "ipfs://special"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: true,
+                whitelist_key: Some(Symbol::new(&env, "ABC12!")),
+                outcome_descriptions: soroban_sdk::vec![
+                    &env,
+                    String::from_str(&env, "Outcome 0"),
+                    String::from_str(&env, "Outcome 1"),
+                ],
+            },
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_place_prediction_rejects_invalid_invite_key() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let now = env.ledger().timestamp();
+    let pool_id = client.create_pool(
+        &creator,
+        &(now + 3600u64),
+        &token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: now,
+            description: String::from_str(&env, "Invalid invite key pool"),
+            metadata_url: String::from_str(&env, "ipfs://invalid-invite"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: true,
+            whitelist_key: Some(Symbol::new(&env, "ABC123")),
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.place_prediction(
+            &user,
+            &pool_id,
+            &100,
+            &1u32,
+            &None,
+            &Some(Symbol::new(&env, "AbC123")),
+        );
+    }));
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn test_resolve_pool_auth_only_happens_at_entry_point() {
     let env = Env::default();
     env.mock_all_auths();
@@ -313,6 +557,7 @@ fn test_resolve_pool_auth_only_happens_at_entry_point() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Resolve Auth Pool"),
             metadata_url: String::from_str(&env, "ipfs://resolve-auth"),
             min_stake: 1i128,
@@ -362,6 +607,7 @@ fn test_oracle_resolve_auth_only_happens_at_entry_point() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Oracle Auth Pool"),
             metadata_url: String::from_str(&env, "ipfs://oracle-auth"),
             min_stake: 1i128,
@@ -413,6 +659,7 @@ fn test_claim_winnings() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -450,6 +697,94 @@ fn test_claim_winnings() {
     let winnings2 = client.claim_winnings(&user2, &pool_id);
     assert_eq!(winnings2, 0);
     assert_eq!(token.balance(&user2), 900);
+}
+
+#[test]
+fn test_reward_claimed_event_emitted_on_winnings_claim() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, operator, creator) = setup(&env);
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100000u64,
+        &token_address,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+                String::from_str(&env, "Outcome 2"),
+            ],
+        },
+    );
+
+    client.place_prediction(&user, &pool_id, &100, &1, &None, &None);
+
+    env.ledger().with_mut(|li| li.timestamp = 100001);
+    client.resolve_pool(&operator, &pool_id, &1u32);
+
+    let winnings = client.claim_winnings(&user, &pool_id);
+    assert_eq!(winnings, 100);
+
+    let events = env.events().all();
+    let reward_claimed_topic = Symbol::new(&env, "reward_claimed");
+    let mut found = false;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == reward_claimed_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let event_pool_id: u64 = event_data
+                        .get(Symbol::new(&env, "pool_id"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_user: Address = event_data
+                        .get(Symbol::new(&env, "user"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_amount: i128 = event_data
+                        .get(Symbol::new(&env, "amount"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_claim_type: String = event_data
+                        .get(Symbol::new(&env, "claim_type"))
+                        .unwrap()
+                        .into_val(&env);
+
+                    assert_eq!(event_pool_id, pool_id);
+                    assert_eq!(event_user, user);
+                    assert_eq!(event_amount, winnings);
+                    assert_eq!(event_claim_type, String::from_str(&env, "winnings"));
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(found, "RewardClaimedEvent not found");
+    assert_eq!(token.balance(&user), 1000);
 }
 
 #[test]
@@ -492,6 +827,7 @@ fn test_claim_winnings_zero_share() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Small Stake Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -581,6 +917,7 @@ fn test_claim_winnings_zero_total_winnings_high_fee() {
         &2u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "High Fee Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -677,6 +1014,7 @@ fn test_referral_fee_distribution() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Referral Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -734,6 +1072,7 @@ fn test_double_claim() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -783,6 +1122,7 @@ fn test_claim_unresolved() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -828,6 +1168,7 @@ fn test_multiple_pools_independent() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -856,6 +1197,7 @@ fn test_multiple_pools_independent() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -908,6 +1250,7 @@ fn test_invalid_category_fails() {
         &2u32,
         &Symbol::new(&env, "InvalidCat"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Invalid Category Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -966,6 +1309,7 @@ fn test_unauthorized_resolve_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1023,6 +1367,7 @@ fn test_oracle_can_resolve() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1086,6 +1431,7 @@ fn test_unauthorized_oracle_resolve() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1145,6 +1491,7 @@ fn test_oracle_resolve_requires_oracle_role() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Oracle Role Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1180,6 +1527,8 @@ fn test_oracle_resolve_requires_oracle_role() {
 fn test_whitelisted_oracle_can_update_price_feed() {
     let env = Env::default();
     env.mock_all_auths();
+    // Set ledger timestamp to a non-zero value so we can use a past timestamp
+    env.ledger().with_mut(|li| li.timestamp = 1000);
 
     let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
     let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
@@ -1195,14 +1544,15 @@ fn test_whitelisted_oracle_can_update_price_feed() {
     client.add_oracle(&admin, &oracle);
 
     let feed_pair = Symbol::new(&env, "ETHUSD");
-    let now = env.ledger().timestamp();
+    let now = env.ledger().timestamp(); // 1000
+                                        // timestamp must be strictly in the past (< now)
     client.update_price_feed(
         &oracle,
         &feed_pair,
         &3_000_000i128,
         &100i128,
-        &now,
-        &(now + 60),
+        &(now - 1),  // 999 (in the past)
+        &(now + 60), // 1060 (expires in the future)
     );
 }
 
@@ -1267,6 +1617,144 @@ fn test_removed_oracle_cannot_update_price_feed() {
 }
 
 #[test]
+fn test_set_price_condition_rejects_invalid_match_operator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Invalid operator"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let result = client.try_set_price_condition(
+        &operator,
+        &pool_id,
+        &Symbol::new(&env, "BTCUSD"),
+        &50_000i128,
+        &3u32,
+        &100u32,
+    );
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_set_price_condition_rejects_tolerance_above_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Invalid tolerance"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let result = client.try_set_price_condition(
+        &operator,
+        &pool_id,
+        &Symbol::new(&env, "BTCUSD"),
+        &50_000i128,
+        &1u32,
+        &(MAX_TOLERANCE + 1),
+    );
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_resolve_pool_from_price_applies_tolerance_bounded_match() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.add_oracle(&admin, &oracle);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &5_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 1_000,
+            description: String::from_str(&env, "Tolerance match"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let feed_pair = Symbol::new(&env, "ETHUSD");
+    client.set_price_condition(&operator, &pool_id, &feed_pair, &1_000i128, &1u32, &100u32);
+    client.update_price_feed(&oracle, &feed_pair, &1_005i128, &1i128, &999u64, &10_000u64);
+
+    env.ledger().with_mut(|li| li.timestamp = 8_600);
+    client.resolve_pool_from_price(&pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 0);
+}
+
+#[test]
 fn test_oracle_resolve_long_proof() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1297,6 +1785,7 @@ fn test_oracle_resolve_long_proof() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1378,6 +1867,7 @@ fn test_oracle_resolve_utf8_emoji_proof() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -1615,7 +2105,6 @@ fn test_non_admin_cannot_pause() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_set_fee_bps() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1631,11 +2120,11 @@ fn test_paused_blocks_set_fee_bps() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.set_fee_bps(&admin, &100u32);
+    let result = client.try_set_fee_bps(&admin, &100u32);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_set_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1651,11 +2140,11 @@ fn test_paused_blocks_set_treasury() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.set_treasury(&admin, &Address::generate(&env));
+    let result = client.try_set_treasury(&admin, &Address::generate(&env));
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_create_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1674,13 +2163,14 @@ fn test_paused_blocks_create_pool() {
 
     let creator = Address::generate(&env);
     client.pause(&admin);
-    client.create_pool(
+    let result = client.try_create_pool(
         &creator,
         &100000u64,
         &token,
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1702,10 +2192,10 @@ fn test_paused_blocks_create_pool() {
             ],
         },
     );
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_place_prediction() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1722,11 +2212,11 @@ fn test_paused_blocks_place_prediction() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.place_prediction(&user, &0u64, &10, &1, &None, &None);
+    let result = client.try_place_prediction(&user, &0u64, &10, &1, &None, &None);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_resolve_pool() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1744,11 +2234,11 @@ fn test_paused_blocks_resolve_pool() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.resolve_pool(&operator, &0u64, &1u32);
+    let result = client.try_resolve_pool(&operator, &0u64, &1u32);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
 fn test_paused_blocks_claim_winnings() {
     let env = Env::default();
     env.mock_all_auths();
@@ -1765,7 +2255,315 @@ fn test_paused_blocks_claim_winnings() {
     client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
 
     client.pause(&admin);
-    client.claim_winnings(&user, &0u64);
+    let result = client.try_claim_winnings(&user, &0u64);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_max_predictions_per_user() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_max_predictions_per_user(&admin, &10u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_prediction_cooldown() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_prediction_cooldown(&admin, &60u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_resolution_delay() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_resolution_delay(&admin, &3600u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_min_pool_duration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_min_pool_duration(&admin, &3600u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_min_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_min_stake(&admin, &100i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_referral_cut_bps() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_referral_cut_bps(&admin, &500u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_referral_rate() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_referral_rate(&admin, &500u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_add_token_to_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.add_token_to_whitelist(&admin, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_remove_token_from_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.remove_token_from_whitelist(&admin, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_add_oracle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.add_oracle(&admin, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_remove_oracle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.remove_oracle(&admin, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_increase_max_total_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.increase_max_total_stake(&admin, &0u64, &1000i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_update_pool_description() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.update_pool_description(&admin, &0u64, &String::from_str(&env, "new desc"));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_cancel_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.cancel_pool(&admin, &0u64, &String::from_str(&env, "reason"));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_claim_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.claim_refund(&user, &0u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_stake_limits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    client.pause(&admin);
+    client.set_stake_limits(&operator, &0u64, &1i128, &0i128);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_add_to_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.add_to_whitelist(&admin, &0u64, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_remove_from_whitelist() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.remove_from_whitelist(&admin, &0u64, &Address::generate(&env));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_init_oracle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.init_oracle(&admin, &Address::generate(&env), &3600u64, &100u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_price_condition() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+    client.pause(&admin);
+    client.set_price_condition(
+        &operator,
+        &0u64,
+        &symbol_short!("BTCUSD"),
+        &50000i128,
+        &1u32,
+        &100u32,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_update_price_feed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.update_price_feed(
+        &Address::generate(&env),
+        &symbol_short!("BTCUSD"),
+        &50000i128,
+        &10i128,
+        &1u64,
+        &9999u64,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_resolve_pool_from_price() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.resolve_pool_from_price(&0u64);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_set_fee_tiers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.set_fee_tiers(&admin, &soroban_sdk::vec![&env]);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #83)")]
+fn test_paused_blocks_flag_disputed_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.pause(&admin);
+    client.flag_disputed_pool(&admin, &0u64, &String::from_str(&env, "dispute reason"));
 }
 
 #[test]
@@ -1801,6 +2599,7 @@ fn test_unpause_restores_functionality() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1844,6 +2643,7 @@ fn test_get_user_predictions() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1872,6 +2672,7 @@ fn test_get_user_predictions() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -1900,6 +2701,7 @@ fn test_get_user_predictions() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2022,6 +2824,7 @@ fn test_multi_oracle_conflict_returns_error() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Multi-Oracle Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -2090,6 +2893,7 @@ fn test_multi_oracle_same_outcome_resolves_successfully() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Multi-Oracle Test 2"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -2156,6 +2960,7 @@ fn test_single_oracle_insufficient_resolutions_keeps_unresolved() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Multi-Oracle Test 3"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -2216,6 +3021,7 @@ fn test_admin_can_cancel_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2271,6 +3077,7 @@ fn test_pool_creator_can_cancel_unresolved_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2312,6 +3119,7 @@ fn test_non_admin_non_creator_cannot_cancel() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2367,6 +3175,7 @@ fn test_create_pool_rejects_non_whitelisted_token() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool"),
             metadata_url: String::from_str(&env, "ipfs://meta"),
             min_stake: 0i128,
@@ -2545,6 +3354,7 @@ fn test_is_whitelisted_tracks_explicit_private_pool_membership() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Private whitelist helper"),
             metadata_url: String::from_str(&env, "ipfs://private-whitelist-helper"),
             min_stake: 1i128,
@@ -2589,6 +3399,7 @@ fn test_is_whitelisted_returns_false_for_public_pool_without_entry() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Public whitelist helper"),
             metadata_url: String::from_str(&env, "ipfs://public-whitelist-helper"),
             min_stake: 1i128,
@@ -2629,6 +3440,7 @@ fn test_add_to_whitelist_is_idempotent_for_already_whitelisted_user() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Private pool for idempotency test"),
             metadata_url: String::from_str(&env, "ipfs://idempotency-test"),
             min_stake: 1i128,
@@ -2718,6 +3530,7 @@ fn test_place_prediction_fails_for_non_whitelisted_token() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "desc"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 10i128,
@@ -2772,6 +3585,7 @@ fn test_place_prediction_succeeds_for_whitelisted_token() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "desc"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 10i128,
@@ -2831,6 +3645,7 @@ fn test_cannot_cancel_resolved_pool_by_operator() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2895,6 +3710,7 @@ fn test_cannot_place_prediction_on_canceled_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -2955,6 +3771,7 @@ fn test_pool_creator_cannot_cancel_after_admin_cancels() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -3019,6 +3836,7 @@ fn test_admin_can_cancel_pool_with_predictions() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(
                 &env,
@@ -3086,6 +3904,7 @@ fn test_cancel_pool_refunds_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cancel Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3133,6 +3952,7 @@ fn test_cannot_cancel_resolved_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Resolve Then Cancel Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3195,6 +4015,7 @@ fn test_cancel_pool_after_resolution_returns_invalid_pool_state() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "State Transition Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3264,6 +4085,7 @@ fn test_cannot_resolve_canceled_pool() {
         &3u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3305,6 +4127,7 @@ fn test_cannot_predict_on_canceled_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Predict Canceled Pool Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3359,6 +4182,7 @@ fn test_resolve_pool_before_delay() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Delay Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3417,6 +4241,7 @@ fn test_resolve_pool_logs_reason_when_resolution_delay_not_met() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Delay log test"),
             metadata_url: String::from_str(&env, "ipfs://delay-log"),
             min_stake: 1i128,
@@ -3480,6 +4305,7 @@ fn test_resolve_pool_after_delay() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Delay Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3503,6 +4329,98 @@ fn test_resolve_pool_after_delay() {
 
     // Should succeed
     client.resolve_pool(&operator, &pool_id, &1u32);
+}
+
+#[test]
+fn test_pool_resolved_event_emitted_on_resolution() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let token = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Init contract with zero resolution delay for easier testing
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token);
+
+    let end_time = 5000u64;
+    let creator = Address::generate(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Event Test Pool"),
+            metadata_url: String::from_str(&env, "ipfs://metadata"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // Advance time to end_time (eligible for resolution with zero delay)
+    env.ledger().with_mut(|li| li.timestamp = end_time);
+
+    // Resolve the pool with outcome 1
+    let expected_outcome = 1u32;
+    client.resolve_pool(&operator, &pool_id, &expected_outcome);
+
+    // Verify the PoolResolvedEvent was emitted
+    let events = env.events().all();
+    let pool_resolved_topic = Symbol::new(&env, "pool_resolved");
+    let mut found = false;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == pool_resolved_topic {
+                    let event_data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+                    let event_pool_id: u64 = event_data
+                        .get(Symbol::new(&env, "pool_id"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_operator: Address = event_data
+                        .get(Symbol::new(&env, "operator"))
+                        .unwrap()
+                        .into_val(&env);
+                    let event_outcome: u32 = event_data
+                        .get(Symbol::new(&env, "outcome"))
+                        .unwrap()
+                        .into_val(&env);
+
+                    assert_eq!(event_pool_id, pool_id);
+                    assert_eq!(event_operator, operator);
+                    assert_eq!(event_outcome, expected_outcome);
+                    found = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    assert!(found, "PoolResolvedEvent not found in emitted events");
 }
 
 #[test]
@@ -3531,6 +4449,7 @@ fn test_mark_pool_ready() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Ready Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3582,6 +4501,7 @@ fn test_stake_below_minimum_rejected() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Min Stake Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 50i128,
@@ -3624,6 +4544,7 @@ fn test_stake_above_maximum_rejected() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max Stake Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3667,6 +4588,7 @@ fn test_stake_at_boundaries_accepted() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Boundary Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 10i128,
@@ -3709,6 +4631,7 @@ fn test_set_stake_limits_by_operator() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Update Limits Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3750,6 +4673,7 @@ fn test_set_stake_limits_unauthorized() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Unauthorized Limits Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3788,6 +4712,7 @@ fn test_set_stake_limits_zero_min_stake_returns_error() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Min Stake Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3825,6 +4750,7 @@ fn test_set_stake_limits_max_below_min_returns_error() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max Below Min Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3866,6 +4792,7 @@ fn test_set_stake_limits_min_equals_max_is_valid() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Equal Stakes Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3906,6 +4833,7 @@ fn test_set_stake_limits_min_greater_than_max_returns_error() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Min Greater Than Max Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3950,6 +4878,7 @@ fn test_set_stake_limits_max_zero_means_unlimited() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Unlimited Max Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -3993,6 +4922,7 @@ fn test_get_pools_by_category() {
         &2u32,
         &cat1,
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 0"),
             metadata_url: String::from_str(&env, "ipfs://0"),
             min_stake: 1i128,
@@ -4017,6 +4947,7 @@ fn test_get_pools_by_category() {
         &2u32,
         &cat1,
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1i128,
@@ -4041,6 +4972,7 @@ fn test_get_pools_by_category() {
         &2u32,
         &cat2,
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1i128,
@@ -4203,8 +5135,11 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
     let token_admin_client2 = token::StellarAssetClient::new(&env, &token_contract2);
     client.add_token_to_whitelist(&admin, &token_contract2);
 
-    // Set protocol fee to 10% (1000 bps) for clear fee calculation
+    // Propose a 10% protocol fee (1000 bps) and apply it after the timelock.
     client.set_fee_bps(&admin, &1000u32);
+    env.ledger()
+        .with_mut(|li| li.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
 
     // Create two pools with different tokens
     let pool1_id = client.create_pool(
@@ -4214,6 +5149,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
         &2u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1 - Token 1"),
             metadata_url: String::from_str(&env, "ipfs://pool1"),
             min_stake: 1i128,
@@ -4239,6 +5175,7 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
         &2u32,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2 - Token 2"),
             metadata_url: String::from_str(&env, "ipfs://pool2"),
             min_stake: 1i128,
@@ -4333,7 +5270,26 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
 }
 
 #[test]
-#[should_panic(expected = "Contract is paused")]
+fn test_paused_blocks_migrate_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    client.pause(&admin);
+    let result = client.try_migrate_state(&admin);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
 fn test_paused_blocks_withdraw_treasury() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4349,8 +5305,58 @@ fn test_paused_blocks_withdraw_treasury() {
     // Pause contract
     client.pause(&admin);
 
-    // Try to withdraw while paused - should panic
-    client.withdraw_treasury(&admin, &token_address, &1000, &treasury);
+    // Try to withdraw while paused — must return ContractPaused error
+    let result = client.try_withdraw_treasury(&admin, &token_address, &1000, &treasury);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_update_referrer() {
+    // Verify that update_referrer returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let result = client.try_update_referrer(&creator, &0u64, &Some(Address::generate(&env)));
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_mark_pool_ready() {
+    // Verify that mark_pool_ready returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let result = client.try_mark_pool_ready(&0u64);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+}
+
+#[test]
+fn test_paused_blocks_batch_claim_winnings() {
+    // Verify that batch_claim_winnings returns ContractPaused when the contract is paused.
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, _, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    client.pause(&admin);
+
+    let pool_ids = soroban_sdk::vec![&env, 0u64];
+    let result = client.try_batch_claim_winnings(&creator, &pool_ids);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
 }
 
 #[test]
@@ -4374,6 +5380,7 @@ fn test_get_pool_stats() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: // Binary pool
         String::from_str(&env, "Stats Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
@@ -4425,6 +5432,8 @@ fn test_get_pool_stats_with_initial_liquidity() {
     let user2 = Address::generate(&env);
     token_admin_client.mint(&user1, &5000);
     token_admin_client.mint(&user2, &5000);
+    // Mint tokens for the creator so they can provide initial liquidity
+    token_admin_client.mint(&creator, &1000);
 
     // Create pool with initial liquidity of 1000
     let pool_id = client.create_pool(
@@ -4434,6 +5443,7 @@ fn test_get_pool_stats_with_initial_liquidity() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Initial Liquidity Test"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -4516,6 +5526,7 @@ fn test_pool_end_time_on_leap_day() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Leap year pool"),
             metadata_url: String::from_str(&env, "ipfs://leap"),
             min_stake: 1i128,
@@ -4542,8 +5553,10 @@ fn test_pool_end_time_on_leap_day() {
 
 /// Creating a pool whose end time is the leap day, but the ledger is already
 /// past Mar 1, must be rejected because the end time is in the past.
+/// Issue #1130 — now surfaces the typed `DeadlineInPast` error (132) instead
+/// of the legacy assert message.
 #[test]
-#[should_panic(expected = "end_time must be in the future")]
+#[should_panic(expected = "#132")]
 fn test_pool_end_time_at_leap_day_already_past() {
     let env = Env::default();
     env.mock_all_auths();
@@ -4561,6 +5574,7 @@ fn test_pool_end_time_at_leap_day_already_past() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Expired leap pool"),
             metadata_url: String::from_str(&env, "ipfs://expired"),
             min_stake: 1i128,
@@ -4601,6 +5615,7 @@ fn test_pool_end_time_spans_leap_day_resolution() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Leap span pool"),
             metadata_url: String::from_str(&env, "ipfs://span"),
             min_stake: 1i128,
@@ -4661,6 +5676,7 @@ fn test_maximum_single_stake_roundtrip() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max stake pool"),
             metadata_url: String::from_str(&env, "ipfs://max"),
             min_stake: 1i128,
@@ -4709,6 +5725,7 @@ fn test_large_stake_winnings_split_correctly() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Large stake split"),
             metadata_url: String::from_str(&env, "ipfs://large"),
             min_stake: 1i128,
@@ -4773,6 +5790,7 @@ fn test_double_resolution_attempt() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Double resolve"),
             metadata_url: String::from_str(&env, "ipfs://double"),
             min_stake: 1i128,
@@ -4814,6 +5832,7 @@ fn test_many_users_rapid_claim_after_resolution() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Rapid claim"),
             metadata_url: String::from_str(&env, "ipfs://rapid"),
             min_stake: 1i128,
@@ -4889,6 +5908,7 @@ fn test_resolution_then_new_pool_state_isolation() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -4922,6 +5942,7 @@ fn test_resolution_then_new_pool_state_isolation() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -4954,6 +5975,108 @@ fn test_resolution_then_new_pool_state_isolation() {
 
 // ── Boundary values in all validation logic ───────────────────────────────────
 
+fn repeated_outcome_descriptions(env: &Env, count: u32) -> soroban_sdk::Vec<String> {
+    let mut outcomes = soroban_sdk::Vec::new(env);
+    for _ in 0..count {
+        outcomes.push_back(String::from_str(env, "Outcome"));
+    }
+    outcomes
+}
+
+/// The lowest valid values for pool creation parameters must be accepted.
+#[test]
+fn test_create_pool_accepts_minimum_boundary_parameters() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &DEFAULT_MIN_POOL_DURATION,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, ""),
+            metadata_url: String::from_str(&env, ""),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, 2),
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.end_time, DEFAULT_MIN_POOL_DURATION);
+    assert_eq!(pool.options_count, 2);
+    assert_eq!(pool.min_stake, 1);
+    assert_eq!(pool.max_stake, 0);
+    assert_eq!(pool.min_total_stake, 1);
+    assert_eq!(pool.max_total_stake, 0);
+    assert_eq!(pool.initial_liquidity, 0);
+    assert_eq!(pool.required_resolutions, 1);
+    assert_eq!(pool.total_stake, 0);
+    assert_eq!(pool.outcome_descriptions.len(), 2);
+}
+
+/// The highest valid pool duration, option count, metadata sizes, stake caps,
+/// and initial liquidity ceiling must be accepted together.
+#[test]
+fn test_create_pool_accepts_maximum_boundary_parameters() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    token_admin_client.mint(&creator, &MAX_INITIAL_LIQUIDITY);
+
+    let max_description_bytes = [b'D'; 256];
+    let max_metadata_bytes = [b'M'; 512];
+    let max_description = core::str::from_utf8(&max_description_bytes).unwrap();
+    let max_metadata = core::str::from_utf8(&max_metadata_bytes).unwrap();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &MAX_POOL_DURATION,
+        &token_address,
+        &MAX_OPTIONS_COUNT,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, max_description),
+            metadata_url: String::from_str(&env, max_metadata),
+            min_stake: MAX_INITIAL_LIQUIDITY,
+            max_stake: MAX_INITIAL_LIQUIDITY,
+            max_total_stake: MAX_INITIAL_LIQUIDITY,
+            min_total_stake: MAX_INITIAL_LIQUIDITY,
+            initial_liquidity: MAX_INITIAL_LIQUIDITY,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, MAX_OPTIONS_COUNT),
+        },
+    );
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.end_time, MAX_POOL_DURATION);
+    assert_eq!(pool.options_count, MAX_OPTIONS_COUNT);
+    assert_eq!(pool.description.len(), 256);
+    assert_eq!(pool.metadata_url.len(), 512);
+    assert_eq!(pool.min_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.max_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.min_total_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.max_total_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.initial_liquidity, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.total_stake, MAX_INITIAL_LIQUIDITY);
+    assert_eq!(pool.outcome_descriptions.len(), MAX_OPTIONS_COUNT);
+}
+
 /// min_stake == 0 must be rejected.
 #[test]
 #[should_panic(expected = "min_stake must be greater than zero")]
@@ -4970,6 +6093,7 @@ fn test_create_pool_rejects_zero_min_stake() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero min stake"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 0i128, // invalid
@@ -4989,10 +6113,10 @@ fn test_create_pool_rejects_zero_min_stake() {
     );
 }
 
-/// options_count == 1 must be rejected (minimum is 2).
+/// required_resolutions == 0 must be rejected.
 #[test]
-#[should_panic(expected = "options_count must be at least 2")]
-fn test_create_pool_rejects_single_option() {
+#[should_panic(expected = "required_resolutions must be at least 1")]
+fn test_create_pool_rejects_zero_required_resolutions() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -5002,9 +6126,106 @@ fn test_create_pool_rejects_single_option() {
         &creator,
         &100_000u64,
         &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Zero required resolutions"),
+            metadata_url: String::from_str(&env, "ipfs://zero-required-resolutions"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 0u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, 2),
+        },
+    );
+}
+
+/// Negative max_total_stake values must be rejected; zero remains the unlimited sentinel.
+#[test]
+#[should_panic(expected = "max_total_stake must be >= 0")]
+fn test_create_pool_rejects_negative_max_total_stake() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Negative max total stake"),
+            metadata_url: String::from_str(&env, "ipfs://negative-max-total"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: -1i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, 2),
+        },
+    );
+}
+
+/// Initial liquidity one unit above MAX_INITIAL_LIQUIDITY must be rejected.
+#[test]
+#[should_panic(expected = "initial_liquidity exceeds maximum allowed value")]
+fn test_create_pool_rejects_initial_liquidity_above_maximum() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Excess initial liquidity"),
+            metadata_url: String::from_str(&env, "ipfs://excess-liquidity"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: MAX_INITIAL_LIQUIDITY + 1,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: repeated_outcome_descriptions(&env, 2),
+        },
+    );
+}
+
+/// options_count == 1 must be rejected (minimum is 2).
+#[test]
+fn test_create_pool_rejects_single_option() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+
+    // options_count < 2 now returns Err(PredifiError::InvalidData) instead of panicking.
+    let result = client.try_create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
         &1u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Single option pool"), // invalid
             metadata_url: String::from_str(&env, "ipfs://single"),
             min_stake: 1i128,
@@ -5018,24 +6239,29 @@ fn test_create_pool_rejects_single_option() {
             outcome_descriptions: soroban_sdk::vec![&env, String::from_str(&env, "Outcome 0")],
         },
     );
+    assert!(
+        result.is_err(),
+        "create_pool should reject options_count < 2 with an error"
+    );
 }
 
 /// options_count > MAX_OPTIONS_COUNT (100) must be rejected.
 #[test]
-#[should_panic(expected = "options_count exceeds maximum allowed value")]
 fn test_create_pool_rejects_excess_options_count() {
     let env = Env::default();
     env.mock_all_auths();
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    client.create_pool(
+    // options_count > MAX_OPTIONS_COUNT now returns Err(PredifiError::InvalidData) instead of panicking.
+    let result = client.try_create_pool(
         &creator,
         &100_000u64,
         &token_address,
         &101u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Too many options"),
             metadata_url: String::from_str(&env, "ipfs://many"),
             min_stake: 1i128,
@@ -5152,6 +6378,10 @@ fn test_create_pool_rejects_excess_options_count() {
             ],
         },
     );
+    assert!(
+        result.is_err(),
+        "create_pool should reject options_count > MAX_OPTIONS_COUNT with an error"
+    );
 }
 
 /// options_count == MAX_OPTIONS_COUNT (100) must be accepted, and a
@@ -5170,6 +6400,7 @@ fn test_create_pool_accepts_maximum_options_count() {
         &100u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max options pool"),
             metadata_url: String::from_str(&env, "ipfs://maxopts"),
             min_stake: 1i128,
@@ -5292,6 +6523,47 @@ fn test_create_pool_accepts_maximum_options_count() {
     client.place_prediction(&user, &pool_id, &100, &99, &None, &None);
 }
 
+/// Placing a prediction with a zero amount must be rejected with InvalidAmount (#42).
+#[test]
+#[should_panic(expected = "Error(Contract, #42)")]
+fn test_place_prediction_rejects_zero_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Zero amount test"),
+            metadata_url: String::from_str(&env, "ipfs://zero-amount"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1000);
+    // amount of 0 must be rejected
+    client.place_prediction(&user, &pool_id, &0, &0, &None, &None);
+}
+
 /// Placing a prediction with outcome >= options_count must be rejected.
 /// This tests the limit enforcement in update_outcome_stake.
 #[test]
@@ -5309,6 +6581,7 @@ fn test_place_prediction_rejects_out_of_bounds_outcome() {
         &3u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Three options"),
             metadata_url: String::from_str(&env, "ipfs://three"),
             min_stake: 1i128,
@@ -5351,6 +6624,7 @@ fn test_place_prediction_rejects_outcome_equal_to_options_count() {
         &5u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Five options"),
             metadata_url: String::from_str(&env, "ipfs://five"),
             min_stake: 1i128,
@@ -5395,6 +6669,7 @@ fn test_place_prediction_all_valid_outcomes() {
         &options_count,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Ten options"),
             metadata_url: String::from_str(&env, "ipfs://ten"),
             min_stake: 1i128,
@@ -5454,6 +6729,7 @@ fn test_stakes_length_consistency_with_options_count() {
         &options_count,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Seven options"),
             metadata_url: String::from_str(&env, "ipfs://seven"),
             min_stake: 1i128,
@@ -5527,6 +6803,7 @@ fn test_outcome_bounds_with_maximum_options_count() {
         &100u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max options pool"),
             metadata_url: String::from_str(&env, "ipfs://maxopts"),
             min_stake: 1i128,
@@ -5676,6 +6953,7 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Too short pool"),
             metadata_url: String::from_str(&env, "ipfs://short"),
             min_stake: 1i128,
@@ -5713,6 +6991,7 @@ fn test_create_pool_rejects_zero_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero duration pool"),
             metadata_url: String::from_str(&env, "ipfs://zero-duration"),
             min_stake: 1i128,
@@ -5749,6 +7028,7 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Min duration pool"),
             metadata_url: String::from_str(&env, "ipfs://mintime"),
             min_stake: 1i128,
@@ -5787,6 +7067,7 @@ fn test_create_pool_rejects_max_stake_less_than_min_stake() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Inverted stake limits"),
             metadata_url: String::from_str(&env, "ipfs://inverted"),
             min_stake: 100i128,
@@ -5821,6 +7102,7 @@ fn test_create_pool_accepts_max_stake_equal_to_min_stake() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Equal stake limits"),
             metadata_url: String::from_str(&env, "ipfs://equal"),
             min_stake: 100i128,
@@ -5860,6 +7142,7 @@ fn test_resolve_pool_rejects_out_of_bounds_outcome() {
         &3u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "OOB outcome"),
             metadata_url: String::from_str(&env, "ipfs://oob"),
             min_stake: 1i128,
@@ -5904,6 +7187,7 @@ fn test_multiple_unauthorized_resolve_attempts_do_not_affect_state() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Auth test pool"),
             metadata_url: String::from_str(&env, "ipfs://auth"),
             min_stake: 1i128,
@@ -5970,6 +7254,7 @@ fn test_unauthorized_admin_op_does_not_mutate_state() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Post-attack pool"),
             metadata_url: String::from_str(&env, "ipfs://postattack"),
             min_stake: 1i128,
@@ -6006,6 +7291,7 @@ fn test_unauthorized_cancel_attempts_do_not_affect_state() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cancel guard pool"),
             metadata_url: String::from_str(&env, "ipfs://guard"),
             min_stake: 1i128,
@@ -6055,6 +7341,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 0"),
             metadata_url: String::from_str(&env, "ipfs://0"),
             min_stake: 1i128,
@@ -6080,6 +7367,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1i128,
@@ -6105,6 +7393,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1i128,
@@ -6130,6 +7419,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 3"),
             metadata_url: String::from_str(&env, "ipfs://3"),
             min_stake: 1i128,
@@ -6155,6 +7445,7 @@ fn test_state_consistency_across_many_pools() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 4"),
             metadata_url: String::from_str(&env, "ipfs://4"),
             min_stake: 1i128,
@@ -6253,6 +7544,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A (cancel)"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -6278,6 +7570,7 @@ fn test_state_consistency_after_cancellation_and_resolution() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B (resolve)"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -6343,6 +7636,7 @@ fn test_all_bettors_on_winning_side() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "All win pool"),
             metadata_url: String::from_str(&env, "ipfs://allwin"),
             min_stake: 1i128,
@@ -6400,6 +7694,7 @@ fn test_no_bettor_on_winning_side() {
         &3u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Empty winner pool"),
             metadata_url: String::from_str(&env, "ipfs://emptywinner"),
             min_stake: 1i128,
@@ -6602,6 +7897,7 @@ fn test_is_pool_active_returns_true_for_active_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Active pool test"),
             metadata_url: String::from_str(&env, "ipfs://active"),
             min_stake: 1i128,
@@ -6654,6 +7950,7 @@ fn create_test_pool(
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(env, "bump_ttl test pool"),
             metadata_url: String::from_str(
                 env,
@@ -6692,6 +7989,7 @@ fn test_is_pool_active_false_after_resolve() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Resolve inactive test"),
             metadata_url: String::from_str(&env, "ipfs://resolved"),
             min_stake: 1i128,
@@ -6733,6 +8031,7 @@ fn test_is_pool_active_false_after_cancel() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cancel inactive test"),
             metadata_url: String::from_str(&env, "ipfs://canceled"),
             min_stake: 1i128,
@@ -6776,6 +8075,7 @@ fn test_is_pool_active_blocks_resolve_on_canceled_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cancel then resolve test"),
             metadata_url: String::from_str(&env, "ipfs://cancelresolve"),
             min_stake: 1i128,
@@ -6818,6 +8118,7 @@ fn test_is_pool_active_blocks_double_cancel() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Double cancel test"),
             metadata_url: String::from_str(&env, "ipfs://doublecancel"),
             min_stake: 1i128,
@@ -6858,6 +8159,7 @@ fn test_is_pool_active_blocks_increase_max_stake_on_resolved_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max stake resolved test"),
             metadata_url: String::from_str(&env, "ipfs://maxresolved"),
             min_stake: 1i128,
@@ -6900,6 +8202,7 @@ fn test_is_pool_active_full_lifecycle() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Lifecycle test"),
             metadata_url: String::from_str(&env, "ipfs://lifecycle"),
             min_stake: 1i128,
@@ -7148,6 +8451,7 @@ fn test_get_pool_config_matches_creation_params() {
     let required_resolutions = 1u32;
 
     let config = PoolConfig {
+        start_time: 0,
         description: description.clone(),
         metadata_url: metadata_url.clone(),
         min_stake,
@@ -7193,8 +8497,9 @@ fn test_get_pool_config_private_pool_with_whitelist_key() {
 
     let (_, client, token_address, _, _, _, _, creator) = setup(&env);
 
-    let whitelist_key = symbol_short!("secret");
+    let whitelist_key = symbol_short!("SECRET");
     let config = PoolConfig {
+        start_time: 0,
         description: String::from_str(&env, "Private pool"),
         metadata_url: String::from_str(&env, "ipfs://test"),
         min_stake: 1i128,
@@ -7237,6 +8542,7 @@ fn test_get_pool_config_with_initial_liquidity() {
 
     let initial_liquidity = 200i128;
     let config = PoolConfig {
+        start_time: 0,
         description: String::from_str(&env, "Liquidity pool"),
         metadata_url: String::from_str(&env, "ipfs://test"),
         min_stake: 5i128,
@@ -7287,6 +8593,7 @@ fn test_get_pool_config_multiple_pools_independent() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, ""),
             min_stake: 1i128,
@@ -7312,6 +8619,7 @@ fn test_get_pool_config_multiple_pools_independent() {
         &3u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, ""),
             min_stake: 10i128,
@@ -7321,7 +8629,7 @@ fn test_get_pool_config_multiple_pools_independent() {
             initial_liquidity: 50i128,
             required_resolutions: 1u32,
             private: true,
-            whitelist_key: Some(Symbol::new(&env, "secret")),
+            whitelist_key: Some(Symbol::new(&env, "SECRET")),
             outcome_descriptions: soroban_sdk::vec![
                 &env,
                 String::from_str(&env, "Option 1"),
@@ -7412,6 +8720,7 @@ fn test_create_pool_with_max_total_stake() {
         &2u32,
         &Symbol::new(&env, "Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Capped pool"),
             metadata_url: String::from_str(&env, "https://example.com"),
             min_stake: 100,
@@ -7448,6 +8757,7 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
         &2u32,
         &Symbol::new(&env, "Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Unlimited pool"),
             metadata_url: String::from_str(&env, "https://example.com"),
             min_stake: 100,
@@ -7468,6 +8778,65 @@ fn test_create_pool_with_zero_max_total_stake_is_unlimited() {
 
     let pool = client.get_pool(&pool_id);
     assert_eq!(pool.max_total_stake, 0);
+}
+
+/// Create a pool with a `max_total_stake` cap, fill it to the limit with
+/// predictions, then verify that an additional prediction is rejected with
+/// `MaxTotalStakeExceeded`.
+#[test]
+#[should_panic(expected = "Error(Contract, #104)")]
+fn test_place_prediction_rejects_when_max_total_stake_exceeded() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &(env.ledger().timestamp() + 100_000),
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Capped pool"),
+            metadata_url: String::from_str(&env, "https://example.com"),
+            min_stake: 100,
+            max_stake: 0,
+            // Cap total stake at 1000 units.
+            max_total_stake: 1000,
+            min_total_stake: 1,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Outcome 0"),
+                String::from_str(&env, "Outcome 1"),
+            ],
+        },
+    );
+
+    // First prediction: fits under the cap (total now 400).
+    let user1 = Address::generate(&env);
+    token_admin_client.mint(&user1, &1000);
+    client.place_prediction(&user1, &pool_id, &400, &0, &None, &None);
+
+    // Second prediction: brings total to 900, still below the 1000 cap.
+    let user2 = Address::generate(&env);
+    token_admin_client.mint(&user2, &1000);
+    client.place_prediction(&user2, &pool_id, &500, &1, &None, &None);
+
+    // Verify the pool.total_stake is now 900.
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.total_stake, 900);
+
+    // Third prediction: would push total to 1400, exceeding the 1000 cap.
+    // This should panic with MaxTotalStakeExceeded.
+    let user3 = Address::generate(&env);
+    token_admin_client.mint(&user3, &1000);
+    client.place_prediction(&user3, &pool_id, &500, &0, &None, &None);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -7501,6 +8870,7 @@ fn test_get_active_pools_contains_new_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Active pool"),
             metadata_url: String::from_str(&env, "ipfs://active"),
             min_stake: 1i128,
@@ -7545,6 +8915,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
         &3u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Match outcome"),
             metadata_url: String::from_str(&env, "ipfs://match"),
             min_stake: 1i128,
@@ -7591,12 +8962,13 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Tech"),
 //         &PoolConfig {
+//             start_time: 0,
 //             description: String::from_str(&env, "Tech pool"),
 //             metadata_url: String::from_str(&env, "ipfs://tech"),
 //             min_stake: 1i128,
 //             max_stake: 0i128,
 //             max_total_stake: 0,
-// min_total_stake: 1,
+//             min_total_stake: 1,
 //             initial_liquidity: 0i128,
 //             required_resolutions: 1u32,
 //             private: false,
@@ -7611,6 +8983,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Sports"),
 //         &PoolConfig {
+//             start_time: 0,
 //             description: String::from_str(&env, "Sports pool"),
 //             metadata_url: String::from_str(&env, "ipfs://sports"),
 //             min_stake: 1i128,
@@ -7631,12 +9004,13 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Crypto"),
 //         &PoolConfig {
+//             start_time: 0,
 //             description: String::from_str(&env, "Crypto pool"),
 //             metadata_url: String::from_str(&env, "ipfs://crypto"),
 //             min_stake: 1i128,
 //             max_stake: 0i128,
 //             max_total_stake: 0,
-// min_total_stake: 1,
+//             min_total_stake: 1,
 //             initial_liquidity: 0i128,
 //             required_resolutions: 1u32,
 //             private: false,
@@ -7651,6 +9025,7 @@ fn test_outcome_descriptions_stored_and_retrieved() {
 //         &2u32,
 //         &symbol_short!("Finance"),
 //         &PoolConfig {
+//             start_time: 0,
 //             description: String::from_str(&env, "Finance pool"),
 //             metadata_url: String::from_str(&env, "ipfs://finance"),
 //             min_stake: 1i128,
@@ -7690,6 +9065,7 @@ fn test_outcome_descriptions_length_mismatch_panics() {
         &3u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Mismatch test"),
             metadata_url: String::from_str(&env, "ipfs://mismatch"),
             min_stake: 1i128,
@@ -7724,6 +9100,7 @@ fn test_get_active_pools_excludes_resolved_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -7749,6 +9126,7 @@ fn test_get_active_pools_excludes_resolved_pool() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -7792,6 +9170,7 @@ fn test_get_active_pools_excludes_canceled_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -7817,6 +9196,7 @@ fn test_get_active_pools_excludes_canceled_pool() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -7885,6 +9265,7 @@ fn test_create_pool_respects_configurable_min_duration() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Short Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -7921,6 +9302,7 @@ fn test_get_active_pools_pagination() {
             &2u32,
             &symbol_short!("Tech"),
             &PoolConfig {
+                start_time: 0,
                 description: String::from_str(&env, "Pool"),
                 metadata_url: String::from_str(&env, "ipfs://p"),
                 min_stake: 1i128,
@@ -8015,6 +9397,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_a = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Tech"),
 //         &PoolConfig {
+//             start_time: 0,
 //             description: String::from_str(&env, "A"),
 //             metadata_url: String::from_str(&env, "ipfs://a"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -8026,6 +9409,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_b = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Sports"),
 //         &PoolConfig {
+//             start_time: 0,
 //             description: String::from_str(&env, "B"),
 //             metadata_url: String::from_str(&env, "ipfs://b"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -8037,6 +9421,7 @@ fn test_get_active_pools_overflow_large_limit_returns_invalid_pagination() {
 //     let pool_c = client.create_pool(
 //         &creator, &100_000u64, &token_address, &2u32, &symbol_short!("Crypto"),
 //         &PoolConfig {
+//             start_time: 0,
 //             description: String::from_str(&env, "C"),
 //             metadata_url: String::from_str(&env, "ipfs://c"),
 //             min_stake: 1i128, max_stake: 0i128, initial_liquidity: 0i128,
@@ -8074,6 +9459,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -8098,6 +9484,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -8122,6 +9509,7 @@ fn test_get_active_pools_swap_pop_removes_last() {
         &2u32,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "C"),
             metadata_url: String::from_str(&env, "ipfs://c"),
             min_stake: 1i128,
@@ -8165,6 +9553,7 @@ fn test_get_active_pools_empty_after_all_resolved() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -8189,6 +9578,7 @@ fn test_get_active_pools_empty_after_all_resolved() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -8233,6 +9623,7 @@ fn test_get_active_pools_excludes_oracle_resolved_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "A"),
             metadata_url: String::from_str(&env, "ipfs://a"),
             min_stake: 1i128,
@@ -8257,6 +9648,7 @@ fn test_get_active_pools_excludes_oracle_resolved_pool() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "B"),
             metadata_url: String::from_str(&env, "ipfs://b"),
             min_stake: 1i128,
@@ -8300,6 +9692,7 @@ fn test_pool_created_event_contains_creator() {
         &2u32,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://..."),
             min_stake: 100,
@@ -8379,6 +9772,7 @@ fn test_claim_winnings_blocks_reentrancy() {
         &2,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Rogue Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://..."),
             min_stake: 100,
@@ -8405,6 +9799,7 @@ fn test_claim_winnings_blocks_reentrancy() {
         &2,
         &symbol_short!("Crypto"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Rogue Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://..."),
             min_stake: 100,
@@ -8470,6 +9865,7 @@ fn test_creator_can_cancel_empty_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Empty Pool"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -8514,6 +9910,7 @@ fn test_cancel_pool_zero_participants_state_is_canceled() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8553,6 +9950,7 @@ fn test_cancel_pool_zero_participants_no_contract_balance_change() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8598,6 +9996,7 @@ fn test_any_user_can_cancel_overdue_pool() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Overdue Pool"),
             metadata_url: String::from_str(&env, "ipfs://overdue"),
             min_stake: 1i128,
@@ -8682,6 +10081,7 @@ fn test_claim_refund_on_zero_participant_canceled_pool_returns_error() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8724,6 +10124,7 @@ fn test_claim_winnings_on_zero_participant_canceled_pool_returns_zero() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8771,6 +10172,7 @@ fn test_create_pool_rejects_metadata_url_exceeding_512_bytes() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Valid description"),
             metadata_url: long_url,
             min_stake: 1i128,
@@ -8806,6 +10208,7 @@ fn test_create_pool_accepts_metadata_url_at_512_bytes() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Valid description"),
             metadata_url: exact_url.clone(),
             min_stake: 1i128,
@@ -8842,6 +10245,7 @@ fn test_create_pool_accepts_empty_metadata_url() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Valid description"),
             metadata_url: String::from_str(&env, ""),
             min_stake: 1i128,
@@ -8880,6 +10284,7 @@ fn test_cancel_pool_zero_participants_removed_from_active_index() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8924,6 +10329,7 @@ fn test_cancel_pool_zero_participants_catpoolix_still_readable() {
         &2u32,
         &category,
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero Participant Pool"),
             metadata_url: String::from_str(&env, "ipfs://zero"),
             min_stake: 1i128,
@@ -8970,6 +10376,7 @@ fn test_creator_cannot_cancel_pool_with_bets() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool with bets"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -9009,6 +10416,7 @@ fn test_operator_can_cancel_pool_with_bets() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool with bets"),
             metadata_url: String::from_str(&env, "ipfs://metadata"),
             min_stake: 1i128,
@@ -9098,6 +10506,7 @@ fn test_pool_created_with_each_category() {
             &2u32,
             &cat,
             &PoolConfig {
+                start_time: 0,
                 description: String::from_str(&env, "Category test pool"),
                 metadata_url: String::from_str(&env, "ipfs://test"),
                 min_stake: 1i128,
@@ -9142,9 +10551,13 @@ fn test_get_fees_returns_treasury_and_referral_fee_bps() {
     assert_eq!(fees.treasury_fee_bps, 300);
     assert_eq!(fees.referral_fee_bps, 5000); // default
 
-    // Update both and verify get_fees reflects the changes
+    // Update both and verify get_fees reflects the changes.
+    // set_fee_bps now queues a proposal; apply it after the timelock.
     c.set_fee_bps(&admin, &750u32);
     c.set_referral_cut_bps(&admin, &2000u32);
+    env.ledger()
+        .with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    c.apply_fee_bps(&admin);
 
     let fees = c.get_fees();
     assert_eq!(fees.treasury_fee_bps, 750);
@@ -9163,6 +10576,7 @@ fn test_get_contract_info_returns_config_and_stats() {
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
     let pool_config = PoolConfig {
+        start_time: 0,
         description: String::from_str(&env, "Pool"),
         metadata_url: String::from_str(&env, "ipfs://pool"),
         min_stake: 1i128,
@@ -9197,7 +10611,11 @@ fn test_get_contract_info_returns_config_and_stats() {
         &pool_config,
     );
 
+    // set_fee_bps queues a proposal; advance past the timelock then apply.
     client.set_fee_bps(&admin, &250u32);
+    env.ledger()
+        .with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
     client.set_treasury(&admin, &treasury);
     client.set_resolution_delay(&admin, &60u64);
     client.set_min_pool_duration(&admin, &7200u64);
@@ -9245,6 +10663,7 @@ fn test_whitelist_events_emitted() {
         &2u32,
         &symbol_short!("Other"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Will it rain?"),
             metadata_url: String::from_str(&env, ""),
             min_stake: 1_000_000i128,
@@ -9366,6 +10785,7 @@ fn test_create_pool_rejects_zero_min_total_stake() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Zero min_total_stake pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -9403,6 +10823,7 @@ fn test_create_pool_accepts_positive_min_total_stake() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Valid min_total_stake pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -9468,6 +10889,7 @@ fn test_max_predictions_per_user_enforcement() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://pool1"),
             min_stake: 1i128,
@@ -9494,6 +10916,7 @@ fn test_max_predictions_per_user_enforcement() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://pool2"),
             min_stake: 1i128,
@@ -9520,6 +10943,7 @@ fn test_max_predictions_per_user_enforcement() {
         &2u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 3"),
             metadata_url: String::from_str(&env, "ipfs://pool3"),
             min_stake: 1i128,
@@ -9572,6 +10996,7 @@ fn test_max_predictions_per_user_zero_means_no_limit() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://pool1"),
             min_stake: 1i128,
@@ -9597,6 +11022,7 @@ fn test_max_predictions_per_user_zero_means_no_limit() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://pool2"),
             min_stake: 1i128,
@@ -9622,6 +11048,7 @@ fn test_max_predictions_per_user_zero_means_no_limit() {
         &2u32,
         &symbol_short!("Finance"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 3"),
             metadata_url: String::from_str(&env, "ipfs://pool3"),
             min_stake: 1i128,
@@ -9671,6 +11098,7 @@ fn test_max_predictions_per_user_same_pool_stake_increase() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Test Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -9703,6 +11131,7 @@ fn test_max_predictions_per_user_same_pool_stake_increase() {
         &2u32,
         &symbol_short!("Sports"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://pool2"),
             min_stake: 1i128,
@@ -9801,6 +11230,7 @@ fn test_prediction_cooldown_blocks_rapid_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://cooldown"),
             min_stake: 1i128,
@@ -9846,6 +11276,7 @@ fn test_prediction_cooldown_allows_prediction_after_elapsed_time() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://cooldown"),
             min_stake: 1i128,
@@ -9932,6 +11363,7 @@ fn test_update_pool_description_by_creator_before_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Will BTC hit 100k?"),
             metadata_url: String::from_str(&env, "ipfs://desc-test"),
             min_stake: 1i128,
@@ -9972,6 +11404,7 @@ fn test_update_pool_description_by_admin_before_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Original description"),
             metadata_url: String::from_str(&env, "ipfs://admin-desc-test"),
             min_stake: 1i128,
@@ -10015,6 +11448,7 @@ fn test_update_pool_description_locked_after_prediction() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Original description"),
             metadata_url: String::from_str(&env, "ipfs://locked-desc-test"),
             min_stake: 1i128,
@@ -10068,6 +11502,7 @@ fn test_update_pool_description_unauthorized() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Original description"),
             metadata_url: String::from_str(&env, "ipfs://unauth-desc-test"),
             min_stake: 1i128,
@@ -10115,6 +11550,7 @@ fn test_batch_claim_winnings_three_pools() {
             &2u32,
             &symbol_short!("Sports"),
             &PoolConfig {
+                start_time: 0,
                 description: String::from_str(&env, desc),
                 metadata_url: String::from_str(&env, "ipfs://test"),
                 min_stake: 1i128,
@@ -10253,6 +11689,7 @@ fn test_prediction_cooldown_first_prediction_always_allowed() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "First prediction pool"),
             metadata_url: String::from_str(&env, "ipfs://first-pred"),
             min_stake: 1i128,
@@ -10298,6 +11735,7 @@ fn test_prediction_cooldown_boundary_one_second_before_is_rejected() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Boundary pool"),
             metadata_url: String::from_str(&env, "ipfs://boundary"),
             min_stake: 1i128,
@@ -10357,6 +11795,7 @@ fn test_prediction_cooldown_is_per_user_independent() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Per-user cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://per-user"),
             min_stake: 1i128,
@@ -10410,6 +11849,7 @@ fn test_prediction_cooldown_disabled_allows_rapid_predictions() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "No cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://no-cooldown"),
             min_stake: 1i128,
@@ -10484,6 +11924,7 @@ fn test_prediction_cooldown_resets_after_each_successful_prediction() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Reset cooldown pool"),
             metadata_url: String::from_str(&env, "ipfs://reset-cooldown"),
             min_stake: 1i128,
@@ -10541,6 +11982,7 @@ fn test_create_pool_rejects_end_time_beyond_max_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "100-year pool"),
             metadata_url: String::from_str(&env, "ipfs://toofar"),
             min_stake: 1i128,
@@ -10575,6 +12017,7 @@ fn test_create_pool_accepts_end_time_at_max_duration() {
         &2u32,
         &Symbol::new(&env, "Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Max duration pool"),
             metadata_url: String::from_str(&env, "ipfs://maxdur"),
             min_stake: 1i128,
@@ -10615,6 +12058,7 @@ fn test_flag_disputed_pool_moderator_succeeds() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Dispute test pool"),
             metadata_url: String::from_str(&env, "ipfs://dispute"),
             min_stake: 1i128,
@@ -10659,6 +12103,7 @@ fn test_flag_disputed_pool_unauthorized_fails() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Dispute test pool"),
             metadata_url: String::from_str(&env, "ipfs://dispute"),
             min_stake: 1i128,
@@ -10702,6 +12147,7 @@ fn test_flag_disputed_pool_already_resolved_fails() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Resolved pool"),
             metadata_url: String::from_str(&env, "ipfs://resolved"),
             min_stake: 1i128,
@@ -10760,10 +12206,10 @@ fn test_update_price_feed_rejects_current_timestamp() {
     let result = client.try_update_price_feed(
         &oracle,
         &feed_pair,
-        &50_000_0000000i128,
+        &500_000_000_000_i128,
         &100i128,
-        &now,           // timestamp == current ledger time
-        &(now + 3600),  // expires_at is fine
+        &now,          // timestamp == current ledger time
+        &(now + 3600), // expires_at is fine
     );
     assert_eq!(
         result,
@@ -10800,9 +12246,9 @@ fn test_update_price_feed_rejects_future_timestamp() {
     let result = client.try_update_price_feed(
         &oracle,
         &feed_pair,
-        &3_000_0000000i128,
+        &30_000_000_000_i128,
         &50i128,
-        &(now + 1),     // timestamp is 1 second in the future
+        &(now + 1), // timestamp is 1 second in the future
         &(now + 3600),
     );
     assert_eq!(
@@ -10842,7 +12288,7 @@ fn test_update_price_feed_accepts_past_timestamp() {
         &feed_pair,
         &200_0000000i128,
         &10i128,
-        &(now - 1),     // 1 second in the past
+        &(now - 1), // 1 second in the past
         &(now + 3600),
     );
 }
@@ -10962,6 +12408,7 @@ fn test_conflicting_oracle_votes_outcome_0_vs_1() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Conflicting Oracle Test"),
             metadata_url: String::from_str(&env, "ipfs://conflict-test"),
             min_stake: 1i128,
@@ -11060,6 +12507,7 @@ fn test_conflicting_oracle_votes_third_oracle_resolves_majority() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Three Oracle Conflict Test"),
             metadata_url: String::from_str(&env, "ipfs://three-oracle-conflict"),
             min_stake: 1i128,
@@ -11114,4 +12562,707 @@ fn test_conflicting_oracle_votes_third_oracle_resolves_majority() {
         "pool should be resolved once the majority threshold is met"
     );
     assert_eq!(pool.outcome, 0u32, "winning outcome should be 0");
+}
+
+#[test]
+fn test_init_oracle_rejects_zero_max_price_age() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _token_address, _, _, _, _operator, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let result = client.try_init_oracle(&admin, &Address::generate(&env), &0, &100);
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_init_oracle_rejects_confidence_ratio_above_10000() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let result = client.try_init_oracle(&admin, &Address::generate(&env), &300, &10_001);
+    assert_eq!(result, Err(Ok(PredifiError::InvalidFeeBps)));
+}
+
+#[test]
+fn test_init_oracle_stores_valid_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    let pyth = Address::generate(&env);
+    client.init_oracle(&admin, &pyth, &300, &100);
+    let (stored_pyth, max_age, confidence) = client.get_oracle_config().unwrap();
+    assert_eq!(stored_pyth, pyth);
+    assert_eq!(max_age, 300);
+    assert_eq!(confidence, 100);
+}
+
+#[test]
+fn test_duplicate_staking_on_same_outcome() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, token, token_admin_client, _, _, creator) = setup(&env);
+    let contract_addr = client.address.clone();
+
+    let pool_id = client.create_pool(
+        &creator,
+        &100_000u64,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Duplicate stake test"),
+            metadata_url: String::from_str(&env, "ipfs://duplicate"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "Yes"),
+                String::from_str(&env, "No"),
+            ],
+        },
+    );
+
+    let user = Address::generate(&env);
+    let stake1 = 100i128;
+    let stake2 = 50i128;
+
+    token_admin_client.mint(&user, &(stake1 + stake2));
+
+    client.place_prediction(&user, &pool_id, &stake1, &0, &None, &None);
+    client.place_prediction(&user, &pool_id, &stake2, &0, &None, &None);
+
+    // Use get_user_predictions with offset=0, limit=1 to get the first (and only) prediction
+    let predictions = client.get_user_predictions(&user, &0u32, &1u32);
+    assert_eq!(predictions.len(), 1);
+    let prediction = predictions.get(0).unwrap();
+    assert_eq!(prediction.amount, stake1 + stake2);
+    assert_eq!(prediction.user_outcome, 0);
+
+    assert_eq!(token.balance(&contract_addr), stake1 + stake2);
+}
+
+#[test]
+#[should_panic]
+fn test_unauthorized_admin_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let not_admin = Address::generate(&env);
+    client.pause(&not_admin);
+}
+
+#[test]
+#[should_panic]
+fn test_unauthorized_admin_unpause() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let not_admin = Address::generate(&env);
+    client.unpause(&not_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_unauthorized_admin_set_max_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let not_admin = Address::generate(&env);
+    client.set_max_predictions_per_user(&not_admin, &10u32);
+}
+
+// ── close_staking tests ───────────────────────────────────────────────────────
+
+/// Shared helper: create a minimal 2-outcome pool ending at timestamp 100_000.
+fn create_basic_pool(
+    env: &Env,
+    client: &PredifiContractClient<'_>,
+    token_address: &Address,
+    creator: &Address,
+) -> u64 {
+    client.create_pool(
+        creator,
+        &100_000u64,
+        token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(env, "Staking close test pool"),
+            metadata_url: String::from_str(
+                env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                env,
+                String::from_str(env, "Yes"),
+                String::from_str(env, "No"),
+            ],
+        },
+    )
+}
+
+#[test]
+fn test_close_staking_emits_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_basic_pool(&env, &client, &token_address, &creator);
+
+    // Advance past end_time.
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+
+    client.close_staking(&pool_id);
+
+    // Verify that exactly one "staking_closed" event was emitted and check payload.
+    let events = env.events().all();
+    let staking_closed_topic = Symbol::new(&env, "staking_closed");
+    let mut found = false;
+    let mut match_count = 0u32;
+
+    for e in events.iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(topic_sym) = Symbol::try_from_val(&env, &topic_val) {
+                if topic_sym == staking_closed_topic {
+                    match_count += 1;
+                    if !found {
+                        let data: soroban_sdk::Map<Symbol, Val> = e.2.clone().into_val(&env);
+
+                        let emitted_pool_id: u64 = data
+                            .get(Symbol::new(&env, "pool_id"))
+                            .unwrap()
+                            .into_val(&env);
+                        let emitted_end_time: u64 = data
+                            .get(Symbol::new(&env, "end_time"))
+                            .unwrap()
+                            .into_val(&env);
+                        let emitted_timestamp: u64 = data
+                            .get(Symbol::new(&env, "timestamp"))
+                            .unwrap()
+                            .into_val(&env);
+
+                        assert_eq!(emitted_pool_id, pool_id);
+                        assert_eq!(emitted_end_time, 100_000u64);
+                        assert_eq!(emitted_timestamp, 100_001u64);
+                        found = true;
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(found, "StakingClosedEvent not found");
+    assert_eq!(match_count, 1, "Expected exactly one StakingClosedEvent");
+}
+
+#[test]
+fn test_close_staking_idempotent_no_duplicate_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_basic_pool(&env, &client, &token_address, &creator);
+
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    let staking_closed_topic = Symbol::new(&env, "staking_closed");
+
+    // Helper: count staking_closed events in the current event log snapshot.
+    let count_staking_closed = |topic: &Symbol| -> u32 {
+        let mut n = 0u32;
+        for e in env.events().all().iter() {
+            if let Some(tv) = e.1.get(0) {
+                if let Ok(s) = Symbol::try_from_val(&env, &tv) {
+                    if &s == topic {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n
+    };
+
+    // First call — event should be emitted once.
+    client.close_staking(&pool_id);
+    assert_eq!(
+        count_staking_closed(&staking_closed_topic),
+        1,
+        "Expected one StakingClosedEvent after first call"
+    );
+
+    // Second call — must succeed but emit NO new event.
+    // The Soroban test env clears the log between top-level calls, so after the
+    // second call the log reflects only what that call emitted (nothing).
+    client.close_staking(&pool_id);
+    assert_eq!(
+        count_staking_closed(&staking_closed_topic),
+        0,
+        "StakingClosedEvent must NOT be re-emitted on a second call (idempotency check)"
+    );
+}
+
+#[test]
+fn test_close_staking_fails_before_end_time() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_basic_pool(&env, &client, &token_address, &creator);
+
+    // Still before end_time; staking window is open.
+    let result = client.try_close_staking(&pool_id);
+    assert!(
+        result.is_err(),
+        "close_staking should fail when end_time has not been reached"
+    );
+}
+
+#[test]
+fn test_close_staking_fails_for_resolved_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = create_basic_pool(&env, &client, &token_address, &creator);
+
+    // Resolve the pool before calling close_staking.
+    env.ledger().with_mut(|li| li.timestamp = 100_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // A resolved pool is not Active; close_staking should return InvalidPoolState.
+    let result = client.try_close_staking(&pool_id);
+    assert!(
+        result.is_err(),
+        "close_staking should fail for an already-resolved pool"
+    );
+}
+
+#[should_panic(expected = "Error(Contract, #2)")]
+#[test]
+fn test_already_initialized_panics() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+    let treasury = Address::generate(&env);
+
+    // First initialization should succeed
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    // Second initialization should panic with AlreadyInitializedOrConfigNotSet
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+}
+
+#[should_panic(expected = "Error(Contract, #91)")]
+#[test]
+fn test_delisted_token_prevents_prediction() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, token, token_admin_client, treasury, operator, creator) =
+        setup(&env);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    token_admin_client.mint(&creator, &10000);
+    token_admin_client.mint(&user, &10000);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = crate::PoolConfig {
+        start_time: 0,
+        description: soroban_sdk::String::from_str(&env, "Test Pool"),
+        metadata_url: soroban_sdk::String::from_str(&env, "ipfs://test"),
+        min_stake: 1i128,
+        max_stake: 0i128,
+        max_total_stake: 100000i128,
+        min_total_stake: 1,
+        initial_liquidity: 0i128,
+        required_resolutions: 1u32,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: soroban_sdk::vec![
+            &env,
+            soroban_sdk::String::from_str(&env, "Outcome 0"),
+            soroban_sdk::String::from_str(&env, "Outcome 1"),
+        ],
+    };
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &soroban_sdk::Symbol::new(&env, "Sports"),
+        &config,
+    );
+
+    // Remove token from whitelist
+    client.remove_token_from_whitelist(&admin, &token_address);
+
+    // User places prediction - should panic with TokenNotWhitelisted (Error 48)
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYOUT ROUNDING PRECISION AUDIT TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These tests validate the payout rounding precision audit implementation
+// to ensure payouts are calculated correctly and never exceed pool bounds.
+
+#[test]
+fn test_payout_rounding_audit_basic_scenario() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+
+    // Mint tokens
+    token_admin_client.mint(&user1, &5000);
+    token_admin_client.mint(&user2, &5000);
+
+    // Setup admin
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Rounding Test Pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1,
+        max_stake: 0,
+        max_total_stake: 10000,
+        min_total_stake: 1,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Finance"),
+        &config,
+    );
+
+    // User1 places 1000 on outcome 0
+    client.place_prediction(&user1, &pool_id, &1000, &0u32, &None, &None);
+
+    // User2 places 1000 on outcome 0 (same outcome)
+    client.place_prediction(&user2, &pool_id, &1000, &0u32, &None, &None);
+
+    // Move time forward past end_time
+    env.ledger().with_mut(|mut l| {
+        l.timestamp = end_time + 1;
+    });
+
+    // Setup operator for resolution
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Resolve pool with outcome 0 as winning
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Claim winnings for user1
+    let payout1 = client.claim_winnings(&user1, &pool_id);
+
+    // Payout should be 50% of pool (1000 / 2000) * 2000 = 1000
+    assert_eq!(payout1, 1000);
+
+    // Claim winnings for user2
+    let payout2 = client.claim_winnings(&user2, &pool_id);
+
+    // Payout should also be 1000
+    assert_eq!(payout2, 1000);
+
+    // Verify total payout doesn't exceed initial total stake
+    assert!(payout1 + payout2 <= 2000);
+}
+
+#[test]
+fn test_payout_rounding_precision_with_fees() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let user = Address::generate(&env);
+
+    // Mint tokens
+    token_admin_client.mint(&user, &10000);
+
+    // Setup admin to set fee
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // Set 10% fee (1000 bps)
+    client.set_fee_bps(&admin, &1000u32);
+    env.ledger().with_mut(|li| li.timestamp += 86401);
+    client.apply_fee_bps(&admin);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Fee Test Pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1,
+        max_stake: 0,
+        max_total_stake: 10000,
+        min_total_stake: 1,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &config,
+    );
+
+    // User stakes 1000 on outcome 0
+    client.place_prediction(&user, &pool_id, &1000, &0u32, &None, &None);
+
+    // Move time forward
+    env.ledger().with_mut(|mut l| {
+        l.timestamp = end_time + 1;
+    });
+
+    // Setup operator
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Resolve
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Claim winnings
+    let payout = client.claim_winnings(&user, &pool_id);
+
+    // With 10% fee and 100% of pool on winning outcome:
+    // Pool = 1000, Fee = 100, Payout pool = 900
+    // User should get 900 (all of remaining pool)
+    assert_eq!(payout, 900);
+
+    // Verify payout doesn't exceed original stake
+    assert!(payout <= 1000);
+}
+
+#[test]
+fn test_payout_rounding_precision_three_winners() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    // Mint tokens
+    token_admin_client.mint(&user1, &10000);
+    token_admin_client.mint(&user2, &10000);
+    token_admin_client.mint(&user3, &10000);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Three Winner Test"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1,
+        max_stake: 0,
+        max_total_stake: 100000,
+        min_total_stake: 1,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Crypto"),
+        &config,
+    );
+
+    // Three users with different stakes on same outcome
+    client.place_prediction(&user1, &pool_id, &333, &0u32, &None, &None);
+    client.place_prediction(&user2, &pool_id, &333, &0u32, &None, &None);
+    client.place_prediction(&user3, &pool_id, &334, &0u32, &None, &None);
+
+    // Move time
+    env.ledger().with_mut(|mut l| {
+        l.timestamp = end_time + 1;
+    });
+
+    // Setup operator
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Resolve
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Claim for all three
+    let payout1 = client.claim_winnings(&user1, &pool_id);
+    let payout2 = client.claim_winnings(&user2, &pool_id);
+    let payout3 = client.claim_winnings(&user3, &pool_id);
+
+    let total_payout = payout1 + payout2 + payout3;
+
+    // Total stake is 1000, so total payout should be 1000
+    assert_eq!(total_payout, 1000);
+
+    // Each payout should be approximately 333 (1000 / 3)
+    assert!(payout1 >= 333 && payout1 <= 334);
+    assert!(payout2 >= 333 && payout2 <= 334);
+    assert!(payout3 >= 333 && payout3 <= 334);
+}
+
+#[test]
+fn test_payout_never_exceeds_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let winner = Address::generate(&env);
+    let loser = Address::generate(&env);
+
+    // Mint tokens
+    token_admin_client.mint(&winner, &5000);
+    token_admin_client.mint(&loser, &5000);
+
+    // Setup admin with 25% fee
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.set_fee_bps(&admin, &2500u32);
+    env.ledger().with_mut(|li| li.timestamp += 86401);
+    client.apply_fee_bps(&admin);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Fee Invariant Test"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1,
+        max_stake: 0,
+        max_total_stake: 100000,
+        min_total_stake: 1,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Politics"),
+        &config,
+    );
+
+    // Winner stakes 2000 on outcome 0
+    client.place_prediction(&winner, &pool_id, &2000, &0u32, &None, &None);
+
+    // Loser stakes 3000 on outcome 1
+    client.place_prediction(&loser, &pool_id, &3000, &1u32, &None, &None);
+
+    // Total pool = 5000
+    // Fee (25%) = 1250
+    // Payout pool = 3750
+
+    // Move time
+    env.ledger().with_mut(|mut l| {
+        l.timestamp = end_time + 1;
+    });
+
+    // Setup operator
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Resolve with outcome 0 winning
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Claim
+    let winner_payout = client.claim_winnings(&winner, &pool_id);
+
+    // Loser gets 0
+    let loser_payout = client.claim_winnings(&loser, &pool_id);
+    assert_eq!(loser_payout, 0);
+
+    // INV-4: Payout must not exceed total stake
+    assert!(
+        winner_payout <= 5000,
+        "Payout {} exceeds total stake 5000",
+        winner_payout
+    );
+
+    // Winner should get all of payout pool (3750)
+    assert_eq!(winner_payout, 3750);
 }

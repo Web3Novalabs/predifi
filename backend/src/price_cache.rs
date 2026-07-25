@@ -20,13 +20,15 @@
 use std::{
     collections::HashMap,
     sync::{Arc, RwLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use axum::{extract::State, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use tokio::task::JoinHandle;
+use tracing::{error, info, info_span, Instrument};
 
+use crate::metrics::SharedMetrics;
 use crate::response::ApiResponse;
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -45,18 +47,39 @@ pub struct AssetPrice {
 pub struct PriceCache(Arc<RwLock<HashMap<String, f64>>>);
 
 impl PriceCache {
+    /// Create an empty price cache.
+    ///
+    /// The cache starts with no entries.  Call [`update`](Self::update) to
+    /// populate it, or rely on [`spawn_fetcher`] to refresh it periodically
+    /// from CoinGecko.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Overwrite the cache with a fresh snapshot.
+    /// Overwrite the cache with a fresh snapshot from an external source.
+    ///
+    /// This acquires a write lock on the internal [`RwLock`], so it is safe to
+    /// call from any thread (e.g. from a background fetcher task).  The
+    /// previous contents are discarded.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic.  If the lock is poisoned the update is silently skipped.
     pub fn update(&self, prices: HashMap<String, f64>) {
         if let Ok(mut guard) = self.0.write() {
             *guard = prices;
         }
     }
 
-    /// Read a snapshot of all cached prices.
+    /// Return a copy of all currently cached prices.
+    ///
+    /// Acquires a read lock on the internal [`RwLock`], so the returned map
+    /// reflects a consistent point-in-time view.  If the cache has never been
+    /// populated the map will be empty.
+    ///
+    /// # Panics
+    ///
+    /// Does not panic.  If the lock is poisoned an empty map is returned.
     pub fn snapshot(&self) -> HashMap<String, f64> {
         self.0.read().map(|g| g.clone()).unwrap_or_default()
     }
@@ -67,27 +90,57 @@ impl PriceCache {
 /// CoinGecko IDs for the assets we track.
 const ASSETS: &[(&str, &str)] = &[("BTC", "bitcoin"), ("ETH", "ethereum"), ("XLM", "stellar")];
 
-/// Spawn a background task that refreshes the cache every 60 seconds.
-pub fn spawn_fetcher(cache: PriceCache) {
-    tokio::spawn(async move {
+/// Spawn a background Tokio task that refreshes the cache from CoinGecko
+/// every 60 seconds.
+///
+/// On success the cache is atomically overwritten with the latest prices.
+/// On failure (network error, rate limit, etc.) the previous data is
+/// retained and the error is logged — the cache never goes backwards.
+///
+/// The returned [`JoinHandle`] allows the caller (typically the graceful
+/// shutdown sequence in [`crate::server`]) to abort the fetcher task when
+/// the process is winding down so it does not keep the runtime alive
+/// after the HTTP listener has stopped.
+///
+/// # Panics
+///
+/// Panics if the reqwest HTTP client cannot be built (this should never
+/// happen in practice).
+pub fn spawn_fetcher(cache: PriceCache, metrics: Option<SharedMetrics>) -> JoinHandle<()> {
+    crate::tracing_context::spawn_worker("price_cache_fetcher", async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
             .expect("failed to build reqwest client");
 
         loop {
-            match fetch_prices(&client).await {
+            let span = info_span!("price_cache.fetch");
+            let fetch_started = Instant::now();
+
+            let fetch_result = async { fetch_prices(&client).await }.instrument(span).await;
+
+            let duration_secs = fetch_started.elapsed().as_secs_f64();
+
+            match fetch_result {
                 Ok(prices) => {
-                    info!(assets = prices.len(), "price cache refreshed");
+                    let asset_count = prices.len();
+                    info!(assets = asset_count, duration_secs, "price cache refreshed");
                     cache.update(prices);
+                    if let Some(ref metrics) = metrics {
+                        metrics.record_price_cache_fetch("success", asset_count, duration_secs);
+                    }
                 }
                 Err(err) => {
-                    error!(error = %err, "price fetch failed; retaining stale cache");
+                    let cached_assets = cache.snapshot().len();
+                    error!(error = %err, duration_secs, "price fetch failed; retaining stale cache");
+                    if let Some(ref metrics) = metrics {
+                        metrics.record_price_cache_fetch("failure", cached_assets, duration_secs);
+                    }
                 }
             }
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
-    });
+    })
 }
 
 /// Fetch prices from CoinGecko simple/price endpoint.
@@ -123,9 +176,14 @@ async fn fetch_prices(client: &reqwest::Client) -> Result<HashMap<String, f64>, 
 pub async fn get_prices(
     State(cache): State<PriceCache>,
 ) -> (StatusCode, Json<ApiResponse<Vec<AssetPrice>>>) {
+    use crate::response::error_codes;
     let snapshot = cache.snapshot();
     if snapshot.is_empty() {
-        return ApiResponse::error(StatusCode::SERVICE_UNAVAILABLE, "price cache not ready");
+        return ApiResponse::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::SERVICE_UNAVAILABLE,
+            "price cache not ready",
+        );
     }
 
     let mut prices: Vec<AssetPrice> = snapshot
@@ -178,6 +236,7 @@ mod tests {
     #[tokio::test]
     async fn get_prices_returns_503_when_empty() {
         use axum::{body::Body, http::Request};
+        use http_body_util::BodyExt;
         use tower::ServiceExt;
 
         let cache = PriceCache::new();
@@ -196,6 +255,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        // Consume the body so the underlying stream is closed before the test exits.
+        let _ = response.into_body().collect().await.unwrap();
     }
 
     #[tokio::test]
@@ -224,9 +285,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
+        // Consume the full body before the test exits.
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("BTC"));
         assert!(text.contains("50000"));
+    }
+
+    #[test]
+    fn metrics_record_price_cache_fetch() {
+        let metrics = crate::metrics::Metrics::new().expect("metrics");
+        metrics.record_price_cache_fetch("success", 3, 0.25);
+        let text = metrics.gather_text().expect("metrics text");
+        assert!(text.contains("app_price_cache_fetch_total"));
+        assert!(text.contains("app_price_cache_assets"));
+        assert!(text.contains("app_price_cache_fetch_duration_seconds"));
     }
 }

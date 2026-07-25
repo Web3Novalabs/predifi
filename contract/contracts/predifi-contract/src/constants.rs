@@ -29,7 +29,7 @@ pub const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
 
 /// Cancellation delay in seconds for overdue pools (7 days).
 /// After this period past the pool's end_time, any user can cancel the pool.
-pub const CANCELATION_DELAY: u64 = 604800;
+pub const CANCELATION_DELAY: u64 = 604_800;
 
 /// Default global minimum stake amount (1 unit in base token units).
 /// Predictions below this threshold are rejected to prevent spam.
@@ -56,14 +56,48 @@ pub const UNRESOLVED_OUTCOME: u32 = u32::MAX;
 /// Pools with end_time beyond current_time + MAX_POOL_DURATION are rejected.
 pub const MAX_POOL_DURATION: u64 = 31_536_000;
 
+/// Maximum length (in bytes/chars) of a single outcome description.
+/// Issue #1122 — bounds outcome descriptions so a pool with N outcomes
+/// cannot blow up persistent storage with arbitrarily long strings.
+pub const MAX_OUTCOME_DESCRIPTION_LEN: u32 = 128;
+
+/// Minimum length (in bytes/chars) of a single outcome description.
+/// Issue #1122 — rejects whitespace-only / empty outcome labels.
+pub const MIN_OUTCOME_DESCRIPTION_LEN: u32 = 1;
+
+/// Initial-liquidity safety margin in basis points relative to
+/// `max_total_stake` (issue #1131). When a creator sets a non-zero
+/// `max_total_stake`, the seeded initial liquidity must be at least
+/// `(max_total_stake * INITIAL_LIQUIDITY_SAFETY_MARGIN_BPS) / 10_000`
+/// — otherwise the pool can be drained on the first few large bets
+/// before the creator's house money meaningfully covers payout risk.
+/// 100 bps = 1%.
+pub const INITIAL_LIQUIDITY_SAFETY_MARGIN_BPS: u32 = 100;
+
+/// Multisig threshold for the emergency-cancel flow (issue #1119).
+/// At least this many distinct operator/admin approvals are required
+/// before `emergency_cancel_pool` can finalize a cancellation.
+pub const EMERGENCY_CANCEL_MULTISIG_THRESHOLD: u32 = 2;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // MONITORING & ALERT THRESHOLDS
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Stake amount (in base token units) above which a `HighValuePredictionEvent`
 /// is emitted so off-chain monitors can apply extra scrutiny.
-/// At 7 decimal places (e.g., USDC on Stellar), this equals 0.1 USDC.
-pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
+/// At 7 decimal places (e.g., USDC on Stellar), this equals 100 USDC.
+pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000_000;
+
+/// Maximum tolerance in basis points (1 bp = 0.01%).
+/// Used as the denominator for calculating tolerance amounts in price conditions.
+/// This represents 100% (10,000 basis points = 100%).
+pub const MAX_TOLERANCE: u32 = 10_000;
+
+/// Maximum number of primitive checks allowed while matching a price condition.
+///
+/// Price resolution is intentionally O(1). Keeping this bound explicit prevents
+/// future condition matching changes from adding unbounded work to resolution.
+pub const MAX_PRICE_CONDITION_MATCH_STEPS: u32 = 4;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // VERSION CONSTANTS
@@ -72,6 +106,14 @@ pub const HIGH_VALUE_THRESHOLD: i128 = 1_000_000;
 /// Current contract version. Bump on each release to support safe migrations.
 /// This is stored in contract instance storage during initialization and upgrades.
 pub const CONTRACT_VERSION: u32 = 1;
+
+/// Minimum timelock delay in seconds for protocol fee changes (1 day = 86 400 s).
+///
+/// After an admin calls `set_fee_bps` to queue a proposal, at least this many
+/// seconds must elapse before `apply_fee_bps` can commit the new value.
+/// The delay gives users and integrators time to observe the pending change and
+/// react (e.g. withdraw positions) before the fee takes effect.
+pub const FEE_CHANGE_TIMELOCK_SECONDS: u64 = 86_400;
 
 #[cfg(test)]
 #[allow(clippy::assertions_on_constants)]
@@ -133,9 +175,9 @@ mod tests {
     }
 
     #[test]
-    fn test_high_value_threshold_equals_0_1_usdc() {
+    fn test_high_value_threshold_equals_100_usdc() {
         // At 7 decimals, 1 USDC = 10_000_000 base units.
-        // Therefore 1_000_000 base units equals 0.1 USDC.
-        assert_eq!(HIGH_VALUE_THRESHOLD, 1_000_000);
+        // Therefore 1_000_000_000 base units equals 100 USDC.
+        assert_eq!(HIGH_VALUE_THRESHOLD, 1_000_000_000);
     }
 }

@@ -27,8 +27,11 @@ fn test_dynamic_fee_tiers_application() {
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
-    // Set global fee to 3%
+    // Propose global fee of 3% and apply it after the timelock.
     client.set_fee_bps(&admin, &300u32);
+    env.ledger()
+        .with_mut(|l| l.timestamp = crate::FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
 
     // Set up fee tiers
     // Threshold 1M (1,000,000 * 10^7) -> 1% (100 bps)
@@ -58,6 +61,7 @@ fn test_dynamic_fee_tiers_application() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Low Volume Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -92,6 +96,7 @@ fn test_dynamic_fee_tiers_application() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Med Volume Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -136,6 +141,7 @@ fn test_dynamic_fee_tiers_application() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "High Volume Pool"),
             metadata_url: String::from_str(&env, "ipfs://test"),
             min_stake: 1i128,
@@ -242,6 +248,7 @@ fn test_fee_tier_treasury_intake() {
             &2u32,
             &symbol_short!("Tech"),
             &PoolConfig {
+                start_time: 0,
                 description: String::from_str(&env, "pool"),
                 metadata_url: String::from_str(&env, "ipfs://x"),
                 min_stake: 1i128,
@@ -419,6 +426,7 @@ fn test_fee_tiers_full_lifecycle() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 1"),
             metadata_url: String::from_str(&env, "ipfs://1"),
             min_stake: 1,
@@ -459,6 +467,7 @@ fn test_fee_tiers_full_lifecycle() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 2"),
             metadata_url: String::from_str(&env, "ipfs://2"),
             min_stake: 1,
@@ -499,6 +508,7 @@ fn test_fee_tiers_full_lifecycle() {
         &2u32,
         &symbol_short!("Tech"),
         &PoolConfig {
+            start_time: 0,
             description: String::from_str(&env, "Pool 3"),
             metadata_url: String::from_str(&env, "ipfs://3"),
             min_stake: 1,
