@@ -3441,6 +3441,9 @@ impl PredifiContract {
         Self::enter_reentrancy_guard(env);
 
         let result: Result<i128, PredifiError> = (|| {
+            // ============================================================
+            // --- CHECKS PHASE: Validate all preconditions before state changes ---
+            // ============================================================
             let pool_key = DataKey::Pool(pool_id);
             let pool: Pool = env
                 .storage()
@@ -3476,9 +3479,16 @@ impl PredifiContract {
                 None => return Ok(0),
             };
 
+            // ============================================================
+            // --- EFFECTS PHASE: Update state before external calls ---
+            // ============================================================
+            // Mark as claimed (write-once flag, prevents double-claims)
             env.storage().persistent().set(&claimed_key, &true);
             Self::bump_ttl(env, &claimed_key);
 
+            // ============================================================
+            // --- INTERACTIONS PHASE: External token transfers (state locked) ---
+            // ============================================================
             if pool.state == MarketState::Canceled {
                 let token_client = token::Client::new(env, &pool.token);
                 token_client.transfer(&env.current_contract_address(), user, &prediction.amount);
@@ -3661,8 +3671,9 @@ impl PredifiContract {
         Self::enter_reentrancy_guard(&env);
 
         let result: Result<i128, PredifiError> = (|| {
-            // --- CHECKS ---
-
+            // ============================================================
+            // --- CHECKS PHASE: Validate all preconditions ---
+            // ============================================================
             let pool_key = DataKey::Pool(pool_id);
             let pool: Pool = match env.storage().persistent().get(&pool_key) {
                 Some(p) => p,
@@ -3703,16 +3714,18 @@ impl PredifiContract {
                 return Err(PredifiError::InsufficientBalance);
             }
 
-            // --- EFFECTS ---
-
+            // ============================================================
+            // --- EFFECTS PHASE: Update state before external calls ---
+            // ============================================================
             // Mark as claimed immediately to prevent re-entrancy (INV-3)
             env.storage().persistent().set(&claimed_key, &true);
             Self::bump_ttl(&env, &claimed_key);
 
             let refund_amount = prediction.amount;
 
-            // --- INTERACTIONS ---
-
+            // ============================================================
+            // --- INTERACTIONS PHASE: External token transfer (state locked) ---
+            // ============================================================
             let token_client = token::Client::new(&env, &pool.token);
             token_client.transfer(&env.current_contract_address(), &user, &refund_amount);
 
