@@ -3331,7 +3331,9 @@ impl PredifiContract {
                 Self::extend_persistent(&env, &referrer_key);
                 let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
                 let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
-                env.storage().persistent().set(&vol_key, &(vol + amount));
+                // ✅ Use checked_add for overflow protection (consistency with all other arithmetic)
+                let new_vol = vol.checked_add(amount).ok_or(PredifiError::InvalidAmount)?;
+                env.storage().persistent().set(&vol_key, &new_vol);
                 Self::extend_persistent(&env, &vol_key);
             }
         } else {
@@ -3349,7 +3351,9 @@ impl PredifiContract {
                 Self::extend_persistent(&env, &referrer_key);
                 let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
                 let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
-                env.storage().persistent().set(&vol_key, &(vol + amount));
+                // ✅ Use checked_add for overflow protection (consistency with all other arithmetic)
+                let new_vol = vol.checked_add(amount).ok_or(PredifiError::InvalidAmount)?;
+                env.storage().persistent().set(&vol_key, &new_vol);
                 Self::extend_persistent(&env, &vol_key);
             }
 
