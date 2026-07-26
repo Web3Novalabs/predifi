@@ -345,6 +345,8 @@ pub async fn run_server(config: Config) {
 mod db_integration_tests;
 #[cfg(test)]
 mod mock_rpc_helpers;
+#[cfg(test)]
+mod openapi_tests;
 #[cfg(all(test, feature = "integration-tests"))]
 mod redis_integration_tests;
 #[cfg(all(test, feature = "integration-tests"))]

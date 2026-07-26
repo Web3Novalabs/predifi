@@ -15,6 +15,10 @@ path = "src/main.rs"
 name = "predifi-seed"
 path = "src/bin/seed.rs"
 
+[[bin]]
+name = "predifi-openapi"
+path = "src/bin/openapi_export.rs"
+
 [dependencies]
 axum = { version = "0.7.9", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }
