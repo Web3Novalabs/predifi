@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::Config;
+use crate::db::PoolCreatedEvent;
+use crate::pool_cache::PoolCache;
 use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
@@ -150,6 +152,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     /// In-memory oracle price cache refreshed every 60 seconds.
     pub cache: PriceCache,
+    /// Short-TTL cache for pool-detail lookups (#1369).
+    pub pool_cache: PoolCache,
     /// Redis cache client for hot-path response caching.
     pub redis: RedisCache,
     /// Optional DB pool — absent in unit tests that don't need a database.
@@ -222,6 +226,10 @@ pub struct PoolsResponse {
 pub async fn get_pool_by_id_handler(
     State(state): State<AppState>,
     Path(pool_id): Path<i64>,
+) -> Json<serde_json::Value> {
+    if let Some(cached) = state.pool_cache.get(pool_id) {
+        return Json(json!(cached));
+    }
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
@@ -236,6 +244,12 @@ pub async fn get_pool_by_id_handler(
     };
 
     match crate::db::get_pool_with_odds(db, pool_id).await {
+        Ok(Some(pool)) => {
+            state.pool_cache.set(pool_id, pool.clone());
+            Json(json!(pool))
+        }
+        Ok(None) => Json(json!({ "error": "pool not found" })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
         Ok(Some(pool)) => ApiResponse::success(pool).into_response(),
         Ok(None) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
@@ -787,6 +801,104 @@ pub async fn get_market_predictions(
     }
 }
 
+// ── Pool creator incentive system (#1366) ─────────────────────────────────────
+
+/// `GET /api/v1/creators/:address/stats` — reputation/quality metrics for a pool creator.
+pub async fn get_creator_stats_handler(
+    State(state): State<AppState>,
+    Path(address): Path<String>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::get_creator_stats(db, &address).await {
+        Ok(Some(stats)) => Json(json!(stats)),
+        Ok(None) => Json(json!({ "error": "creator not found" })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+/// `POST /api/v1/pools/:id/pay-creator-incentive` — pay out a pool creator's
+/// incentive share once the pool has reached its participation threshold.
+/// Idempotent: a second call after payout is a no-op.
+pub async fn pay_creator_incentive_handler(
+    State(state): State<AppState>,
+    Path(pool_id): Path<i64>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::pay_creator_incentive(db, pool_id, state.config.treasury_fee_bps).await {
+        Ok(Some(amount)) => {
+            state.pool_cache.invalidate(pool_id);
+            Json(json!({ "status": "paid", "pool_id": pool_id, "amount": amount }))
+        }
+        Ok(None) => Json(json!({ "status": "not_eligible", "pool_id": pool_id })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+// ── Pool templates for recurring markets (#1368) ──────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePoolTemplateRequest {
+    pub creator: String,
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub token: String,
+    pub duration_seconds: i64,
+    pub recurrence_interval_seconds: i64,
+}
+
+/// `POST /api/v1/pool-templates` — save a reusable pool configuration.
+pub async fn create_pool_template_handler(
+    State(state): State<AppState>,
+    Json(body): Json<CreatePoolTemplateRequest>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::create_pool_template(
+        db,
+        &body.creator,
+        &body.name,
+        &body.category,
+        &body.description,
+        &body.token,
+        body.duration_seconds,
+        body.recurrence_interval_seconds,
+    )
+    .await
+    {
+        Ok(template) => Json(json!(template)),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListPoolTemplatesQuery {
+    pub creator: String,
+}
+
+/// `GET /api/v1/pool-templates?creator=...` — list a creator's saved templates.
+pub async fn list_pool_templates_handler(
+    State(state): State<AppState>,
+    Query(params): Query<ListPoolTemplatesQuery>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::list_pool_templates(db, &params.creator).await {
+        Ok(templates) => Json(json!({ "creator": params.creator, "templates": templates })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
 /// Build the version 1 API router.
 pub fn router(
     config: Arc<Config>,
@@ -801,6 +913,7 @@ pub fn router(
     let state = AppState {
         config,
         cache,
+        pool_cache: PoolCache::new(),
         redis,
         db: pool,
         metrics,
@@ -859,6 +972,31 @@ pub fn router(
     );
 
     Router::new()
+        .route("/", get(index))
+        .route("/health", get(health))
+        .route("/pools", get(get_pools))
+        .route("/pools/:id", get(get_pool_by_id_handler))
+        .route("/leaderboard", get(get_leaderboard))
+        .route("/fees", get(get_fees))
+        .route("/prices", get(crate::price_cache::get_prices))
+        .route("/referrals/{address}", get(referrals_handler))
+        .route(
+            "/users/{address}/referrals",
+            get(user_referral_earnings_handler),
+        )
+        .route("/users/{address}/history", get(get_user_history))
+        .route("/users/{address}/predictions", get(get_user_predictions))
+        .route("/indexer/pool-created", post(ingest_pool_created))
+        .route("/creators/{address}/stats", get(get_creator_stats_handler))
+        .route(
+            "/pools/{id}/pay-creator-incentive",
+            post(pay_creator_incentive_handler),
+        )
+        .route(
+            "/pool-templates",
+            get(list_pool_templates_handler).post(create_pool_template_handler),
+        )
+        .with_state(state)
         .merge(light)
         .merge(read)
         .merge(user)
