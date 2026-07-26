@@ -13,6 +13,17 @@ use tokio::time::interval;
 use tracing::{error, info, instrument, warn};
 
 use crate::redis_cache::RedisCache;
+use crate::worker::queue::{job_kind_from_topics, Job, JobQueue};
+
+use std::sync::OnceLock;
+
+/// Shared reliable job queue for idempotency, retries, DLQ, and health.
+static WORKER_QUEUE: OnceLock<JobQueue> = OnceLock::new();
+
+/// Access the process-wide worker job queue (for health endpoints / ops).
+pub fn worker_job_queue() -> &'static JobQueue {
+    WORKER_QUEUE.get_or_init(JobQueue::with_defaults)
+}
 
 const POLL_INTERVAL_SECS: u64 = 5;
 const STATE_KEY: &str = "stellar_listener_latest_ledger";
@@ -257,7 +268,9 @@ async fn process_event_batch(
     events: &[StellarEvent],
     max_batch_size: usize,
 ) {
+    let queue = worker_job_queue();
     let mut referral_events: Vec<crate::db::ReferralPaidEvent> = Vec::new();
+    let mut referral_job_ids: Vec<String> = Vec::new();
 
     for event in events {
         info!(
@@ -268,6 +281,12 @@ async fn process_event_batch(
             "stellar event"
         );
 
+        // Idempotent skip for duplicate deliveries of the same event id.
+        if queue.already_processed(&event.id) {
+            info!(id = %event.id, "skipping already-processed event");
+            continue;
+        }
+
         let topic_matches = |needle: &str| {
             event
                 .topics
@@ -277,64 +296,92 @@ async fn process_event_batch(
         };
 
         if event.event_type == "contract" {
+            let kind = job_kind_from_topics(event.topics.as_ref());
+            let job = Job {
+                id: event.id.clone(),
+                kind: kind.clone(),
+                payload: event
+                    .data
+                    .as_ref()
+                    .map(|d| d.to_string())
+                    .unwrap_or_default(),
+                attempts: 0,
+                ledger: Some(event.ledger),
+            };
+
             if topic_matches("pool_created") {
-                if let Err(e) = handle_pool_created_event(db, redis, event).await {
-                    error!(
-                        id = %event.id,
-                        ledger = event.ledger,
-                        error = %e,
-                        "failed to process pool_created event"
-                    );
+                match handle_pool_created_event(db, redis, event).await {
+                    Ok(()) => queue.record_success(&job),
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process pool_created event");
+                        queue.record_failure(job, e);
+                    }
                 }
             } else if topic_matches("prediction_placed") {
-                if let Err(e) = handle_prediction_placed_event(db, event, event_bus).await {
-                    error!(
-                        id = %event.id,
-                        ledger = event.ledger,
-                        error = %e,
-                        "failed to process prediction_placed event"
-                    );
+                match handle_prediction_placed_event(db, event, event_bus).await {
+                    Ok(()) => queue.record_success(&job),
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process prediction_placed event");
+                        queue.record_failure(job, e);
+                    }
                 }
             } else if topic_matches("pool_resolved") {
-                if let Err(e) = handle_pool_resolved_event(db, event).await {
-                    error!(
-                        id = %event.id,
-                        ledger = event.ledger,
-                        error = %e,
-                        "failed to process pool_resolved event"
-                    );
+                match handle_pool_resolved_event(db, event).await {
+                    Ok(()) => queue.record_success(&job),
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process pool_resolved event");
+                        queue.record_failure(job, e);
+                    }
                 }
             } else if topic_matches("pool_canceled") {
-                if let Err(e) = handle_pool_canceled_event(db, event).await {
-                    error!(
-                        id = %event.id,
-                        ledger = event.ledger,
-                        error = %e,
-                        "failed to process pool_canceled event"
-                    );
+                match handle_pool_canceled_event(db, event).await {
+                    Ok(()) => queue.record_success(&job),
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process pool_canceled event");
+                        queue.record_failure(job, e);
+                    }
                 }
             } else if topic_matches("referral_paid") {
                 match parse_referral_paid_event(event) {
-                    Ok(ev) => referral_events.push(ev),
-                    Err(e) => error!(
-                        id = %event.id,
-                        ledger = event.ledger,
-                        error = %e,
-                        "failed to parse referral_paid event"
-                    ),
+                    Ok(ev) => {
+                        referral_events.push(ev);
+                        referral_job_ids.push(event.id.clone());
+                    }
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to parse referral_paid event");
+                        queue.record_failure(job, e);
+                    }
                 }
             }
         }
     }
 
     if !referral_events.is_empty() {
-        if let Err(e) = crate::db::insert_referrals_bulk(db, &referral_events, max_batch_size).await
-        {
-            error!(
-                error = %e,
-                count = referral_events.len(),
-                "failed to bulk insert referral events"
-            );
+        match crate::db::insert_referrals_bulk(db, &referral_events, max_batch_size).await {
+            Ok(()) => {
+                for id in &referral_job_ids {
+                    queue.mark_processed(id);
+                }
+            }
+            Err(e) => {
+                error!(
+                    error = %e,
+                    count = referral_events.len(),
+                    "failed to bulk insert referral events"
+                );
+                for id in referral_job_ids {
+                    queue.record_failure(
+                        Job {
+                            id,
+                            kind: "referral_paid".into(),
+                            payload: String::new(),
+                            attempts: 0,
+                            ledger: None,
+                        },
+                        e.to_string(),
+                    );
+                }
+            }
         }
     }
 }
