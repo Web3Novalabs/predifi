@@ -11,6 +11,7 @@ interface NetworkSwitchModalProps {
   currentChainName: string;
   onSwitch: () => Promise<void>;
   switchError: string | null;
+  switchRecoveryAction?: string | null;
 }
 
 export function NetworkSwitchModal({
@@ -18,6 +19,7 @@ export function NetworkSwitchModal({
   currentChainName,
   onSwitch,
   switchError,
+  switchRecoveryAction,
 }: NetworkSwitchModalProps) {
   const switchBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -81,9 +83,12 @@ export function NetworkSwitchModal({
 
         {/* Error feedback */}
         {switchError && (
-          <p role="alert" className="mt-3 text-xs text-red-400">
-            {switchError}
-          </p>
+          <div role="alert" className="mt-3 space-y-1">
+            <p className="text-xs text-red-400">{switchError}</p>
+            {switchRecoveryAction && (
+              <p className="text-xs text-zinc-400">{switchRecoveryAction}</p>
+            )}
+          </div>
         )}
 
         {/* CTA */}
