@@ -2529,6 +2529,131 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Batch add multiple tokens to the allowed betting whitelist in a single
+    /// transaction. Caller must have Admin role (0).
+    ///
+    /// Reduces per-token transaction overhead when onboarding several tokens
+    /// at once. Skips tokens that are already whitelisted.
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If caller does not hold the Admin role.
+    /// * `InvalidData` - If `tokens` is empty or exceeds `MAX_BATCH_SIZE` (100).
+    pub fn batch_add_tokens_to_whitelist(
+        env: Env,
+        admin: Address,
+        tokens: Vec<Address>,
+    ) -> Result<u32, PredifiError> {
+        const MAX_BATCH_SIZE: u32 = 100;
+
+        Self::require_not_paused(&env)?;
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "batch_add_tokens_to_whitelist")?;
+
+        let batch_size = tokens.len();
+        if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
+            return Err(PredifiError::InvalidData);
+        }
+
+        let whitelist_key = DataKey::TokenWhitelist;
+        let mut whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&whitelist_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut added_count: u32 = 0;
+        for token in tokens.iter() {
+            let key = DataKey::TokenWl(token.clone());
+            let already_whitelisted = env.storage().persistent().has(&key);
+
+            if !already_whitelisted {
+                env.storage().persistent().set(&key, &true);
+                Self::extend_persistent(&env, &key);
+
+                if !whitelist.contains(&token) {
+                    whitelist.push_back(token.clone());
+                }
+
+                added_count += 1;
+
+                TokenWhitelistAddedEvent {
+                    admin: admin.clone(),
+                    token: token.clone(),
+                }
+                .publish(&env);
+            }
+        }
+
+        if added_count > 0 {
+            env.storage().persistent().set(&whitelist_key, &whitelist);
+            Self::extend_persistent(&env, &whitelist_key);
+        }
+
+        Ok(added_count)
+    }
+
+    /// Batch remove multiple tokens from the allowed betting whitelist in a
+    /// single transaction. Caller must have Admin role (0).
+    ///
+    /// # Errors
+    /// * `Unauthorized` - If caller does not hold the Admin role.
+    /// * `InvalidData` - If `tokens` is empty or exceeds `MAX_BATCH_SIZE` (100).
+    pub fn batch_remove_tokens_from_whitelist(
+        env: Env,
+        admin: Address,
+        tokens: Vec<Address>,
+    ) -> Result<u32, PredifiError> {
+        const MAX_BATCH_SIZE: u32 = 100;
+
+        Self::require_not_paused(&env)?;
+        admin.require_auth();
+        Self::require_admin_role(&env, &admin, "batch_remove_tokens_from_whitelist")?;
+
+        let batch_size = tokens.len();
+        if batch_size == 0 || batch_size > MAX_BATCH_SIZE {
+            return Err(PredifiError::InvalidData);
+        }
+
+        let whitelist_key = DataKey::TokenWhitelist;
+        let mut whitelist: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&whitelist_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut removed_count: u32 = 0;
+        for token in tokens.iter() {
+            let key = DataKey::TokenWl(token.clone());
+            let was_whitelisted = env.storage().persistent().has(&key);
+
+            if was_whitelisted {
+                env.storage().persistent().remove(&key);
+                removed_count += 1;
+
+                TokenWhitelistRemovedEvent {
+                    admin: admin.clone(),
+                    token: token.clone(),
+                }
+                .publish(&env);
+            }
+        }
+
+        if removed_count > 0 {
+            let mut new_whitelist = Vec::new(&env);
+            for t in whitelist.iter() {
+                if !tokens.contains(&t) {
+                    new_whitelist.push_back(t);
+                }
+            }
+            whitelist = new_whitelist;
+
+            env.storage().persistent().set(&whitelist_key, &whitelist);
+            Self::extend_persistent(&env, &whitelist_key);
+        }
+
+        Ok(removed_count)
+    }
+
     /// Add an oracle address to the trusted oracle whitelist. Caller must have Admin role (0).
     pub fn add_oracle(
         env: Env,

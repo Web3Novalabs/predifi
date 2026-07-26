@@ -551,14 +551,140 @@ pub struct LeaderboardQuery {
     pub limit: Option<BoundedI64<1, 100>>,
     /// Zero-based offset for pagination (default 0).
     pub offset: Option<BoundedI64<0, 9223372036854775807>>,
-    /// Ranking type: "volume" | "winnings" (default: "volume")
+    /// Ranking type: "volume" | "winnings" | "win_rate" | "streak" (default: "volume")
     pub rank_by: Option<NonEmptyString>,
+    /// Time window: "week" | "month" | "all" (default: "all"). Ignored for `rank_by=winnings`.
+    pub period: Option<NonEmptyString>,
 }
 
-/// `GET /api/v1/leaderboard` — user rankings by betting volume or winnings.
+/// `GET /api/v1/leaderboard` — user rankings by betting volume, winnings, win
+/// rate, or current win streak, optionally scoped to a time window
+/// ("week" | "month" | "all").
 pub async fn get_leaderboard(
     State(state): State<AppState>,
     Query(params): Query<LeaderboardQuery>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
+    let rank_by = params.rank_by.as_ref().map(|s| s.as_str()).unwrap_or("volume");
+    let period = params.period.as_ref().map(|s| s.as_str()).unwrap_or("all");
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match rank_by {
+        "winnings" => match crate::db::get_users_by_winnings(db, limit, offset).await {
+            Ok(users) => {
+                let response = json!({
+                    "leaderboard": users,
+                    "rank_by": "winnings",
+                    "period": "all",
+                    "limit": limit,
+                    "offset": offset,
+                });
+                ApiResponse::success(response).into_response()
+            }
+            Err(e) => ApiResponse::<()>::error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error_codes::INTERNAL_ERROR,
+                e.to_string(),
+            )
+            .into_response(),
+        },
+        "win_rate" | "streak" => {
+            match crate::db::get_leaderboard_extended(db, rank_by, period, None, limit, offset)
+                .await
+            {
+                Ok(entries) => {
+                    let response = json!({
+                        "leaderboard": entries,
+                        "rank_by": rank_by,
+                        "period": period,
+                        "limit": limit,
+                        "offset": offset,
+                    });
+                    ApiResponse::success(response).into_response()
+                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
+            }
+        }
+        _ if period != "all" => {
+            // Volume ranking scoped to a time window.
+            match crate::db::get_leaderboard_extended(db, "volume", period, None, limit, offset)
+                .await
+            {
+                Ok(entries) => {
+                    let response = json!({
+                        "leaderboard": entries,
+                        "rank_by": "volume",
+                        "period": period,
+                        "limit": limit,
+                        "offset": offset,
+                    });
+                    ApiResponse::success(response).into_response()
+                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
+            }
+        }
+        _ => {
+            // Default: all-time volume ranking (unchanged legacy behavior).
+            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
+                Ok(users) => {
+                    let response = json!({
+                        "leaderboard": users,
+                        "rank_by": "volume",
+                        "period": "all",
+                        "limit": limit,
+                        "offset": offset,
+                    });
+                    ApiResponse::success(response).into_response()
+                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
+            }
+        }
+    }
+}
+
+/// Query parameters for the `GET /api/v1/pools/:id/leaderboard` endpoint.
+#[derive(Debug, Deserialize)]
+pub struct PoolLeaderboardQuery {
+    /// Maximum number of results to return (capped at 100, default 20).
+    pub limit: Option<BoundedI64<1, 100>>,
+    /// Zero-based offset for pagination (default 0).
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Ranking type: "volume" | "win_rate" | "streak" (default: "volume")
+    pub rank_by: Option<NonEmptyString>,
+}
+
+/// `GET /api/v1/pools/:id/leaderboard` — top stakers for a single pool.
+pub async fn get_pool_leaderboard(
+    State(state): State<AppState>,
+    Path(pool_id): Path<i64>,
+    Query(params): Query<PoolLeaderboardQuery>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
@@ -576,44 +702,25 @@ pub async fn get_leaderboard(
         .into_response();
     };
 
-    match rank_by {
-        "winnings" => match crate::db::get_users_by_winnings(db, limit, offset).await {
-            Ok(users) => {
-                let response = json!({
-                    "leaderboard": users,
-                    "rank_by": "winnings",
-                    "limit": limit,
-                    "offset": offset,
-                });
-                ApiResponse::success(response).into_response()
-            }
-            Err(e) => ApiResponse::<()>::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error_codes::INTERNAL_ERROR,
-                e.to_string(),
-            )
-            .into_response(),
-        },
-        _ => {
-            // Default to volume ranking
-            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
-                Ok(users) => {
-                    let response = json!({
-                        "leaderboard": users,
-                        "rank_by": "volume",
-                        "limit": limit,
-                        "offset": offset,
-                    });
-                    ApiResponse::success(response).into_response()
-                }
-                Err(e) => ApiResponse::<()>::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error_codes::INTERNAL_ERROR,
-                    e.to_string(),
-                )
-                .into_response(),
-            }
+    match crate::db::get_leaderboard_extended(db, rank_by, "all", Some(pool_id), limit, offset)
+        .await
+    {
+        Ok(entries) => {
+            let response = json!({
+                "pool_id": pool_id,
+                "leaderboard": entries,
+                "rank_by": rank_by,
+                "limit": limit,
+                "offset": offset,
+            });
+            ApiResponse::success(response).into_response()
         }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -1282,6 +1389,7 @@ pub fn router(
         Router::new()
             .route("/pools", get(get_pools))
             .route("/pools/:id", get(get_pool_by_id_handler))
+            .route("/pools/:id/leaderboard", get(get_pool_leaderboard))
             .route("/stats", get(get_stats))
             .route("/leaderboard", get(get_leaderboard))
             .route("/tags", get(list_tags_handler))
@@ -1337,7 +1445,23 @@ pub fn router(
     // panics on an overlapping method route, which would take down the whole
     // server at startup.
     Router::new()
-        .route("/creators/:address/stats", get(get_creator_stats_handler))
+        .route("/", get(index))
+        .route("/health", get(health))
+        .route("/pools", get(get_pools))
+        .route("/pools/:id", get(get_pool_by_id_handler))
+        .route("/pools/:id/leaderboard", get(get_pool_leaderboard))
+        .route("/leaderboard", get(get_leaderboard))
+        .route("/fees", get(get_fees))
+        .route("/prices", get(crate::price_cache::get_prices))
+        .route("/referrals/{address}", get(referrals_handler))
+        .route(
+            "/users/{address}/referrals",
+            get(user_referral_earnings_handler),
+        )
+        .route("/users/{address}/history", get(get_user_history))
+        .route("/users/{address}/predictions", get(get_user_predictions))
+        .route("/indexer/pool-created", post(ingest_pool_created))
+        .route("/creators/{address}/stats", get(get_creator_stats_handler))
         .route(
             "/pools/:id/pay-creator-incentive",
             post(pay_creator_incentive_handler),

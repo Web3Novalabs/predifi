@@ -108,3 +108,61 @@ export async function fetchPools(url: string): Promise<PoolsResponse> {
 
   return (await res.json()) as PoolsResponse;
 }
+
+/** Per-outcome stake/odds breakdown, as returned by `GET /api/v1/pools/{id}`. */
+export interface OutcomeOdds {
+  outcome: number;
+  stake: number;
+  odds: number;
+}
+
+/** A single pool with real-time odds and (when available) outcome labels. */
+export interface PoolWithOdds {
+  pool_id: number;
+  name: string;
+  category: string;
+  total_stake: number;
+  end_time: string;
+  created_at: string;
+  state: string;
+  creator: string;
+  token: string;
+  result: string | null;
+  odds: OutcomeOdds[];
+  /** Human-readable labels for each outcome, when the indexer has them. */
+  outcome_descriptions?: string[];
+}
+
+/** Envelope shape returned by every `/api/v1` endpoint. */
+interface ApiEnvelope<T> {
+  status: "success" | "error";
+  data?: T;
+  error?: { code: string; message: string; request_id: string };
+}
+
+/** Build the URL for `GET /api/v1/pools/{id}`. */
+export function poolByIdUrl(poolId: number | string): string {
+  return `${API_BASE_URL}/api/v1/pools/${poolId}`;
+}
+
+/**
+ * Fetch a single pool with its current odds by id.
+ *
+ * Returns `null` on a 404 (pool not found) so callers can render a
+ * "not found" state; throws {@link ApiError} for other non-2xx statuses.
+ */
+export async function fetchPoolById(
+  poolId: number | string,
+): Promise<PoolWithOdds | null> {
+  const res = await fetch(poolByIdUrl(poolId), {
+    headers: { Accept: "application/json" },
+  });
+
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    throw new ApiError(`Failed to load pool (HTTP ${res.status})`, res.status);
+  }
+
+  const body = (await res.json()) as ApiEnvelope<PoolWithOdds>;
+  return body.data ?? null;
+}
