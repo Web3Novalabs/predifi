@@ -2,7 +2,7 @@
 
 import React, { useState, useId } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, Info } from "lucide-react";
+import { CheckCircle2, Info, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, Input, StakeInput, Checkbox, SupportedTokensPicker } from "@/components/ui";
 import type { Token } from "@/components/ui";
@@ -10,6 +10,8 @@ import {
   validateCreatePool,
   minCloseTimeValue,
   POOL_CATEGORIES,
+  MIN_OUTCOMES,
+  MAX_OUTCOMES,
   type CreatePoolFormValues,
   type CreatePoolFormErrors,
 } from "@/lib/validations/poolCreation";
@@ -20,8 +22,7 @@ const INITIAL_VALUES: CreatePoolFormValues = {
   name: "",
   description: "",
   category: "",
-  optionA: "",
-  optionB: "",
+  outcomes: ["", ""],
   minStake: "",
   maxStake: "",
   closeTime: "",
@@ -375,6 +376,44 @@ export function CreatePoolForm() {
     setSubmitError(null);
   }
 
+  function setOutcome(index: number, value: string) {
+    setValues((prev) => {
+      const outcomes = [...prev.outcomes];
+      outcomes[index] = value;
+      return { ...prev, outcomes };
+    });
+    setErrors((prev) => {
+      if (!prev.outcomeErrors && !prev.outcomes) return prev;
+      const outcomeErrors = prev.outcomeErrors ? [...prev.outcomeErrors] : undefined;
+      if (outcomeErrors) outcomeErrors[index] = undefined;
+      return { ...prev, outcomeErrors, outcomes: undefined };
+    });
+    setSubmitError(null);
+  }
+
+  function addOutcome() {
+    setValues((prev) =>
+      prev.outcomes.length >= MAX_OUTCOMES
+        ? prev
+        : { ...prev, outcomes: [...prev.outcomes, ""] },
+    );
+  }
+
+  function removeOutcome(index: number) {
+    setValues((prev) =>
+      prev.outcomes.length <= MIN_OUTCOMES
+        ? prev
+        : { ...prev, outcomes: prev.outcomes.filter((_, i) => i !== index) },
+    );
+    setErrors((prev) => {
+      if (!prev.outcomeErrors) return prev;
+      return {
+        ...prev,
+        outcomeErrors: prev.outcomeErrors.filter((_, i) => i !== index),
+      };
+    });
+  }
+
   function handleTokenChange(token: Token) {
     setValues((prev) => ({ ...prev, token: token.id }));
     // Re-validate stake fields when token changes
@@ -395,7 +434,11 @@ export function CreatePoolForm() {
       setErrors(validationErrors);
       // Scroll to the first error field
       const firstErrorField = Object.keys(validationErrors)[0];
-      const el = document.getElementById(firstErrorField);
+      const targetId =
+        firstErrorField === "outcomeErrors"
+          ? `outcome-${validationErrors.outcomeErrors?.findIndex((e) => e) ?? 0}`
+          : firstErrorField;
+      const el = document.getElementById(targetId);
       el?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
@@ -486,31 +529,58 @@ export function CreatePoolForm() {
       {/* ── 2. Prediction Options ── */}
       <FormSection
         title="Prediction Options"
-        description="Define the two possible outcomes participants can stake on."
+        description={`Define the outcomes participants can stake on (${MIN_OUTCOMES}–${MAX_OUTCOMES}).`}
       >
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
-            id="optionA"
-            label="Option A"
-            placeholder="e.g. Yes"
-            value={values.optionA}
-            onChange={(e) => setField("optionA", e.target.value)}
-            error={errors.optionA}
-            helperText="Up to 50 characters."
-            disabled={isSubmitting}
-            autoComplete="off"
-          />
-          <Input
-            id="optionB"
-            label="Option B"
-            placeholder="e.g. No"
-            value={values.optionB}
-            onChange={(e) => setField("optionB", e.target.value)}
-            error={errors.optionB}
-            helperText="Up to 50 characters. Must differ from Option A."
-            disabled={isSubmitting}
-            autoComplete="off"
-          />
+        <div className="space-y-3">
+          {values.outcomes.map((outcome, index) => (
+            <div key={index} className="flex items-start gap-2">
+              <div className="flex-1">
+                <Input
+                  id={`outcome-${index}`}
+                  label={`Outcome ${index + 1}`}
+                  placeholder={
+                    index === 0 ? "e.g. Yes" : index === 1 ? "e.g. No" : "e.g. Draw"
+                  }
+                  value={outcome}
+                  onChange={(e) => setOutcome(index, e.target.value)}
+                  error={errors.outcomeErrors?.[index]}
+                  disabled={isSubmitting}
+                  autoComplete="off"
+                />
+              </div>
+              {values.outcomes.length > MIN_OUTCOMES && (
+                <button
+                  type="button"
+                  onClick={() => removeOutcome(index)}
+                  disabled={isSubmitting}
+                  aria-label={`Remove outcome ${index + 1}`}
+                  className="mt-7 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-zinc-700 text-zinc-400 hover:border-red-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          ))}
+
+          {errors.outcomes && (
+            <p className="text-sm font-medium text-destructive" role="alert">
+              {errors.outcomes}
+            </p>
+          )}
+
+          {values.outcomes.length < MAX_OUTCOMES && (
+            <Button
+              type="button"
+              variant="tertiary"
+              size="small"
+              onClick={addOutcome}
+              disabled={isSubmitting}
+              className="gap-1.5"
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add outcome
+            </Button>
+          )}
         </div>
       </FormSection>
 
