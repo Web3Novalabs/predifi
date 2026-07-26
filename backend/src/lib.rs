@@ -13,6 +13,7 @@ pub mod jwt;
 pub mod metrics;
 pub mod openapi;
 pub mod price_cache;
+pub mod pool_cache;
 pub mod rate_limit;
 pub mod redis_cache;
 pub mod referrals;
@@ -236,6 +237,7 @@ pub fn build_router(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
@@ -279,6 +281,7 @@ pub fn build_router_with_db(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),

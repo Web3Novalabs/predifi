@@ -891,14 +891,12 @@ where
 }
 
 /// Insert a new pool record decoded from a `PoolCreated` contract event.
-#[instrument(skip(executor), name = "db.insert_pool_from_event",
+#[instrument(skip(pool), name = "db.insert_pool_from_event",
     fields(pool_id = event.pool_id, creator = %event.creator))]
-pub async fn insert_pool_from_event<'e, E>(
-    executor: E,
+pub async fn insert_pool_from_event(
+    pool: &sqlx::PgPool,
     event: &PoolCreatedEvent,
 ) -> Result<(), sqlx::Error>
-where
-    E: Executor<'e, Database = Postgres>,
 {
     sqlx::query(
         r#"
@@ -913,7 +911,7 @@ where
     .bind(event.end_time as f64)
     .bind(&event.creator)
     .bind(&event.token)
-    .execute(executor)
+    .execute(pool)
     .await?;
 
     record_pool_created_for_creator(pool, &event.creator).await?;
@@ -1343,6 +1341,11 @@ pub async fn advance_pool_template(pool: &PgPool, template_id: i64) -> Result<()
     )
     .bind(template_id)
     .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 /// Decoded data from a `prediction_placed` contract event.
 #[derive(Debug)]
 pub struct PredictionPlacedEvent {

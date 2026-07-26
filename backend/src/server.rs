@@ -271,6 +271,7 @@ pub fn build_router_with_rate_limit(
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
@@ -316,6 +317,7 @@ fn build_router_with_db(
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),
