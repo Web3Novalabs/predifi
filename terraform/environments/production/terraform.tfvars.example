@@ -1,0 +1,31 @@
+# Example values — copy to terraform.tfvars (do not commit secrets).
+
+aws_region = "us-east-1"
+
+vpc_id = "vpc-xxxxxxxx"
+
+public_subnet_ids = [
+  "subnet-public-a",
+  "subnet-public-b",
+]
+
+private_subnet_ids = [
+  "subnet-private-a",
+  "subnet-private-b",
+]
+
+ami_id   = "ami-xxxxxxxx" # Amazon Linux 2023
+key_name = "predifi-prod"
+
+domain_name     = "api.predifi.app"
+route53_zone_id = "ZXXXXXXXX"
+ssl_sans        = ["www.api.predifi.app"]
+
+compute_instance_type    = "t3.medium"
+compute_desired_capacity = 2
+db_instance_class        = "db.t4g.medium"
+
+# Prefer VPN / bastion CIDRs only
+monitoring_allowed_cidrs = [
+  "10.0.0.0/16",
+]
