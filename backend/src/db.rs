@@ -496,6 +496,9 @@ pub async fn get_pools_with_filters(
     offset: i64,
 ) -> Result<Vec<PoolRow>, sqlx::Error> {
     // Build ORDER BY clause from sort_by parameter.
+    // SECURITY: This uses a controlled match statement with hardcoded values.
+    // No user input reaches the SQL query directly - only the predefined
+    // "total_stake DESC", "end_time ASC", or "created_at DESC" strings are used.
     let order_clause = match sort_by {
         "popular" => "total_stake DESC",
         "ending_soon" => "end_time ASC",
@@ -508,9 +511,10 @@ pub async fn get_pools_with_filters(
         _ => "active", // default to active for invalid status
     };
 
-    // sqlx doesn't support dynamic ORDER BY via bind params, so we build the
-    // query string manually. The order_clause is constructed from a controlled
-    // match arm — no user input reaches it directly.
+    // SECURITY NOTE: sqlx doesn't support dynamic ORDER BY via bind params,
+    // so we build the query string manually. The order_clause is constructed
+    // from a controlled match arm above — no user input reaches it directly.
+    // This is safe because only the three hardcoded ORDER BY clauses are possible.
     let sql = format!(
         r#"
         SELECT pool_id, name, category, total_stake, end_time, created_at

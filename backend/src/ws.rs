@@ -30,6 +30,9 @@ use crate::jwt::{extract_bearer_token, verify_jwt_token};
 
 const CHANNEL_CAPACITY: usize = 256;
 
+/// Maximum allowed message size in bytes to prevent memory exhaustion attacks.
+const MAX_MESSAGE_SIZE: usize = 1_048_576; // 1 MB
+
 /// Optional query parameters for the WebSocket endpoint.
 #[derive(Debug, Deserialize, Default)]
 pub struct WsConnectParams {
@@ -118,6 +121,35 @@ fn extract_ws_token(headers: &HeaderMap, params: &WsConnectParams) -> Option<Str
         .or_else(|| params.token.clone())
 }
 
+/// Validate the Origin header to prevent CSRF-like WebSocket hijacking.
+///
+/// This checks that the Origin header matches the configured allowed origins.
+/// If no origins are configured, the check is skipped (allowing any origin).
+/// In production, this should be configured to restrict to trusted domains.
+fn validate_origin(headers: &HeaderMap, config: &Config) -> bool {
+    // If no allowed origins are configured, skip validation (permissive mode)
+    if config.allowed_ws_origins.is_empty() {
+        return true;
+    }
+
+    let origin = match headers.get("origin") {
+        Some(value) => match value.to_str() {
+            Ok(origin_str) => origin_str,
+            Err(_) => {
+                tracing::warn!("Invalid Origin header format");
+                return false;
+            }
+        },
+        None => {
+            tracing::warn!("Missing Origin header in WebSocket upgrade request");
+            return false;
+        }
+    };
+
+    // Check if the origin is in the allowed list
+    config.allowed_ws_origins.contains(&origin.to_string())
+}
+
 fn unauthorized_response(message: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
@@ -136,6 +168,17 @@ pub async fn ws_handler(
     State(config): State<Arc<Config>>,
     State(bus): State<EventBus>,
 ) -> impl IntoResponse {
+    // Validate Origin header to prevent CSRF-like hijacking
+    if !validate_origin(&headers, &config) {
+        return (
+            StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({
+                "error": "invalid or missing Origin header",
+            })),
+        )
+            .into_response();
+    }
+
     let Some(token) = extract_ws_token(&headers, &params) else {
         return unauthorized_response("missing or invalid authorization token");
     };
@@ -183,6 +226,15 @@ async fn run_socket(
                         if !should_deliver_event(&msg, wallet_filter) {
                             continue;
                         }
+                        // Enforce message size limit to prevent memory exhaustion
+                        if msg.len() > MAX_MESSAGE_SIZE {
+                            tracing::warn!(
+                                message_size = msg.len(),
+                                max_size = MAX_MESSAGE_SIZE,
+                                "WebSocket message exceeds size limit, dropping"
+                            );
+                            continue;
+                        }
                         if socket.send(Message::Text(msg)).await.is_err() {
                             break;
                         }
@@ -193,6 +245,19 @@ async fn run_socket(
             }
             msg = socket.recv() => {
                 if msg.is_none() { break; }
+                // Also validate incoming message size
+                if let Some(Ok(message)) = msg {
+                    if let Message::Text(text) = message {
+                        if text.len() > MAX_MESSAGE_SIZE {
+                            tracing::warn!(
+                                message_size = text.len(),
+                                max_size = MAX_MESSAGE_SIZE,
+                                "Incoming WebSocket message exceeds size limit, closing connection"
+                            );
+                            break;
+                        }
+                    }
+                }
             }
         }
     }

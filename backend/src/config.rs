@@ -101,6 +101,13 @@ pub struct Config {
     pub secret_key: String,
     /// Maximum number of Stellar events processed per indexer batch (default `500`).
     pub indexer_max_batch_size: usize,
+    /// Validated list of origins permitted for WebSocket connections.
+    ///
+    /// Loaded from the `PREDIFI_WS_ALLOWED_ORIGINS` environment variable as a
+    /// comma-separated list of origins. If empty, all origins are allowed (permissive mode).
+    /// In production, this should be configured to restrict WebSocket connections to trusted domains.
+    /// Uses the same validation logic as CORS origins.
+    pub allowed_ws_origins: Vec<String>,
 }
 
 impl Config {
@@ -187,6 +194,9 @@ impl Config {
             DEFAULT_INDEXER_MAX_BATCH_SIZE,
         )?;
 
+        // Parse WebSocket allowed origins (optional, defaults to empty for permissive mode)
+        let allowed_ws_origins = parse_ws_origins(vars)?;
+
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_MIN_CONNECTIONS",
@@ -221,6 +231,7 @@ impl Config {
             cors_allowed_origins,
             secret_key,
             indexer_max_batch_size,
+            allowed_ws_origins,
         };
 
         config.validate()?;
@@ -361,6 +372,7 @@ impl Config {
             cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
             secret_key: String::from(DEFAULT_SECRET_KEY),
             indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
+            allowed_ws_origins: Vec::new(), // Empty for permissive mode in tests
         }
     }
 }
@@ -445,6 +457,39 @@ fn parse_cors_origins(vars: &HashMap<String, String>) -> Result<Vec<String>, Con
             key: "PREDIFI_CORS_ALLOWED_ORIGINS",
             reason: String::from("must contain at least one origin"),
         });
+    }
+
+    for origin in &origins {
+        validate_cors_origin(origin)?;
+    }
+
+    Ok(origins)
+}
+
+/// Parse and validate the `PREDIFI_WS_ALLOWED_ORIGINS` environment variable.
+///
+/// The value must be a comma-separated list of origins using the same validation
+/// rules as CORS origins. If the variable is absent, returns an empty vector
+/// (permissive mode - allows any origin). This is intentional for WebSocket
+/// origin validation to be optional in development while enforceable in production.
+fn parse_ws_origins(vars: &HashMap<String, String>) -> Result<Vec<String>, ConfigError> {
+    let raw = match vars.get("PREDIFI_WS_ALLOWED_ORIGINS") {
+        Some(v) => v.clone(),
+        None => {
+            // Permissive mode when not configured
+            return Ok(Vec::new());
+        }
+    };
+
+    let origins: Vec<String> = raw
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // Empty string means explicitly disable restrictions (same as absent)
+    if origins.is_empty() {
+        return Ok(Vec::new());
     }
 
     for origin in &origins {
