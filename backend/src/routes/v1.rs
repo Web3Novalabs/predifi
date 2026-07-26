@@ -1328,7 +1328,7 @@ pub fn router(
             .route("/indexer/prediction-placed", post(ingest_prediction_placed))
             .route("/indexer/claim", post(ingest_claim_handler))
             .route("/pools/:id/tags", patch(update_pool_tags_handler))
-            .with_state(state),
+            .with_state(state.clone()),
         RateLimitTier::Write,
     );
 
