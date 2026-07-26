@@ -40,6 +40,8 @@ pub struct WsConnectParams {
     pub address: Option<String>,
     /// Optional JWT passed as a query parameter when headers are unavailable.
     pub token: Option<String>,
+    /// When set, only events whose `pool_id` equals this value are forwarded.
+    pub pool_id: Option<u64>,
 }
 
 /// Shareable handle to the broadcast channel.
@@ -93,23 +95,27 @@ impl EventBus {
     }
 }
 
-/// Returns `true` when `json` should be delivered to a subscriber with `wallet_filter`.
+/// Returns `true` when `json` should be delivered to a subscriber with `wallet_filter` and `pool_filter`.
 ///
-/// When `wallet_filter` is `None`, all well-formed events are delivered.
-/// When set, only events containing a matching `user_address` field are delivered.
-pub fn should_deliver_event(json: &str, wallet_filter: Option<&str>) -> bool {
-    let Some(filter) = wallet_filter else {
-        return true;
-    };
-
+/// When filters are `None`, all well-formed events are delivered.
+pub fn should_deliver_event(json: &str, wallet_filter: Option<&str>, pool_filter: Option<u64>) -> bool {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
         return false;
     };
 
-    value
-        .get("user_address")
-        .and_then(|v| v.as_str())
-        .is_some_and(|addr| addr == filter)
+    if let Some(wallet) = wallet_filter {
+        if value.get("user_address").and_then(|v| v.as_str()) != Some(wallet) {
+            return false;
+        }
+    }
+
+    if let Some(pool_id) = pool_filter {
+        if value.get("pool_id").and_then(|v| v.as_u64()) != Some(pool_id) {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn extract_ws_token(headers: &HeaderMap, params: &WsConnectParams) -> Option<String> {
@@ -189,25 +195,28 @@ pub async fn ws_handler(
     };
 
     let wallet_filter = params.address;
+    let pool_filter = params.pool_id;
     let span = info_span!(
         "websocket.connect",
         wallet = ?wallet_filter,
+        pool_id = ?pool_filter,
         subject = %claims.sub
     );
-    ws.on_upgrade(move |socket| handle_socket(socket, bus, wallet_filter).instrument(span))
+    ws.on_upgrade(move |socket| handle_socket(socket, bus, wallet_filter, pool_filter).instrument(span))
 }
 
-async fn handle_socket(mut socket: WebSocket, bus: EventBus, wallet_filter: Option<String>) {
+async fn handle_socket(mut socket: WebSocket, bus: EventBus, wallet_filter: Option<String>, pool_filter: Option<u64>) {
     let mut rx = bus.subscribe();
 
     let count = bus.active_connections.fetch_add(1, Ordering::Relaxed) + 1;
     tracing::info!(
         active_connections = count,
         wallet = ?wallet_filter,
+        pool_id = ?pool_filter,
         "websocket client connected"
     );
 
-    run_socket(&mut socket, &mut rx, wallet_filter.as_deref()).await;
+    run_socket(&mut socket, &mut rx, wallet_filter.as_deref(), pool_filter).await;
 
     let count = bus.active_connections.fetch_sub(1, Ordering::Relaxed) - 1;
     tracing::info!(active_connections = count, "websocket client disconnected");
@@ -217,13 +226,14 @@ async fn run_socket(
     socket: &mut WebSocket,
     rx: &mut broadcast::Receiver<String>,
     wallet_filter: Option<&str>,
+    pool_filter: Option<u64>,
 ) {
     loop {
         tokio::select! {
             result = rx.recv() => {
                 match result {
                     Ok(msg) => {
-                        if !should_deliver_event(&msg, wallet_filter) {
+                        if !should_deliver_event(&msg, wallet_filter, pool_filter) {
                             continue;
                         }
                         // Enforce message size limit to prevent memory exhaustion
@@ -271,30 +281,30 @@ mod tests {
     #[test]
     fn delivers_all_events_when_no_wallet_filter() {
         let json = r#"{"type":"prediction_placed","user_address":"GABC","pool_id":1}"#;
-        assert!(should_deliver_event(json, None));
+        assert!(should_deliver_event(json, None, None));
     }
 
     #[test]
     fn delivers_event_when_wallet_matches() {
         let json = r#"{"type":"prediction_placed","user_address":"GABC","pool_id":1}"#;
-        assert!(should_deliver_event(json, Some("GABC")));
+        assert!(should_deliver_event(json, Some("GABC"), None));
     }
 
     #[test]
     fn skips_event_when_wallet_mismatch() {
         let json = r#"{"type":"prediction_placed","user_address":"GABC","pool_id":1}"#;
-        assert!(!should_deliver_event(json, Some("GXYZ")));
+        assert!(!should_deliver_event(json, Some("GXYZ"), None));
     }
 
     #[test]
     fn skips_malformed_json_when_filter_active() {
-        assert!(!should_deliver_event("not-json", Some("GABC")));
+        assert!(!should_deliver_event("not-json", Some("GABC"), None));
     }
 
     #[test]
     fn skips_event_missing_user_address_when_filter_active() {
         let json = r#"{"type":"prediction_placed","pool_id":1}"#;
-        assert!(!should_deliver_event(json, Some("GABC")));
+        assert!(!should_deliver_event(json, Some("GABC"), None));
     }
 
     #[test]

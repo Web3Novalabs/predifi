@@ -31,6 +31,12 @@ export const MAX_STAKE: Record<string, number> = {
   STRK: 1_000_000,
 };
 
+/** Minimum number of outcomes a pool must define. */
+export const MIN_OUTCOMES = 2;
+
+/** Maximum number of outcomes a pool may define (mirrors the on-chain MAX_OPTIONS_COUNT). */
+export const MAX_OUTCOMES = 10;
+
 /** Form field values for pool creation. */
 export interface CreatePoolFormValues {
   /** Human-readable pool name. */
@@ -39,10 +45,12 @@ export interface CreatePoolFormValues {
   description: string;
   /** Category bucket this pool belongs to. */
   category: PoolCategory | "";
-  /** Option A label (e.g. "Yes", "Team A wins"). */
-  optionA: string;
-  /** Option B label (e.g. "No", "Team B wins"). */
-  optionB: string;
+  /**
+   * Labels for each possible outcome (e.g. `["Yes", "No"]` or
+   * `["Team A", "Team B", "Draw"]`). Must contain between
+   * {@link MIN_OUTCOMES} and {@link MAX_OUTCOMES} non-empty, unique entries.
+   */
+  outcomes: string[];
   /** Minimum stake required to participate (display units). */
   minStake: string;
   /** Maximum stake per participant (display units). */
@@ -58,7 +66,10 @@ export interface CreatePoolFormValues {
 /** Per-field validation error messages. */
 export type CreatePoolFormErrors = Partial<
   Record<keyof CreatePoolFormValues, string>
->;
+> & {
+  /** Per-outcome error messages, indexed the same as `values.outcomes`. */
+  outcomeErrors?: (string | undefined)[];
+};
 
 /** Minimum minutes a pool close time must be in the future. */
 const MIN_CLOSE_MINUTES = 30;
@@ -99,28 +110,33 @@ export function validateCreatePool(
     errors.category = "Please select a category.";
   }
 
-  // ── options ───────────────────────────────────────────────────────────────
-  const optionA = values.optionA.trim();
-  const optionB = values.optionB.trim();
+  // ── outcomes ──────────────────────────────────────────────────────────────
+  const outcomeErrors: (string | undefined)[] = values.outcomes.map(
+    (outcome) => {
+      const trimmed = outcome.trim();
+      if (!trimmed) return "Outcome label is required.";
+      if (trimmed.length > 50) return "Must be 50 characters or fewer.";
+      return undefined;
+    },
+  );
 
-  if (!optionA) {
-    errors.optionA = "Option A label is required.";
-  } else if (optionA.length < 1) {
-    errors.optionA = "Option A must not be empty.";
-  } else if (optionA.length > 50) {
-    errors.optionA = "Option A must be 50 characters or fewer.";
+  const trimmedOutcomes = values.outcomes.map((o) => o.trim().toLowerCase());
+  trimmedOutcomes.forEach((outcome, index) => {
+    if (!outcome || outcomeErrors[index]) return;
+    const firstDuplicateIndex = trimmedOutcomes.indexOf(outcome);
+    if (firstDuplicateIndex !== index) {
+      outcomeErrors[index] = "Outcome labels must be unique.";
+    }
+  });
+
+  if (outcomeErrors.some((e) => e !== undefined)) {
+    errors.outcomeErrors = outcomeErrors;
   }
 
-  if (!optionB) {
-    errors.optionB = "Option B label is required.";
-  } else if (optionB.length < 1) {
-    errors.optionB = "Option B must not be empty.";
-  } else if (optionB.length > 50) {
-    errors.optionB = "Option B must be 50 characters or fewer.";
-  }
-
-  if (optionA && optionB && optionA.toLowerCase() === optionB.toLowerCase()) {
-    errors.optionB = "Option B must be different from Option A.";
+  if (values.outcomes.length < MIN_OUTCOMES) {
+    errors.outcomes = `A pool needs at least ${MIN_OUTCOMES} outcomes.`;
+  } else if (values.outcomes.length > MAX_OUTCOMES) {
+    errors.outcomes = `A pool can have at most ${MAX_OUTCOMES} outcomes.`;
   }
 
   // ── stake bounds ──────────────────────────────────────────────────────────

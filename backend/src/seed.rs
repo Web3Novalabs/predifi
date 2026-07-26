@@ -20,8 +20,11 @@
 //! cargo run --bin predifi-seed                  # insert seed data
 //! cargo run --bin predifi-seed -- --fresh       # truncate first, then seed
 //! cargo run --bin predifi-seed -- --num-pools 20
+//! cargo run --bin predifi-seed -- --scenario settled   # targeted scenario
 //! cargo run --bin predifi-seed -- --help
 //! ```
+//!
+//! See [`SeedScenario`] for the scenarios `--scenario` accepts.
 
 use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
@@ -43,6 +46,9 @@ pub const SEED_WALLETS: &[&str] = &[
     "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3",
     "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4",
     "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA5",
+    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA6",
+    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA7",
+    "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8",
 ];
 
 /// Fixture referrer address — distinct from the betting wallets so referral
@@ -57,6 +63,8 @@ pub const SEED_TOKENS: &[&str] = &[
     "native",
     "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RztMfo6BASE2QYX",
     "EURC:GDHU6RQSD3QZFFIGTVK6VP4YHV2KLDPEMTZSDQ3B",
+    "XLM:GBNSVAPT7UZ2DHQ3XN5F5SD6ZJPKQ2FPGHTMWQ4KLMNO",
+    "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRIHF",
 ];
 
 /// Description of a pool to seed.
@@ -91,6 +99,77 @@ pub struct SeedReferral {
     pub amount: i64,
 }
 
+/// Named scenario selecting *which* slice of fixture data a seed run writes.
+///
+/// Scenarios let a developer target one code path (say, settled-pool payout
+/// screens) without waiting for a full spread of pools to be generated.
+/// Selected on the CLI with `--scenario <name>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SeedScenario {
+    /// Full spread: mixed states, all tokens, one referral per pool.
+    #[default]
+    All,
+    /// Every pool `active` and still open for predictions.
+    ActivePools,
+    /// Every pool `closed` — past its end time, awaiting settlement.
+    ClosedPools,
+    /// Every pool `settled` with a winning outcome, for payout/claim flows.
+    SettledPools,
+    /// Full pool spread plus a multi-level referral chain between wallets.
+    ReferralChain,
+    /// One pool per entry in [`SEED_TOKENS`], for token-handling checks.
+    MultiToken,
+}
+
+impl SeedScenario {
+    /// CLI names accepted by `--scenario`, in help-text order.
+    pub const NAMES: &'static [&'static str] = &[
+        "all",
+        "active",
+        "closed",
+        "settled",
+        "referral-chain",
+        "multi-token",
+    ];
+
+    /// Parse a CLI scenario name. Returns `None` for unknown names.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "all" => Some(Self::All),
+            "active" => Some(Self::ActivePools),
+            "closed" => Some(Self::ClosedPools),
+            "settled" => Some(Self::SettledPools),
+            "referral-chain" => Some(Self::ReferralChain),
+            "multi-token" => Some(Self::MultiToken),
+            _ => None,
+        }
+    }
+
+    /// The CLI name for this scenario — inverse of [`SeedScenario::parse`].
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::ActivePools => "active",
+            Self::ClosedPools => "closed",
+            Self::SettledPools => "settled",
+            Self::ReferralChain => "referral-chain",
+            Self::MultiToken => "multi-token",
+        }
+    }
+
+    /// One-line description used by `--help`.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::All => "mixed pool states, all tokens, one referral per pool",
+            Self::ActivePools => "only open pools accepting predictions",
+            Self::ClosedPools => "only closed pools awaiting settlement",
+            Self::SettledPools => "only settled pools with winning outcomes",
+            Self::ReferralChain => "full spread plus a multi-level referral chain",
+            Self::MultiToken => "one pool per supported token configuration",
+        }
+    }
+}
+
 /// Configuration for a seed run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeedConfig {
@@ -99,6 +178,8 @@ pub struct SeedConfig {
     /// When true, truncate `pools`, `predictions`, `referrals`, and `stats`
     /// before inserting fresh data.
     pub fresh: bool,
+    /// Which fixture scenario to write.
+    pub scenario: SeedScenario,
 }
 
 impl Default for SeedConfig {
@@ -106,6 +187,7 @@ impl Default for SeedConfig {
         Self {
             num_pools: DEFAULT_NUM_POOLS,
             fresh: false,
+            scenario: SeedScenario::All,
         }
     }
 }
@@ -149,6 +231,42 @@ pub fn build_seed_pools(num_pools: usize) -> Vec<SeedPool> {
         .collect()
 }
 
+/// Generate pool fixtures shaped by `scenario`.
+///
+/// Starts from [`build_seed_pools`] and then narrows the result: state-specific
+/// scenarios force every pool into that state, and `MultiToken` guarantees at
+/// least one pool per entry in [`SEED_TOKENS`].
+pub fn build_seed_pools_for_scenario(num_pools: usize, scenario: SeedScenario) -> Vec<SeedPool> {
+    // MultiToken needs enough pools to cover every token at least once.
+    let count = match scenario {
+        SeedScenario::MultiToken => num_pools.max(SEED_TOKENS.len()),
+        _ => num_pools,
+    };
+
+    build_seed_pools(count)
+        .into_iter()
+        .map(|mut pool| {
+            match scenario {
+                SeedScenario::All | SeedScenario::ReferralChain | SeedScenario::MultiToken => {}
+                SeedScenario::ActivePools => {
+                    pool.state = "active".to_string();
+                    pool.result = None;
+                }
+                SeedScenario::ClosedPools => {
+                    pool.state = "closed".to_string();
+                    pool.result = None;
+                }
+                SeedScenario::SettledPools => {
+                    pool.state = "settled".to_string();
+                    pool.result = Some((pool.pool_id % 2) as i32);
+                }
+            }
+            pool.description = format!("{} [{}]", pool.description, scenario.as_str());
+            pool
+        })
+        .collect()
+}
+
 /// Generate deterministic predictions for the given pools.
 ///
 /// Each pool receives 2–4 predictions from fixture wallets, with amounts
@@ -187,6 +305,32 @@ pub fn build_seed_referrals(pools: &[SeedPool]) -> Vec<SeedReferral> {
                 referrer: SEED_REFERRER.to_string(),
                 referred_user: referred.to_string(),
                 amount,
+            }
+        })
+        .collect()
+}
+
+/// Generate a multi-level referral chain across the fixture wallets.
+///
+/// Wallet `n` refers wallet `n + 1`, so referral earnings queries have a chain
+/// (rather than a single flat referrer) to walk. Pools are distributed across
+/// the chain links so every level carries at least one payment.
+pub fn build_seed_referral_chain(pools: &[SeedPool]) -> Vec<SeedReferral> {
+    // A chain of `SEED_WALLETS.len() - 1` links: 0→1, 1→2, 2→3, …
+    let links: Vec<(&str, &str)> = SEED_WALLETS.windows(2).map(|w| (w[0], w[1])).collect();
+    if links.is_empty() {
+        return Vec::new();
+    }
+
+    pools
+        .iter()
+        .map(|pool| {
+            let (referrer, referred) = links[(pool.pool_id as usize) % links.len()];
+            SeedReferral {
+                pool_id: pool.pool_id,
+                referrer: referrer.to_string(),
+                referred_user: referred.to_string(),
+                amount: 10 + ((pool.pool_id as i64) * 5),
             }
         })
         .collect()
@@ -353,9 +497,14 @@ pub async fn run_seed(pool: &PgPool, config: &SeedConfig) -> Result<SeedSummary,
         truncate_all(pool).await?;
     }
 
-    let pools = build_seed_pools(config.num_pools);
+    info!(scenario = config.scenario.as_str(), "building fixtures");
+
+    let pools = build_seed_pools_for_scenario(config.num_pools, config.scenario);
     let predictions = build_seed_predictions(&pools);
-    let referrals = build_seed_referrals(&pools);
+    let referrals = match config.scenario {
+        SeedScenario::ReferralChain => build_seed_referral_chain(&pools),
+        _ => build_seed_referrals(&pools),
+    };
 
     let pools_written = insert_seed_pools(pool, &pools).await?;
     let predictions_written = insert_seed_predictions(pool, &predictions).await?;
@@ -519,5 +668,91 @@ mod tests {
         let cfg = SeedConfig::default();
         assert_eq!(cfg.num_pools, DEFAULT_NUM_POOLS);
         assert!(!cfg.fresh);
+        assert_eq!(cfg.scenario, SeedScenario::All);
+    }
+
+    #[test]
+    fn scenario_names_round_trip_through_parse() {
+        for name in SeedScenario::NAMES {
+            let parsed = SeedScenario::parse(name)
+                .unwrap_or_else(|| panic!("{name} should be a known scenario"));
+            assert_eq!(parsed.as_str(), *name);
+            assert!(!parsed.description().is_empty());
+        }
+        assert_eq!(SeedScenario::parse("not-a-scenario"), None);
+    }
+
+    #[test]
+    fn state_scenarios_force_every_pool_into_that_state() {
+        let cases = [
+            (SeedScenario::ActivePools, "active"),
+            (SeedScenario::ClosedPools, "closed"),
+            (SeedScenario::SettledPools, "settled"),
+        ];
+        for (scenario, expected_state) in cases {
+            let pools = build_seed_pools_for_scenario(6, scenario);
+            assert_eq!(pools.len(), 6);
+            assert!(
+                pools.iter().all(|p| p.state == expected_state),
+                "{scenario:?} should produce only {expected_state} pools"
+            );
+        }
+    }
+
+    #[test]
+    fn settled_scenario_always_carries_a_result() {
+        let pools = build_seed_pools_for_scenario(5, SeedScenario::SettledPools);
+        assert!(pools.iter().all(|p| p.result.is_some()));
+
+        let open = build_seed_pools_for_scenario(5, SeedScenario::ActivePools);
+        assert!(open.iter().all(|p| p.result.is_none()));
+    }
+
+    #[test]
+    fn multi_token_scenario_covers_every_token() {
+        // Requesting fewer pools than tokens still covers the full token set.
+        let pools = build_seed_pools_for_scenario(2, SeedScenario::MultiToken);
+        assert!(pools.len() >= SEED_TOKENS.len());
+        for token in SEED_TOKENS {
+            assert!(
+                pools.iter().any(|p| p.token == *token),
+                "no seeded pool uses token {token}"
+            );
+        }
+    }
+
+    #[test]
+    fn all_scenario_matches_the_default_state_spread() {
+        let scoped = build_seed_pools_for_scenario(10, SeedScenario::All);
+        let base = build_seed_pools(10);
+        let states = |pools: &[SeedPool]| pools.iter().map(|p| p.state.clone()).collect::<Vec<_>>();
+        assert_eq!(states(&scoped), states(&base));
+    }
+
+    #[test]
+    fn referral_chain_links_distinct_wallets() {
+        let pools = build_seed_pools_for_scenario(8, SeedScenario::ReferralChain);
+        let chain = build_seed_referral_chain(&pools);
+
+        assert_eq!(chain.len(), pools.len());
+        assert!(
+            chain.iter().all(|r| r.referrer != r.referred_user),
+            "a wallet must never refer itself"
+        );
+        assert!(chain.iter().all(|r| r.amount > 0));
+
+        // More than one wallet acts as referrer, i.e. it really is a chain.
+        let referrers: std::collections::HashSet<_> =
+            chain.iter().map(|r| r.referrer.clone()).collect();
+        assert!(referrers.len() > 1, "chain should span multiple referrers");
+    }
+
+    #[test]
+    fn referral_chain_is_deterministic() {
+        let pools = build_seed_pools_for_scenario(6, SeedScenario::ReferralChain);
+        assert_eq!(
+            build_seed_referral_chain(&pools),
+            build_seed_referral_chain(&pools)
+        );
     }
 }

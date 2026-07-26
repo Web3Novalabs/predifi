@@ -845,6 +845,163 @@ pub async fn get_users_by_winnings(
     Ok(rankings)
 }
 
+/// A leaderboard entry supporting time-window and pool-scoped ranking (#1363).
+#[derive(Debug, serde::Serialize)]
+pub struct LeaderboardEntry {
+    pub user_address: String,
+    pub total_volume: i64,
+    pub prediction_count: i64,
+    pub wins: i64,
+    pub settled_count: i64,
+    pub win_rate: f64,
+    pub current_streak: i64,
+    pub rank: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct LeaderboardRow {
+    user_address: String,
+    total_volume: i64,
+    prediction_count: i64,
+    wins: i64,
+    settled_count: i64,
+    current_streak: i64,
+}
+
+/// Get leaderboard rankings with support for time-window filtering and
+/// optional per-pool scoping.
+///
+/// * `rank_by` - "volume" (default) | "win_rate" | "streak"
+/// * `period` - "week" | "month" | "all" (default)
+/// * `pool_id` - when `Some`, restricts the ranking to a single pool
+///
+/// `current_streak` counts each user's most recent consecutive wins across
+/// settled predictions (in the scope defined by `pool_id`/`period`), ordered
+/// by the pool's `end_time`.
+pub async fn get_leaderboard_extended(
+    pool: &PgPool,
+    rank_by: &str,
+    period: &str,
+    pool_id: Option<i64>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<LeaderboardEntry>, sqlx::Error> {
+    let order_by = match rank_by {
+        "win_rate" => {
+            "(CASE WHEN ua.settled_count > 0 THEN ua.wins::FLOAT / ua.settled_count ELSE 0 END)"
+        }
+        "streak" => "COALESCE(sc.current_streak, 0)",
+        _ => "ua.total_volume",
+    };
+
+    let sql = format!(
+        r#"
+        WITH scoped_predictions AS (
+            SELECT p.user_address, p.pool_id, p.amount, p.outcome, p.created_at,
+                   pl.state, pl.result, pl.end_time
+            FROM predictions p
+            JOIN pools pl ON pl.pool_id = p.pool_id
+            WHERE ($3::bigint IS NULL OR p.pool_id = $3)
+              AND ($4::timestamptz IS NULL OR p.created_at >= $4)
+        ),
+        outcome_flags AS (
+            SELECT
+                user_address,
+                amount,
+                end_time,
+                state,
+                CASE
+                    WHEN state = 'settled' AND result IS NOT NULL AND outcome = CAST(result AS INTEGER)
+                    THEN 1 ELSE 0
+                END AS is_win
+            FROM scoped_predictions
+        ),
+        user_agg AS (
+            SELECT
+                user_address,
+                SUM(amount) AS total_volume,
+                COUNT(*) AS prediction_count,
+                SUM(CASE WHEN state = 'settled' THEN 1 ELSE 0 END) AS settled_count,
+                SUM(is_win) AS wins
+            FROM outcome_flags
+            GROUP BY user_address
+        ),
+        ranked_settled AS (
+            SELECT
+                user_address,
+                is_win,
+                ROW_NUMBER() OVER (PARTITION BY user_address ORDER BY end_time DESC) AS rn
+            FROM outcome_flags
+            WHERE state = 'settled'
+        ),
+        streak_groups AS (
+            SELECT
+                user_address,
+                is_win,
+                rn,
+                SUM(CASE WHEN is_win = 0 THEN 1 ELSE 0 END)
+                    OVER (PARTITION BY user_address ORDER BY rn) AS loss_group
+            FROM ranked_settled
+        ),
+        streak_calc AS (
+            SELECT user_address, COUNT(*) AS current_streak
+            FROM streak_groups
+            WHERE is_win = 1 AND loss_group = 0
+            GROUP BY user_address
+        )
+        SELECT
+            ua.user_address,
+            ua.total_volume,
+            ua.prediction_count,
+            COALESCE(ua.wins, 0) AS wins,
+            COALESCE(ua.settled_count, 0) AS settled_count,
+            COALESCE(sc.current_streak, 0) AS current_streak
+        FROM user_agg ua
+        LEFT JOIN streak_calc sc ON sc.user_address = ua.user_address
+        ORDER BY {order_by} DESC
+        LIMIT $1 OFFSET $2
+        "#
+    );
+
+    let cutoff: Option<DateTime<Utc>> = match period {
+        "week" => Some(Utc::now() - chrono::Duration::days(7)),
+        "month" => Some(Utc::now() - chrono::Duration::days(30)),
+        _ => None,
+    };
+
+    let rows = sqlx::query_as::<_, LeaderboardRow>(&sql)
+        .bind(limit)
+        .bind(offset)
+        .bind(pool_id)
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await?;
+
+    let rankings = rows
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let win_rate = if row.settled_count > 0 {
+                row.wins as f64 / row.settled_count as f64
+            } else {
+                0.0
+            };
+            LeaderboardEntry {
+                user_address: row.user_address,
+                total_volume: row.total_volume,
+                prediction_count: row.prediction_count,
+                wins: row.wins,
+                settled_count: row.settled_count,
+                win_rate,
+                current_streak: row.current_streak,
+                rank: offset + index as i64 + 1,
+            }
+        })
+        .collect();
+
+    Ok(rankings)
+}
+
 /// Run `operation` inside a database transaction, committing on success.
 #[instrument(skip(pool), name = "db.insert_prediction_from_event_with_pool",
     fields(pool_id = event.pool_id, user_address = %event.user_address))]
@@ -869,11 +1026,13 @@ pub async fn resolve_pool_in_db<'e, E>(
 where
     E: Executor<'e, Database = Postgres>,
 {
-    sqlx::query("UPDATE pools SET state = 'settled', result = $1 WHERE pool_id = $2")
-        .bind(winning_outcome.to_string())
-        .bind(pool_id as i64)
-        .execute(executor)
-        .await?;
+    sqlx::query(
+        "UPDATE pools SET state = 'settled', result = $1, resolved_at = NOW() WHERE pool_id = $2",
+    )
+    .bind(winning_outcome.to_string())
+    .bind(pool_id as i64)
+    .execute(executor)
+    .await?;
     Ok(())
 }
 
@@ -891,14 +1050,12 @@ where
 }
 
 /// Insert a new pool record decoded from a `PoolCreated` contract event.
-#[instrument(skip(executor), name = "db.insert_pool_from_event",
+#[instrument(skip(pool), name = "db.insert_pool_from_event",
     fields(pool_id = event.pool_id, creator = %event.creator))]
-pub async fn insert_pool_from_event<'e, E>(
-    executor: E,
+pub async fn insert_pool_from_event(
+    pool: &sqlx::PgPool,
     event: &PoolCreatedEvent,
 ) -> Result<(), sqlx::Error>
-where
-    E: Executor<'e, Database = Postgres>,
 {
     sqlx::query(
         r#"
@@ -913,7 +1070,7 @@ where
     .bind(event.end_time as f64)
     .bind(&event.creator)
     .bind(&event.token)
-    .execute(executor)
+    .execute(pool)
     .await?;
 
     record_pool_created_for_creator(pool, &event.creator).await?;
@@ -1343,6 +1500,11 @@ pub async fn advance_pool_template(pool: &PgPool, template_id: i64) -> Result<()
     )
     .bind(template_id)
     .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 /// Decoded data from a `prediction_placed` contract event.
 #[derive(Debug)]
 pub struct PredictionPlacedEvent {
