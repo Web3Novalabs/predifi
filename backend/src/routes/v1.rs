@@ -954,9 +954,9 @@ pub fn router(
             .route("/pools/:id", get(get_pool_by_id_handler))
             .route("/stats", get(get_stats))
             .route("/leaderboard", get(get_leaderboard))
-            .route("/referrals/{address}", get(referrals_handler))
+            .route("/referrals/:address", get(referrals_handler))
             .route(
-                "/referrals/{address}/estimate",
+                "/referrals/:address/estimate",
                 get(referral_estimate_handler),
             )
             .route("/markets/:id/predictions", get(get_market_predictions))
@@ -967,10 +967,10 @@ pub fn router(
     // User tier — per-user history and predictions.
     let user = with_rate_limit(
         Router::new()
-            .route("/users/{address}/history", get(get_user_history))
-            .route("/users/{address}/predictions", get(get_user_predictions))
+            .route("/users/:address/history", get(get_user_history))
+            .route("/users/:address/predictions", get(get_user_predictions))
             .route(
-                "/users/{address}/referrals",
+                "/users/:address/referrals",
                 get(user_referral_earnings_handler),
             )
             .with_state(state.clone()),
@@ -986,25 +986,14 @@ pub fn router(
         RateLimitTier::Write,
     );
 
+    // Routes without a rate-limit tier of their own. Anything already served by
+    // `light`/`read`/`user`/`write` above must NOT be repeated here: `merge`
+    // panics on an overlapping method route, which would take down the whole
+    // server at startup.
     Router::new()
-        .route("/", get(index))
-        .route("/health", get(health))
-        .route("/pools", get(get_pools))
-        .route("/pools/:id", get(get_pool_by_id_handler))
-        .route("/leaderboard", get(get_leaderboard))
-        .route("/fees", get(get_fees))
-        .route("/prices", get(crate::price_cache::get_prices))
-        .route("/referrals/{address}", get(referrals_handler))
+        .route("/creators/:address/stats", get(get_creator_stats_handler))
         .route(
-            "/users/{address}/referrals",
-            get(user_referral_earnings_handler),
-        )
-        .route("/users/{address}/history", get(get_user_history))
-        .route("/users/{address}/predictions", get(get_user_predictions))
-        .route("/indexer/pool-created", post(ingest_pool_created))
-        .route("/creators/{address}/stats", get(get_creator_stats_handler))
-        .route(
-            "/pools/{id}/pay-creator-incentive",
+            "/pools/:id/pay-creator-incentive",
             post(pay_creator_incentive_handler),
         )
         .route(

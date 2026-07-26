@@ -85,7 +85,7 @@ export default function SettingsPage() {
         {/* Layout */}
         <div className="flex flex-col lg:flex-row gap-6 lg:gap-8">
           <SettingsSidebar activeTab={activeTab} onTabChange={setActiveTab} />
-          <main className="flex-1 min-w-0">
+          <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
             <div
               key={activeTab}
               className="animate-fade-in rounded-xl border border-zinc-800 bg-zinc-900 p-6"

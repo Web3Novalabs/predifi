@@ -108,7 +108,7 @@ const Footer = dynamic(() => import("./(marketing)/components/Footer"), {
 export default function Home() {
   return (
     <div className="text-sm min-h-screen bg-[#001112]">
-      <main className="w-full overflow-x-hidden">
+      <main id="main-content" tabIndex={-1} className="w-full overflow-x-hidden">
         {/* Above the fold — eagerly loaded */}
         <NavBar />
         <HeroSection />
