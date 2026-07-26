@@ -2,8 +2,10 @@
 
 import { useMemo, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle, Skeleton, SearchBar } from "@/components/ui";
+import { cn } from "@/lib/utils";
 import { SearchResultHighlighter } from "@/components/search/SearchResultHighlighter";
 import { usePools } from "@/lib/hooks/usePools";
+import { useTags } from "@/lib/hooks/useTags";
 import type { Pool } from "@/lib/api/pools";
 
 interface PoolsListProps {
@@ -16,6 +18,8 @@ export function PoolsList({
   forceLoading = false,
 }: PoolsListProps) {
   const [query, setQuery] = useState("");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const { tags: availableTags } = useTags();
   const {
     pools,
     total,
@@ -25,9 +29,15 @@ export function PoolsList({
   } = usePools({
     status: "active",
     sort_by: "new",
+    tags: selectedTags.length > 0 ? selectedTags : undefined,
   });
   const handleSearch = useCallback((value: string) => {
     setQuery(value.trim());
+  }, []);
+  const toggleTag = useCallback((tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
   }, []);
   const filteredPools = useMemo(() => {
     const normalizedQuery = query.toLowerCase();
@@ -81,6 +91,29 @@ export function PoolsList({
           onSearch={handleSearch}
           aria-label="Search pools"
         />
+        {availableTags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {availableTags.map((tag) => {
+              const active = selectedTags.includes(tag);
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => toggleTag(tag)}
+                  aria-pressed={active}
+                  className={cn(
+                    "rounded-full px-2.5 py-1 text-[11px] font-medium border transition-colors",
+                    active
+                      ? "bg-[#37B7C3]/15 border-[#37B7C3]/40 text-[#7DE3EC]"
+                      : "border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:border-zinc-700",
+                  )}
+                >
+                  #{tag}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {isError ? (
@@ -122,6 +155,11 @@ function PoolRow({ pool, query }: { pool: Pool; query: string }) {
           {" · "}
           {pool.total_stake.toLocaleString()} {pool.token}
         </p>
+        {pool.tags.length > 0 && (
+          <p className="text-[10px] text-zinc-600 truncate">
+            {pool.tags.map((t) => `#${t}`).join(" ")}
+          </p>
+        )}
       </div>
       <span className="shrink-0 rounded-full bg-emerald-400/10 px-3 py-1 text-xs font-medium capitalize text-emerald-400">
         {pool.state}

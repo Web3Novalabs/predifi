@@ -414,6 +414,17 @@ where
             .await;
         });
 
+    // Periodically sweeps pool/prediction state to generate notifications
+    // (pool ending soon, resolved, claim window expiring, interest matches).
+    // Every insert is deduplicated on the DB side, so this can run on a fixed
+    // interval without ever double-notifying a user.
+    let notifications_pool = pool.clone();
+    let notifications_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("notification_sweep", async move {
+            crate::notifications::run_sweep_loop(notifications_pool, Duration::from_secs(300))
+                .await;
+        });
+
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
@@ -465,6 +476,7 @@ where
     // Abort workers before closing the pool so they cannot race it.
     fetcher_handle.abort();
     listener_handle.abort();
+    notifications_handle.abort();
 
     // Close the pool after aborting workers.
     shutdown::with_shutdown_timeout(drain_timeout, "database pool close", pool.close()).await;

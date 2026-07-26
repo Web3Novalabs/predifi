@@ -20,6 +20,7 @@ const INITIAL_VALUES: CreatePoolFormValues = {
   name: "",
   description: "",
   category: "",
+  tags: "",
   optionA: "",
   optionB: "",
   minStake: "",
@@ -480,6 +481,17 @@ export function CreatePoolForm() {
           placeholder="Select a category"
           error={errors.category}
           disabled={isSubmitting}
+        />
+
+        <Input
+          id="tags"
+          label="Tags (optional)"
+          placeholder="e.g. btc, price-prediction, halving"
+          value={values.tags}
+          onChange={(e) => setField("tags", e.target.value)}
+          helperText="Comma-separated. Helps participants filter and find your pool."
+          disabled={isSubmitting}
+          autoComplete="off"
         />
       </FormSection>
 

@@ -24,6 +24,8 @@ export interface Pool {
   pool_id: number;
   name: string;
   category: string;
+  /** Free-form tags assigned by the creator, e.g. `["btc", "price-prediction"]`. */
+  tags: string[];
   /** Total amount staked across the pool, in the token's base units. */
   total_stake: number;
   /** Pool close time as a Unix timestamp (seconds). */
@@ -53,6 +55,8 @@ export interface PoolsQuery {
   sort_by?: "popular" | "ending_soon" | "new";
   /** Category filter, e.g. `"Sports"` or `"Crypto"`. */
   category?: string;
+  /** Tag filter — a pool matches if any of its tags overlap this list. */
+  tags?: string[];
   /** Lifecycle filter. Defaults to `"active"` on the backend. */
   status?: "active" | "closed" | "settled";
   limit?: number;
@@ -69,6 +73,7 @@ export function poolsUrl(query: PoolsQuery = {}): string {
   const params = new URLSearchParams();
   if (query.sort_by) params.set("sort_by", query.sort_by);
   if (query.category) params.set("category", query.category);
+  if (query.tags && query.tags.length > 0) params.set("tags", query.tags.join(","));
   if (query.status) params.set("status", query.status);
   if (query.limit != null) params.set("limit", String(query.limit));
   if (query.offset != null) params.set("offset", String(query.offset));
