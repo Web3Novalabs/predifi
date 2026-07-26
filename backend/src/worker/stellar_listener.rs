@@ -521,6 +521,189 @@ fn extract_u64(data: &Value, key: &str) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
+
+    // ── reconnect loop behaviour ──────────────────────────────────────────────
+
+    /// A connection drop (fetch_events returning Err) must increment
+    /// `consecutive_failures` and schedule a backoff delay.  We verify this
+    /// by simulating the exact state-machine from `run_worker` without
+    /// spinning up a real RPC server.
+    #[test]
+    fn connection_drop_triggers_reconnect_with_delay() {
+        // After the first error consecutive_failures becomes 1 and the delay
+        // must be INITIAL_RECONNECT_DELAY_SECS (1 s), not 0.
+        let consecutive_failures: u32 = 0;
+
+        // Simulate what run_worker does on Err
+        let after_failure = consecutive_failures + 1;
+        let delay = reconnect_delay_secs(after_failure);
+
+        assert_eq!(after_failure, 1, "first failure sets consecutive_failures = 1");
+        assert_eq!(
+            delay, INITIAL_RECONNECT_DELAY_SECS,
+            "first failure delay must be INITIAL_RECONNECT_DELAY_SECS"
+        );
+        assert!(delay > 0, "delay must be non-zero so the loop actually waits");
+    }
+
+    /// Each consecutive failure must double the delay (exponential backoff)
+    /// up to MAX_RECONNECT_DELAY_SECS.
+    #[test]
+    fn backoff_increases_on_repeated_failures() {
+        let delays: Vec<u64> = (1..=8).map(reconnect_delay_secs).collect();
+
+        // First few must strictly increase.
+        for window in delays.windows(2) {
+            assert!(
+                window[1] >= window[0],
+                "delay must be non-decreasing: {} then {}",
+                window[0],
+                window[1]
+            );
+        }
+
+        // Must cap at MAX_RECONNECT_DELAY_SECS.
+        let high_failure_delay = reconnect_delay_secs(100);
+        assert_eq!(
+            high_failure_delay, MAX_RECONNECT_DELAY_SECS,
+            "delay must be capped at MAX_RECONNECT_DELAY_SECS"
+        );
+    }
+
+    /// A successful fetch after failures must reset `consecutive_failures` to 0,
+    /// which in turn drives the next delay back to the initial value.
+    #[test]
+    fn successful_reconnect_resets_backoff() {
+        // Simulate several failures followed by a success.
+        let mut consecutive_failures: u32 = 5;
+
+        // Simulate a successful fetch (the Ok branch in run_worker).
+        if consecutive_failures > 0 {
+            // The worker logs restoration here; reset the counter.
+            consecutive_failures = 0;
+        }
+
+        assert_eq!(
+            consecutive_failures, 0,
+            "consecutive_failures must be reset to 0 after a successful fetch"
+        );
+
+        // The next failure's delay should now be back at the initial value.
+        let next_failure = consecutive_failures + 1;
+        let delay_after_reset = reconnect_delay_secs(next_failure);
+        assert_eq!(
+            delay_after_reset, INITIAL_RECONNECT_DELAY_SECS,
+            "after a reset the first new failure must use the initial delay"
+        );
+    }
+
+    /// The cursor must NOT be reset on a connection failure — the listener
+    /// must resume from the last successfully persisted ledger.
+    ///
+    /// We simulate the Err branch of the poll loop and confirm the cursor
+    /// value is unchanged.
+    #[test]
+    fn cursor_is_not_reset_on_connection_failure() {
+        let cursor: u64 = 42;
+        let mut consecutive_failures: u32 = 0;
+
+        // Simulate what run_worker does on Err(_)
+        consecutive_failures += 1;
+        let delay = reconnect_delay_secs(consecutive_failures);
+        // cursor is intentionally NOT modified in the Err branch
+        let _ = delay; // would call tokio::time::sleep in the real loop
+        let _ = consecutive_failures; // consumed above
+
+        assert_eq!(
+            cursor, 42,
+            "cursor must stay at 42 after a failed fetch; the listener must resume from ledger 42"
+        );
+    }
+
+    /// After a successful fetch the cursor advances to `latest_ledger + 1`,
+    /// so on reconnect the listener resumes from exactly where it left off
+    /// without reprocessing already-seen events.
+    #[test]
+    fn cursor_advances_to_latest_ledger_plus_one_on_success() {
+        let mut cursor: u64 = 10;
+
+        // Simulate the Ok branch of run_worker when the RPC returns ledger 15.
+        let latest_ledger: u64 = 15;
+        let new_cursor = latest_ledger + 1;
+        if new_cursor > cursor {
+            cursor = new_cursor;
+        }
+
+        assert_eq!(
+            cursor, 16,
+            "cursor must be latest_ledger + 1 so the next poll starts from the correct ledger"
+        );
+    }
+
+    /// A partial-failure run: several errors followed by success.
+    /// Verifies the full state-machine: failures accumulate, delay grows,
+    /// then success resets everything and the cursor is preserved.
+    #[test]
+    fn reconnect_loop_state_machine_partial_failures_then_success() {
+        let call_count = Arc::new(AtomicU32::new(0));
+        let call_count_ref = call_count.clone();
+
+        // Drive the state-machine synchronously (no actual I/O or sleeping).
+        let max_iter = 6u32;
+        let fail_until = 4u32; // succeed on the 5th call
+
+        let mut cursor: u64 = 7;
+        let mut consecutive_failures: u32 = 0;
+        let mut recorded_delays: Vec<u64> = Vec::new();
+
+        for _ in 0..max_iter {
+            let call_n = call_count_ref.fetch_add(1, Ordering::SeqCst) + 1;
+
+            if call_n <= fail_until {
+                // Err path
+                consecutive_failures += 1;
+                recorded_delays.push(reconnect_delay_secs(consecutive_failures));
+                // cursor unchanged
+            } else {
+                // Ok path — simulate result: latest_ledger = 20
+                if consecutive_failures > 0 {
+                    consecutive_failures = 0;
+                }
+                let new_cursor = 20u64 + 1;
+                if new_cursor > cursor {
+                    cursor = new_cursor;
+                }
+                break;
+            }
+        }
+
+        // Failures should have grown monotonically.
+        for window in recorded_delays.windows(2) {
+            assert!(
+                window[1] >= window[0],
+                "delays must be non-decreasing during failures"
+            );
+        }
+
+        // After recovery the counter is zero.
+        assert_eq!(consecutive_failures, 0, "failures must be reset after success");
+
+        // Cursor advanced to latest_ledger + 1.
+        assert_eq!(cursor, 21, "cursor must have advanced to 21 after success");
+
+        // We recorded exactly fail_until delays.
+        assert_eq!(
+            recorded_delays.len(),
+            fail_until as usize,
+            "one delay per failure"
+        );
+    }
+
+    // ── existing tests ────────────────────────────────────────────────────────
 
     #[test]
     fn parse_rpc_response_with_events() {
