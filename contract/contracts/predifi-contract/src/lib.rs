@@ -3,6 +3,8 @@
 
 mod benchmark_test;
 mod constants;
+mod gas_opt;
+mod payouts;
 #[cfg(test)]
 mod payout_proptests;
 mod price_feed;
@@ -23,6 +25,10 @@ use soroban_sdk::{
 };
 
 pub use constants::*;
+pub use payouts::{
+    calculate_claim_payout, calculate_odds_bps, calculate_protocol_fee, calculate_referral_amount,
+    calculate_winnings, PayoutBreakdown, PayoutInput,
+};
 pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
 
@@ -1624,11 +1630,7 @@ impl PredifiContract {
     /// Used for markets with many outcomes (e.g., 32+ teams tournament).
     #[allow(dead_code)]
     fn init_outcome_stakes(env: &Env, options_count: u32) -> Vec<i128> {
-        let mut stakes = Vec::new(env);
-        for _ in 0..options_count {
-            stakes.push_back(0);
-        }
-        stakes
+        gas_opt::alloc_zero_stakes(env, options_count)
     }
 
     /// Get outcome stakes for a pool using optimized batch storage.
@@ -1640,18 +1642,26 @@ impl PredifiContract {
             stakes
         } else {
             // Fallback: reconstruct from individual outcome stakes (backward compatibility)
-            let mut stakes = Vec::new(env);
+            // Migrate into the batch key so subsequent reads are O(1) storage IO.
+            let mut stakes = gas_opt::alloc_zero_stakes(env, options_count);
             for i in 0..options_count {
                 let outcome_key = DataKey::OutStake(pool_id, i);
                 let stake: i128 = env.storage().persistent().get(&outcome_key).unwrap_or(0);
-                stakes.push_back(stake);
+                if stake != 0 {
+                    stakes.set(i, stake);
+                }
             }
+            env.storage().persistent().set(&key, &stakes);
+            Self::extend_persistent(env, &key);
             stakes
         }
     }
 
-    /// Update outcome stake at a specific index and persist using optimized batch storage.
-    /// Also maintains backward compatibility with individual outcome stake keys.
+    /// Update outcome stake at a specific index and persist using batch storage only.
+    ///
+    /// Gas optimization: a single `OutStakes` write replaces the previous dual-write
+    /// (`OutStakes` + per-outcome `OutStake`), cutting ~1 persistent write + TTL bump
+    /// per `place_prediction` call.
     ///
     /// # Panics
     /// Panics if `outcome >= options_count` to prevent unbounded storage growth.
@@ -1668,20 +1678,12 @@ impl PredifiContract {
         }
 
         let mut stakes = Self::get_outcome_stakes(env, pool_id, options_count);
-        let current = stakes.get(outcome).unwrap_or(0);
-        stakes.set(outcome, current + amount);
+        gas_opt::apply_stake_delta(&mut stakes, outcome, amount);
 
-        // Store using optimized batch key
+        // Single batch persist — no dual-write of individual OutStake keys
         let key = DataKey::OutStakes(pool_id);
         env.storage().persistent().set(&key, &stakes);
         Self::extend_persistent(env, &key);
-
-        // Also update individual key for backward compatibility
-        let outcome_key = DataKey::OutStake(pool_id, outcome);
-        env.storage()
-            .persistent()
-            .set(&outcome_key, &(current + amount));
-        Self::extend_persistent(env, &outcome_key);
 
         stakes
     }
@@ -3239,10 +3241,7 @@ impl PredifiContract {
         Self::bump_ttl(&env, &pc_key);
 
         // Initialize optimized batch storage with zeros to avoid expensive fallback reads
-        let mut initial_stakes = Vec::new(&env);
-        for _ in 0..options_count {
-            initial_stakes.push_back(0i128);
-        }
+        let initial_stakes = gas_opt::alloc_zero_stakes(&env, options_count);
         let stakes_key = DataKey::OutStakes(pool_id);
         env.storage().persistent().set(&stakes_key, &initial_stakes);
         Self::extend_persistent(&env, &stakes_key);
@@ -4279,14 +4278,13 @@ impl PredifiContract {
             }
 
             let pred_key = DataKey::Pred(user.clone(), pool_id);
+            // Single get — avoid redundant has() storage read on the hot claim path
             let prediction: Option<Prediction> = env.storage().persistent().get(&pred_key);
-
-            if env.storage().persistent().has(&pred_key) {
-                Self::extend_persistent(env, &pred_key);
-            }
-
             let prediction = match prediction {
-                Some(p) => p,
+                Some(p) => {
+                    Self::extend_persistent(env, &pred_key);
+                    p
+                }
                 None => return Ok(0),
             };
 
@@ -4358,16 +4356,17 @@ impl PredifiContract {
                 let config = Self::get_config(env);
                 config.fee_bps as i128
             };
-            let protocol_fee_total =
-                SafeMath::percentage(pool.total_stake, fee_bps_i, RoundingMode::ProtocolFavor)
-                    .map_err(|_| PredifiError::InvalidAmount)?;
-            let payout_pool = pool
-                .total_stake
-                .checked_sub(protocol_fee_total)
-                .ok_or(PredifiError::InvalidAmount)?;
 
-            let winnings = SafeMath::calculate_share(prediction.amount, winning_stake, payout_pool)
-                .map_err(|_| PredifiError::InvalidAmount)?;
+            // Payout math lives in `payouts` — keeps lib.rs focused on orchestration
+            let breakdown = calculate_claim_payout(&PayoutInput {
+                pool_total_stake: pool.total_stake,
+                fee_bps: fee_bps_i,
+                user_stake: prediction.amount,
+                winning_stake,
+            })
+            .map_err(|_| PredifiError::InvalidAmount)?;
+            let protocol_fee_total = breakdown.protocol_fee;
+            let winnings = breakdown.winnings;
 
             assert!(winnings <= pool.total_stake, "Winnings exceed total stake");
 
@@ -4377,18 +4376,12 @@ impl PredifiContract {
             if let Some(referrer) = env.storage().persistent().get::<_, Address>(&referrer_key) {
                 Self::extend_persistent(env, &referrer_key);
                 if protocol_fee_total > 0 && pool.total_stake > 0 {
-                    let protocol_fee_share = SafeMath::proportion(
+                    let referral_cut_bps = Self::read_referral_cut_bps(env) as i128;
+                    let referral_amount = calculate_referral_amount(
                         prediction.amount,
                         pool.total_stake,
                         protocol_fee_total,
-                        RoundingMode::Neutral,
-                    )
-                    .map_err(|_| PredifiError::InvalidAmount)?;
-                    let referral_cut_bps = Self::read_referral_cut_bps(env) as i128;
-                    let referral_amount = SafeMath::percentage(
-                        protocol_fee_share,
                         referral_cut_bps,
-                        RoundingMode::Neutral,
                     )
                     .map_err(|_| PredifiError::InvalidAmount)?;
                     if referral_amount > 0 {
@@ -4777,25 +4770,23 @@ impl PredifiContract {
 
     /// Get a specific outcome's stake (backward compatible).
     ///
-    /// Optimized to read the batch `OutStakes` key directly when available,
-    /// avoiding a full `Pool` struct deserialization. Falls back to loading
-    /// the pool only when the batch key is missing (pre-optimization data).
+    /// Prefers the batch `OutStakes` key (single read for all outcomes). Falls
+    /// back to the legacy per-outcome `OutStake` key for pre-migration data.
     pub fn get_outcome_stake(env: Env, pool_id: u64, outcome: u32) -> i128 {
-        // Optimization: Try individual key first (most common case, cheapest to read)
-        let stake_key = DataKey::OutStake(pool_id, outcome);
-        if let Some(stake) = env.storage().persistent().get::<_, i128>(&stake_key) {
-            Self::extend_persistent(&env, &stake_key);
-            return stake;
-        }
-
-        // Fallback: Try optimized batch key
+        // Prefer batch key — canonical after gas optimization (no dual-write)
         let batch_key = DataKey::OutStakes(pool_id);
         if let Some(stakes) = env.storage().persistent().get::<_, Vec<i128>>(&batch_key) {
             Self::extend_persistent(&env, &batch_key);
             return stakes.get(outcome).unwrap_or(0);
         }
 
-        // Final fallback: reconstructed if neither exists (unlikely in modern version)
+        // Legacy fallback: individual key
+        let stake_key = DataKey::OutStake(pool_id, outcome);
+        if let Some(stake) = env.storage().persistent().get::<_, i128>(&stake_key) {
+            Self::extend_persistent(&env, &stake_key);
+            return stake;
+        }
+
         0
     }
 
@@ -5247,6 +5238,10 @@ impl PredifiContract {
     }
 
     /// Get comprehensive stats for a pool.
+    ///
+    /// Gas notes: uses the in-pool `participants_count` (avoids an extra
+    /// `PartCnt` storage round-trip) and computes odds from the already-loaded
+    /// stakes vec via [`gas_opt::odds_from_stakes`].
     pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -5257,39 +5252,13 @@ impl PredifiContract {
         Self::extend_persistent(&env, &pool_key);
 
         let stakes = Self::get_outcome_stakes(&env, pool_id, pool.options_count);
-
-        let pc_key = DataKey::PartCnt(pool_id);
-        let participants_count: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
-        if env.storage().persistent().has(&pc_key) {
-            Self::extend_persistent(&env, &pc_key);
-        }
-
-        let mut current_odds = Vec::new(&env);
-        for stake in stakes.iter() {
-            if stake == 0 {
-                current_odds.push_back(0);
-            } else {
-                // Include initial_liquidity in the denominator so odds reflect
-                // the true probability including house money.
-                let total_for_odds = pool.total_stake;
-                let odds = if total_for_odds <= 0 {
-                    0
-                } else {
-                    total_for_odds
-                        .checked_mul(10000)
-                        .expect("overflow")
-                        .checked_div(stake)
-                        .unwrap_or(0)
-                };
-                current_odds.push_back(odds as u64);
-            }
-        }
+        let current_odds = gas_opt::odds_from_stakes(&env, &stakes, pool.total_stake);
 
         PoolStats {
             pool_id,
             total_stake: pool.total_stake,
             stakes_per_outcome: stakes,
-            participants_count,
+            participants_count: pool.participants_count,
             current_odds,
         }
     }
