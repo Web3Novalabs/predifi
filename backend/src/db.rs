@@ -1026,11 +1026,13 @@ pub async fn resolve_pool_in_db<'e, E>(
 where
     E: Executor<'e, Database = Postgres>,
 {
-    sqlx::query("UPDATE pools SET state = 'settled', result = $1 WHERE pool_id = $2")
-        .bind(winning_outcome.to_string())
-        .bind(pool_id as i64)
-        .execute(executor)
-        .await?;
+    sqlx::query(
+        "UPDATE pools SET state = 'settled', result = $1, resolved_at = NOW() WHERE pool_id = $2",
+    )
+    .bind(winning_outcome.to_string())
+    .bind(pool_id as i64)
+    .execute(executor)
+    .await?;
     Ok(())
 }
 

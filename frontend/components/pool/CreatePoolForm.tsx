@@ -524,6 +524,17 @@ export function CreatePoolForm() {
           error={errors.category}
           disabled={isSubmitting}
         />
+
+        <Input
+          id="tags"
+          label="Tags (optional)"
+          placeholder="e.g. btc, price-prediction, halving"
+          value={values.tags}
+          onChange={(e) => setField("tags", e.target.value)}
+          helperText="Comma-separated. Helps participants filter and find your pool."
+          disabled={isSubmitting}
+          autoComplete="off"
+        />
       </FormSection>
 
       {/* ── 2. Prediction Options ── */}
