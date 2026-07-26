@@ -39,6 +39,8 @@ export interface CreatePoolFormValues {
   description: string;
   /** Category bucket this pool belongs to. */
   category: PoolCategory | "";
+  /** Free-form comma-separated tags (e.g. "btc, price-prediction"). Optional. */
+  tags: string;
   /** Option A label (e.g. "Yes", "Team A wins"). */
   optionA: string;
   /** Option B label (e.g. "No", "Team B wins"). */
