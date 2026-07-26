@@ -11,7 +11,7 @@ use tokio::time::{sleep, Duration as TokioDuration};
 use crate::config::Config;
 use crate::db::PoolCreatedEvent;
 use crate::pool_cache::PoolCache;
-use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
+use crate::db::PredictionPlacedEvent;
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
@@ -113,6 +113,22 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
         all_healthy = false;
     }
 
+    let mut disk_status = "ok";
+    let mut disk_error = String::new();
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    if let Some(disk) = disks.first() {
+        let available = disk.available_space();
+        let total = disk.total_space();
+        if total > 0 && (available as f64 / total as f64) < 0.05 {
+            disk_status = "degraded";
+            disk_error = format!("Low disk space: {}/{} bytes available", available, total);
+            all_healthy = false;
+        }
+    } else {
+        disk_status = "unknown";
+        disk_error = String::from("Could not determine disk space");
+    }
+
     let body = serde_json::json!({
         "status": if all_healthy { "ok" } else { "error" },
         "version": "v1",
@@ -120,13 +136,15 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
             "db": db_status,
             "rpc": rpc_status,
             "redis": redis_status,
-            "price_cache": price_cache_status
+            "price_cache": price_cache_status,
+            "disk": disk_status
         },
         "errors": {
             "db": if db_status == "unreachable" { Some(db_error.clone()) } else { None },
             "rpc": if rpc_status == "unreachable" { Some(last_error.clone()) } else { None },
             "redis": if redis_status == "unreachable" { Some(redis_error.clone()) } else { None },
-            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None }
+            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None },
+            "disk": if disk_status != "ok" { Some(disk_error) } else { None }
         }
     });
 
@@ -229,13 +247,13 @@ pub struct PoolsResponse {
 pub async fn get_pool_by_id_handler(
     State(state): State<AppState>,
     Path(pool_id): Path<i64>,
-) -> Json<serde_json::Value> {
-    if let Some(cached) = state.pool_cache.get(pool_id) {
-        return Json(json!(cached));
-    }
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    if let Some(cached) = state.pool_cache.get(pool_id) {
+        return ApiResponse::success(cached).into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -249,11 +267,8 @@ pub async fn get_pool_by_id_handler(
     match crate::db::get_pool_with_odds(db, pool_id).await {
         Ok(Some(pool)) => {
             state.pool_cache.set(pool_id, pool.clone());
-            Json(json!(pool))
+            ApiResponse::success(pool).into_response()
         }
-        Ok(None) => Json(json!({ "error": "pool not found" })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
-        Ok(Some(pool)) => ApiResponse::success(pool).into_response(),
         Ok(None) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
@@ -1272,7 +1287,7 @@ pub fn router(
             .route("/tags", get(list_tags_handler))
             .route("/referrals/{address}", get(referrals_handler))
             .route(
-                "/referrals/{address}/estimate",
+                "/referrals/:address/estimate",
                 get(referral_estimate_handler),
             )
             .route("/markets/:id/predictions", get(get_market_predictions))
@@ -1287,7 +1302,7 @@ pub fn router(
             .route("/users/{address}/predictions", get(get_user_predictions))
             .route("/users/{address}/profile", get(get_user_profile_handler))
             .route(
-                "/users/{address}/referrals",
+                "/users/:address/referrals",
                 get(user_referral_earnings_handler),
             )
             .route(
@@ -1317,25 +1332,14 @@ pub fn router(
         RateLimitTier::Write,
     );
 
+    // Routes without a rate-limit tier of their own. Anything already served by
+    // `light`/`read`/`user`/`write` above must NOT be repeated here: `merge`
+    // panics on an overlapping method route, which would take down the whole
+    // server at startup.
     Router::new()
-        .route("/", get(index))
-        .route("/health", get(health))
-        .route("/pools", get(get_pools))
-        .route("/pools/:id", get(get_pool_by_id_handler))
-        .route("/leaderboard", get(get_leaderboard))
-        .route("/fees", get(get_fees))
-        .route("/prices", get(crate::price_cache::get_prices))
-        .route("/referrals/{address}", get(referrals_handler))
+        .route("/creators/:address/stats", get(get_creator_stats_handler))
         .route(
-            "/users/{address}/referrals",
-            get(user_referral_earnings_handler),
-        )
-        .route("/users/{address}/history", get(get_user_history))
-        .route("/users/{address}/predictions", get(get_user_predictions))
-        .route("/indexer/pool-created", post(ingest_pool_created))
-        .route("/creators/{address}/stats", get(get_creator_stats_handler))
-        .route(
-            "/pools/{id}/pay-creator-incentive",
+            "/pools/:id/pay-creator-incentive",
             post(pay_creator_incentive_handler),
         )
         .route(

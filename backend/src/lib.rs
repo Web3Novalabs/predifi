@@ -239,6 +239,7 @@ pub fn build_router(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
@@ -282,6 +283,7 @@ pub fn build_router_with_db(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),
@@ -345,6 +347,8 @@ pub async fn run_server(config: Config) {
 mod db_integration_tests;
 #[cfg(test)]
 mod mock_rpc_helpers;
+#[cfg(test)]
+mod openapi_tests;
 #[cfg(all(test, feature = "integration-tests"))]
 mod redis_integration_tests;
 #[cfg(all(test, feature = "integration-tests"))]

@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "generate:api": "bash ./scripts/generate-api-types.sh"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.0.4",
