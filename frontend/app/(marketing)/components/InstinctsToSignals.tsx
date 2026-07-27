@@ -1,3 +1,4 @@
+import React from "react";
 import {
   ArrowUpRight,
   ChartPie,
@@ -5,14 +6,20 @@ import {
   SquareSplitHorizontal,
 } from "lucide-react";
 
-function InstinctsToSignals() {
+/**
+ * InstinctsToSignals
+ *
+ * Static component for displaying platform features.
+ * Wrapped with React.memo to prevent unnecessary re-renders since it has no props or state.
+ */
+const InstinctsToSignals = React.memo(function InstinctsToSignals() {
   return (
-    <div>
+    <div className="px-5">
       <p className="text-[24px] md:text-[48px]/[120%] max-w-[1000px] mx-auto -tracking-[4%] text-center text-[#D9D9D9] font-medium">
-        You don’t just bet. turns instincts into signals
+        You don&apos;t just bet. turns instincts into signals
       </p>
 
-      <div className="flex lg:flex-row flex-col items-center justify-center gap-y-10 gap-x-[80px] items-center mt-[50px] mb-10">
+      <div className="flex lg:flex-row flex-col items-center justify-center gap-y-10 gap-x-[80px] mt-[50px] mb-10">
         <div className="space-y-[10px] max-w-[340px]">
           <ChartPie size={40} />
           <h3 className="text-sm lg:text-lg font-medium">
@@ -40,11 +47,13 @@ function InstinctsToSignals() {
         </div>
       </div>
 
-      <button className="w-[300px] py-[10px] gap-x-3 items-center flex justify-center text-lg bg-[#37B7C31A] rounded-[10px] mx-auto">
+      <button className="w-full max-w-[300px] py-[10px] gap-x-3 items-center flex justify-center text-lg bg-[#37B7C31A] rounded-[10px] mx-auto">
         Learn more <ArrowUpRight />
       </button>
     </div>
   );
-}
+});
+
+InstinctsToSignals.displayName = "InstinctsToSignals";
 
 export default InstinctsToSignals;

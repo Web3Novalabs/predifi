@@ -1,4 +1,5 @@
 import React from "react";
+import Image from "next/image";
 import { ArrowRight } from "lucide-react";
 
 const featuresData = [
@@ -25,7 +26,13 @@ const featuresData = [
   },
 ];
 
-function Features() {
+/**
+ * Features
+ *
+ * Static features section component rendered on marketing pages.
+ * Wrapped with React.memo to prevent unnecessary re-renders since it has no props or state.
+ */
+const Features = React.memo(function Features() {
   return (
     <div className="py-[60px] md:py-[100px] px-5">
       <p className="text-[24px] md:text-[48px] leading-[120%] mb-[50px] md:mb-[80px] max-w-[1000px] mx-auto -tracking-[0.04em] text-center text-[#D9D9D9] font-medium">
@@ -51,12 +58,15 @@ function Features() {
                 ${isReversed ? "md:flex-row-reverse" : "md:flex-row"}
               `}
             >
-              {/* IMAGE */}
+              {/* IMAGE — with aspect ratio container to prevent layout shift */}
               <div className="flex-shrink-0">
-                <img
+                <Image
                   src={feature.image}
+                  width={400}
+                  height={400}
                   className="w-full max-w-[180px] md:max-w-[400px] h-auto object-contain"
                   alt={feature.title}
+                  loading="lazy"
                 />
               </div>
 
@@ -80,6 +90,8 @@ function Features() {
       </div>
     </div>
   );
-}
+});
+
+Features.displayName = "Features";
 
 export default Features;

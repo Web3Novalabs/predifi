@@ -7,21 +7,25 @@
 //!
 //! # Usage
 //! Call [`run_full_sync`] from the main server or as a standalone task:
-//! ```rust,no_run
+//! ```rust,ignore
 //! sync::run_full_sync(&db, &config).await?;
 //! ```
 
 use sqlx::PgPool;
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::config::Config;
 
 /// Result of a single pool sync operation.
 #[derive(Debug)]
 pub struct PoolSyncResult {
+    /// On-chain pool identifier.
     pub pool_id: i64,
+    /// `total_stake` value read from the database before the sync.
     pub db_stake: i64,
+    /// `total_stake` value returned by the Soroban contract.
     pub contract_stake: i64,
+    /// `true` if the database row was updated to match the contract.
     pub fixed: bool,
 }
 
@@ -30,6 +34,8 @@ pub struct PoolSyncResult {
 ///
 /// This calls `get_pool_outcome_stakes` on the predifi contract and sums
 /// all outcome stakes to compute the total.
+#[instrument(skip(config), name = "sync.fetch_contract_total_stake",
+    fields(pool_id = pool_id))]
 async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64> {
     // Build the Soroban RPC request — we call `get_pool_outcome_stakes(pool_id)`.
     // The response is a map of outcome_index → stake_amount; we sum the values.
@@ -80,14 +86,14 @@ fn parse_total_stake_from_rpc(body: &serde_json::Value) -> Option<i64> {
 }
 
 /// Fix the DB `total_stake` for a pool by updating it to match on-chain state.
+#[instrument(skip(db), name = "sync.fix_pool_stake",
+    fields(pool_id = pool_id, correct_stake = correct_stake))]
 async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result<(), sqlx::Error> {
-    sqlx::query!(
-        "UPDATE pools SET total_stake = $1 WHERE pool_id = $2",
-        correct_stake,
-        pool_id
-    )
-    .execute(db)
-    .await?;
+    sqlx::query("UPDATE pools SET total_stake = $1 WHERE pool_id = $2")
+        .bind(correct_stake)
+        .bind(pool_id)
+        .execute(db)
+        .await?;
     Ok(())
 }
 
@@ -99,16 +105,25 @@ async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result
 /// 3. If they differ, updates the DB to match the contract (contract is truth).
 ///
 /// Returns the list of pools that were examined, including which were fixed.
+#[instrument(skip(db, config), name = "sync.run_full_sync")]
 pub async fn run_full_sync(
     db: &PgPool,
     config: &Config,
 ) -> Result<Vec<PoolSyncResult>, sqlx::Error> {
     info!("starting full contract-DB state sync");
 
+    #[derive(sqlx::FromRow)]
+    struct PoolStakeRow {
+        pool_id: i64,
+        total_stake: i64,
+    }
+
     // Fetch all pool IDs and their current DB total_stake.
-    let rows = sqlx::query!("SELECT pool_id, total_stake FROM pools ORDER BY pool_id")
-        .fetch_all(db)
-        .await?;
+    let rows = sqlx::query_as::<_, PoolStakeRow>(
+        "SELECT pool_id, total_stake FROM pools ORDER BY pool_id",
+    )
+    .fetch_all(db)
+    .await?;
 
     let mut results = Vec::with_capacity(rows.len());
     let mut fixed_count = 0u32;

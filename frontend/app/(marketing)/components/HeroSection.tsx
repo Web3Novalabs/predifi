@@ -1,20 +1,58 @@
 import React from "react";
+import Image from "next/image";
 
-function HeroSection() {
+/**
+ * Stat
+ *
+ * Static stat component for displaying metrics.
+ * Wrapped with React.memo to prevent unnecessary re-renders since it only depends on props.
+ */
+const Stat = React.memo(function Stat({
+  value,
+  label,
+}: {
+  value: string;
+  label: string;
+}) {
+  return (
+    <div className="w-full md:w-[219px] text-center space-y-1 md:space-y-[5px]">
+      <h3 className="text-[32px] md:text-[28px] font-semibold bg-[linear-gradient(180deg,#F2FFFD_-18.66%,#009886_136.06%)] bg-clip-text text-transparent">
+        {value}
+      </h3>
+      <p className="text-[#B3CECB] text-sm md:text-sm font-medium tracking-wide">
+        {label}
+      </p>
+    </div>
+  );
+});
+
+Stat.displayName = "Stat";
+
+/**
+ * HeroSection
+ *
+ * Static hero section component rendered on marketing pages.
+ * Wrapped with React.memo to prevent unnecessary re-renders since it has no props or state.
+ */
+const HeroSection = React.memo(function HeroSection() {
   return (
     // Added min-h to ensure it covers screen on mobile, and overflow adjustments
-    <section className="relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible">
-      {/* Background Pattern */}
-      <img
-        src="/swirl-pattern.png"
+    <section className="hero-critical relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible">
+      {/* Background Pattern — decorative full-bleed raster image */}
+      <Image
+        src="/swirl-pattern.webp"
         alt=""
         aria-hidden="true"
-        className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
+        fill
+        className="object-cover pointer-events-none z-0"
+        priority
+        loading="eager"
+        fetchPriority="high"
       />
 
       {/* Main content */}
       <div className="relative z-10 flex flex-col items-center max-w-4xl px-5">
-        <h1 className="max-w-[736px] font-medium text-[48px] leading-[110%] md:text-[80px] md:leading-[120%] -tracking-[0.05em] md:-tracking-[10%] bg-[linear-gradient(263.91deg,#CEFFF7_30.32%,#59B1A6_93.13%)] bg-clip-text text-transparent transition-all duration-300">
+        <h1 className="max-w-full font-medium text-[38px] sm:text-[48px] md:text-[80px] leading-[110%] md:leading-[120%] -tracking-[0.05em] md:-tracking-[10%] bg-[linear-gradient(263.91deg,#CEFFF7_30.32%,#59B1A6_93.13%)] bg-clip-text text-transparent transition-all duration-300">
           Predict. Profit. Flip
         </h1>
 
@@ -37,7 +75,7 @@ function HeroSection() {
         Desktop: Positioned absolutely at bottom, horizontal layout.
       */}
       <div className="relative mt-12 w-full px-5 md:mt-0 md:absolute md:left-1/2 md:-translate-x-1/2 md:-bottom-[92px] z-20">
-        <div className="flex flex-col md:flex-row items-center justify-center gap-y-20 md:gap-x-[70px] rounded-[24px] md:rounded-[14px] bg-[#001518] md:bg-[#00262A66] px-6 py-10 md:py-6 backdrop-blur-none md:backdrop-blur-[14px] shadow-2xl md:shadow-lg w-full max-w-[350px] md:max-w-fit mx-auto border border-[#ffffff0d] md:border-none">
+        <div className="flex flex-col md:flex-row items-center justify-center gap-y-10 md:gap-x-[70px] rounded-[24px] md:rounded-[14px] bg-[#001518] md:bg-[#00262A66] px-6 sm:px-8 py-10 md:py-6 backdrop-blur-none md:backdrop-blur-[14px] shadow-2xl md:shadow-lg w-full max-w-[90vw] md:max-w-fit mx-auto border border-[#ffffff0d] md:border-none">
           <Stat label="Prediction Accuracy" value="99%" />
           <Stat label="Amount Predicted" value="$44k+" />
           {/* Hidden on mobile if you want to match the screenshot exactly (which only showed 3 items), 
@@ -48,19 +86,8 @@ function HeroSection() {
       </div>
     </section>
   );
-}
+});
+
+HeroSection.displayName = "HeroSection";
 
 export default HeroSection;
-
-function Stat({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="w-full md:w-[219px] text-center space-y-1 md:space-y-[5px]">
-      <h3 className="text-[32px] md:text-[28px] font-semibold bg-[linear-gradient(180deg,#F2FFFD_-18.66%,#009886_136.06%)] bg-clip-text text-transparent">
-        {value}
-      </h3>
-      <p className="text-[#B3CECB] text-sm md:text-sm font-medium tracking-wide">
-        {label}
-      </p>
-    </div>
-  );
-}

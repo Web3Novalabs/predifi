@@ -1,4 +1,4 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 //! # `PrediFi` Errors
 //!
@@ -55,3 +55,10 @@
 pub mod errors;
 
 pub use errors::PrediFiError;
+
+// Native (std) error types exposed to the backend when the `std` feature is enabled.
+#[cfg(feature = "std")]
+pub mod native_errors;
+
+#[cfg(feature = "std")]
+pub use native_errors::ConfigError;

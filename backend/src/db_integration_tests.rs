@@ -48,10 +48,10 @@ mod tests {
         let url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
 
         let pool = PgPoolOptions::new()
-            .max_connections(2)
+            .max_connections(5)
             .connect(&url)
             .await
-            .expect("connect to test postgres");
+            .expect("connect to postgres");
 
         sqlx::migrate!("./migrations")
             .run(&pool)
@@ -62,6 +62,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
     async fn migrations_run_cleanly() {
         let (pool, container) = setup().await;
         // If setup() completes without panic the migrations are valid.
@@ -70,6 +71,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
     async fn insert_and_query_pool() {
         let (pool, container) = setup().await;
 
@@ -95,6 +97,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
     async fn insert_and_query_prediction() {
         let (pool, container) = setup().await;
 
@@ -134,6 +137,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
     async fn pool_status_defaults_to_open() {
         let (pool, container) = setup().await;
 

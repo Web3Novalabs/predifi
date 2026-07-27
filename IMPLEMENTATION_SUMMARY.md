@@ -215,7 +215,7 @@ pub struct Config {
 
 **Environment variable**:
 ```bash
-REDIS_URL=redis://localhost:6379  # Default value
+PREDIFI_REDIS_URL=redis://localhost:6379  # Default value
 ```
 
 ### 4. Application Initialization
@@ -473,13 +473,13 @@ docker ps
 
 ```bash
 # Required for Redis caching
-REDIS_URL=redis://localhost:6379
+PREDIFI_REDIS_URL=redis://localhost:6379
 
 # Optional: Redis with authentication
-REDIS_URL=redis://:password@localhost:6379
+PREDIFI_REDIS_URL=redis://:password@localhost:6379
 
 # Optional: Redis Cluster
-REDIS_URL=redis://node1:6379,node2:6379,node3:6379
+PREDIFI_REDIS_URL=redis://node1:6379,node2:6379,node3:6379
 ```
 
 ### Docker Compose Example
@@ -493,8 +493,8 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/predifi
-      - REDIS_URL=redis://redis:6379
+      - PREDIFI_DATABASE_URL=postgres://postgres:postgres@db:5432/predifi
+      - PREDIFI_REDIS_URL=redis://redis:6379
     depends_on:
       - db
       - redis
@@ -537,7 +537,7 @@ volumes:
 
 3. **Update Environment Variables**:
    ```bash
-   echo "REDIS_URL=redis://localhost:6379" >> .env
+   echo "PREDIFI_REDIS_URL=redis://localhost:6379" >> .env
    ```
 
 4. **Rebuild and Deploy Backend**:
@@ -625,10 +625,10 @@ COMMIT;
 
 ```bash
 # Disable Redis by setting invalid URL
-export REDIS_URL=redis://invalid:9999
+export PREDIFI_REDIS_URL=redis://invalid:9999
 
 # Or remove from environment
-unset REDIS_URL
+unset PREDIFI_REDIS_URL
 
 # Application will run without caching (graceful degradation)
 ```
