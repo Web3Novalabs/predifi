@@ -165,7 +165,8 @@ export function PerformanceCharts({ stats, performance }: PerformanceChartsProps
                     ))}
                   </Pie>
                   <Tooltip
-                    formatter={(value: number, name: string) => [value, name]}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    formatter={(value: any, name: any) => [value ?? 0, name ?? ""]}
                     contentStyle={{
                       background: "#18181b",
                       border: "1px solid rgba(255,255,255,0.1)",

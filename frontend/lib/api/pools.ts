@@ -56,6 +56,7 @@ export interface OutcomeOdds {
 /** Detailed pool payload including live odds. */
 export interface PoolDetail extends Pool {
   odds: OutcomeOdds[];
+  outcome_descriptions?: string[];
   /** Prediction count derived client-side from live WS updates when available. */
   prediction_count?: number;
 }
@@ -172,6 +173,11 @@ export async function fetchPoolDetail(url: string): Promise<PoolDetail> {
     end_time: endTime,
     odds: pool.odds ?? [],
   };
+}
+
+/** Helper function to fetch a pool detail by ID directly. */
+export async function fetchPoolById(id: string | number): Promise<PoolDetail> {
+  return fetchPoolDetail(poolDetailUrl(id));
 }
 
 /** Live event pushed over `/api/v1/ws`. */

@@ -57,22 +57,73 @@ locals {
       systemctl enable --now docker
     fi
 
-    mkdir -p /opt/predifi-monitoring/prometheus
+    mkdir -p /opt/predifi-monitoring/prometheus/alerts
+    cat >/opt/predifi-monitoring/prometheus/alerts/predifi_alerts.yml <<EOF
+groups:
+  - name: predifi_production_alerts
+    rules:
+      - alert: HighApiErrorRate
+        expr: (sum(rate(app_http_requests_total{status=~"5.."}[5m])) / sum(rate(app_http_requests_total[5m]))) * 100 > 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API HTTP 5xx error rate exceeded 1%"
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, sum(rate(app_http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p99 latency is greater than 500ms"
+      - alert: DatabasePoolExhausted
+        expr: sum(rate(app_db_queries_total{result="error"}[5m])) > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool exhaustion or query error spike"
+      - alert: HighRedisMemoryUsage
+        expr: sum(rate(app_redis_operations_total{result="error"}[5m])) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis operation error rate or high memory usage (>80%)"
+      - alert: ContractInteractionFailures
+        expr: sum(rate(app_db_queries_total{query_type=~".*contract.*",result="error"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Smart contract interaction failure detected"
+      - alert: BackendMemoryHigh
+        expr: (app_memory_used_bytes / app_memory_total_bytes) * 100 > 90
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend memory usage exceeded 90% threshold"
+EOF
+
     cat >/opt/predifi-monitoring/prometheus/prometheus.yml <<EOF
-    global:
-      scrape_interval: 15s
-    scrape_configs:
-      - job_name: predifi
-        metrics_path: /metrics
-        static_configs:
-          - targets: [${local.scrape_list}]
-    EOF
+global:
+  scrape_interval: 15s
+rule_files:
+  - /etc/prometheus/alerts/*.yml
+scrape_configs:
+  - job_name: predifi
+    metrics_path: /metrics
+    static_configs:
+      - targets: [${local.scrape_list}]
+EOF
 
     docker rm -f prometheus grafana 2>/dev/null || true
 
     docker run -d --name prometheus --restart=always \
       -p 9090:9090 \
       -v /opt/predifi-monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
+      -v /opt/predifi-monitoring/prometheus/alerts:/etc/prometheus/alerts \
       prom/prometheus:v2.54.1
 
     docker run -d --name grafana --restart=always \
