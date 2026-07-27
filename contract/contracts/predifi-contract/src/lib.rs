@@ -2,6 +2,8 @@
 #![allow(clippy::too_many_arguments)]
 
 mod benchmark_test;
+#[cfg(test)]
+mod boundary_edge_case_tests;
 mod constants;
 mod gas_opt;
 mod payouts;
