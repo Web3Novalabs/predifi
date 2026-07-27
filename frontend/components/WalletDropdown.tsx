@@ -52,8 +52,11 @@ function safeCopy(text: string): Promise<void> {
         document.body.appendChild(textarea);
         textarea.select();
         const ok = document.execCommand("copy");
-        document.body.removeChild(textarea);
-        ok ? resolve() : reject(new Error("Copy failed"));
+        if (ok) {
+          resolve();
+        } else {
+          reject(new Error("Copy failed"));
+        }
       } catch (e) {
         reject(e);
       }

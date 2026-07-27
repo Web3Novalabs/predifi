@@ -48,8 +48,6 @@ export default function LeaderboardPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setIsLoading(true);
-    setError(null);
 
     fetchLeaderboard({ rankBy, period: periodDisabled ? undefined : period, limit: 50 })
       .then((res) => {

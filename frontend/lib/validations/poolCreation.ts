@@ -59,6 +59,8 @@ export interface CreatePoolFormValues {
   closeTime: string;
   /** Selected token ID (e.g. "XLM" or "STRK"). */
   token: string;
+  /** Optional comma-separated tags string. */
+  tags?: string;
   /** Creator agrees to pool creation terms. */
   termsAccepted: boolean;
 }

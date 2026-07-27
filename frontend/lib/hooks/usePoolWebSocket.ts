@@ -40,13 +40,14 @@ export function usePoolWebSocket({
   const [lastEvent, setLastEvent] = useState<PoolLiveEvent | null>(null);
   const [nonce, setNonce] = useState(0);
   const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
+  useEffect(() => {
+    onEventRef.current = onEvent;
+  }, [onEvent]);
 
   const reconnect = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
     if (!enabled || !Number.isFinite(poolId)) {
-      setStatus("closed");
       return;
     }
 

@@ -1,0 +1,62 @@
+groups:
+  - name: predifi_production_alerts
+    rules:
+      # API Error Rate > 1%
+      - alert: HighApiErrorRate
+        expr: (sum(rate(app_http_requests_total{status=~"5.."}[5m])) / sum(rate(app_http_requests_total[5m]))) * 100 > 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API HTTP 5xx error rate exceeded 1%"
+          description: "API HTTP 5xx error rate is currently {{ $value | printf \"%.2f\" }}% over the last 5 minutes."
+
+      # p99 Latency > 500ms
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, sum(rate(app_http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p99 latency is greater than 500ms"
+          description: "The 99th percentile HTTP request latency is {{ $value | printf \"%.3f\" }}s."
+
+      # Database Connection Pool Exhaustion / Failures
+      - alert: DatabasePoolExhausted
+        expr: sum(rate(app_db_queries_total{result="error"}[5m])) > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool exhaustion or query error spike"
+          description: "Database queries are failing at {{ $value | printf \"%.1f\" }} errors per second."
+
+      # Redis Memory Usage > 80% / Redis Operation Failures
+      - alert: HighRedisMemoryUsage
+        expr: sum(rate(app_redis_operations_total{result="error"}[5m])) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis operation error rate or high memory usage (>80%)"
+          description: "Redis operations are failing at {{ $value | printf \"%.1f\" }} errors per second."
+
+      # Contract Interaction Failures
+      - alert: ContractInteractionFailures
+        expr: sum(rate(app_db_queries_total{query_type=~".*contract.*",result="error"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Smart contract interaction failure detected"
+          description: "Contract operations are producing errors."
+
+      # Backend Out-of-Memory / High Memory Event
+      - alert: BackendMemoryHigh
+        expr: (app_memory_used_bytes / app_memory_total_bytes) * 100 > 90
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend memory usage exceeded 90% threshold"
+          description: "Backend process memory usage is at {{ $value | printf \"%.2f\" }}%, risk of Out-Of-Memory (OOM) killer."
