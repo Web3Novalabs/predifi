@@ -587,8 +587,6 @@ pub enum DataKey {
     Pool(u64),
     /// Pool ID counter for generating unique pool IDs: `PoolIdCtr` -> `u64`
     PoolIdCtr,
-    /// Participant count for a pool: `PartCnt(pool_id)` -> `u32`
-    PartCnt(u64),
 
     // ── Predictions & stakes ─────────────────────────────────────────────────
     /// User prediction by user address and pool ID: `Pred(user, pool_id)` -> `Prediction`
@@ -3238,10 +3236,6 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
 
-        let pc_key = DataKey::PartCnt(pool_id);
-        env.storage().persistent().set(&pc_key, &0u32);
-        Self::bump_ttl(&env, &pc_key);
-
         // Initialize optimized batch storage with zeros to avoid expensive fallback reads
         let initial_stakes = gas_opt::alloc_zero_stakes(&env, options_count);
         let stakes_key = DataKey::OutStakes(pool_id);
@@ -3430,10 +3424,10 @@ impl PredifiContract {
 
         // Lock the description once any participant has joined — equivalent to
         // "pool has started" in this contract's model (no separate start_time).
-        // We read the PartCnt key which is the authoritative participant counter.
-        let pc_key = DataKey::PartCnt(pool_id);
-        let participants: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
-        if participants > 0 {
+        // We read the pool's participants_count field which is the authoritative participant counter.
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env.storage().persistent().get(&pool_key).expect("Pool not found");
+        if pool.participants_count > 0 {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -4032,12 +4026,186 @@ impl PredifiContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    /// Place a prediction on a pool. Cannot predict on canceled or resolved pools.
-    /// Optional `referrer`: if set, that address will receive a referral cut of the protocol fee
-    /// when this user claims winnings. Stored only on first prediction for (user, pool_id).
-    /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
-    /// PRE: pool.min_stake <= amount <= pool.max_stake (unless max_stake == 0)
-    /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
+    /// Place a prediction (stake tokens) on a specific outcome in an active prediction pool.
+    ///
+    /// This function allows users to participate in prediction markets by staking tokens on a chosen
+    /// outcome. The staked tokens are transferred from the user's wallet to the contract and held
+    /// until the pool is resolved. If the predicted outcome wins, the user can claim their share
+    /// of the total stake (minus protocol fees) via [`claim_winnings`].
+    ///
+    /// # Parameters
+    ///
+    /// * `env` - The Soroban environment, providing access to storage, ledger state, and contract interfaces.
+    /// * `user` - The address of the user placing the prediction. Must authenticate via `require_auth()`.
+    /// * `pool_id` - The unique identifier of the prediction pool to bet on.
+    /// * `amount` - The amount of tokens to stake (in the token's base units, e.g., stroops for XLM).
+    ///   Must be strictly positive and meet all applicable minimum stake requirements.
+    /// * `outcome` - The index (0-based) of the predicted outcome. Must be less than `pool.options_count`.
+    ///   This corresponds to an entry in `pool.outcome_descriptions`.
+    /// * `referrer` - Optional address of the referrer who referred this user. If provided, the referrer
+    ///   will receive a share of the protocol fee (determined by `Config::referral_bps`) when the user
+    ///   claims winnings. The referrer is stored only on the first prediction for a given `(user, pool_id)`
+    ///   pair and cannot be changed later. The referrer cannot be the user themselves or the contract address.
+    /// * `invite_key` - Optional symbol used to access private pools. If the pool is private (`pool.private == true`),
+    ///   the user must either be whitelisted, be the pool creator, or provide a valid `invite_key` matching
+    ///   `pool.whitelist_key`. This parameter is ignored for public pools.
+    ///
+    /// # Prediction Cooldown Mechanism
+    ///
+    /// To prevent spam and suspicious activity, the contract enforces a cooldown period between consecutive
+    /// predictions from the same user. The cooldown duration is configured via `Config::prediction_cooldown_seconds`
+    /// (default: 0, meaning disabled). When enabled:
+    ///
+    /// - The contract stores the timestamp of each user's last successful prediction in `DataKey::LastPredictionTime(user)`.
+    /// - Before accepting a new prediction, it checks if `current_time - last_prediction_time >= cooldown_seconds`.
+    /// - If the cooldown has not elapsed, the function returns [`PredifiError::RateLimitOrSuspiciousActivity`].
+    /// - This cooldown is enforced globally across all pools for each user.
+    ///
+    /// # Stake Limits Enforcement
+    ///
+    /// The function enforces multiple stake limits to ensure pool integrity and prevent manipulation:
+    ///
+    /// 1. **Global minimum stake**: `amount` must be >= `Config::min_stake`. If not, returns
+    ///    [`PredifiError::InsufficientStake`].
+    ///
+    /// 2. **Per-pool minimum stake**: `amount` must be >= `pool.min_stake`. If not, returns
+    ///    [`PredifiError::StakeBelowMinimum`].
+    ///
+    /// 3. **Per-pool maximum stake**: If `pool.max_stake > 0`, `amount` must be <= `pool.max_stake`.
+    ///    If not, returns [`PredifiError::StakeAboveMaximum`].
+    ///
+    /// 4. **Total pool cap**: If `pool.max_total_stake > 0`, the new total (`pool.total_stake + amount`)
+    ///    must not exceed this cap. If it would, returns [`PredifiError::MaxTotalStakeExceeded`].
+    ///
+    /// 5. **Maximum predictions per user**: If `Config::max_predictions_per_user > 0`, a user cannot
+    ///    place predictions on more than this number of distinct pools. Increasing an existing prediction
+    ///    on the same pool does not count against this limit. If exceeded, returns
+    ///    [`PredifiError::MaxPredictionsExceeded`].
+    ///
+    /// # Referral Handling
+    ///
+    /// The referral system incentivizes user acquisition by rewarding referrers with a share of protocol fees:
+    ///
+    /// - When a user provides a `referrer` address on their **first** prediction for a pool, the referrer
+    ///   is stored in `DataKey::Referrer(user, pool_id)`. This referrer cannot be changed for subsequent
+    ///   predictions on the same pool.
+    /// - The contract tracks the total volume referred by each referrer in `DataKey::ReferredVolume(referrer, pool_id)`.
+    /// - When the referred user claims winnings, the protocol fee is split between the treasury and the referrer
+    ///   according to `Config::referral_bps` (e.g., 500 bps = 5% of the fee goes to the referrer).
+    /// - Referrers cannot be the user themselves or the contract address.
+    ///
+    /// # Fee Deduction Flow
+    ///
+    /// **Important**: No fees are deducted during `place_prediction`. Protocol fees are calculated and
+    /// deducted at **claim time** in the [`claim_winnings`] function:
+    ///
+    /// 1. When a user claims winnings, the contract calculates the gross payout based on their stake
+    ///    and the winning outcome's share of the total pool.
+    /// 2. The protocol fee is calculated as `gross_payout * pool.fee_bps / 10_000`.
+    /// 3. If the user has a referrer, the fee is split: the referrer receives
+    ///    `protocol_fee * referral_bps / 10_000`, and the treasury receives the remainder.
+    /// 4. The net payout (`gross_payout - protocol_fee`) is transferred to the user.
+    ///
+    /// # Private Pool Authorization
+    ///
+    /// For private pools (`pool.private == true`), access is restricted:
+    ///
+    /// - The user must be whitelisted via `DataKey::Whitelist(pool_id, user)`, OR
+    /// - The user must be the pool creator, OR
+    /// - The user must provide a valid `invite_key` matching `pool.whitelist_key`.
+    ///
+    /// If none of these conditions are met, the function panics with "User not authorized for private pool".
+    ///
+    /// # Emitted Events
+    ///
+    /// The function emits the following events upon successful prediction placement:
+    ///
+    /// - **`PredictionPlacedEvent`**: Always emitted. Contains `pool_id`, `user`, `amount`, and `outcome`.
+    ///   This event signals that a prediction was successfully recorded.
+    ///
+    /// - **`HighValuePredictionEvent`**: Emitted when `amount >= HIGH_VALUE_THRESHOLD` (100 USDC at 7 decimals).
+    ///   This is a monitoring event for off-chain systems to track large stakes and detect unusual patterns.
+    ///
+    /// - **`OutcomeStakesUpdatedEvent`**: Emitted for pools with 16 or more outcomes (`pool.options_count >= 16`).
+    ///   This batch event avoids emitting individual events per outcome, which would be impractical for large
+    ///   tournaments (e.g., 32-team brackets). Contains `pool_id`, `options_count`, and `total_stake`.
+    ///
+    /// - **`PredictionBlockedDelistedEvent`**: Emitted when the prediction is rejected because the pool's token
+    ///   is not whitelisted. Contains `pool_id`, `user`, `token`, and `timestamp`.
+    ///
+    /// # Error Conditions
+    ///
+    /// The function returns a [`PredifiError`] in the following cases:
+    ///
+    /// - [`PredifiError::ContractPaused`]: The contract is currently paused. All state-mutating operations are blocked.
+    /// - [`PredifiError::InvalidAmount`]: The stake amount is zero or negative.
+    /// - [`PredifiError::InsufficientStake`]: The amount is below the global minimum stake (`Config::min_stake`).
+    /// - [`PredifiError::TokenNotWhitelisted`]: The pool's token is not on the betting whitelist.
+    /// - [`PredifiError::InvalidOutcome`]: The outcome index is >= `pool.options_count`.
+    /// - [`PredifiError::StakeBelowMinimum`]: The amount is below the pool's minimum stake (`pool.min_stake`).
+    /// - [`PredifiError::StakeAboveMaximum`]: The amount exceeds the pool's maximum stake (`pool.max_stake`).
+    /// - [`PredifiError::MaxTotalStakeExceeded`]: Adding the amount would exceed the pool's total stake cap.
+    /// - [`PredifiError::RateLimitOrSuspiciousActivity`]: The prediction cooldown period has not elapsed.
+    /// - [`PredifiError::MaxPredictionsExceeded`]: The user has exceeded the maximum number of pools they can participate in.
+    ///
+    /// Additionally, the function may panic with the following messages:
+    ///
+    /// - "referrer cannot be self": The provided referrer address is the same as the user.
+    /// - "referrer cannot be contract": The provided referrer address is the contract itself.
+    /// - "Pool not found": The specified `pool_id` does not exist.
+    /// - "Pool is not active": The pool is not in the `Active` state (e.g., resolved or canceled).
+    /// - "Pool has ended": The current ledger time is >= `pool.end_time`.
+    /// - "User not authorized for private pool": The user lacks authorization for a private pool.
+    /// - "Cannot change prediction outcome": The user is trying to stake on a different outcome than their existing prediction.
+    ///
+    /// # Protocol Invariants
+    ///
+    /// This function maintains the following protocol invariants:
+    ///
+    /// - **INV-1**: After execution, `pool.total_stake` equals the sum of all outcome stakes.
+    /// - **INV-7**: All predictions have `amount > 0` (enforced by rejecting zero/negative amounts).
+    /// - **INV-2**: Pool state transitions are one-way; this function only operates on `Active` pools.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// // Place a prediction of 100 USDC on outcome 0, with a referrer
+    /// contract.place_prediction(
+    ///     env,
+    ///     user_address,
+    ///     pool_id,
+    ///     100_000_000,  // 100 USDC at 7 decimals
+    ///     0,            // outcome index
+    ///     Some(referrer_address),
+    ///     None,         // no invite key needed for public pool
+    /// )?;
+    ///
+    /// // Place a prediction on a private pool using an invite key
+    /// contract.place_prediction(
+    ///     env,
+    ///     user_address,
+    ///     pool_id,
+    ///     50_000_000,
+    ///     1,
+    ///     None,         // no referrer
+    ///     Some(invite_key_symbol),
+    /// )?;
+    /// ```
+    ///
+    /// # Security Considerations
+    ///
+    /// - **Reentrancy Protection**: The function uses a reentrancy guard (`enter_reentrancy_guard` / `exit_reentrancy_guard`)
+    ///   to prevent reentrancy attacks during token transfers.
+    /// - **Token Whitelist**: Only whitelisted tokens can be used for staking to prevent malicious token contracts.
+    /// - **Rate Limiting**: The prediction cooldown mitigates spam and rapid-fire betting patterns.
+    /// - **Stake Caps**: Multiple stake limits prevent pool manipulation and ensure fair distribution.
+    ///
+    /// # Related Functions
+    ///
+    /// - [`create_pool`]: Creates a new prediction pool.
+    /// - [`claim_winnings`]: Claims winnings for resolved pools (where fees are deducted).
+    /// - [`resolve_pool`]: Resolves a pool to a winning outcome.
+    /// - [`oracle_resolve`]: Oracle-based resolution with multi-vote consensus.
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(
         env: Env,
@@ -4240,13 +4408,7 @@ impl PredifiContract {
                 Self::extend_persistent(&env, &vol_key);
             }
 
-            let pc_key = DataKey::PartCnt(pool_id);
-            let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
-            env.storage().persistent().set(&pc_key, &(pc + 1));
-            Self::extend_persistent(&env, &pc_key);
-
-            // Mirror the count on the Pool struct so get_pool_participants_count
-            // can read it with a single storage fetch.
+            // Increment participants_count in the pool struct
             pool.participants_count = pool.participants_count.saturating_add(1);
 
             let count_key = DataKey::UsrPrdCnt(user.clone());
@@ -5370,9 +5532,8 @@ impl PredifiContract {
 
     /// Get comprehensive stats for a pool.
     ///
-    /// Gas notes: uses the in-pool `participants_count` (avoids an extra
-    /// `PartCnt` storage round-trip) and computes odds from the already-loaded
-    /// stakes vec via [`gas_opt::odds_from_stakes`].
+    /// Gas notes: uses the in-pool `participants_count` and computes odds from the
+    /// already-loaded stakes vec via [`gas_opt::odds_from_stakes`].
     pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -5604,19 +5765,34 @@ impl PredifiContract {
     ///
     /// This intentionally preserves the previous missing-feed behavior:
     /// callers panic with "Feed not found" when the feed has not been updated.
-    fn load_price_feed_for_resolution(env: &Env, feed_pair: Symbol) -> (i128, u64) {
-        let (price, _confidence, _timestamp, expires_at): (i128, i128, u64, u64) = env
+    fn load_price_feed_for_resolution(env: &Env, feed_pair: Symbol) -> (i128, u64, u64) {
+        let (price, _confidence, timestamp, expires_at): (i128, i128, u64, u64) = env
             .storage()
             .persistent()
             .get(&DataKey::PriceFeed(feed_pair))
             .expect("Feed not found");
 
-        (price, expires_at)
+        (price, timestamp, expires_at)
     }
 
-    fn require_fresh_price_feed(env: &Env, expires_at: u64) -> Result<(), PredifiError> {
-        if env.ledger().timestamp() > expires_at {
-            return Err(PredifiError::InvalidPoolState);
+    fn require_fresh_price_feed(
+        env: &Env,
+        timestamp: u64,
+        expires_at: u64,
+    ) -> Result<(), PredifiError> {
+        let current_time = env.ledger().timestamp();
+
+        // Check if price has expired
+        if current_time > expires_at {
+            return Err(PredifiError::PriceDataInvalid);
+        }
+
+        // Check if price is within the oracle's max_price_age limit
+        let (_pyth_contract, max_price_age, _min_confidence_ratio) = Self::get_oracle_config(env.clone())
+            .ok_or(PredifiError::OracleNotInitialized)?;
+        
+        if current_time > timestamp.saturating_add(max_price_age) {
+            return Err(PredifiError::PriceDataInvalid);
         }
 
         Ok(())
@@ -5786,8 +5962,8 @@ impl PredifiContract {
 
         let (feed_pair, target_price, comparison_op, tolerance_bps) =
             Self::load_price_resolution_condition(&env, pool_id)?;
-        let (price, expires_at) = Self::load_price_feed_for_resolution(&env, feed_pair);
-        Self::require_fresh_price_feed(&env, expires_at)?;
+        let (price, timestamp, expires_at) = Self::load_price_feed_for_resolution(&env, feed_pair);
+        Self::require_fresh_price_feed(&env, timestamp, expires_at)?;
 
         let outcome =
             Self::price_resolution_outcome(price, target_price, comparison_op, tolerance_bps)?;
@@ -6131,7 +6307,6 @@ impl PredifiContract {
     ///
     /// Entries renewed:
     /// - `Pool(pool_id)` — core pool struct
-    /// - `PartCnt(pool_id)` — participant counter
     /// - `OutStakes(pool_id)` — batch outcome stakes (if present)
     ///
     /// # Arguments
@@ -6153,12 +6328,6 @@ impl PredifiContract {
 
         // Bump the pool struct entry.
         Self::bump_ttl(&env, &pool_key);
-
-        // Bump participant counter if present.
-        let pc_key = DataKey::PartCnt(pool_id);
-        if env.storage().persistent().has(&pc_key) {
-            Self::bump_ttl(&env, &pc_key);
-        }
 
         // Bump batch outcome stakes entry if present.
         let stakes_key = DataKey::OutStakes(pool_id);
