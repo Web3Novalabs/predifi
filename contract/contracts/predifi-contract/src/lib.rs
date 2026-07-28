@@ -4528,6 +4528,39 @@ impl PredifiContract {
         result
     }
 
+    /// Claim winning payout from a resolved prediction market pool.
+    ///
+    /// # Payout Calculation & Economics
+    /// - Payout is calculated proportionally based on the caller's stake relative to total winning stakes:
+    ///   `user_payout = (user_stake / winning_stake) * (total_pool_stake - protocol_fee)`
+    /// - Protocol fee is deducted based on the pool's configured basis points (`fee_bps`).
+    /// - If a referrer is associated with the user, a portion of the fee is transferred to the referrer.
+    ///
+    /// # Claim Window Enforcement
+    /// - If `claim_window_seconds` is configured, claims are strictly rejected with `InvalidTimestamp`
+    ///   if the current ledger timestamp exceeds `resolution_timestamp + claim_window_seconds`.
+    ///
+    /// # Double-Claim Prevention & Security
+    /// - Prevents double-claiming by storing a `DataKey::Claimed(user, pool_id)` sentinel in persistent storage.
+    /// - Re-entrancy guard (`enter_reentrancy_guard` / `exit_reentrancy_guard`) protects token transfers.
+    /// - Suspicious double-claim attempts trigger `SuspiciousDoubleClaimEvent` alerts.
+    ///
+    /// # Token Transfer Mechanics
+    /// - Validates token transfer limits via `validate_token_transfer`.
+    /// - Executes token transfer directly from the contract address to the user's address via Soroban `token::Client`.
+    ///
+    /// # Emitted Events
+    /// - Emits `WinningsClaimedEvent` and `RewardClaimedEvent` upon successful claim.
+    /// - Emits `ReferralPaidEvent` if a referral reward is distributed.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban host environment.
+    /// * `user` - Address of the winning user claiming payout (must require_auth).
+    /// * `pool_id` - ID of the resolved market pool.
+    ///
+    /// # Returns
+    /// * `Ok(amount)` - Net winning token amount transferred to `user`.
+    /// * `Err(PredifiError)` - Reason for claim failure (e.g. `PoolNotResolved`, `AlreadyClaimed`, `InvalidTimestamp`).
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env)?;
@@ -4564,25 +4597,40 @@ impl PredifiContract {
         Ok(results)
     }
 
-    /// Claim a refund from a canceled pool. Returns the refunded amount.
-    /// Only available for canceled pools. User receives their full original stake.
+    /// Claim a refund from a canceled prediction pool.
     ///
-    /// PRE: pool.state = Canceled, user has a prediction on the pool
-    /// POST: HasClaimed(user, pool) = true (INV-3), user receives full stake amount
+    /// # Refund Calculation & Economics
+    /// - Returns 100% of the user's original staked principal amount (`prediction.amount`).
+    /// - No protocol fees or penalties are deducted when a market pool is canceled.
+    ///
+    /// # Double-Claim Prevention & Security
+    /// - Enforces `INV-3` double-claim prevention by writing `DataKey::Claimed(user, pool_id)` to persistent storage.
+    /// - Protected by re-entrancy guard (`enter_reentrancy_guard` / `exit_reentrancy_guard`) during asset transfers.
+    ///
+    /// # Token Transfer Mechanics
+    /// - Checks balance and validates transfer via `validate_token_transfer`.
+    /// - Transfers funds from contract balance directly to `user` via Soroban `token::Client`.
+    ///
+    /// # Emitted Events
+    /// - Emits `RefundClaimedEvent` with `pool_id`, `user`, and refunded `amount`.
+    /// - Emits `RewardClaimedEvent` with `claim_type: "refund"`.
+    ///
+    /// PRE: pool.state = Canceled, user has an active prediction on the pool.
+    /// POST: HasClaimed(user, pool) = true (INV-3), user receives full principal stake amount.
     ///
     /// # Arguments
-    /// * `user` - Address claiming the refund (must provide auth)
-    /// * `pool_id` - ID of the canceled pool
+    /// * `env` - The Soroban host environment instance.
+    /// * `user` - Address claiming the refund (must provide authorization).
+    /// * `pool_id` - Unique identifier of the canceled pool.
     ///
     /// # Returns
-    /// Ok(amount) - Refund successfully claimed, returns refunded amount
-    /// Err(PredifiError) - Operation failed with specific error code
+    /// * `Ok(amount)` - Refund successfully claimed, returns exact refunded principal amount.
+    /// * `Err(PredifiError)` - Operation failed with specific error code.
     ///
     /// # Errors
-    /// - `InvalidPoolState` if pool doesn't exist or is not canceled
-    /// - `InsufficientBalance` if user has no stake to refund
-    /// - `AlreadyClaimed` if user already claimed refund for this pool
-    /// - `PoolNotResolved` if pool is resolved (not canceled)
+    /// - `InvalidPoolState` if pool doesn't exist or is not in `Canceled` state.
+    /// - `InsufficientBalance` if user has no stake to refund.
+    /// - `AlreadyClaimed` if user has already claimed a refund for this pool.
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn claim_refund(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env)?;

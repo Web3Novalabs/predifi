@@ -1,28 +1,37 @@
 #![allow(dead_code)]
 
-//! # Safe Math Module for Proportion Calculations
+//! # Safe Math Module for Proportion and Payout Calculations
 //!
-//! This module provides safe arithmetic operations for proportion and percentage
-//! calculations, critical for payout logic where rounding errors or division by
-//! zero could lead to locked funds or unfair distributions.
+//! This module provides audited, overflow-safe arithmetic operations specifically tailored for
+//! proportional payout allocations, fee calculations, and percentage distribution in PrediFi prediction markets.
 //!
-//! ## Features
+//! ## Security Rationale & Overflow/Underflow Protection Strategies
 //!
-//! - Fixed-point arithmetic with configurable precision
-//! - Protection against overflow, underflow, and division by zero
-//! - Configurable rounding strategies (protocol-favoring, neutral, user-favoring)
-//! - Proportion calculations that maintain fairness in payouts
+//! In decentralized prediction markets, incorrect arithmetic operations (such as integer overflows,
+//! unchecked division by zero, or rounding exploitation) can lead to critical vulnerabilities,
+//! including draining contract liquidity or permanently locking user stakes.
 //!
-//! ## Usage Example
+//! To prevent these risks, `SafeMath` enforces:
+//! 1. **Checked Arithmetic**: All operations utilize Rust's checked primitives (`checked_mul`, `checked_div`, `checked_add`, `checked_sub`, `checked_rem`). Any overflow or underflow immediately returns a `PrediFiError::ArithmeticError` or `PrediFiError::InvalidAmount`.
+//! 2. **Explicit Zero-Division Prevention**: Divisors are validated prior to execution. A zero denominator safely aborts execution with `PrediFiError::ArithmeticError`.
+//! 3. **Configurable Rounding Modes**:
+//!    - `ProtocolFavor`: Performs floor division (rounding down). Any fractional dust remains within contract pool reserves, preventing exploiters from draining single-stroop rounding remainders.
+//!    - `Neutral`: Performs standard half-up rounding to the nearest integer.
+//!    - `UserFavor`: Performs ceiling division (rounding up), giving fractional remainders to the beneficiary.
+//! 4. **Range & Bound Validation**: Percentage calculations strictly require basis points `bps` to lie in `[0, 10_000]` (where 10,000 bps = 100%). Out-of-bound fee rates return `PrediFiError::InvalidFeeBps`.
+//!
+//! ## Common Usage Patterns
 //!
 //! ```rust,ignore
 //! use safe_math::{SafeMath, RoundingMode};
 //!
-//! // Calculate 30% of 1000 with protocol-favoring rounding
-//! let result = SafeMath::percentage(1000, 3000, RoundingMode::ProtocolFavor)?;
+//! // Calculate a 2.5% (250 bps) protocol fee on 1,000,000 tokens
+//! let fee = SafeMath::percentage(1_000_000, 250, RoundingMode::ProtocolFavor)?;
+//! assert_eq!(fee, 25_000);
 //!
-//! // Calculate proportional payout
-//! let payout = SafeMath::proportion(user_stake, total_stake, pool_balance, RoundingMode::Neutral)?;
+//! // Calculate proportional user payout: (user_stake / total_winning_stake) * pool_reward
+//! let user_payout = SafeMath::proportion(300, 1000, 5000, RoundingMode::ProtocolFavor)?;
+//! assert_eq!(user_payout, 1500);
 //! ```
 
 use predifi_errors::PrediFiError;
