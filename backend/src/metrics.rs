@@ -1,4 +1,4 @@
-use prometheus::{CounterVec, Encoder, Gauge, Opts, Registry, TextEncoder};
+use prometheus::{CounterVec, Encoder, Gauge, Histogram, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder};
 use std::sync::Arc;
 
 /// Shared application metrics exposed to Prometheus.
@@ -6,10 +6,15 @@ use std::sync::Arc;
 pub struct Metrics {
     pub registry: Registry,
     pub http_requests_total: CounterVec,
+    pub http_request_duration_seconds: HistogramVec,
+    pub price_cache_fetch_total: CounterVec,
+    pub price_cache_assets: Gauge,
+    pub price_cache_fetch_duration_seconds: Histogram,
     pub app_up: Gauge,
     pub app_info: Gauge,
     pub memory_used_bytes: Gauge,
     pub memory_total_bytes: Gauge,
+    pub active_pools: Gauge,
 }
 
 /// Type alias for a reference-counted [`Metrics`] instance shared across handlers.
@@ -32,6 +37,38 @@ impl Metrics {
             &["method", "path", "status"],
         )?;
 
+        let http_request_duration_seconds = HistogramVec::new(
+            HistogramOpts::new(
+                "app_http_request_duration_seconds",
+                "HTTP request latency in seconds.",
+            )
+            .buckets(vec![
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ]),
+            &["method", "path", "status"],
+        )?;
+
+        let price_cache_fetch_total = CounterVec::new(
+            Opts::new(
+                "app_price_cache_fetch_total",
+                "Total CoinGecko price-cache refresh attempts.",
+            ),
+            &["result"],
+        )?;
+
+        let price_cache_assets = Gauge::with_opts(Opts::new(
+            "app_price_cache_assets",
+            "Number of assets currently stored in the price cache.",
+        ))?;
+
+        let price_cache_fetch_duration_seconds = Histogram::with_opts(
+            HistogramOpts::new(
+                "app_price_cache_fetch_duration_seconds",
+                "CoinGecko price-cache refresh latency in seconds.",
+            )
+            .buckets(vec![0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0]),
+        )?;
+
         let app_up = Gauge::with_opts(Opts::new("app_up", "Application availability status."))?;
         app_up.set(1.0);
 
@@ -51,20 +88,45 @@ impl Metrics {
             "Total system memory in bytes.",
         ))?;
 
+        let active_pools = Gauge::with_opts(Opts::new(
+            "app_active_pools",
+            "Number of currently active prediction market pools.",
+        ))?;
+
         registry.register(Box::new(http_requests_total.clone()))?;
+        registry.register(Box::new(http_request_duration_seconds.clone()))?;
+        registry.register(Box::new(price_cache_fetch_total.clone()))?;
+        registry.register(Box::new(price_cache_assets.clone()))?;
+        registry.register(Box::new(price_cache_fetch_duration_seconds.clone()))?;
         registry.register(Box::new(app_up.clone()))?;
         registry.register(Box::new(app_info.clone()))?;
         registry.register(Box::new(memory_used_bytes.clone()))?;
         registry.register(Box::new(memory_total_bytes.clone()))?;
+        registry.register(Box::new(active_pools.clone()))?;
 
         Ok(Self {
             registry,
             http_requests_total,
+            http_request_duration_seconds,
+            price_cache_fetch_total,
+            price_cache_assets,
+            price_cache_fetch_duration_seconds,
             app_up,
             app_info,
             memory_used_bytes,
             memory_total_bytes,
+            active_pools,
         })
+    }
+
+    /// Record the outcome of a price-cache refresh attempt.
+    pub fn record_price_cache_fetch(&self, result: &str, assets: usize, duration_secs: f64) {
+        self.price_cache_fetch_total
+            .with_label_values(&[result])
+            .inc();
+        self.price_cache_assets.set(assets as f64);
+        self.price_cache_fetch_duration_seconds
+            .observe(duration_secs);
     }
 
     /// Encode all registered metrics into the Prometheus text exposition format.
@@ -117,6 +179,14 @@ mod tests {
         assert!(
             names.contains(&"app_memory_total_bytes"),
             "app_memory_total_bytes must be registered"
+        );
+        assert!(
+            names.contains(&"app_price_cache_assets"),
+            "app_price_cache_assets must be registered"
+        );
+        assert!(
+            names.contains(&"app_price_cache_fetch_duration_seconds"),
+            "app_price_cache_fetch_duration_seconds must be registered"
         );
 
         // CounterVec metrics are omitted until a label set is instantiated.
@@ -194,6 +264,21 @@ mod tests {
         assert!(
             !m2_text.contains("GET"),
             "m2 registry must be independent of m1"
+        );
+    }
+
+    /// HTTP 500 counter increments independently of the general request counter.
+    #[test]
+    fn http_server_errors_total_increments() {
+        let metrics = Metrics::new().expect("Metrics::new() must succeed");
+        assert_eq!(metrics.http_server_errors_total.get(), 0.0);
+        metrics.http_server_errors_total.inc();
+        assert_eq!(metrics.http_server_errors_total.get(), 1.0);
+
+        let text = metrics.gather_text().expect("gather_text() must succeed");
+        assert!(
+            text.contains("app_http_500_errors_total"),
+            "output must contain app_http_500_errors_total"
         );
     }
 

@@ -1,15 +1,21 @@
 //! Shared test fixtures for integration tests.
 //!
 //! Keeping container bootstrapping in one place avoids duplicating the setup
-//! logic across the Postgres and Redis integration suites.
+//! logic across the Postgres, Redis, and HTTP integration suites.
 
-use std::time::Duration;
+mod mock_rpc;
+
+use std::{collections::HashMap, time::Duration};
 
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::{postgres::Postgres, redis::Redis};
 
+use crate::config::Config;
+use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
+
+pub use mock_rpc::MockRpcServer;
 
 /// Start a temporary Postgres container and return a SQLx pool bound to it.
 ///
@@ -54,4 +60,28 @@ pub async fn setup_redis() -> (RedisCache, testcontainers::ContainerAsync<Redis>
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     (cache, container)
+}
+
+/// Default asset prices used to satisfy health-check readiness in tests.
+pub fn default_test_prices() -> HashMap<String, f64> {
+    HashMap::from([
+        ("BTC".to_string(), 60_000.0),
+        ("ETH".to_string(), 3_000.0),
+        ("XLM".to_string(), 0.12),
+    ])
+}
+
+/// Start a mock Stellar RPC server and return a test [`Config`] + populated cache.
+///
+/// Call [`MockRpcServer::shutdown`] when the test finishes so the ephemeral port
+/// is released before the next test runs.
+pub async fn setup_healthy_test_env() -> (Config, PriceCache, MockRpcServer) {
+    let mock = MockRpcServer::start().await;
+    let mut config = Config::default_for_test();
+    config.stellar_rpc_url = mock.url();
+
+    let cache = PriceCache::new();
+    cache.update(default_test_prices());
+
+    (config, cache, mock)
 }

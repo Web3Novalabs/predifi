@@ -342,6 +342,7 @@ pub fn build_router_with_db(
 
     router
 }
+use predifi_backend::{config::Config, run_server};
 
 #[tokio::main]
 async fn main() {

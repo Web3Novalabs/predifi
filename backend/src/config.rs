@@ -172,7 +172,7 @@ impl Config {
             });
         }
 
-        Ok(Self {
+        let config = Self {
             host,
             port,
             database_url,
@@ -193,7 +193,96 @@ impl Config {
             sentry_dsn,
             redis_url,
             cors_allowed_origins,
-        })
+        };
+
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validate semantic constraints on a fully-built configuration.
+    ///
+    /// Called automatically by [`Self::from_map`] and again at application
+    /// startup via [`crate::run_server`] so misconfiguration fails fast before
+    /// any network listeners or background workers are started.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        validate_url_scheme(
+            &self.database_url,
+            "PREDIFI_DATABASE_URL",
+            &["postgres://", "postgresql://"],
+        )?;
+        validate_url_scheme(
+            &self.redis_url,
+            "PREDIFI_REDIS_URL",
+            &["redis://", "rediss://"],
+        )?;
+        validate_url_scheme(
+            &self.stellar_rpc_url,
+            "PREDIFI_STELLAR_RPC_URL",
+            &["http://", "https://"],
+        )?;
+
+        if self.db_max_connections == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_MAX_CONNECTIONS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.db_min_connections == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_MIN_CONNECTIONS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.db_acquire_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.db_connect_max_attempts == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_CONNECT_MAX_ATTEMPTS",
+                reason: String::from("must be at least one"),
+            });
+        }
+        if self.rpc_health_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_RPC_HEALTH_TIMEOUT_SECS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.rpc_health_retry_count == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_RPC_HEALTH_RETRY_COUNT",
+                reason: String::from("must be at least one"),
+            });
+        }
+        if self.rpc_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "RPC_TIMEOUT_SECS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.treasury_fee_bps > 10_000 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_TREASURY_FEE_BPS",
+                reason: String::from("must be <= 10000 (100%)"),
+            });
+        }
+        if self.referral_fee_bps > 10_000 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_REFERRAL_FEE_BPS",
+                reason: String::from("must be <= 10000 (100%)"),
+            });
+        }
+        if self.cors_allowed_origins.is_empty() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_CORS_ALLOWED_ORIGINS",
+                reason: String::from("must contain at least one origin"),
+            });
+        }
+
+        Ok(())
     }
 
     /// Return the `host:port` string used to bind the TCP listener.
@@ -483,6 +572,25 @@ fn to_number_error(key: &'static str, value: &str, err: ParseIntError) -> Config
         key,
         value: value.to_string(),
         reason: err.to_string(),
+    }
+}
+
+/// Ensure `url` begins with one of the allowed schemes.
+fn validate_url_scheme(
+    url: &str,
+    key: &'static str,
+    schemes: &[&str],
+) -> Result<(), ConfigError> {
+    if schemes.iter().any(|scheme| url.starts_with(scheme)) {
+        Ok(())
+    } else {
+        Err(ConfigError::InvalidValue {
+            key,
+            reason: format!(
+                "must start with one of: {}",
+                schemes.join(", ")
+            ),
+        })
     }
 }
 
@@ -1213,5 +1321,46 @@ mod tests {
         )]);
         let config = Config::from_map(&vars).unwrap();
         assert_eq!(config.cors_allowed_origins, vec!["https://example.com/"]);
+    }
+
+    #[test]
+    fn validate_rejects_invalid_database_url_scheme() {
+        let config = Config {
+            database_url: String::from("mysql://localhost/db"),
+            ..Config::default_for_test()
+        };
+        let error = config.validate().expect_err("mysql URL must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_DATABASE_URL",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_treasury_fee_above_100_percent() {
+        let config = Config {
+            treasury_fee_bps: 10_001,
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_TREASURY_FEE_BPS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_default_for_test_config() {
+        Config::default_for_test()
+            .validate()
+            .expect("default test config must be valid");
     }
 }
