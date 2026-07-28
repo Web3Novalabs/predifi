@@ -6166,6 +6166,7 @@ impl PredifiContract {
     }
 }
 
+mod boundary_tests;
 mod edge_case_tests;
 mod fee_tiers_test;
 mod integration_test;
