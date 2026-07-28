@@ -587,8 +587,6 @@ pub enum DataKey {
     Pool(u64),
     /// Pool ID counter for generating unique pool IDs: `PoolIdCtr` -> `u64`
     PoolIdCtr,
-    /// Participant count for a pool: `PartCnt(pool_id)` -> `u32`
-    PartCnt(u64),
 
     // ── Predictions & stakes ─────────────────────────────────────────────────
     /// User prediction by user address and pool ID: `Pred(user, pool_id)` -> `Prediction`
@@ -3450,10 +3448,6 @@ impl PredifiContract {
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
 
-        let pc_key = DataKey::PartCnt(pool_id);
-        env.storage().persistent().set(&pc_key, &0u32);
-        Self::bump_ttl(&env, &pc_key);
-
         // Initialize optimized batch storage with zeros to avoid expensive fallback reads
         let initial_stakes = gas_opt::alloc_zero_stakes(&env, options_count);
         let stakes_key = DataKey::OutStakes(pool_id);
@@ -3642,10 +3636,10 @@ impl PredifiContract {
 
         // Lock the description once any participant has joined — equivalent to
         // "pool has started" in this contract's model (no separate start_time).
-        // We read the PartCnt key which is the authoritative participant counter.
-        let pc_key = DataKey::PartCnt(pool_id);
-        let participants: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
-        if participants > 0 {
+        // We read the pool's participants_count field which is the authoritative participant counter.
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Pool = env.storage().persistent().get(&pool_key).expect("Pool not found");
+        if pool.participants_count > 0 {
             return Err(PredifiError::InvalidPoolState);
         }
 
@@ -4612,13 +4606,7 @@ impl PredifiContract {
                 Self::extend_persistent(&env, &vol_key);
             }
 
-            let pc_key = DataKey::PartCnt(pool_id);
-            let pc: u32 = env.storage().persistent().get(&pc_key).unwrap_or(0);
-            env.storage().persistent().set(&pc_key, &(pc + 1));
-            Self::extend_persistent(&env, &pc_key);
-
-            // Mirror the count on the Pool struct so get_pool_participants_count
-            // can read it with a single storage fetch.
+            // Increment participants_count in the pool struct
             pool.participants_count = pool.participants_count.saturating_add(1);
 
             let count_key = DataKey::UsrPrdCnt(user.clone());
@@ -5742,9 +5730,8 @@ impl PredifiContract {
 
     /// Get comprehensive stats for a pool.
     ///
-    /// Gas notes: uses the in-pool `participants_count` (avoids an extra
-    /// `PartCnt` storage round-trip) and computes odds from the already-loaded
-    /// stakes vec via [`gas_opt::odds_from_stakes`].
+    /// Gas notes: uses the in-pool `participants_count` and computes odds from the
+    /// already-loaded stakes vec via [`gas_opt::odds_from_stakes`].
     pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -5976,19 +5963,34 @@ impl PredifiContract {
     ///
     /// This intentionally preserves the previous missing-feed behavior:
     /// callers panic with "Feed not found" when the feed has not been updated.
-    fn load_price_feed_for_resolution(env: &Env, feed_pair: Symbol) -> (i128, u64) {
-        let (price, _confidence, _timestamp, expires_at): (i128, i128, u64, u64) = env
+    fn load_price_feed_for_resolution(env: &Env, feed_pair: Symbol) -> (i128, u64, u64) {
+        let (price, _confidence, timestamp, expires_at): (i128, i128, u64, u64) = env
             .storage()
             .persistent()
             .get(&DataKey::PriceFeed(feed_pair))
             .expect("Feed not found");
 
-        (price, expires_at)
+        (price, timestamp, expires_at)
     }
 
-    fn require_fresh_price_feed(env: &Env, expires_at: u64) -> Result<(), PredifiError> {
-        if env.ledger().timestamp() > expires_at {
-            return Err(PredifiError::InvalidPoolState);
+    fn require_fresh_price_feed(
+        env: &Env,
+        timestamp: u64,
+        expires_at: u64,
+    ) -> Result<(), PredifiError> {
+        let current_time = env.ledger().timestamp();
+
+        // Check if price has expired
+        if current_time > expires_at {
+            return Err(PredifiError::PriceDataInvalid);
+        }
+
+        // Check if price is within the oracle's max_price_age limit
+        let (_pyth_contract, max_price_age, _min_confidence_ratio) = Self::get_oracle_config(env.clone())
+            .ok_or(PredifiError::OracleNotInitialized)?;
+        
+        if current_time > timestamp.saturating_add(max_price_age) {
+            return Err(PredifiError::PriceDataInvalid);
         }
 
         Ok(())
@@ -6158,8 +6160,8 @@ impl PredifiContract {
 
         let (feed_pair, target_price, comparison_op, tolerance_bps) =
             Self::load_price_resolution_condition(&env, pool_id)?;
-        let (price, expires_at) = Self::load_price_feed_for_resolution(&env, feed_pair);
-        Self::require_fresh_price_feed(&env, expires_at)?;
+        let (price, timestamp, expires_at) = Self::load_price_feed_for_resolution(&env, feed_pair);
+        Self::require_fresh_price_feed(&env, timestamp, expires_at)?;
 
         let outcome =
             Self::price_resolution_outcome(price, target_price, comparison_op, tolerance_bps)?;
@@ -6503,7 +6505,6 @@ impl PredifiContract {
     ///
     /// Entries renewed:
     /// - `Pool(pool_id)` — core pool struct
-    /// - `PartCnt(pool_id)` — participant counter
     /// - `OutStakes(pool_id)` — batch outcome stakes (if present)
     ///
     /// # Arguments
@@ -6525,12 +6526,6 @@ impl PredifiContract {
 
         // Bump the pool struct entry.
         Self::bump_ttl(&env, &pool_key);
-
-        // Bump participant counter if present.
-        let pc_key = DataKey::PartCnt(pool_id);
-        if env.storage().persistent().has(&pc_key) {
-            Self::bump_ttl(&env, &pc_key);
-        }
 
         // Bump batch outcome stakes entry if present.
         let stakes_key = DataKey::OutStakes(pool_id);
