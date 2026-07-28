@@ -1,5 +1,9 @@
 # Local PR draft — not part of the repository history
 PULL_REQUEST.md
+**/PULL_REQUEST.md
+
+# Local documentation generated during implementation — not part of the repository history
+**/VALIDATION_ENHANCEMENTS.md
 
 # Kiro IDE workspace metadata
 .kiro/
