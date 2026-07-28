@@ -3456,10 +3456,91 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
-    /// Cannot resolve a canceled pool.
-    /// PRE: pool.state = Active, operator has role 1
-    /// POST: pool.state = Resolved, state transition valid (INV-2)
+    /// Finalises a prediction pool by recording an operator's vote for a winning outcome.
+    ///
+    /// Resolution uses a **multi-vote / threshold model**: each address with Operator
+    /// role (role `1`) calls this function once to cast a vote.  The pool transitions
+    /// to [`MarketState::Resolved`] only when a single outcome accumulates at least
+    /// `pool.required_resolutions` votes.  If operators disagree on the outcome a
+    /// [`PredifiError::ResolutionConflict`] is returned and the pool stays active so
+    /// administrators can intervene.
+    ///
+    /// # Resolution flow
+    ///
+    /// 1. **Auth & role check** — `operator` must sign the transaction and hold the
+    ///    Operator role for `pool_id` (`require_operator_role_for_resolution`).
+    /// 2. **State guard** — the pool must be in `MarketState::Active`; Locked,
+    ///    Resolved, and Cancelled pools are rejected with [`PredifiError::InvalidPoolState`].
+    /// 3. **Resolution delay** — `current_ledger_time >= pool.end_time + config.resolution_delay`
+    ///    must hold.  This cooling-off period allows late price feeds to settle before
+    ///    any outcome is locked in.  Violations return [`PredifiError::ResolutionDelayNotMet`].
+    /// 4. **Outcome validation** — `outcome` must satisfy
+    ///    `0 <= outcome < pool.options_count` and must not equal `UNRESOLVED_OUTCOME`
+    ///    (the sentinel value reserved for pools that have not yet been decided).
+    ///    Invalid values return [`PredifiError::InvalidOutcome`].
+    /// 5. **Duplicate-vote guard** — each operator may vote exactly once per pool.
+    ///    A second call from the same address returns [`PredifiError::OracleAlreadyVoted`].
+    /// 6. **Vote recording** — the vote is stored in temporary ledger storage under
+    ///    `DataKey::ResVote(pool_id, operator)`.  Per-outcome tallies are maintained
+    ///    in `DataKey::ResVoteCt(pool_id, outcome)` and the total vote count in
+    ///    `DataKey::ResTotal(pool_id)`.
+    /// 7. **Conflict detection** — if any other outcome already has votes, a
+    ///    [`ResolutionConflictEvent`] is emitted and [`PredifiError::ResolutionConflict`]
+    ///    is returned, leaving the pool in `Active` so administrators can adjudicate.
+    /// 8. **Threshold check & finalisation** — once `new_outcome_votes >= pool.required_resolutions`:
+    ///    - `pool.state` is set to `MarketState::Resolved`.
+    ///    - `pool.outcome` is recorded.
+    ///    - A dynamic protocol fee (`pool.fee_bps`) is calculated via
+    ///      [`Self::calculate_dynamic_fee`].
+    ///    - `pool.resolution_timestamp` is stamped with the current ledger time.
+    ///    - The pool is removed from the global active index.
+    ///    - [`PoolResolvedEvent`] and [`PoolResolvedDiagEvent`] are published.
+    ///
+    /// # Payout calculation (post-resolution)
+    ///
+    /// This function does **not** distribute funds directly.  Winners call
+    /// `claim_winnings` (or a payout helper) after resolution.  The payout for a
+    /// winning stake `s` out of a total winning-side stake `W` and a total pool
+    /// stake `T` is:
+    ///
+    /// ```text
+    /// gross_payout = s * T / W
+    /// fee          = gross_payout * pool.fee_bps / 10_000
+    /// net_payout   = gross_payout - fee
+    /// ```
+    ///
+    /// # Emitted events
+    ///
+    /// | Event | When |
+    /// |---|---|
+    /// | [`ResolutionVoteCastEvent`] | Every successful vote, regardless of threshold |
+    /// | [`ResolutionConflictEvent`] | When a vote conflicts with an earlier outcome |
+    /// | [`PoolResolvedEvent`] | When the threshold is reached and the pool is finalised |
+    /// | [`PoolResolvedDiagEvent`] | Same trigger as `PoolResolvedEvent`; carries stake diagnostics |
+    ///
+    /// # Errors
+    ///
+    /// | Error | Condition |
+    /// |---|---|
+    /// | [`PredifiError::ContractPaused`] | The contract is globally paused |
+    /// | [`PredifiError::InvalidPoolState`] | Pool is not `Active` |
+    /// | [`PredifiError::ResolutionDelayNotMet`] | Too early to resolve |
+    /// | [`PredifiError::InvalidOutcome`] | `outcome >= options_count` or equals sentinel |
+    /// | [`PredifiError::OracleAlreadyVoted`] | This operator already voted for this pool |
+    /// | [`PredifiError::ResolutionConflict`] | Operators disagree on the winning outcome |
+    ///
+    /// # Preconditions
+    ///
+    /// - `pool.state == MarketState::Active`
+    /// - `operator` holds Operator role (`1`) for `pool_id`
+    /// - `env.ledger().timestamp() >= pool.end_time + config.resolution_delay`
+    ///
+    /// # Postconditions (on threshold reached)
+    ///
+    /// - `pool.state == MarketState::Resolved` (INV-2 state transition satisfied)
+    /// - `pool.outcome == outcome`
+    /// - `pool.resolution_timestamp == Some(current_time)`
+    /// - Pool is removed from the global active index
     pub fn resolve_pool(
         env: Env,
         operator: Address,
