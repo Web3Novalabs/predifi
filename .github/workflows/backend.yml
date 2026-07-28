@@ -181,6 +181,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Security audit
+        run: |
+          cargo install cargo-audit --locked --quiet
+          cargo audit
+
       - name: Cargo check
         run: cargo check --workspace
 
