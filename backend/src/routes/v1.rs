@@ -770,6 +770,14 @@ pub async fn ingest_pool_created(
 
     match crate::db::insert_pool_from_event(db, &event).await {
         Ok(()) => {
+            let response = json!({ "status": "ok", "pool_id": event.pool_id });
+            ApiResponse::success(response).into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string()
+        ).into_response(),
             state.redis.invalidate_pools_cache().await;
             state.redis.invalidate_stats_cache().await;
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
