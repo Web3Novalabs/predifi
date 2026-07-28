@@ -1,10 +1,25 @@
 "use client";
 
+/**
+ * NotificationBell
+ *
+ * Re-render optimisation (issue #1406)
+ * ─────────────────────────────────────
+ * Previously the component received `address` as a prop, requiring every
+ * parent that renders a nav-bar or profile header to thread the wallet address
+ * down through its own props. This is classic prop-drilling.
+ *
+ * Fix: read the address from WalletContext via useWalletAddress(). The hook
+ * only subscribes to address changes (not isConnecting / error), so the bell
+ * skips re-renders caused by wallet interaction state.
+ */
+
 import { useState } from "react";
 import { Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
 import { useNotifications } from "@/lib/hooks/useNotifications";
+import { useWalletAddress } from "@/lib/context";
 import type { Notification, NotificationType } from "@/lib/api/notifications";
 
 const TYPE_LABEL: Record<NotificationType, string> = {
@@ -21,15 +36,13 @@ const TYPE_STYLES: Record<NotificationType, string> = {
   new_pool_match: "bg-[#37B7C3]/20 text-[#7DE3EC]",
 };
 
-interface NotificationBellProps {
-  /** Connected wallet address. Renders nothing when absent. */
-  address: string | undefined;
-}
-
-export function NotificationBell({ address }: NotificationBellProps) {
+export function NotificationBell() {
+  const address = useWalletAddress();
   const [open, setOpen] = useState(false);
-  const { notifications, unreadCount, isLoading, markRead } = useNotifications(address);
+  const { notifications, unreadCount, isLoading, markRead } =
+    useNotifications(address);
 
+  // Don't render anything until a wallet is connected.
   if (!address) return null;
 
   async function handleOpen() {
@@ -82,9 +95,13 @@ export function NotificationBell({ address }: NotificationBellProps) {
             </div>
 
             {isLoading ? (
-              <p className="p-6 text-center text-sm text-zinc-500">Loading…</p>
+              <p className="p-6 text-center text-sm text-zinc-500">
+                Loading…
+              </p>
             ) : notifications.length === 0 ? (
-              <p className="p-6 text-center text-sm text-zinc-500">You&apos;re all caught up.</p>
+              <p className="p-6 text-center text-sm text-zinc-500">
+                You&apos;re all caught up.
+              </p>
             ) : (
               <ul>
                 {notifications.map((notification) => (
@@ -110,8 +127,12 @@ export function NotificationBell({ address }: NotificationBellProps) {
                           <span className="h-1.5 w-1.5 rounded-full bg-[#37B7C3]" />
                         )}
                       </div>
-                      <p className="text-sm text-white mt-1">{notification.title}</p>
-                      <p className="text-xs text-zinc-500 mt-0.5">{notification.message}</p>
+                      <p className="text-sm text-white mt-1">
+                        {notification.title}
+                      </p>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        {notification.message}
+                      </p>
                       <p className="text-[10px] text-zinc-600 mt-1">
                         {formatUtcDateTime(notification.created_at)}
                       </p>
