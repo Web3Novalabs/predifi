@@ -1291,3 +1291,152 @@ fn test_1313_resolve_with_many_participants() {
     let winning_stake = ctx.client.get_outcome_stake(&pool_id, &0u32);
     assert_eq!(winning_stake, 1_000, "winning-side stake must be 1_000");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #1327 — Boundary & Edge Case Tests: mark_pool_ready / close_staking
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Test mark_pool_ready boundary condition: 1 second before resolution_delay fails with
+/// ResolutionDelayNotMet, exact timestamp succeeds.
+#[test]
+fn test_1327_mark_pool_ready_timestamp_boundaries() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Set resolution delay to 100 seconds
+    ctx.client.set_resolution_delay(&ctx.admin, &100u64);
+
+    let duration = 3_600u64;
+    let pool_id = ctx.create_pool(duration);
+
+    // end_time = 1_000 + 3_600 = 4_600
+    // resolution expected at 4_600 + 100 = 4_700
+
+    // Advance to 4_699 (1s before delay met)
+    ctx.advance_time(3_699);
+    let res = ctx.client.try_mark_pool_ready(&pool_id);
+    assert_eq!(
+        res,
+        Err(Ok(PredifiError::ResolutionDelayNotMet)),
+        "mark_pool_ready should fail 1 second before resolution delay is met"
+    );
+
+    // Advance 1 second to exact boundary 4_700
+    ctx.advance_time(1);
+    let res_exact = ctx.client.try_mark_pool_ready(&pool_id);
+    assert!(
+        res_exact.is_ok(),
+        "mark_pool_ready should succeed exactly at resolution_delay boundary"
+    );
+}
+
+/// Test mark_pool_ready is idempotent when called multiple times on an active pool.
+#[test]
+fn test_1327_mark_pool_ready_idempotent_and_already_ready() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(3_600);
+    ctx.advance_time(3_601);
+
+    // First call
+    let res1 = ctx.client.try_mark_pool_ready(&pool_id);
+    assert!(res1.is_ok(), "First mark_pool_ready call should succeed");
+
+    // Second call on already ready active pool
+    let res2 = ctx.client.try_mark_pool_ready(&pool_id);
+    assert!(res2.is_ok(), "Second mark_pool_ready call on ready pool should succeed idempotently");
+}
+
+/// Test mark_pool_ready ordering violations: calling on canceled or resolved pools.
+#[test]
+fn test_1327_mark_pool_ready_ordering_violations() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id1 = ctx.create_pool(3_600);
+    ctx.advance_time(3_601);
+
+    // Resolve pool1
+    ctx.client.resolve_pool(&ctx.operator, &pool_id1, &0u32);
+
+    let res_resolved = ctx.client.try_mark_pool_ready(&pool_id1);
+    assert_eq!(
+        res_resolved,
+        Err(Ok(PredifiError::InvalidPoolState)),
+        "mark_pool_ready should fail on already-resolved pool"
+    );
+
+    // Cancel pool2
+    let pool_id2 = ctx.create_pool(3_600);
+    ctx.client.cancel_pool(&ctx.operator, &pool_id2, &String::from_str(&env, "cancellation"));
+
+    let res_canceled = ctx.client.try_mark_pool_ready(&pool_id2);
+    assert_eq!(
+        res_canceled,
+        Err(Ok(PredifiError::InvalidPoolState)),
+        "mark_pool_ready should fail on canceled pool"
+    );
+}
+
+/// Test close_staking boundary conditions: calling before end_time returns StakingStillOpen,
+/// exact end_time succeeds.
+#[test]
+fn test_1327_close_staking_timestamp_boundaries() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let duration = 3_600u64;
+    let pool_id = ctx.create_pool(duration);
+
+    // end_time = 1_000 + 3_600 = 4_600
+    // Advance to 4_599 (1s before end_time)
+    ctx.advance_time(3_599);
+    let res_before = ctx.client.try_close_staking(&pool_id);
+    assert_eq!(
+        res_before,
+        Err(Ok(PredifiError::StakingStillOpen)),
+        "close_staking must return StakingStillOpen when current_time < end_time"
+    );
+
+    // Advance 1s to exact end_time boundary
+    ctx.advance_time(1);
+    let res_exact = ctx.client.try_close_staking(&pool_id);
+    assert!(
+        res_exact.is_ok(),
+        "close_staking must succeed at exact end_time boundary"
+    );
+}
+
+/// Test close_staking double call idempotency and state validation.
+#[test]
+fn test_1327_close_staking_double_call_idempotent() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(3_600);
+    ctx.advance_time(3_601);
+
+    let first = ctx.client.try_close_staking(&pool_id);
+    assert!(first.is_ok(), "first close_staking call must succeed");
+
+    let second = ctx.client.try_close_staking(&pool_id);
+    assert!(second.is_ok(), "subsequent close_staking call must succeed idempotently");
+}
+
+/// Test close_staking state transition ordering violations on canceled or resolved pools.
+#[test]
+fn test_1327_close_staking_ordering_violations() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(3_600);
+    ctx.client.cancel_pool(&ctx.operator, &pool_id, &String::from_str(&env, "cancel"));
+
+    let res_canceled = ctx.client.try_close_staking(&pool_id);
+    assert_eq!(
+        res_canceled,
+        Err(Ok(PredifiError::InvalidPoolState)),
+        "close_staking on canceled pool must return InvalidPoolState"
+    );
+}
