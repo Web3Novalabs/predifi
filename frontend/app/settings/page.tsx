@@ -1,11 +1,39 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 
 import { SettingsSidebar, type SettingsTab } from "@/components/settings/SettingsSidebar";
-import { ProfileForm } from "@/components/settings/ProfileForm";
-import { SecuritySettings } from "@/components/settings/SecuritySettings";
-import { NotificationPreferences } from "@/components/settings/NotificationPreferences";
+
+// ProfileForm — below-the-fold, lazily loaded
+const ProfileForm = dynamic(
+  () => import("@/components/settings/ProfileForm").then((mod) => mod.ProfileForm),
+  {
+    loading: () => (
+      <div className="h-[300px] w-full animate-pulse bg-zinc-800/50 rounded-xl" aria-hidden="true" />
+    ),
+  },
+);
+
+// SecuritySettings — below-the-fold, lazily loaded
+const SecuritySettings = dynamic(
+  () => import("@/components/settings/SecuritySettings").then((mod) => mod.SecuritySettings),
+  {
+    loading: () => (
+      <div className="h-[300px] w-full animate-pulse bg-zinc-800/50 rounded-xl" aria-hidden="true" />
+    ),
+  },
+);
+
+// NotificationPreferences — below-the-fold, lazily loaded
+const NotificationPreferences = dynamic(
+  () => import("@/components/settings/NotificationPreferences").then((mod) => mod.NotificationPreferences),
+  {
+    loading: () => (
+      <div className="h-[300px] w-full animate-pulse bg-zinc-800/50 rounded-xl" aria-hidden="true" />
+    ),
+  },
+);
 
 const PANEL_MAP: Record<SettingsTab, React.ReactNode> = {
   profile: <ProfileForm />,
@@ -58,7 +86,7 @@ export default function SettingsPage() {
         {/* Layout */}
         <div className="flex flex-col lg:flex-row gap-6 lg:gap-8">
           <SettingsSidebar activeTab={activeTab} onTabChange={setActiveTab} />
-          <main className="flex-1 min-w-0">
+          <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
             <div
               key={activeTab}
               className="animate-fade-in rounded-xl border border-zinc-800 bg-zinc-900 p-6"

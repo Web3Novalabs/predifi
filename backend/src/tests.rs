@@ -3,14 +3,11 @@ use http_body_util::BodyExt;
 use tower::ServiceExt; // provides `.oneshot()`
 
 use crate::config::Config;
-use crate::test_support::setup_healthy_test_env;
+use crate::mock_rpc_helpers::setup_healthy_test_env;
 use crate::{build_router, price_cache::PriceCache, redis_cache::RedisCache};
 
 /// Build a router backed by a mock Stellar RPC and populated price cache.
-async fn build_healthy_router() -> (
-    axum::Router,
-    crate::test_support::MockRpcServer,
-) {
+async fn build_healthy_router() -> (axum::Router, crate::mock_rpc_helpers::MockRpcServer) {
     let (config, cache, mock) = setup_healthy_test_env().await;
     let router = build_router(
         config,
@@ -1160,11 +1157,37 @@ async fn api_v1_stats_returns_error_without_db() {
     .await
     .expect("request failed");
 
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     let body = body_string(response.into_body()).await;
     assert!(
-        body.contains("\"error\""),
+        body.contains("database not available") || body.contains("\"error\""),
         "should report error when db is absent, got: {body}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Liveness Probe Tests (/live)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// GET /live must always return HTTP 200 without checking dependencies.
+#[tokio::test]
+async fn live_returns_200_without_dependency_checks() {
+    let response = crate::server::build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/live"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"alive\""),
+        "liveness probe should report alive, got: {body}"
     );
 }
 
@@ -1204,6 +1227,10 @@ async fn ready_returns_503_when_redis_disabled() {
     assert!(
         body.contains("\"redis\":\"not_configured\""),
         "redis dependency should be 'not_configured', got: {body}"
+    );
+    assert!(
+        body.contains("\"price_cache\""),
+        "readiness probe should include price_cache dependency, got: {body}"
     );
 }
 
@@ -1328,7 +1355,9 @@ async fn graceful_shutdown_drains_inflight_request() {
     sleep(Duration::from_millis(150)).await;
 
     // Trigger graceful shutdown while the request is still in flight.
-    shutdown_tx.send(()).expect("shutdown trigger must be sendable");
+    shutdown_tx
+        .send(())
+        .expect("shutdown trigger must be sendable");
 
     // The in-flight request must still complete successfully.
     let response = tokio::time::timeout(Duration::from_secs(3), in_flight)
@@ -1366,12 +1395,11 @@ async fn graceful_shutdown_drains_inflight_request() {
     )
     .await;
 
-    match after_shutdown {
-        Ok(Ok(_)) => panic!(
+    if let Ok(Ok(_)) = after_shutdown {
+        panic!(
             "new connections after shutdown must fail, but got: {:?}",
             after_shutdown
-        ),
-        _ => {}
+        );
     }
 }
 

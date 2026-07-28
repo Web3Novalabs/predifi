@@ -10,9 +10,20 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio::time::interval;
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::redis_cache::RedisCache;
+use crate::worker::queue::{job_kind_from_topics, Job, JobQueue};
+
+use std::sync::OnceLock;
+
+/// Shared reliable job queue for idempotency, retries, DLQ, and health.
+static WORKER_QUEUE: OnceLock<JobQueue> = OnceLock::new();
+
+/// Access the process-wide worker job queue (for health endpoints / ops).
+pub fn worker_job_queue() -> &'static JobQueue {
+    WORKER_QUEUE.get_or_init(JobQueue::with_defaults)
+}
 
 const POLL_INTERVAL_SECS: u64 = 5;
 const STATE_KEY: &str = "stellar_listener_latest_ledger";
@@ -56,6 +67,7 @@ pub struct StellarEvent {
 // ── Ledger cursor persistence ─────────────────────────────────────────────────
 
 /// Load the last processed ledger from the database.
+#[instrument(skip(pool), name = "stellar_listener.load_cursor")]
 async fn load_cursor(pool: &PgPool) -> Option<u64> {
     sqlx::query_scalar::<_, String>("SELECT value FROM app_state WHERE key = $1")
         .bind(STATE_KEY)
@@ -67,6 +79,7 @@ async fn load_cursor(pool: &PgPool) -> Option<u64> {
 }
 
 /// Persist the latest processed ledger to the database.
+#[instrument(skip(pool), name = "stellar_listener.save_cursor", fields(ledger = ledger))]
 async fn save_cursor(pool: &PgPool, ledger: u64) {
     let result = sqlx::query(
         "INSERT INTO app_state (key, value) VALUES ($1, $2)
@@ -84,6 +97,12 @@ async fn save_cursor(pool: &PgPool, ledger: u64) {
 
 // ── RPC call ──────────────────────────────────────────────────────────────────
 
+/// Fetch a batch of Stellar contract events starting from `start_ledger`.
+///
+/// Each call is wrapped in its own OTel span so RPC latency and failures are
+/// visible in the trace backend.
+#[instrument(skip(client), name = "stellar_listener.fetch_events",
+    fields(rpc_url = %rpc_url, start_ledger = start_ledger))]
 async fn fetch_events(
     client: &reqwest::Client,
     rpc_url: &str,
@@ -123,15 +142,20 @@ async fn fetch_events(
 /// (typically [`crate::server::run`]) can abort it as part of the graceful
 /// shutdown sequence.  Aborting the handle cancels the in-flight RPC poll
 /// and prevents the listener from blocking process exit.
+///
+/// > **Note:** prefer calling [`run_worker`] directly inside a
+/// > [`crate::tracing_context::spawn_worker`] closure so the task inherits a
+/// > named root span in the OTel trace backend.
 pub fn spawn(
     rpc_url: String,
     db: PgPool,
     event_bus: crate::ws::EventBus,
     redis: RedisCache,
     timeout: Duration,
+    max_batch_size: usize,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        run(rpc_url, db, event_bus, redis, timeout).await;
+    crate::tracing_context::spawn_worker("stellar_listener", async move {
+        run_worker(rpc_url, db, event_bus, redis, timeout, max_batch_size).await;
     })
 }
 
@@ -146,12 +170,18 @@ fn reconnect_delay_secs(consecutive_failures: u32) -> u64 {
         .min(MAX_RECONNECT_DELAY_SECS)
 }
 
-async fn run(
+/// The main polling loop for the Stellar event listener.
+///
+/// Exposed as `pub` so [`crate::server::run_with_signal`] can invoke it
+/// inside a [`crate::tracing_context::spawn_worker`] closure, which roots the
+/// entire listener under a named OTel span without double-spawning.
+pub async fn run_worker(
     rpc_url: String,
     db: PgPool,
     event_bus: crate::ws::EventBus,
     redis: RedisCache,
     timeout: Duration,
+    max_batch_size: usize,
 ) {
     let client = reqwest::Client::builder()
         .timeout(timeout)
@@ -162,7 +192,8 @@ async fn run(
     // Resume from the last persisted ledger, or start from ledger 1.
     let mut cursor: u64 = load_cursor(&db).await.unwrap_or(1);
     let mut consecutive_failures: u32 = 0;
-    info!(cursor, "stellar listener starting");
+    let batch_size = max_batch_size.max(1);
+    info!(cursor, batch_size, "stellar listener starting");
 
     loop {
         if consecutive_failures == 0 {
@@ -181,96 +212,24 @@ async fn run(
 
                 let count = result.events.len();
                 if count > 0 {
+                    if count > batch_size {
+                        warn!(
+                            events = count,
+                            batch_size,
+                            "stellar event batch exceeds configured maximum; processing in chunks"
+                        );
+                    }
+
                     info!(
                         ledger_start = cursor,
                         latest_ledger = result.latest_ledger,
                         events = count,
+                        batch_size,
                         "stellar events received"
                     );
-                    // Collect referral events for bulk insert to minimise DB round-trips.
-                    let mut referral_events: Vec<crate::db::ReferralPaidEvent> = Vec::new();
 
-                    for event in &result.events {
-                        info!(
-                            id = %event.id,
-                            event_type = %event.event_type,
-                            ledger = event.ledger,
-                            contract_id = ?event.contract_id,
-                            "stellar event"
-                        );
-
-                        let topic_matches = |needle: &str| {
-                            event
-                                .topics
-                                .as_ref()
-                                .map(|t| t.iter().any(|s| s == needle))
-                                .unwrap_or(false)
-                        };
-
-                        if event.event_type == "contract" {
-                            if topic_matches("pool_created") {
-                                if let Err(e) = handle_pool_created_event(&db, &redis, event).await {
-                                    error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to process pool_created event"
-                                    );
-                                }
-                            } else if topic_matches("prediction_placed") {
-                                if let Err(e) =
-                                    handle_prediction_placed_event(&db, event, &event_bus).await
-                                {
-                                    error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to process prediction_placed event"
-                                    );
-                                }
-                            } else if topic_matches("pool_resolved") {
-                                if let Err(e) = handle_pool_resolved_event(&db, event).await {
-                                    error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to process pool_resolved event"
-                                    );
-                                }
-                            } else if topic_matches("pool_canceled") {
-                                if let Err(e) = handle_pool_canceled_event(&db, event).await {
-                                    error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to process pool_canceled event"
-                                    );
-                                }
-                            } else if topic_matches("referral_paid") {
-                                match parse_referral_paid_event(event) {
-                                    Ok(ev) => referral_events.push(ev),
-                                    Err(e) => error!(
-                                        id = %event.id,
-                                        ledger = event.ledger,
-                                        error = %e,
-                                        "failed to parse referral_paid event"
-                                    ),
-                                }
-                            }
-                        }
-                    }
-
-                    // Bulk-insert all collected referral events in a single query.
-                    if !referral_events.is_empty() {
-                        if let Err(e) =
-                            crate::db::insert_referrals_bulk(&db, &referral_events).await
-                        {
-                            error!(
-                                error = %e,
-                                count = referral_events.len(),
-                                "failed to bulk insert referral events"
-                            );
-                        }
+                    for chunk in result.events.chunks(batch_size) {
+                        process_event_batch(&db, &redis, &event_bus, chunk, batch_size).await;
                     }
                 }
 
@@ -291,6 +250,137 @@ async fn run(
                     "failed to fetch stellar events; scheduling reconnect"
                 );
                 tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
+        }
+    }
+}
+
+/// Process a batch of Stellar events, dispatching each to the appropriate handler.
+///
+/// Each call is wrapped in its own OTel span so per-batch latency is visible
+/// in the trace backend.
+#[instrument(skip_all, name = "stellar_listener.process_event_batch",
+    fields(event_count = events.len()))]
+async fn process_event_batch(
+    db: &PgPool,
+    redis: &RedisCache,
+    event_bus: &crate::ws::EventBus,
+    events: &[StellarEvent],
+    max_batch_size: usize,
+) {
+    let queue = worker_job_queue();
+    let mut referral_events: Vec<crate::db::ReferralPaidEvent> = Vec::new();
+    let mut referral_job_ids: Vec<String> = Vec::new();
+
+    for event in events {
+        info!(
+            id = %event.id,
+            event_type = %event.event_type,
+            ledger = event.ledger,
+            contract_id = ?event.contract_id,
+            "stellar event"
+        );
+
+        // Idempotent skip for duplicate deliveries of the same event id.
+        if queue.already_processed(&event.id) {
+            info!(id = %event.id, "skipping already-processed event");
+            continue;
+        }
+
+        let topic_matches = |needle: &str| {
+            event
+                .topics
+                .as_ref()
+                .map(|t| t.iter().any(|s| s == needle))
+                .unwrap_or(false)
+        };
+
+        if event.event_type == "contract" {
+            let kind = job_kind_from_topics(event.topics.as_ref());
+            let job = Job {
+                id: event.id.clone(),
+                kind: kind.clone(),
+                payload: event
+                    .data
+                    .as_ref()
+                    .map(|d| d.to_string())
+                    .unwrap_or_default(),
+                attempts: 0,
+                ledger: Some(event.ledger),
+            };
+
+            if topic_matches("pool_created") {
+                match handle_pool_created_event(db, redis, event).await {
+                    Ok(()) => queue.record_success(&job),
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process pool_created event");
+                        queue.record_failure(job, e);
+                    }
+                }
+            } else if topic_matches("prediction_placed") {
+                match handle_prediction_placed_event(db, event, event_bus).await {
+                    Ok(()) => queue.record_success(&job),
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process prediction_placed event");
+                        queue.record_failure(job, e);
+                    }
+                }
+            } else if topic_matches("pool_resolved") {
+                match handle_pool_resolved_event(db, event).await {
+                    Ok(()) => queue.record_success(&job),
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process pool_resolved event");
+                        queue.record_failure(job, e);
+                    }
+                }
+            } else if topic_matches("pool_canceled") {
+                match handle_pool_canceled_event(db, event).await {
+                    Ok(()) => queue.record_success(&job),
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process pool_canceled event");
+                        queue.record_failure(job, e);
+                    }
+                }
+            } else if topic_matches("referral_paid") {
+                match parse_referral_paid_event(event) {
+                    Ok(ev) => {
+                        referral_events.push(ev);
+                        referral_job_ids.push(event.id.clone());
+                    }
+                    Err(e) => {
+                        error!(id = %event.id, ledger = event.ledger, error = %e, "failed to parse referral_paid event");
+                        queue.record_failure(job, e);
+                    }
+                }
+            }
+        }
+    }
+
+    if !referral_events.is_empty() {
+        match crate::db::insert_referrals_bulk(db, &referral_events, max_batch_size).await {
+            Ok(()) => {
+                for id in &referral_job_ids {
+                    queue.mark_processed(id);
+                }
+            }
+            Err(e) => {
+                error!(
+                    error = %e,
+                    count = referral_events.len(),
+                    "failed to bulk insert referral events"
+                );
+                for id in referral_job_ids {
+                    queue.record_failure(
+                        Job {
+                            id,
+                            kind: "referral_paid".into(),
+                            payload: String::new(),
+                            attempts: 0,
+                            ledger: None,
+                        },
+                        e.to_string(),
+                    );
+                }
             }
         }
     }
@@ -561,5 +651,14 @@ mod tests {
         assert_eq!(reconnect_delay_secs(3), 4);
         assert_eq!(reconnect_delay_secs(4), 8);
         assert_eq!(reconnect_delay_secs(10), 60);
+    }
+
+    #[test]
+    fn event_batch_is_split_into_configured_chunks() {
+        let events: Vec<u64> = (0..5).collect();
+        let chunks: Vec<_> = events.chunks(2).collect();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0], &[0, 1]);
+        assert_eq!(chunks[2], &[4]);
     }
 }

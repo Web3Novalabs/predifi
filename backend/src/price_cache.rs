@@ -107,7 +107,7 @@ const ASSETS: &[(&str, &str)] = &[("BTC", "bitcoin"), ("ETH", "ethereum"), ("XLM
 /// Panics if the reqwest HTTP client cannot be built (this should never
 /// happen in practice).
 pub fn spawn_fetcher(cache: PriceCache, metrics: Option<SharedMetrics>) -> JoinHandle<()> {
-    tracing_context::spawn_worker("price_cache_fetcher", async move {
+    crate::tracing_context::spawn_worker("price_cache_fetcher", async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -117,11 +117,7 @@ pub fn spawn_fetcher(cache: PriceCache, metrics: Option<SharedMetrics>) -> JoinH
             let span = info_span!("price_cache.fetch");
             let fetch_started = Instant::now();
 
-            let fetch_result = async {
-                fetch_prices(&client).await
-            }
-            .instrument(span)
-            .await;
+            let fetch_result = async { fetch_prices(&client).await }.instrument(span).await;
 
             let duration_secs = fetch_started.elapsed().as_secs_f64();
 
@@ -171,41 +167,6 @@ async fn fetch_prices(client: &reqwest::Client) -> Result<HashMap<String, f64>, 
     Ok(result)
 }
 
-/// Fetch prices from CoinCap as a fallback.
-async fn fetch_prices_fallback(client: &reqwest::Client) -> Result<HashMap<String, f64>, reqwest::Error> {
-    let ids: Vec<&str> = ASSETS.iter().map(|(_, id)| *id).collect();
-    let ids_param = ids.join(",");
-
-    let url = format!(
-        "https://api.coincap.io/v2/assets?ids={}",
-        ids_param
-    );
-
-    #[derive(serde::Deserialize)]
-    struct CoinCapAsset {
-        symbol: String,
-        #[serde(rename = "priceUsd")]
-        price_usd: String,
-    }
-
-    #[derive(serde::Deserialize)]
-    struct CoinCapResponse {
-        data: Vec<CoinCapAsset>,
-    }
-
-    let raw: CoinCapResponse = client.get(&url).send().await?.json().await?;
-
-    let mut result = HashMap::new();
-    for asset in raw.data {
-        if let Ok(price) = asset.price_usd.parse::<f64>() {
-            if ASSETS.iter().any(|(s, _)| *s == asset.symbol) {
-                result.insert(asset.symbol, price);
-            }
-        }
-    }
-    Ok(result)
-}
-
 // ── HTTP handler ─────────────────────────────────────────────────────────────
 
 /// `GET /api/v1/prices`
@@ -221,7 +182,7 @@ pub async fn get_prices(
         return ApiResponse::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::SERVICE_UNAVAILABLE,
-            "price cache not ready"
+            "price cache not ready",
         );
     }
 

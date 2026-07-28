@@ -42,6 +42,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::db::ReferralEarningRow;
+use crate::response::error_codes;
 use crate::response::ApiResponse;
 use crate::response::error_codes;
 
@@ -97,6 +98,7 @@ pub async fn get_referrals(
         })),
         Ok(None) => Ok(ApiResponse::error(
             StatusCode::NOT_FOUND,
+            error_codes::NOT_FOUND,
             format!("no referrals found for {address}"),
         )),
         Err(err) => {
@@ -161,7 +163,8 @@ pub async fn estimate_referral_rewards(
     .await?
     .unwrap_or(0);
 
-    let estimated_reward = estimate_referral_reward(total_volume, treasury_fee_bps, referral_fee_bps);
+    let estimated_reward =
+        estimate_referral_reward(total_volume, treasury_fee_bps, referral_fee_bps);
 
     Ok(ApiResponse::success(ReferralRewardEstimate {
         referrer: address,
