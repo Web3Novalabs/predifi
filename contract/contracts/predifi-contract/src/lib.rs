@@ -3005,21 +3005,233 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// Create a new prediction pool. Returns the new pool ID.
+    /// Create a new prediction pool with configurable parameters.
     ///
-    /// PRE: end_time > current_time (INV-8)
-    /// POST: Pool.state = Active, Pool.total_stake = initial_liquidity (if provided)
+    /// This function creates a new prediction market pool where users can stake tokens on
+    /// specific outcomes. The pool is initialized in the `Active` state and immediately
+    /// accepts predictions once the `start_time` is reached (or immediately if `start_time` is 0).
     ///
-    /// # Arguments
-    /// * `creator`           - Address of the pool creator (must provide auth).
-    /// * `end_time`          - Unix timestamp after which no more predictions are accepted.
-    /// * `token`             - The Stellar token contract address used for staking.
-    /// * `options_count`     - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
-    /// * `description`       - Short human-readable description of the event (max 256 bytes).
-    /// * `metadata_url`      - URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
-    /// * `min_stake`         - Minimum stake amount per prediction (must be > 0).
-    /// * `max_stake`         - Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
-    /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
+    /// # Parameters
+    ///
+    /// - `env` - The Soroban environment, providing access to storage, ledger, and auth
+    /// - `creator` - The address creating the pool (must authenticate via `require_auth`)
+    /// - `end_time` - Unix timestamp after which no more predictions are accepted (must be > current_time)
+    /// - `token` - The Stellar token contract address used for staking (must be whitelisted)
+    /// - `options_count` - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT = 100)
+    /// - `category` - Market category symbol (e.g., `CATEGORY_SPORTS`, `CATEGORY_FINANCE`)
+    /// - `config` - Pool configuration parameters via `PoolConfig` struct:
+    ///   - `start_time` - Unix timestamp when the pool opens for predictions (0 = open immediately)
+    ///   - `description` - Short human-readable description (max 256 bytes)
+    ///   - `metadata_url` - URL to extended metadata, e.g., IPFS link (max 512 bytes)
+    ///   - `min_stake` - Minimum stake amount per prediction (must be > 0)
+    ///   - `max_stake` - Maximum stake per prediction (0 = no limit, else must be >= min_stake)
+    ///   - `min_total_stake` - Minimum total stake required for resolution (must be > 0)
+    ///   - `max_total_stake` - Hard cap on total stake (0 = no limit)
+    ///   - `initial_liquidity` - Optional house money provided by creator (must be >= 0)
+    ///   - `required_resolutions` - Number of oracle/operator votes needed for resolution (must be >= 1)
+    ///   - `private` - If true, only whitelisted addresses can participate
+    ///   - `whitelist_key` - Optional symbol for private pool access
+    ///   - `outcome_descriptions` - Human-readable labels for each outcome (length must equal options_count)
+    ///
+    /// # Return Value
+    ///
+    /// Returns `Ok(pool_id)` - The unique identifier of the newly created pool.
+    /// The pool_id is auto-incremented and can be used to reference the pool in all subsequent operations.
+    ///
+    /// # Emitted Events
+    ///
+    /// This function emits the following events:
+    ///
+    /// 1. **`PoolCreatedEvent`** (always emitted):
+    ///   - `pool_id` - The new pool's unique identifier
+    ///   - `creator` - The address that created the pool
+    ///   - `end_time` - The pool's betting deadline
+    ///   - `token` - The token contract used for staking
+    ///   - `options_count` - Number of possible outcomes
+    ///   - `metadata_url` - URL to extended metadata
+    ///   - `initial_liquidity` - Amount of house money provided
+    ///   - `category` - Market category
+    ///   - `required_resolutions` - Resolution threshold
+    ///   - `max_total_stake` - Total stake cap
+    ///   - `outcome_descriptions` - Labels for each outcome
+    ///
+    /// 2. **`InitialLiquidityProvidedEvent`** (conditional):
+    ///   - Emitted only if `initial_liquidity > 0`
+    ///   - `pool_id` - The pool receiving liquidity
+    ///   - `creator` - The address providing liquidity
+    ///   - `amount` - The amount of liquidity transferred
+    ///
+    /// # Error Conditions
+    ///
+    /// The function can return the following errors:
+    ///
+    /// - `ContractPaused` - The contract is currently paused; all state-mutating operations are blocked
+    /// - `Unauthorized` - Caller is not authorized (creator authentication failed)
+    /// - `TokenNotWhitelisted` - The specified token is not on the allowed betting whitelist
+    /// - `InvalidTimestamp` - `end_time` is not in the future, exceeds MAX_POOL_DURATION, or `end_time <= start_time`
+    /// - `DeadlineInPast` - `end_time` or `start_time` is in the past (issue #1130)
+    /// - `InvalidData` - `options_count` < 2 or > MAX_OPTIONS_COUNT
+    /// - `MetadataUrlInvalid` - `metadata_url` exceeds 512 bytes
+    /// - `InvalidTargetPrice` - Invalid target price (for price-based pools)
+    /// - `InitialLiquidityBelowSafetyMargin` - Initial liquidity is insufficient relative to `max_total_stake` (issue #1131)
+    /// - `RequiredResolutionsExceedOperators` - `required_resolutions` > number of active operators
+    /// - `OutcomeDescriptionTooLong` - An outcome description exceeds MAX_OUTCOME_DESCRIPTION_LEN (128 bytes)
+    /// - `OutcomeDescriptionEmpty` - An outcome description is empty or below MIN_OUTCOME_DESCRIPTION_LEN (1 byte)
+    ///
+    /// # Validation Rules
+    ///
+    /// The function performs extensive validation before pool creation:
+    ///
+    /// **Time Validation:**
+    /// - `end_time` must be > current_time (INV-8)
+    /// - `end_time` must be > `start_time`
+    /// - `end_time` must not exceed current_time + MAX_POOL_DURATION (365 days)
+    /// - Pool duration must be >= min_pool_duration (default: 1 hour)
+    /// - If `start_time > 0`, it must be > current_time (cannot schedule past start)
+    ///
+    /// **Token Validation:**
+    /// - Token must be whitelisted via `is_token_whitelisted`
+    /// - Token address validation is deferred to actual transfer (Soroban pattern)
+    ///
+    /// **Outcome Validation:**
+    /// - `options_count` must be >= 2 (binary or multi-outcome)
+    /// - `options_count` must be <= MAX_OPTIONS_COUNT (100)
+    /// - `outcome_descriptions` length must equal `options_count`
+    /// - Each outcome description must be between 1 and 128 bytes
+    ///
+    /// **Stake Validation:**
+    /// - `min_stake` must be > 0
+    /// - `max_stake` must be 0 or >= `min_stake`
+    /// - `min_total_stake` must be > 0
+    /// - `max_total_stake` must be >= 0
+    ///
+    /// **Liquidity Validation:**
+    /// - `initial_liquidity` must be >= 0
+    /// - `initial_liquidity` must not exceed MAX_INITIAL_LIQUIDITY
+    /// - If `max_total_stake > 0` and `initial_liquidity > 0`: liquidity must be at least
+    ///   `(max_total_stake * INITIAL_LIQUIDITY_SAFETY_MARGIN_BPS) / 10_000` (1% safety margin)
+    ///
+    /// **Resolution Validation:**
+    /// - `required_resolutions` must be >= 1
+    /// - `required_resolutions` must not exceed the number of active operators
+    ///   (unless operator_count is 0, in which case oracle resolution is allowed)
+    ///
+    /// **Category Validation:**
+    /// - Category must be one of the canonical category symbols (e.g., CATEGORY_SPORTS)
+    ///
+    /// **Private Pool Validation:**
+    /// - If `whitelist_key` is provided, it must pass `validate_referral_code`
+    ///
+    /// # Storage Initialization
+    ///
+    /// The function initializes the following storage entries:
+    ///
+    /// - `DataKey::Pool(pool_id)` - The pool's full state
+    /// - `DataKey::PartCnt(pool_id)` - Participant count (initialized to 0)
+    /// - `DataKey::OutStakes(pool_id)` - Batch storage for outcome stakes (initialized to zeros)
+    /// - `DataKey::CatPoolCt(category)` - Category pool count (incremented)
+    /// - `DataKey::CatPoolIx(category, index)` - Category pool index (appended)
+    /// - `DataKey::PoolIdCtr` - Pool ID counter (incremented)
+    ///
+    /// # Initial Liquidity Transfer
+    ///
+    /// If `initial_liquidity > 0`, the function transfers tokens from the creator to the contract:
+    /// - Tokens are transferred via `token_client.transfer(creator, contract, initial_liquidity)`
+    /// - This represents "house money" that participates in the pool
+    /// - Initial liquidity is part of `pool.total_stake` but typically excluded from fee calculations
+    /// - The transfer occurs after all validation to avoid wasting gas on invalid pools
+    ///
+    /// # Category Indexing
+    ///
+    /// Pools are indexed by category for efficient querying:
+    /// - Each category maintains a count of pools (`CatPoolCt`)
+    /// - Each category maintains an ordered list of pool IDs (`CatPoolIx`)
+    /// - This enables category-based pool enumeration and discovery
+    ///
+    /// # Pre-conditions
+    ///
+    /// - `end_time > current_time` (INV-8)
+    /// - Token must be whitelisted
+    /// - Creator must have sufficient balance for `initial_liquidity` (if provided)
+    /// - Access control contract must be deployed and have sufficient operators (if required_resolutions > 0)
+    ///
+    /// # Post-conditions
+    ///
+    /// - `Pool.state = Active`
+    /// - `Pool.total_stake = initial_liquidity` (if provided, else 0)
+    /// - `Pool.outcome = UNRESOLVED_OUTCOME`
+    /// - `PoolIdCtr` is incremented
+    /// - Category indexes are updated
+    /// - `PoolCreatedEvent` is emitted
+    /// - `InitialLiquidityProvidedEvent` is emitted (if liquidity provided)
+    ///
+    /// # Usage Examples
+    ///
+    /// ## Basic Binary Pool
+    ///
+    /// ```rust
+    /// use soroban_sdk::{Address, Symbol, symbol_short};
+    ///
+    /// let creator = Address::generate(&env);
+    /// let token = Address::generate(&env);
+    /// let end_time = env.ledger().timestamp() + 86400; // 24 hours from now
+    ///
+    /// let config = PoolConfig {
+    ///     start_time: 0, // Open immediately
+    ///     description: String::from_str(&env, "Will BTC exceed $100k?"),
+    ///     metadata_url: String::from_str(&env, "ipfs://QmHash"),
+    ///     min_stake: 1000,
+    ///     max_stake: 1000000,
+    ///     min_total_stake: 10000,
+    ///     max_total_stake: 10000000,
+    ///     initial_liquidity: 0,
+    ///     required_resolutions: 1,
+    ///     private: false,
+    ///     whitelist_key: None,
+    ///     outcome_descriptions: vec![&env, 
+    ///         String::from_str(&env, "No"),
+    ///         String::from_str(&env, "Yes")
+    ///     ],
+    /// };
+    ///
+    /// let pool_id = contract.create_pool(
+    ///     env,
+    ///     creator,
+    ///     end_time,
+    ///     token,
+    ///     2, // Binary: No/Yes
+    ///     CATEGORY_CRYPTO,
+    ///     config,
+    /// )?;
+    /// ```
+    ///
+    /// ## Pool with Initial Liquidity
+    ///
+    /// ```rust
+    /// let config = PoolConfig {
+    ///     // ... other fields ...
+    ///     initial_liquidity: 1000000, // Creator provides house money
+    ///     max_total_stake: 10000000,
+    ///     // ... other fields ...
+    /// };
+    ///
+    /// let pool_id = contract.create_pool(env, creator, end_time, token, 2, CATEGORY_SPORTS, config)?;
+    /// // Creator must have approved the contract to spend 1000000 tokens
+    /// ```
+    ///
+    /// ## Private Pool with Whitelist
+    ///
+    /// ```rust
+    /// let config = PoolConfig {
+    ///     // ... other fields ...
+    ///     private: true,
+    ///     whitelist_key: Some(symbol_short!("SECRET_KEY")),
+    ///     // ... other fields ...
+    /// };
+    ///
+    /// let pool_id = contract.create_pool(env, creator, end_time, token, 2, CATEGORY_FINANCE, config)?;
+    /// // Only whitelisted users or those with the invite key can participate
+    /// ```
     #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
         env: Env,
@@ -4032,12 +4244,172 @@ impl PredifiContract {
             .unwrap_or_else(|| Vec::new(&env))
     }
 
-    /// Place a prediction on a pool. Cannot predict on canceled or resolved pools.
-    /// Optional `referrer`: if set, that address will receive a referral cut of the protocol fee
-    /// when this user claims winnings. Stored only on first prediction for (user, pool_id).
-    /// PRE: amount > 0 (INV-7), pool.state = Active, current_time < pool.end_time
-    /// PRE: pool.min_stake <= amount <= pool.max_stake (unless max_stake == 0)
-    /// POST: pool.total_stake increases by amount, OutcomeStake increases by amount (INV-1)
+    /// Place a prediction on an active pool by staking tokens on a specific outcome.
+    ///
+    /// This function allows users to participate in prediction markets by transferring tokens
+    /// to the contract and recording their prediction. The prediction is stored and will be
+    /// evaluated when the pool is resolved. Winners can claim their share of the pool's total
+    /// stake minus protocol fees via `claim_winnings`.
+    ///
+    /// # Parameters
+    ///
+    /// - `env` - The Soroban environment, providing access to storage, ledger, and auth
+    /// - `user` - The address placing the prediction (must authenticate via `require_auth`)
+    /// - `pool_id` - The unique identifier of the prediction pool to bet on
+    /// - `amount` - The amount of tokens to stake (must be > 0 and meet minimum requirements)
+    /// - `outcome` - The predicted outcome index (0-based, must be < `pool.options_count`)
+    /// - `referrer` - Optional address that referred this user. If set, the referrer receives
+    ///   a share of the protocol fee when the user claims winnings. Only stored on the first
+    ///   prediction for a given `(user, pool_id)` pair. Cannot be the user or the contract.
+    /// - `invite_key` - Optional symbol used to access private pools. Must match the pool's
+    ///   `whitelist_key` if the pool is private and the user is not whitelisted.
+    ///
+    /// # Prediction Cooldown Mechanism
+    ///
+    /// The contract enforces a cooldown period between consecutive predictions from the same
+    /// address to prevent spam and potential front-running attacks. The cooldown duration is
+    /// configured via `Config::prediction_cooldown_seconds` (default: 0, meaning disabled).
+    ///
+    /// - When `prediction_cooldown_seconds > 0`, the contract checks `LastPredictionTime(user)`
+    ///   to ensure sufficient time has elapsed since the user's last successful prediction.
+    /// - If the cooldown has not elapsed, the function returns `RateLimitOrSuspiciousActivity`.
+    /// - The timestamp is updated after each successful prediction, regardless of pool.
+    ///
+    /// # Stake Limits Enforcement
+    ///
+    /// The function enforces multiple stake limits at different levels:
+    ///
+    /// **Global Protocol Minimum:**
+    /// - `amount` must be >= `Config::min_stake` (default: 1 token unit)
+    /// - Error: `InsufficientStake`
+    ///
+    /// **Per-Pool Limits:**
+    /// - `amount` must be >= `pool.min_stake` (set at pool creation)
+    /// - Error: `StakeBelowMinimum`
+    /// - If `pool.max_stake > 0`, `amount` must be <= `pool.max_stake`
+    /// - Error: `StakeAboveMaximum`
+    ///
+    /// **Total Pool Cap:**
+    /// - If `pool.max_total_stake > 0`, the new `pool.total_stake + amount` must not exceed this cap
+    /// - Error: `MaxTotalStakeExceeded`
+    ///
+    /// **User Prediction Count Limit:**
+    /// - If `Config::max_predictions_per_user > 0`, a user cannot place predictions on more than
+    ///   this number of distinct pools
+    /// - Increasing stake on an existing prediction (same pool, same outcome) does not count
+    ///   toward this limit
+    /// - Error: `MaxPredictionsExceeded`
+    ///
+    /// # Referral Handling
+    ///
+    /// Referrals allow users to earn rewards by bringing new participants to the protocol:
+    ///
+    /// - The `referrer` parameter is only processed on the **first prediction** for a given
+    ///   `(user, pool_id)` pair. Subsequent predictions on the same pool ignore this parameter.
+    /// - The referrer address is stored in `DataKey::Referrer(user, pool_id)`.
+    /// - Referred volume is tracked in `DataKey::ReferredVolume(referrer, pool_id)` and
+    ///   accumulates across all predictions from the referred user on that pool.
+    /// - When the referred user claims winnings, the referrer receives a share of the protocol
+    ///   fee based on `Config::referral_bps` (default: 500 bps = 5%).
+    /// - Referrer validation: Cannot be the user themselves or the contract address.
+    /// - Currently, only one referrer per (user, pool) is supported. Future extensions may
+    ///   support multiple referrers (see `DataKey::Referrer` documentation).
+    ///
+    /// # Fee Deduction Flow
+    ///
+    /// **Note:** Protocol fees are NOT deducted during `place_prediction`. Fees are calculated
+    /// and deducted at **resolution time** when winners claim their winnings via `claim_winnings`.
+    ///
+    /// The fee flow works as follows:
+    ///
+    /// 1. **Prediction Placement (this function):**
+    ///    - User transfers the full `amount` to the contract
+    ///    - The full amount is added to `pool.total_stake`
+    ///    - No fees are deducted at this stage
+    ///
+    /// 2. **Pool Resolution:**
+    ///    - The pool's `fee_bps` is determined by the dynamic fee tier system based on
+    ///      `pool.total_stake` at resolution time
+    ///    - The winning outcome is finalized
+    ///
+    /// 3. **Winnings Claim (`claim_winnings`):**
+    ///    - Protocol fee = `user_winnings * pool.fee_bps / 10_000`
+    ///    - Referral fee = `protocol_fee * Config::referral_bps / 10_000`
+    ///    - Treasury receives: `protocol_fee - referral_fee`
+    ///    - Referrer receives: `referral_fee`
+    ///    - User receives: `user_winnings - protocol_fee`
+    ///
+    /// # Emitted Events
+    ///
+    /// This function emits the following events in order:
+    ///
+    /// 1. **`PredictionPlacedEvent`** (always emitted):
+    ///    - `pool_id` - The pool receiving the prediction
+    ///    - `user` - The address placing the prediction
+    ///    - `amount` - The staked amount
+    ///    - `outcome` - The predicted outcome index
+    ///
+    /// 2. **`HighValuePredictionEvent`** (conditional):
+    ///    - Emitted when `amount >= HIGH_VALUE_THRESHOLD`
+    ///    - Used for monitoring and alerting on large stakes
+    ///    - Fields: `pool_id`, `user`, `amount`, `outcome`, `threshold`
+    ///
+    /// 3. **`OutcomeStakesUpdatedEvent`** (conditional):
+    ///    - Emitted when `pool.options_count >= 16`
+    ///    - Avoids emitting individual events per outcome for large tournaments
+    ///    - Fields: `pool_id`, `options_count`, `total_stake`
+    ///
+    /// 4. **`PredictionBlockedDelistedEvent`** (error case):
+    ///    - Emitted when the pool's token is not whitelisted
+    ///    - Fields: `pool_id`, `user`, `token`, `timestamp`
+    ///
+    /// # Error Conditions
+    ///
+    /// The function can return the following errors:
+    ///
+    /// - `ContractPaused` - The contract is currently paused; all state-mutating operations are blocked
+    /// - `InvalidAmount` - The stake amount is zero or negative
+    /// - `InsufficientStake` - The amount is below the global protocol minimum (`Config::min_stake`)
+    /// - `TokenNotWhitelisted` - The pool's token is not on the allowed betting whitelist
+    /// - `PoolNotFound` - The specified `pool_id` does not exist
+    /// - `InvalidPoolState` - The pool is not in `Active` state (e.g., resolved, canceled, or disputed)
+    /// - `InvalidOutcome` - The outcome index is >= `pool.options_count`
+    /// - `StakeBelowMinimum` - The amount is below the pool's `min_stake`
+    /// - `StakeAboveMaximum` - The amount exceeds the pool's `max_stake` (if > 0)
+    /// - `MaxTotalStakeExceeded` - Adding this amount would exceed `pool.max_total_stake`
+    /// - `RateLimitOrSuspiciousActivity` - The prediction cooldown period has not elapsed
+    /// - `MaxPredictionsExceeded` - The user has exceeded the maximum number of pools they can participate in
+    /// - `ArithmeticError` - An overflow occurred during stake calculations
+    ///
+    /// # Pre-conditions
+    ///
+    /// - `amount > 0` (INV-7)
+    /// - `pool.state == MarketState::Active`
+    /// - `env.ledger().timestamp() < pool.end_time` (pool has not ended)
+    /// - `pool.min_stake <= amount <= pool.max_stake` (unless `max_stake == 0`)
+    /// - `amount >= Config::min_stake` (global minimum)
+    /// - `outcome < pool.options_count`
+    /// - Pool's token must be whitelisted
+    /// - For private pools: user must be whitelisted, be the creator, or provide valid `invite_key`
+    /// - If `prediction_cooldown_seconds > 0`: sufficient time must have elapsed since user's last prediction
+    /// - If `max_predictions_per_user > 0`: user must not have exceeded the prediction count limit
+    ///
+    /// # Post-conditions
+    ///
+    /// - `pool.total_stake` increases by `amount` (INV-1)
+    /// - `OutcomeStake(pool_id, outcome)` increases by `amount` (INV-1)
+    /// - User's prediction record is created or updated with the new stake
+    /// - If first prediction for user on this pool: `participants_count` increments
+    /// - If referrer provided on first prediction: referrer is stored and referred volume is tracked
+    /// - `LastPredictionTime(user)` is updated to current timestamp
+    /// - Tokens are transferred from `user` to the contract
+    /// - `PredictionPlacedEvent` is emitted
+    ///
+    /// # Reentrancy Protection
+    ///
+    /// This function uses a reentrancy guard (`enter_reentrancy_guard` / `exit_reentrancy_guard`)
+    /// to prevent reentrant calls. The guard is entered at the start and exited before token
+    /// transfer and event emission.
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(
         env: Env,
