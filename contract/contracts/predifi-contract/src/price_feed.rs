@@ -371,7 +371,39 @@ impl PriceFeedAdapter {
         Ok(())
     }
 
-    /// Get oracle configuration
+    /// Get the current oracle configuration.
+    ///
+    /// This function retrieves the global oracle configuration from persistent storage.
+    /// The configuration contains the Pyth contract address and validation parameters
+    /// used for price staleness checks.
+    ///
+    /// # Oracle Integration Pattern
+    ///
+    /// This function is used by:
+    /// - `is_price_valid` to retrieve staleness validation parameters
+    /// - Admin interfaces to display current oracle settings
+    /// - Testing and debugging to verify configuration state
+    ///
+    /// # Parameters
+    ///
+    /// - `env` - The Soroban environment
+    ///
+    /// # Returns
+    ///
+    /// The `OracleConfig` struct containing:
+    /// - `pyth_contract` - Pyth Network oracle contract address
+    /// - `max_price_age` - Maximum age of price data in seconds
+    /// - `min_confidence_ratio` - Minimum confidence ratio in basis points
+    ///
+    /// # Panics
+    ///
+    /// This function panics if the oracle configuration has not been initialized
+    /// via `init_oracle`. This is intentional to fail fast if the oracle is not
+    /// properly configured before attempting price validation.
+    ///
+    /// # Storage
+    ///
+    /// Reads from `DataKey::OracleConfig` in persistent storage.
     pub fn get_oracle_config(env: &Env) -> OracleConfig {
         env.storage()
             .persistent()
@@ -474,7 +506,38 @@ impl PriceFeedAdapter {
         Ok(())
     }
 
-    /// Get current price feed data
+    /// Get the current price feed data for a specific asset pair.
+    ///
+    /// This function retrieves the latest price feed data from persistent storage
+    /// for the specified asset pair. It returns `None` if no feed data exists for
+    /// the pair.
+    ///
+    /// # Oracle Integration Pattern
+    ///
+    /// This function is used by:
+    /// - `evaluate_price_condition` to retrieve price data for resolution
+    /// - Admin interfaces to display current oracle prices
+    /// - Off-chain systems to query contract state
+    ///
+    /// # Parameters
+    ///
+    /// - `env` - The Soroban environment
+    /// - `feed_pair` - The asset pair symbol (e.g., `symbol!("BTC/USD")`)
+    ///
+    /// # Returns
+    ///
+    /// - `Some(PriceFeed)` - The latest price feed data for the pair
+    /// - `None` - No price feed data exists for the pair
+    ///
+    /// # Price Data Validity
+    ///
+    /// This function does NOT perform staleness validation. It returns the stored
+    /// price feed regardless of whether it is fresh or expired. Staleness checks
+    /// are performed separately by `is_price_valid` during resolution.
+    ///
+    /// # Storage
+    ///
+    /// Reads from `DataKey::PriceFeed(feed_pair)` in persistent storage.
     pub fn get_price_feed(env: &Env, feed_pair: &Symbol) -> Option<PriceFeed> {
         let feed: Option<PriceFeed> = env
             .storage()
@@ -611,7 +674,38 @@ impl PriceFeedAdapter {
         Ok(())
     }
 
-    /// Get price condition for a pool
+    /// Get the price condition configured for a specific pool.
+    ///
+    /// This function retrieves the price condition from persistent storage
+    /// for the specified pool. The condition defines how the pool should be
+    /// resolved automatically based on oracle price data.
+    ///
+    /// # Oracle Integration Pattern
+    ///
+    /// This function is used by:
+    /// - `resolve_pool_from_price` to retrieve the pool's resolution criteria
+    /// - Admin interfaces to display pool configuration
+    /// - Off-chain systems to query pool resolution conditions
+    ///
+    /// # Parameters
+    ///
+    /// - `env` - The Soroban environment
+    /// - `pool_id` - The unique identifier of the prediction pool
+    ///
+    /// # Returns
+    ///
+    /// - `Some(PriceCondition)` - The price condition configured for the pool
+    /// - `None` - No price condition is set for the pool
+    ///
+    /// # Usage Context
+    ///
+    /// If this function returns `None`, the pool cannot be resolved via
+    /// `resolve_pool_from_price`. Manual resolution via `resolve_pool` must
+    /// be used instead.
+    ///
+    /// # Storage
+    ///
+    /// Reads from `DataKey::PriceCondition(pool_id)` in persistent storage.
     pub fn get_price_condition(env: &Env, pool_id: u64) -> Option<PriceCondition> {
         env.storage()
             .persistent()
@@ -865,7 +959,44 @@ impl PriceFeedAdapter {
         Ok(())
     }
 
-    /// Get all available price feed pairs
+    /// Get all available price feed pairs registered in the contract.
+    ///
+    /// This function returns a list of all asset pair symbols that have
+    /// price feed data available. This is useful for discovery and
+    /// validation purposes.
+    ///
+    /// # Oracle Integration Pattern
+    ///
+    /// This function is used by:
+    /// - Admin interfaces to display available oracle feeds
+    /// - Pool creation interfaces to show valid feed options
+    /// - Off-chain systems to discover supported asset pairs
+    ///
+    /// # Parameters
+    ///
+    /// - `env` - The Soroban environment
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<Symbol>` containing all feed pair symbols with available data.
+    ///
+    /// # Current Implementation
+    ///
+    /// This function currently returns an empty vector. A full implementation
+    /// would scan storage for all `DataKey::PriceFeed` keys and return the
+    /// corresponding pair symbols. This depends on Soroban's storage scanning
+    /// capabilities which may be limited.
+    ///
+    /// # Future Enhancement
+    ///
+    /// To implement this function fully, consider:
+    /// - Maintaining a `DataKey::PriceFeedList` registry of all feed pairs
+    /// - Updating the registry in `update_price_feed` and `cleanup_expired_feeds`
+    /// - Returning the registry from this function
+    ///
+    /// # Storage
+    ///
+    /// Would read from `DataKey::PriceFeedList` if a registry is implemented.
     pub fn get_available_feeds(env: &Env) -> Vec<Symbol> {
         // This would typically scan storage for all PriceFeed keys
         // For now, return empty vector - implementation depends on storage scanning capabilities
