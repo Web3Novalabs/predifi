@@ -1,187 +1,213 @@
-//! OpenTelemetry tracing setup for request tracing.
+//! OpenTelemetry tracer provider setup for distributed tracing.
 //!
-//! This module provides functions to initialize OpenTelemetry tracing with
-//! OTLP (OpenTelemetry Protocol) exporters for distributed tracing.
+//! This module initialises an OpenTelemetry tracer provider and wires it into
+//! the `tracing` subscriber stack used by the Axum server.  Spans emitted via
+//! `tracing::info_span!` and `#[tracing::instrument]` are forwarded to the
+//! configured OTLP collector (Jaeger, Grafana Tempo, OpenTelemetry Collector…).
+//!
+//! # Environment variables
+//!
+//! | Variable | Default | Description |
+//! |---|---|---|
+//! | `TELEMETRY_ENABLED` | `"false"` | Set to `"true"` to activate OTel export |
+//! | `SERVICE_NAME` | `"predifi-backend"` | Reported service name |
+//! | `OTEL_EXPORTER_OTLP_ENDPOINT` | `"http://localhost:4317"` | OTLP gRPC collector |
+//! | `APP_ENV` | `"development"` | Deployment environment tag |
+//!
+//! Telemetry is **opt-in** (`TELEMETRY_ENABLED` defaults to `"false"`) so the
+//! server starts cleanly in environments without a collector configured.
 
-use opentelemetry::trace::TracerProvider;
-use opentelemetry_otlp::WithExportConfig;
-
+use opentelemetry::trace::TracerProvider as _;
 use opentelemetry::KeyValue;
+use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     resource::Resource,
     trace::{self, Tracer},
 };
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-/// Initialize OpenTelemetry tracing with OTLP exporter.
+// ── Resource builder ──────────────────────────────────────────────────────────
+
+/// Build a [`Resource`] carrying standard service-identification attributes.
 ///
-/// This function sets up distributed tracing with the following features:
-/// - OTLP exporter for sending traces to a collector (e.g., Jaeger, Tempo)
-/// - Standard semantic attributes for service identification
-/// - Integration with the existing tracing subscriber
+/// Every exported span carries `service.name`, `service.version`, and
+/// `deployment.environment` so collectors can filter by service.
+fn build_resource(service_name: &'static str) -> Resource {
+    Resource::new(vec![
+        KeyValue::new("service.name", service_name),
+        KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
+        KeyValue::new(
+            "deployment.environment",
+            std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string()),
+        ),
+    ])
+}
+
+// ── Provider initialisation ───────────────────────────────────────────────────
+
+/// Initialise an OpenTelemetry tracer provider with an **OTLP gRPC** exporter.
+///
+/// Spans are exported asynchronously via a batch processor running on the
+/// Tokio runtime.  The provider is registered as the global provider so any
+/// code that calls `opentelemetry::global::tracer(…)` gets a tracer from the
+/// same pipeline.
 ///
 /// # Arguments
-/// * `service_name` - The name of the service (e.g., "predifi-backend")
-/// * `otlp_endpoint` - The OTLP collector endpoint (e.g., "http://localhost:4317")
+/// * `service_name`  – Reported service name (e.g. `"predifi-backend"`).
+/// * `otlp_endpoint` – Collector gRPC endpoint (e.g. `"http://localhost:4317"`).
 ///
-/// # Returns
-/// A Tracer instance that can be used for manual instrumentation if needed.
+/// # Panics
+/// Panics if the OTLP exporter cannot be constructed (bad endpoint string —
+/// network failures are handled lazily by tonic).
 ///
 /// # Example
 /// ```no_run
 /// use predifi_backend::telemetry::init_telemetry;
-///
 /// let tracer = init_telemetry("predifi-backend", "http://localhost:4317");
 /// ```
 pub fn init_telemetry(service_name: &'static str, otlp_endpoint: &'static str) -> Tracer {
-    // Create a resource with service metadata
-    let _resource = Resource::new(vec![
-        KeyValue::new("service.name", service_name),
-        KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-        KeyValue::new(
-            "deployment.environment",
-            std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string()),
-        ),
-    ]);
+    let resource = build_resource(service_name);
 
-    // Configure OTLP exporter
     let otlp_exporter = opentelemetry_otlp::new_exporter()
         .tonic()
         .with_endpoint(otlp_endpoint)
         .build_span_exporter()
-        .expect("Failed to create OTLP exporter");
+        .expect("failed to create OTLP span exporter");
 
-    // Create a trace pipeline
+    // Wire the resource so every span carries service.name / service.version /
+    // deployment.environment attributes.
     let provider = trace::TracerProvider::builder()
+        .with_config(trace::Config::default().with_resource(resource))
         .with_batch_exporter(otlp_exporter, opentelemetry_sdk::runtime::Tokio)
         .build();
 
-    // Get a tracer from the provider
     let tracer = provider.tracer(service_name);
 
-    // Set the global tracer provider
-    let _ = opentelemetry::global::set_tracer_provider(provider);
+    // Register as the process-wide global provider.
+    opentelemetry::global::set_tracer_provider(provider);
 
     tracer
 }
 
-/// Initialize OpenTelemetry tracing with Jaeger exporter.
+// ── Subscriber wiring ─────────────────────────────────────────────────────────
+
+/// Initialise the `tracing` subscriber stack with an OpenTelemetry layer.
 ///
-/// This is an alternative to OTLP for environments using Jaeger directly.
+/// Replaces any previously installed global subscriber.  Callers **must not**
+/// have already called `…::init()` on a subscriber before invoking this.
+///
+/// The stack (outer → inner):
+/// 1. `EnvFilter`                    — honours `RUST_LOG` / the supplied `log_level`.
+/// 2. `tracing_opentelemetry::layer` — forwards spans to the OTel provider.
+/// 3. `fmt::layer`                   — console output (JSON or compact).
 ///
 /// # Arguments
-/// * `service_name` - The name of the service
-/// * `jaeger_endpoint` - The Jaeger agent endpoint (e.g., "http://localhost:14268/api/traces")
-///
-/// # Returns
-/// A Tracer instance for manual instrumentation.
-pub fn init_jaeger_telemetry(service_name: &'static str, jaeger_endpoint: &'static str) -> Tracer {
-    let _resource = Resource::new(vec![
-        KeyValue::new("service.name", service_name),
-        KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
-        KeyValue::new(
-            "deployment.environment",
-            std::env::var("APP_ENV").unwrap_or_else(|_| "development".to_string()),
-        ),
-    ]);
-
-    opentelemetry_jaeger::new_agent_pipeline()
-        .with_endpoint(jaeger_endpoint)
-        .with_service_name(service_name)
-        .install_simple()
-        .expect("Failed to install Jaeger exporter")
-}
-
-/// Initialize tracing subscriber with OpenTelemetry layer.
-///
-/// This function sets up the complete tracing stack including:
-/// - OpenTelemetry tracing layer
-/// - Existing fmt layer for console output
-/// - Environment filter for log level control
-///
-/// # Arguments
-/// * `tracer` - The OpenTelemetry tracer to use
-/// * `log_level` - The log level filter (e.g., "info", "debug")
-/// * `use_json` - Whether to use JSON formatting for logs
+/// * `tracer`    – Tracer obtained from [`init_telemetry`].
+/// * `log_level` – `EnvFilter`-compatible string (e.g. `"info"`, `"debug"`).
+/// * `use_json`  – `true` → newline-delimited JSON; `false` → compact human output.
 pub fn init_tracing_subscriber(tracer: Tracer, log_level: &str, use_json: bool) {
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
     let env_filter = tracing_subscriber::EnvFilter::new(log_level);
-
-    let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
-
+    let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
 
-    let subscriber = tracing_subscriber::registry()
+    let registry = tracing_subscriber::registry()
         .with(env_filter)
-        .with(telemetry_layer);
+        .with(otel_layer);
 
     if use_json {
-        subscriber.with(fmt_layer.json()).init();
+        registry.with(fmt_layer.json()).init();
     } else {
-        subscriber.with(fmt_layer.compact()).init();
+        registry.with(fmt_layer.compact()).init();
     }
 }
 
-/// Initialize telemetry based on environment configuration.
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+
+/// Flush buffered spans and shut down the global OTel tracer provider.
 ///
-/// This helper function reads environment variables to determine which
-/// telemetry backend to use and initializes it accordingly.
+/// Call this **after** all background workers are aborted and the HTTP server
+/// has stopped, so no new spans are generated during the flush.
+pub fn shutdown_tracer_provider() {
+    opentelemetry::global::shutdown_tracer_provider();
+}
+
+// ── Environment-driven bootstrap ─────────────────────────────────────────────
+
+/// Initialise the OTel tracer provider from environment variables.
 ///
-/// # Environment Variables
-/// * `OTEL_EXPORTER_OTLP_ENDPOINT` - OTLP collector endpoint (default: "http://localhost:4317")
-/// * `JAEGER_ENDPOINT` - Jaeger agent endpoint (if set, uses Jaeger instead of OTLP)
-/// * `TELEMETRY_ENABLED` - Set to "false" to disable telemetry (default: "true")
-/// * `SERVICE_NAME` - Service name (default: "predifi-backend")
+/// Returns `Some(Tracer)` when telemetry is active, `None` when disabled.
+/// Callers should pass the tracer to [`init_tracing_subscriber`].
 ///
-/// # Returns
-/// `Some(Tracer)` if telemetry is enabled, `None` otherwise.
+/// See the [module-level docs](self) for the full env var list.
 pub fn init_telemetry_from_env() -> Option<Tracer> {
-    let telemetry_enabled = std::env::var("TELEMETRY_ENABLED")
-        .unwrap_or_else(|_| "true".to_string())
+    // Telemetry is **opt-in**: absent or non-"true" values leave it disabled so
+    // the server starts cleanly without a collector.
+    let enabled = std::env::var("TELEMETRY_ENABLED")
+        .unwrap_or_else(|_| "false".to_string())
         .to_lowercase()
         == "true";
 
-    if !telemetry_enabled {
+    if !enabled {
         return None;
     }
 
     let service_name =
         std::env::var("SERVICE_NAME").unwrap_or_else(|_| "predifi-backend".to_string());
 
-    // Check for Jaeger endpoint first
-    if let Ok(jaeger_endpoint) = std::env::var("JAEGER_ENDPOINT") {
-        let name = Box::leak(service_name.into_boxed_str());
-        let endpoint = Box::leak(jaeger_endpoint.into_boxed_str());
-        return Some(init_jaeger_telemetry(name, endpoint));
-    }
-
-    // Fall back to OTLP
     let otlp_endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
 
-    let name = Box::leak(service_name.into_boxed_str());
-    let endpoint = Box::leak(otlp_endpoint.into_boxed_str());
+    // Box::leak gives `&'static str` from owned Strings coming from the env.
+    let name: &'static str = Box::leak(service_name.into_boxed_str());
+    let endpoint: &'static str = Box::leak(otlp_endpoint.into_boxed_str());
     Some(init_telemetry(name, endpoint))
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// `TELEMETRY_ENABLED=false` must return `None` without any network call.
     #[test]
-    fn test_telemetry_disabled_when_env_false() {
+    fn telemetry_disabled_when_env_false() {
         std::env::set_var("TELEMETRY_ENABLED", "false");
         let result = init_telemetry_from_env();
-        assert!(result.is_none());
+        assert!(
+            result.is_none(),
+            "init_telemetry_from_env must return None when TELEMETRY_ENABLED=false"
+        );
         std::env::remove_var("TELEMETRY_ENABLED");
     }
 
-    #[tokio::test]
-    async fn test_telemetry_enabled_by_default() {
+    /// Absent `TELEMETRY_ENABLED` must default to disabled (opt-in behaviour).
+    #[test]
+    fn telemetry_disabled_by_default() {
         std::env::remove_var("TELEMETRY_ENABLED");
-        // This will try to connect to localhost, so we just check it returns Some
-        // In a real test, we'd mock the exporter
-        let _result = init_telemetry_from_env();
-        // Will fail to connect but should return Some (the tracer)
-        // We skip this assertion in unit tests to avoid network calls
+        let result = init_telemetry_from_env();
+        assert!(
+            result.is_none(),
+            "init_telemetry_from_env must return None when TELEMETRY_ENABLED is unset"
+        );
+    }
+
+    /// `build_resource` must embed the service name in the resource attributes.
+    #[test]
+    fn build_resource_includes_service_name() {
+        let resource = build_resource("test-service");
+        let resource_str = format!("{resource:?}");
+        assert!(
+            resource_str.contains("test-service"),
+            "resource must contain the service name, got: {resource_str}"
+        );
+    }
+
+    /// `shutdown_tracer_provider` must not panic when no custom provider is registered.
+    #[test]
+    fn shutdown_tracer_provider_is_safe_with_no_provider() {
+        // The global noop provider is always present; shutdown is a harmless no-op.
+        shutdown_tracer_provider();
     }
 }

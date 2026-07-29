@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 export type Theme = "dark" | "light" | "system";
 
@@ -11,6 +11,11 @@ function applyTheme(theme: Theme) {
   const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   const resolved = theme === "system" ? (prefersDark ? "dark" : "light") : theme;
   document.documentElement.setAttribute("data-theme", resolved);
+  if (resolved === "dark") {
+    document.documentElement.classList.add("dark");
+  } else {
+    document.documentElement.classList.remove("dark");
+  }
 }
 
 function readStored(): Theme {
@@ -41,5 +46,19 @@ export function useTheme() {
     applyTheme(next);
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    applyTheme(theme);
+
+    if (theme !== "system") return;
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = () => {
+      applyTheme("system");
+    };
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [theme]);
+
   return { theme, setTheme };
 }
+

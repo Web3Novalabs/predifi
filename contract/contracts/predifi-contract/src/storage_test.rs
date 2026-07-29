@@ -626,4 +626,151 @@ mod tests {
             "Expected 1 active pool after resolving 2"
         );
     }
+
+    /// Verify that participants_count in Pool struct is the single source of truth
+    /// after PartCnt storage key optimization.
+    #[test]
+    fn test_participants_count_single_source_of_truth() {
+        use soroban_sdk::{symbol_short, String};
+
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, token, _admin, _operator) = setup_with_token(&env);
+
+        let creator = Address::generate(&env);
+
+        let pool_id = client
+            .create_pool(
+                &creator,
+                &100_000,
+                &token,
+                &2u32,
+                &symbol_short!("Tech"),
+                &PoolConfig {
+                    start_time: 0,
+                    description: String::from_str(&env, "Test pool"),
+                    metadata_url: String::from_str(&env, "ipfs://test"),
+                    min_stake: 1i128,
+                    max_stake: 0i128,
+                    max_total_stake: 0i128,
+                    min_total_stake: 1i128,
+                    initial_liquidity: 0i128,
+                    required_resolutions: 1u32,
+                    private: false,
+                    whitelist_key: None,
+                    outcome_descriptions: soroban_sdk::vec![
+                        &env,
+                        String::from_str(&env, "Yes"),
+                        String::from_str(&env, "No"),
+                    ],
+                },
+            )
+            .unwrap();
+
+        // Verify that participants_count in Pool struct is the source of truth
+        let pool = client.get_pool(&pool_id);
+        assert_eq!(
+            pool.participants_count,
+            0,
+            "New pool should have participants_count = 0"
+        );
+
+        // Place a prediction to increment participants_count
+        let user = Address::generate(&env);
+        let token_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
+        token_admin_client.mint(&user, &100i128);
+
+        client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
+
+        // Verify participants_count incremented in Pool struct
+        let pool = client.get_pool(&pool_id);
+        assert_eq!(
+            pool.participants_count,
+            1,
+            "participants_count should be 1 after first prediction"
+        );
+
+        // Place another prediction from a different user
+        let user2 = Address::generate(&env);
+        token_admin_client.mint(&user2, &50i128);
+        client.place_prediction(&user2, &pool_id, &50i128, &1u32, &None, &None);
+
+        // Verify participants_count incremented again
+        let pool = client.get_pool(&pool_id);
+        assert_eq!(
+            pool.participants_count,
+            2,
+            "participants_count should be 2 after second unique user"
+        );
+
+        // Verify get_pool_participants_count returns the same value
+        let count = client.get_pool_participants_count(&pool_id);
+        assert_eq!(
+            count,
+            2,
+            "get_pool_participants_count should match pool.participants_count"
+        );
+    }
+
+    /// Verify that storage footprint is reduced by eliminating redundant PartCnt key.
+    /// This test confirms that only one storage entry (Pool struct) is needed
+    /// to track participant count instead of two (Pool + PartCnt).
+    #[test]
+    fn test_storage_footprint_reduction() {
+        use soroban_sdk::{symbol_short, String};
+
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, token, _admin, _operator) = setup_with_token(&env);
+
+        let creator = Address::generate(&env);
+
+        let pool_id = client
+            .create_pool(
+                &creator,
+                &100_000,
+                &token,
+                &2u32,
+                &symbol_short!("Tech"),
+                &PoolConfig {
+                    start_time: 0,
+                    description: String::from_str(&env, "Test pool"),
+                    metadata_url: String::from_str(&env, "ipfs://test"),
+                    min_stake: 1i128,
+                    max_stake: 0i128,
+                    max_total_stake: 0i128,
+                    min_total_stake: 1i128,
+                    initial_liquidity: 0i128,
+                    required_resolutions: 1u32,
+                    private: false,
+                    whitelist_key: None,
+                    outcome_descriptions: soroban_sdk::vec![
+                        &env,
+                        String::from_str(&env, "Yes"),
+                        String::from_str(&env, "No"),
+                    ],
+                },
+            )
+            .unwrap();
+
+        let contract_id = client.address;
+        env.as_contract(&contract_id, || {
+            // Count storage entries related to pool creation
+            let pool_key = DataKey::Pool(pool_id);
+            assert!(
+                env.storage().persistent().has(&pool_key),
+                "Pool key must exist"
+            );
+
+            let stakes_key = DataKey::OutStakes(pool_id);
+            assert!(
+                env.storage().persistent().has(&stakes_key),
+                "OutStakes key must exist"
+            );
+
+            // Verify that the old PartCnt key pattern is no longer used
+            // This is implicitly tested by the fact that DataKey::PartCnt
+            // no longer exists in the enum, so it cannot be used.
+        });
+    }
 }

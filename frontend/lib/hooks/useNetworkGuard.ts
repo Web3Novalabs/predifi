@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { classifyWalletError } from "@/lib/walletErrors";
 
 /** Stellar / Soroban — no canonical EVM chain for this app.
  *  Set to the chain you actually target; null means "any chain is wrong
@@ -18,6 +19,8 @@ export interface NetworkGuardState {
   switchNetwork: () => Promise<void>;
   /** Error message from the last failed switch attempt. */
   switchError: string | null;
+  /** Structured recovery hint when switch fails. */
+  switchRecoveryAction: string | null;
 }
 
 const CHAIN_NAMES: Record<string, string> = {
@@ -39,12 +42,14 @@ function chainName(hexId: string): string {
 export function useNetworkGuard(): NetworkGuardState {
   const [currentChainId, setCurrentChainId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [switchRecoveryAction, setSwitchRecoveryAction] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     const eth = window.ethereum;
     if (!eth) return;
 
-    // Read current chain on mount
     eth.request({ method: "eth_chainId" }).then(setCurrentChainId).catch(() => {});
 
     const handler = (chainId: string) => setCurrentChainId(chainId);
@@ -58,16 +63,25 @@ export function useNetworkGuard(): NetworkGuardState {
 
   const switchNetwork = useCallback(async () => {
     const eth = window.ethereum;
-    if (!eth) return;
+    if (!eth) {
+      const classified = classifyWalletError(
+        new Error("wallet extension not found")
+      );
+      setSwitchError(classified.message);
+      setSwitchRecoveryAction(classified.recoveryAction);
+      return;
+    }
     setSwitchError(null);
+    setSwitchRecoveryAction(null);
     try {
       await eth.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: REQUIRED_CHAIN_ID }],
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Network switch failed.";
-      setSwitchError(msg);
+      const classified = classifyWalletError(err);
+      setSwitchError(classified.message);
+      setSwitchRecoveryAction(classified.recoveryAction);
     }
   }, []);
 
@@ -76,5 +90,6 @@ export function useNetworkGuard(): NetworkGuardState {
     currentChainName: currentChainId ? chainName(currentChainId) : "",
     switchNetwork,
     switchError,
+    switchRecoveryAction,
   };
 }

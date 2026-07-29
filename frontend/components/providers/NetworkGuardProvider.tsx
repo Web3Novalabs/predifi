@@ -5,8 +5,13 @@ import { useNetworkGuard } from "@/lib/hooks/useNetworkGuard";
 import { NetworkSwitchModal } from "@/components/modals/NetworkSwitchModal";
 
 export function NetworkGuardProvider({ children }: { children: ReactNode }) {
-  const { isWrongNetwork, currentChainName, switchNetwork, switchError } =
-    useNetworkGuard();
+  const {
+    isWrongNetwork,
+    currentChainName,
+    switchNetwork,
+    switchError,
+    switchRecoveryAction,
+  } = useNetworkGuard();
 
   return (
     <>
@@ -16,6 +21,7 @@ export function NetworkGuardProvider({ children }: { children: ReactNode }) {
         currentChainName={currentChainName}
         onSwitch={switchNetwork}
         switchError={switchError}
+        switchRecoveryAction={switchRecoveryAction}
       />
     </>
   );
