@@ -24,6 +24,8 @@ mod storage_test;
 #[cfg(test)]
 mod stress_test;
 #[cfg(test)]
+mod stress_test_high_volume;
+#[cfg(test)]
 mod test_utils;
 mod treasury;
 
