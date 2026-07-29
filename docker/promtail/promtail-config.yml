@@ -1,0 +1,50 @@
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  # Ships stdout/stderr of every container in this compose project to Loki.
+  - job_name: predifi-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          - name: label
+            values: ["com.docker.compose.project=predifi"]
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_label_com_docker_compose_service"]
+        target_label: service
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/?(.*)"
+        target_label: container
+      - target_label: job
+        replacement: predifi
+    pipeline_stages:
+      # The backend emits structured JSON via tracing-subscriber
+      # ({"timestamp":..,"level":..,"fields":{"message":..}}). Other services log
+      # free-form text, so parsing is scoped to the backend containers only.
+      - match:
+          selector: '{service=~"backend|backend-seed"}'
+          stages:
+            - json:
+                expressions:
+                  level: level
+                  timestamp: timestamp
+                  message: fields.message
+                  span_name: span.name
+            - labels:
+                level:
+                span_name:
+            - timestamp:
+                source: timestamp
+                format: RFC3339Nano
+                action_on_failure: skip
+            - output:
+                source: message
