@@ -81,7 +81,7 @@ export function PredictionHistoryClient() {
             </p>
           </div>
         </div>
-        <NotificationBell address={address} />
+        <NotificationBell />
       </div>
 
       {isError ? (
