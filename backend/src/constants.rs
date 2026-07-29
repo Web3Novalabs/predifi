@@ -72,7 +72,13 @@ pub const JWT_SECRET_MIN_LENGTH: usize = 32;
 /// Access token lifetime in seconds (1 hour).
 pub const JWT_ACCESS_TOKEN_EXPIRY_SECS: u64 = 3_600;
 
-/// Default maximum number of events processed per indexer poll cycle.
+/// Refresh token lifetime in seconds (7 days).
+pub const JWT_REFRESH_TOKEN_EXPIRY_SECS: u64 = 7 * 24 * 3_600;
+
+/// Rate limit for token refresh endpoint: 10 requests per 60 seconds per IP.
+/// Prevents brute-force attacks on refresh token rotation.
+pub const RATE_LIMIT_TOKEN_BURST: u32 = 10;
+pub const RATE_LIMIT_TOKEN_PERIOD_SECS: u64 = 60;
 pub const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = 500;
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────

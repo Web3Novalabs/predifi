@@ -4,6 +4,7 @@ import "./globals.css";
 import { SWRProvider } from "@/components/providers/SWRProvider";
 import { NetworkGuardProvider } from "@/components/providers/NetworkGuardProvider";
 import { ToastProvider, SkipLink, LiveRegionProvider } from "@/components/ui";
+import { WalletProvider, ThemeProvider } from "@/lib/context";
 
 const SITE_DESCRIPTION =
   "PrediFi is a decentralized prediction market protocol built on the Stellar network with Soroban smart contracts.";
@@ -103,11 +104,15 @@ export default function RootLayout({
         {/* First tab stop: lets keyboard users bypass the nav (WCAG 2.4.1) */}
         <SkipLink />
         <SWRProvider>
-          <NetworkGuardProvider>
-            <LiveRegionProvider>
-              <ToastProvider>{children}</ToastProvider>
-            </LiveRegionProvider>
-          </NetworkGuardProvider>
+          <WalletProvider>
+            <ThemeProvider>
+              <NetworkGuardProvider>
+                <LiveRegionProvider>
+                  <ToastProvider>{children}</ToastProvider>
+                </LiveRegionProvider>
+              </NetworkGuardProvider>
+            </ThemeProvider>
+          </WalletProvider>
         </SWRProvider>
       </body>
     </html>

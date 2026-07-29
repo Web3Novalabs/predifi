@@ -937,6 +937,829 @@ fn test_1314_state_invariant_after_cancel_no_stake_leakage() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Boundary & Edge Case Tests: create_pool
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Creating a pool with zero duration (end_time == start_time) must be rejected
+/// with InvalidTimestamp.
+#[test]
+fn test_create_pool_zero_duration_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let current_time = ctx.env.ledger().timestamp();
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &current_time, // end_time == current_time (zero duration from now)
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: current_time, // start_time == end_time
+            description: String::from_str(&ctx.env, "Zero duration pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://zero"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidTimestamp)),
+        "zero duration pool must be rejected with InvalidTimestamp"
+    );
+}
+
+/// Creating a pool with end_time == u64::MAX should be rejected if it exceeds
+/// MAX_POOL_DURATION from current time.
+#[test]
+fn test_create_pool_max_u64_timestamp_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &u64::MAX,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Max timestamp pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://max"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidTimestamp)),
+        "u64::MAX timestamp must be rejected as exceeding MAX_POOL_DURATION"
+    );
+}
+
+/// Creating a pool with an empty description string should be rejected.
+/// The contract validates description length, and empty strings are invalid.
+#[test]
+fn test_create_pool_empty_description_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, ""), // Empty description
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    // Empty description should be rejected (assert! in code will panic)
+    assert!(result.is_err(), "empty description must be rejected");
+}
+
+/// Creating a pool with a description exceeding 256 bytes must be rejected.
+#[test]
+fn test_create_pool_description_too_long_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let over_limit = core::str::from_utf8(&[b'a'; 257]).unwrap();
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, over_limit), // 257 bytes
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "description > 256 bytes must be rejected");
+}
+
+/// Creating a pool with exactly 256-byte description should succeed (boundary test).
+#[test]
+fn test_create_pool_description_at_limit_succeeds() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let at_limit = core::str::from_utf8(&[b'a'; 256]).unwrap();
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, at_limit), // Exactly 256 bytes
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_ok(), "256-byte description should be accepted");
+}
+
+/// Creating a pool with a non-whitelisted token must be rejected with
+/// TokenNotWhitelisted.
+#[test]
+fn test_create_pool_invalid_token_address_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let invalid_token = Address::generate(&ctx.env);
+    // Do NOT whitelist this token
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &invalid_token, // Non-whitelisted token
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Invalid token pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::TokenNotWhitelisted)),
+        "non-whitelisted token must be rejected with TokenNotWhitelisted"
+    );
+}
+
+/// Creating multiple pools with the same description should succeed - pools are
+/// identified by pool_id, not by description. This verifies there's no
+/// duplicate-name restriction.
+#[test]
+fn test_create_pool_duplicate_descriptions_allowed() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let description = String::from_str(&ctx.env, "Duplicate Test Pool");
+
+    // Create first pool
+    let pool_id1 = ctx
+        .client
+        .create_pool(
+            &ctx.creator,
+            &100_000u64,
+            &ctx.token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: 0,
+                description: description.clone(),
+                metadata_url: String::from_str(&ctx.env, "ipfs://test1"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: vec![
+                    &ctx.env,
+                    String::from_str(&ctx.env, "No"),
+                    String::from_str(&ctx.env, "Yes"),
+                ],
+            },
+        )
+        .unwrap();
+
+    // Create second pool with same description
+    let pool_id2 = ctx
+        .client
+        .create_pool(
+            &ctx.creator,
+            &100_001u64,
+            &ctx.token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: 0,
+                description: description.clone(), // Same description
+                metadata_url: String::from_str(&ctx.env, "ipfs://test2"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: vec![
+                    &ctx.env,
+                    String::from_str(&ctx.env, "No"),
+                    String::from_str(&ctx.env, "Yes"),
+                ],
+            },
+        )
+        .unwrap();
+
+    // Both pools should exist with different IDs
+    assert_ne!(pool_id1, pool_id2, "pools must have different IDs");
+    
+    let pool1 = ctx.client.get_pool(&pool_id1);
+    let pool2 = ctx.client.get_pool(&pool_id2);
+    assert_eq!(pool1.description, pool2.description, "descriptions should match");
+}
+
+/// Creating a pool with options_count = 1 must be rejected (minimum is 2).
+#[test]
+fn test_create_pool_single_option_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &1u32, // Only 1 option - invalid
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Single option pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![&ctx.env, String::from_str(&ctx.env, "Only")],
+        },
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidData)),
+        "single option must be rejected with InvalidData"
+    );
+}
+
+/// Creating a pool with options_count = 0 must be rejected.
+#[test]
+fn test_create_pool_zero_options_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &0u32, // Zero options - invalid
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Zero options pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![&ctx.env],
+        },
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidData)),
+        "zero options must be rejected with InvalidData"
+    );
+}
+
+/// Creating a pool with negative initial_liquidity must be rejected.
+#[test]
+fn test_create_pool_negative_liquidity_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Negative liquidity pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: -1i128, // Negative liquidity
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "negative initial_liquidity must be rejected");
+}
+
+/// Creating a pool with required_resolutions = 0 must be rejected.
+#[test]
+fn test_create_pool_zero_required_resolutions_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Zero resolutions pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 0u32, // Zero required resolutions
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "zero required_resolutions must be rejected");
+}
+
+/// Creating a pool with min_stake = 0 must be rejected.
+#[test]
+fn test_create_pool_zero_min_stake_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Zero min stake pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 0i128, // Zero min stake
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "zero min_stake must be rejected");
+}
+
+/// Creating a pool with max_stake < min_stake must be rejected.
+#[test]
+fn test_create_pool_max_stake_less_than_min_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Invalid stake bounds pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 100i128,
+            max_stake: 50i128, // max_stake < min_stake
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "max_stake < min_stake must be rejected");
+}
+
+/// Creating a pool with min_total_stake = 0 must be rejected.
+#[test]
+fn test_create_pool_zero_min_total_stake_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Zero min total stake pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 0i128, // Zero min total stake
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "zero min_total_stake must be rejected");
+}
+
+/// Creating a pool with negative max_total_stake must be rejected.
+#[test]
+fn test_create_pool_negative_max_total_stake_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Negative max total stake pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: -1i128, // Negative max total stake
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "negative max_total_stake must be rejected");
+}
+
+/// Creating a pool with metadata_url exceeding 512 bytes must be rejected.
+#[test]
+fn test_create_pool_metadata_url_too_long_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let over_limit = core::str::from_utf8(&[b'a'; 513]).unwrap();
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Test pool"),
+            metadata_url: String::from_str(&ctx.env, over_limit), // 513 bytes
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::MetadataUrlInvalid)),
+        "metadata_url > 512 bytes must be rejected with MetadataUrlInvalid"
+    );
+}
+
+/// Creating a pool with exactly 512-byte metadata_url should succeed (boundary test).
+#[test]
+fn test_create_pool_metadata_url_at_limit_succeeds() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let at_limit = core::str::from_utf8(&[b'a'; 512]).unwrap();
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Test pool"),
+            metadata_url: String::from_str(&ctx.env, at_limit), // Exactly 512 bytes
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_ok(), "512-byte metadata_url should be accepted");
+}
+
+/// Creating a pool with invalid category must be rejected.
+#[test]
+fn test_create_pool_invalid_category_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("INVALID_CATEGORY"), // Not in allowed list
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Invalid category pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "invalid category must be rejected");
+}
+
+/// Verify that failed pool creation does not leave partial state.
+/// The pool_id counter should not be incremented on failure.
+#[test]
+fn test_create_pool_failure_does_not_increment_pool_id() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Get initial pool_id counter
+    let initial_counter = ctx.client.get_pool_id_counter();
+
+    // Attempt to create a pool with invalid token (will fail)
+    let invalid_token = Address::generate(&ctx.env);
+    let result = ctx.client.try_create_pool(
+        &ctx.creator,
+        &100_000u64,
+        &invalid_token,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Invalid token pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+    assert!(result.is_err(), "pool creation should fail");
+
+    // Verify counter did not increment
+    let final_counter = ctx.client.get_pool_id_counter();
+    assert_eq!(
+        initial_counter, final_counter,
+        "pool_id counter must not increment on failed creation"
+    );
+}
+
+/// Verify that successful pool creation increments the pool_id counter.
+#[test]
+fn test_create_pool_success_increments_pool_id() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let initial_counter = ctx.client.get_pool_id_counter();
+
+    // Create a valid pool
+    let _pool_id = ctx.create_pool(100_000);
+
+    let final_counter = ctx.client.get_pool_id_counter();
+    assert_eq!(
+        initial_counter + 1, final_counter,
+        "pool_id counter must increment by 1 on successful creation"
+    );
+}
+
+/// Creating a pool when global fee is 0 bps should succeed and the pool
+/// should capture the 0 bps fee at creation time.
+#[test]
+fn test_create_pool_with_zero_global_fee_succeeds() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Set global fee to 0 bps
+    ctx.client.set_fee_bps(&ctx.admin, &0u32);
+    ctx.advance_time(crate::FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+
+    let pool_id = ctx.create_pool(100_000);
+    let pool = ctx.client.get_pool(&pool_id);
+
+    assert_eq!(pool.fee_bps, 0, "pool should capture 0 bps fee at creation");
+}
+
+/// Creating a pool when global fee is 10000 bps (100%) should succeed and
+/// the pool should capture the 10000 bps fee at creation time.
+#[test]
+fn test_create_pool_with_max_global_fee_succeeds() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Set global fee to 10000 bps (100%)
+    ctx.client.set_fee_bps(&ctx.admin, &10_000u32);
+    ctx.advance_time(crate::FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+
+    let pool_id = ctx.create_pool(100_000);
+    let pool = ctx.client.get_pool(&pool_id);
+
+    assert_eq!(
+        pool.fee_bps, 10_000,
+        "pool should capture 10000 bps fee at creation"
+    );
+}
+
+/// Verify that pool fee is captured at creation time and does not change
+/// when global fee is updated later.
+#[test]
+fn test_create_pool_fee_captured_at_creation() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Set initial global fee to 500 bps
+    ctx.client.set_fee_bps(&ctx.admin, &500u32);
+    ctx.advance_time(crate::FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+
+    // Create pool - should capture 500 bps
+    let pool_id = ctx.create_pool(100_000);
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(pool.fee_bps, 500, "pool should capture 500 bps at creation");
+
+    // Update global fee to 2000 bps
+    ctx.client.set_fee_bps(&ctx.admin, &2_000u32);
+    ctx.advance_time(crate::FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+
+    // Pool fee should remain 500 bps (captured at creation)
+    let pool_after = ctx.client.get_pool(&pool_id);
+    assert_eq!(
+        pool_after.fee_bps, 500,
+        "pool fee must not change after global fee update"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Issue #1313 — `resolve_pool` Boundary Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
