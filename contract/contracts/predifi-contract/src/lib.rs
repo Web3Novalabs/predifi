@@ -26,6 +26,8 @@ mod stress_test;
 #[cfg(test)]
 mod stress_test_high_volume;
 #[cfg(test)]
+mod stress_test_max_pools;
+#[cfg(test)]
 mod test_utils;
 mod treasury;
 
