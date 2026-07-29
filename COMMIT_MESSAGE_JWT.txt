@@ -1,0 +1,141 @@
+feat(#1483): JWT Security Hardening - Token Type Binding, Key Rotation, Revocation, and Rate Limiting
+
+## Overview
+Comprehensive security hardening of JWT token handling to address #1483 requirements:
+- Token type enforcement (prevent refresh token misuse as access token)
+- Secret key rotation support via key versioning
+- Token revocation mechanism backed by Redis
+- Refresh token lifecycle with automatic rotation
+- Dedicated rate limiting for token operations
+- Algorithm confusion prevention documentation
+
+## Changes
+
+### 1. Enhanced JWT Claims (jwt.rs)
+- Added `token_type` field to PredifiClaims ("access" or "refresh")
+- Added `key_version` field to support secret rotation
+- Implemented `sign_jwt_with_type()` for flexible token issuance
+- Implemented `verify_jwt_token_strict()` with token type and key version validation
+
+### 2. Token Revocation Support (jwt_security.rs - NEW)
+- `is_token_revoked()` - Check if token JTI is in revocation list
+- `revoke_token()` - Revoke specific token by JTI
+- `revoke_user_tokens()` - Revoke all tokens for a user (logout/password change)
+- `is_token_valid_for_user()` - Check bulk user revocation timestamp
+- `generate_jti()` - Deterministic JWT ID generation for revocation tracking
+
+### 3. Rate Limiting Enhancements (rate_limit.rs)
+- New `RateLimitTier::Token` for token endpoints
+- 10 requests per 60 seconds (stricter than other tiers)
+- Configuration added to constants.rs
+
+### 4. Configuration Constants (constants.rs)
+- JWT_REFRESH_TOKEN_EXPIRY_SECS = 7 days
+- RATE_LIMIT_TOKEN_BURST = 10
+- RATE_LIMIT_TOKEN_PERIOD_SECS = 60
+
+### 5. Documentation
+- Comprehensive JWT_SECURITY_HARDENING.md documenting:
+  - Token type enforcement benefits
+  - Key rotation strategy
+  - Token revocation usage
+  - Refresh token lifecycle
+  - Algorithm confusion prevention (HS256 pinning)
+  - Production security checklist
+
+## Security Improvements
+
+### Token Type Enforcement
+Prevents accidental or malicious use of refresh tokens as access tokens:
+```rust
+// Reject refresh token when expecting access token
+verify_jwt_token_strict(token, secret, "access", current_key_version)?
+```
+
+### Secret Rotation Without Service Interruption
+- Deploy new key_version in configuration
+- Old tokens (with old version) continue working
+- New tokens issued with new version
+- Gradual transition over token lifetime
+
+### Token Revocation
+- Logout: `revoke_user_tokens(cache, user_address)`
+- Password change: `revoke_user_tokens(cache, user_address)`
+- Suspicious activity: `revoke_token(cache, jti, ttl_secs)`
+- Redis-backed with TTL matching token expiry
+
+### Refresh Token Rotation
+- Access tokens: 1 hour expiry (unchanged)
+- Refresh tokens: 7 days expiry (new)
+- Enables shorter-lived token compromise window
+- Supports tracking token rotation patterns
+
+### Rate Limiting for Token Operations
+- 10 req/60s per IP for `/auth/*` endpoints
+- Prevents brute-force attacks on token refresh
+- More restrictive than general endpoints (20-120 req/60s)
+
+### Algorithm Confusion Prevention
+Hard-coded HS256 with explicit documentation:
+- No algorithm negotiation from token header
+- Prevents alg:none attacks
+- Prevents RS256 ↔ HS256 confusion
+- Blocks unknown algorithm attacks
+
+## Testing
+
+All new code includes unit tests:
+- jwt.rs tests (35 existing + enhanced with new claims)
+- jwt_security.rs tests (JTI generation, determinism)
+- rate_limit.rs tests (Token tier coverage)
+
+Run tests:
+```bash
+cargo test --lib jwt
+cargo test --lib jwt_security
+cargo test --lib rate_limit
+```
+
+## Production Checklist
+- [x] Algorithm confusion prevented (hard-coded HS256)
+- [x] Token expiration enforced (1h access, 7d refresh)
+- [x] Secret key minimum length (32 bytes) validated
+- [x] Production secret validation (rejects dev default)
+- [x] Token revocation mechanism implemented
+- [x] Key rotation strategy designed
+- [x] Rate limiting for token endpoints
+- [x] Comprehensive documentation
+
+## Breaking Changes
+None - backward compatible. `token_type` and `key_version` fields in JWT claims default to "access" and 0.
+
+## Related Issues
+- #1483: JWT token security hardening (this implementation)
+
+## Migration Guide
+### For endpoint implementations (future):
+```rust
+// Verify access token
+let claims = verify_jwt_token_strict(
+    &token,
+    secret,
+    "access",           // expected type
+    current_key_version // from config
+)?;
+
+// For refresh endpoint
+let claims = verify_jwt_token_strict(
+    &token,
+    secret,
+    "refresh",
+    current_key_version
+)?;
+
+// On logout
+revoke_user_tokens(&redis_cache, user_address).await?;
+```
+
+## Notes
+- RedisCache is optional - token revocation defaults to fail-open if unavailable
+- WebSocket token handling should be tightened in separate PR (restrict to headers only)
+- Key rotation strategy supports multi-version coexistence during rollout
