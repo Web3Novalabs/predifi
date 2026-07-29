@@ -3,7 +3,7 @@ import { DM_Mono } from "next/font/google";
 import "./globals.css";
 import { SWRProvider } from "@/components/providers/SWRProvider";
 import { NetworkGuardProvider } from "@/components/providers/NetworkGuardProvider";
-import { ToastProvider } from "@/components/ui";
+import { ToastProvider, SkipLink, LiveRegionProvider } from "@/components/ui";
 
 const SITE_DESCRIPTION =
   "PrediFi is a decentralized prediction market protocol built on the Stellar network with Soroban smart contracts.";
@@ -100,9 +100,13 @@ export default function RootLayout({
         <style>{`.hero-critical{min-height:calc(100vh - 40px);display:flex;flex-direction:column;align-items:center;text-align:center}`}</style>
       </head>
       <body className={`antialiased text-sm ${dmMono.variable}`}>
+        {/* First tab stop: lets keyboard users bypass the nav (WCAG 2.4.1) */}
+        <SkipLink />
         <SWRProvider>
           <NetworkGuardProvider>
-            <ToastProvider>{children}</ToastProvider>
+            <LiveRegionProvider>
+              <ToastProvider>{children}</ToastProvider>
+            </LiveRegionProvider>
           </NetworkGuardProvider>
         </SWRProvider>
       </body>

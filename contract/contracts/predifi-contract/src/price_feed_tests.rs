@@ -725,4 +725,193 @@ mod tests {
         let second = PredifiContract::cleanup_expired_feeds(env.clone());
         assert_eq!(second, 0);
     }
+
+    /// Verify that price age is validated against oracle config's max_price_age
+    /// during price-based pool resolution.
+    #[test]
+    fn test_price_age_limit_enforcement() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle with max_price_age = 60 seconds
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            60, // 60 seconds max price age
+            100,
+        )
+        .unwrap();
+
+        // Set up roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator role
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Create a test pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // Set price condition
+        let feed_pair = symbol!("ETH/USD");
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            feed_pair.clone(),
+            3000_000000_i128,
+            1, // Greater than
+            100,
+        )
+        .unwrap();
+
+        let current_time = env.ledger().timestamp();
+
+        // Update price feed with timestamp
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3100_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600, // expires far in the future
+        )
+        .unwrap();
+
+        // Fast forward past max_price_age but before expires_at
+        env.ledger().set_timestamp(current_time + 120); // 120 seconds later (> 60s max_age)
+
+        // Try to resolve - should fail due to price age exceeding max_price_age
+        let result = PredifiContract::resolve_pool_from_price(env.clone(), pool_id);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::PriceDataInvalid));
+    }
+
+    /// Verify that fresh price data within max_price_age is accepted.
+    #[test]
+    fn test_fresh_price_within_max_age_accepted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle with max_price_age = 60 seconds
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            60, // 60 seconds max price age
+            100,
+        )
+        .unwrap();
+
+        // Set up roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator role
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Create a test pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // Set price condition
+        let feed_pair = symbol!("ETH/USD");
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            feed_pair.clone(),
+            3000_000000_i128,
+            1, // Greater than
+            100,
+        )
+        .unwrap();
+
+        let current_time = env.ledger().timestamp();
+
+        // Update price feed with timestamp
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3100_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600, // expires far in the future
+        )
+        .unwrap();
+
+        // Fast forward within max_price_age (30 seconds later)
+        env.ledger().set_timestamp(current_time + 30); // 30 seconds later (< 60s max_age)
+
+        // Resolve should succeed - price is fresh
+        let result = PredifiContract::resolve_pool_from_price(env.clone(), pool_id);
+        assert!(result.is_ok());
+
+        // Verify pool is resolved
+        let pool = PredifiContract::get_pool(env.clone(), pool_id).unwrap();
+        assert_eq!(pool.state, MarketState::Resolved);
+        assert_eq!(pool.outcome, 1); // Condition met
+    }
+
+    /// Verify that resolution fails when oracle is not initialized.
+    #[test]
+    fn test_price_resolution_without_oracle_config_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        // Do NOT initialize oracle
+
+        // Set up roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator role
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Create a test pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // Set price condition
+        let feed_pair = symbol!("ETH/USD");
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            feed_pair.clone(),
+            3000_000000_i128,
+            1,
+            100,
+        )
+        .unwrap();
+
+        let current_time = env.ledger().timestamp();
+
+        // Update price feed (this should work even without oracle config)
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3100_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600,
+        )
+        .unwrap();
+
+        // Fast forward to resolution time
+        env.ledger().set_timestamp(current_time + 3600);
+
+        // Resolution should fail - oracle config not initialized
+        let result = PredifiContract::resolve_pool_from_price(env.clone(), pool_id);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::OracleNotInitialized));
+    }
 }

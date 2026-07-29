@@ -584,3 +584,188 @@ fn test_update_price_feed_rejects_non_whitelisted_oracle() {
     );
     assert!(result.is_err(), "non-whitelisted oracle must be rejected");
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1319 — Boundary & Edge Case Tests: add_token_to_whitelist
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test adding duplicate token to whitelist does not corrupt state.
+#[test]
+fn test_add_token_to_whitelist_duplicate_token() {
+    let env = Env::default();
+    let (client, _, _, admin) = setup(&env);
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_whitelisted(&token), "Token should be whitelisted");
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_whitelisted(&token), "Token should remain whitelisted after duplicate call");
+}
+
+/// Test adding token to whitelist by non-admin is rejected.
+#[test]
+fn test_add_token_to_whitelist_unauthorized() {
+    let env = Env::default();
+    let (client, _, _, _) = setup(&env);
+    let non_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    let res = client.try_add_token_to_whitelist(&non_admin, &token);
+    assert!(res.is_err(), "Non-admin cannot add token to whitelist");
+    assert!(!client.is_token_whitelisted(&token), "Token should not be whitelisted");
+}
+
+/// Test removing and re-adding same token to whitelist.
+#[test]
+fn test_add_token_to_whitelist_remove_and_readd() {
+    let env = Env::default();
+    let (client, _, _, admin) = setup(&env);
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_whitelisted(&token));
+
+    client.remove_token_from_whitelist(&admin, &token);
+    assert!(!client.is_token_whitelisted(&token));
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_whitelisted(&token));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1320 — Boundary & Edge Case Tests: remove_token_from_whitelist
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test removing non-existent / non-whitelisted token.
+#[test]
+fn test_remove_token_from_whitelist_non_existent() {
+    let env = Env::default();
+    let (client, _, _, admin) = setup(&env);
+    let token = Address::generate(&env);
+
+    assert!(!client.is_token_whitelisted(&token));
+    let res = client.try_remove_token_from_whitelist(&admin, &token);
+    assert!(!client.is_token_whitelisted(&token));
+}
+
+/// Test non-admin attempt to remove token from whitelist is rejected.
+#[test]
+fn test_remove_token_from_whitelist_unauthorized() {
+    let env = Env::default();
+    let (client, _, _, admin) = setup(&env);
+    let non_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token);
+    assert!(client.is_token_whitelisted(&token));
+
+    let res = client.try_remove_token_from_whitelist(&non_admin, &token);
+    assert!(res.is_err(), "Non-admin cannot remove token from whitelist");
+    assert!(client.is_token_whitelisted(&token), "Token remains whitelisted after failed removal");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1328 — Boundary & Edge Case Tests: pause / unpause
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test pausing an already paused contract.
+#[test]
+fn test_pause_already_paused_contract() {
+    let env = Env::default();
+    let (client, _, _, admin) = setup(&env);
+
+    client.pause(&admin);
+    assert!(client.is_paused(), "Contract should be paused");
+
+    let res = client.try_pause(&admin);
+    assert!(client.is_paused(), "Contract should remain paused");
+}
+
+/// Test unpausing an unpaused contract.
+#[test]
+fn test_unpause_already_unpaused_contract() {
+    let env = Env::default();
+    let (client, _, _, admin) = setup(&env);
+
+    assert!(!client.is_paused(), "Contract initially unpaused");
+
+    let res = client.try_unpause(&admin);
+    assert!(!client.is_paused(), "Contract remains unpaused");
+}
+
+/// Test non-admin pause and unpause attempts are rejected.
+#[test]
+fn test_pause_unpause_unauthorized() {
+    let env = Env::default();
+    let (client, _, _, _) = setup(&env);
+    let non_admin = Address::generate(&env);
+
+    let res_pause = client.try_pause(&non_admin);
+    assert!(res_pause.is_err(), "Non-admin cannot pause contract");
+    assert!(!client.is_paused());
+
+    let res_unpause = client.try_unpause(&non_admin);
+    assert!(res_unpause.is_err(), "Non-admin cannot unpause contract");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1336 — Integration Tests: Price feed oracle interactions
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test multi-asset price feed updates across multiple whitelisted oracles.
+#[test]
+fn test_multi_asset_price_feed_oracle_updates() {
+    let env = Env::default();
+    let (client, _, _, admin) = setup(&env);
+
+    let oracle1 = Address::generate(&env);
+    let oracle2 = Address::generate(&env);
+    client.add_oracle(&admin, &oracle1);
+    client.add_oracle(&admin, &oracle2);
+
+    let btc_pair = symbol_short!("BTCUSD");
+    let eth_pair = symbol_short!("ETHUSD");
+
+    let res1 = client.try_update_price_feed(
+        &oracle1,
+        &btc_pair,
+        &65_000_000_000i128,
+        &5_000_000i128,
+        &999u64,
+        &2_000u64,
+    );
+    assert!(res1.is_ok(), "Oracle 1 BTC price update failed");
+
+    let res2 = client.try_update_price_feed(
+        &oracle2,
+        &eth_pair,
+        &3_500_000_000i128,
+        &1_000_000i128,
+        &999u64,
+        &2_000u64,
+    );
+    assert!(res2.is_ok(), "Oracle 2 ETH price update failed");
+}
+
+/// Test price feed update rejects expired parameters.
+#[test]
+fn test_price_feed_update_invalid_expiration() {
+    let env = Env::default();
+    let (client, _, _, admin) = setup(&env);
+
+    let oracle = Address::generate(&env);
+    client.add_oracle(&admin, &oracle);
+
+    let feed_pair = symbol_short!("XLMUSD");
+    let res = client.try_update_price_feed(
+        &oracle,
+        &feed_pair,
+        &100_000_000i128,
+        &500_000i128,
+        &999u64,
+        &999u64,
+    );
+    assert!(res.is_err(), "Price feed with invalid expiration should be rejected");
+}
+
