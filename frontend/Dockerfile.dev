@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+
+# Development-only image used by the repository-root docker-compose.yml.
+# The frontend source is bind-mounted at runtime so `next dev` hot-reloads.
+
+FROM node:20-bookworm-slim
+
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+WORKDIR /app
+
+ENV NEXT_TELEMETRY_DISABLED=1
+
+EXPOSE 3000
+
+# --no-frozen-lockfile because the committed pnpm-lock.yaml predates the
+# jest/testing-library devDependencies in package.json.
+CMD ["sh", "-c", "pnpm install --no-frozen-lockfile && pnpm run dev --hostname 0.0.0.0"]

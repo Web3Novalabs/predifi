@@ -44,6 +44,7 @@ use sqlx::PgPool;
 use crate::db::ReferralEarningRow;
 use crate::response::error_codes;
 use crate::response::ApiResponse;
+use crate::response::error_codes;
 
 /// Summary statistics for a single referrer address.
 #[derive(Debug, Serialize, sqlx::FromRow)]

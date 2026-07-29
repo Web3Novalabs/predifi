@@ -1,0 +1,58 @@
+# Single-binary Loki suitable for local development. Filesystem storage only —
+# do not reuse this configuration for a production deployment.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h
+  max_query_series: 5000
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  retention_enabled: true
+
+# Evaluates the log-based alert rules in ./rules. Rules are exposed through the
+# Loki ruler API, which Grafana surfaces via the Loki data source
+# (`manageAlerts: true`). No Alertmanager is wired up for local development.
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /etc/loki/rules
+  rule_path: /tmp/loki-rules
+  enable_api: true
+  ring:
+    kvstore:
+      store: inmemory
+
+analytics:
+  reporting_enabled: false

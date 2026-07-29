@@ -1,6 +1,7 @@
 use std::{collections::HashMap, env, fmt, num::ParseIntError};
 
 const DEFAULT_HOST: &str = "0.0.0.0";
+const PRODUCTION_ENV_VALUE: &str = "production";
 const DEFAULT_PORT: u16 = 3000;
 const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@localhost:5432/predifi";
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 10;
@@ -20,6 +21,7 @@ const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
 const DEFAULT_REFERRAL_FEE_BPS: u32 = 5000;
 const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
 const DEFAULT_SECRET_KEY: &str = "predifi-dev-secret-do-not-use-in-production-32";
+const DEFAULT_APP_ENV: &str = "development";
 const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = crate::constants::DEFAULT_INDEXER_MAX_BATCH_SIZE;
 
 /// Origins allowed by default when `CORS_ALLOWED_ORIGINS` is not set.
@@ -101,6 +103,12 @@ pub struct Config {
     pub secret_key: String,
     /// Maximum number of Stellar events processed per indexer batch (default `500`).
     pub indexer_max_batch_size: usize,
+    /// Deployment environment name (e.g. `"production"`, `"staging"`, `"development"`).
+    ///
+    /// Read from `PREDIFI_APP_ENV`. When set to `"production"`, additional
+    /// hardening checks are applied at startup (e.g. the default dev secret key
+    /// is rejected).  Defaults to `"development"` when the variable is absent.
+    pub app_env: String,
     /// Validated list of origins permitted for WebSocket connections.
     ///
     /// Loaded from the `PREDIFI_WS_ALLOWED_ORIGINS` environment variable as a
@@ -197,6 +205,8 @@ impl Config {
         // Parse WebSocket allowed origins (optional, defaults to empty for permissive mode)
         let allowed_ws_origins = parse_ws_origins(vars)?;
 
+        let app_env = get_string(vars, "PREDIFI_APP_ENV", DEFAULT_APP_ENV);
+
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_MIN_CONNECTIONS",
@@ -231,6 +241,7 @@ impl Config {
             cors_allowed_origins,
             secret_key,
             indexer_max_batch_size,
+            app_env,
             allowed_ws_origins,
         };
 
@@ -244,22 +255,39 @@ impl Config {
     /// startup via [`crate::run_server`] so misconfiguration fails fast before
     /// any network listeners or background workers are started.
     pub fn validate(&self) -> Result<(), ConfigError> {
+        // ── Host ─────────────────────────────────────────────────────────────
+        if self.host.is_empty() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_APP_HOST",
+                reason: String::from("must not be empty"),
+            });
+        }
+
+        // ── Database URL ─────────────────────────────────────────────────────
         validate_url_scheme(
             &self.database_url,
             "PREDIFI_DATABASE_URL",
             &["postgres://", "postgresql://"],
         )?;
+        validate_url_has_host(&self.database_url, "PREDIFI_DATABASE_URL")?;
+
+        // ── Redis URL ────────────────────────────────────────────────────────
         validate_url_scheme(
             &self.redis_url,
             "PREDIFI_REDIS_URL",
             &["redis://", "rediss://"],
         )?;
+        validate_url_has_host(&self.redis_url, "PREDIFI_REDIS_URL")?;
+
+        // ── Stellar RPC URL ──────────────────────────────────────────────────
         validate_url_scheme(
             &self.stellar_rpc_url,
             "PREDIFI_STELLAR_RPC_URL",
             &["http://", "https://"],
         )?;
+        validate_url_has_host(&self.stellar_rpc_url, "PREDIFI_STELLAR_RPC_URL")?;
 
+        // ── Database pool ────────────────────────────────────────────────────
         if self.db_max_connections == 0 {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_MAX_CONNECTIONS",
@@ -278,12 +306,36 @@ impl Config {
                 reason: String::from("must be greater than zero"),
             });
         }
+
+        // ── Connection retry settings ────────────────────────────────────────
         if self.db_connect_max_attempts == 0 {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_CONNECT_MAX_ATTEMPTS",
                 reason: String::from("must be at least one"),
             });
         }
+        if self.db_connect_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_CONNECT_TIMEOUT_SECS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        // base delay must not exceed max delay (when max_attempts > 1 the
+        // first retry fires after base_delay; if base > max the cap would
+        // never apply, which is a misconfiguration).
+        if self.db_connect_max_attempts > 1
+            && self.db_connect_base_delay_ms > self.db_connect_max_delay_ms
+        {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_CONNECT_BASE_DELAY_MS",
+                reason: format!(
+                    "must be <= PREDIFI_DB_CONNECT_MAX_DELAY_MS ({}), got {}",
+                    self.db_connect_max_delay_ms, self.db_connect_base_delay_ms
+                ),
+            });
+        }
+
+        // ── RPC timeouts ─────────────────────────────────────────────────────
         if self.rpc_health_timeout_secs == 0 {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_RPC_HEALTH_TIMEOUT_SECS",
@@ -302,6 +354,20 @@ impl Config {
                 reason: String::from("must be greater than zero"),
             });
         }
+        // The health-check per-attempt timeout must be within the general RPC
+        // budget; otherwise the health check would never complete before the
+        // outer timeout fires.
+        if self.rpc_health_timeout_secs > self.rpc_timeout_secs {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_RPC_HEALTH_TIMEOUT_SECS",
+                reason: format!(
+                    "must be <= RPC_TIMEOUT_SECS ({}), got {}",
+                    self.rpc_timeout_secs, self.rpc_health_timeout_secs
+                ),
+            });
+        }
+
+        // ── Fee basis points ─────────────────────────────────────────────────
         if self.treasury_fee_bps > 10_000 {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_TREASURY_FEE_BPS",
@@ -314,18 +380,36 @@ impl Config {
                 reason: String::from("must be <= 10000 (100%)"),
             });
         }
+
+        // ── CORS ─────────────────────────────────────────────────────────────
         if self.cors_allowed_origins.is_empty() {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_CORS_ALLOWED_ORIGINS",
                 reason: String::from("must contain at least one origin"),
             });
         }
+
+        // ── JWT secret ───────────────────────────────────────────────────────
         if let Err(reason) = crate::jwt::verify_jwt_secret(&self.secret_key) {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_SECRET_KEY",
                 reason: reason.to_string(),
             });
         }
+        // Reject the compiled-in dev placeholder in production.
+        if self.app_env.eq_ignore_ascii_case(PRODUCTION_ENV_VALUE)
+            && self.secret_key == DEFAULT_SECRET_KEY
+        {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SECRET_KEY",
+                reason: String::from(
+                    "the default development secret must not be used in production; \
+                     set PREDIFI_SECRET_KEY to a strong, randomly generated value",
+                ),
+            });
+        }
+
+        // ── Indexer ──────────────────────────────────────────────────────────
         if self.indexer_max_batch_size == 0 {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_INDEXER_MAX_BATCH_SIZE",
@@ -372,6 +456,7 @@ impl Config {
             cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
             secret_key: String::from(DEFAULT_SECRET_KEY),
             indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
+            app_env: String::from(DEFAULT_APP_ENV),
             allowed_ws_origins: Vec::new(), // Empty for permissive mode in tests
         }
     }
@@ -686,6 +771,59 @@ fn validate_url_scheme(url: &str, key: &'static str, schemes: &[&str]) -> Result
             reason: format!("must start with one of: {}", schemes.join(", ")),
         })
     }
+}
+
+/// Ensure `url` has a non-empty host after the scheme.
+///
+/// This catches malformed URLs like `postgres:///dbname` or `redis:///` that
+/// pass the scheme check but have no host, which would cause a confusing
+/// runtime error at connection time.
+fn validate_url_has_host(url: &str, key: &'static str) -> Result<(), ConfigError> {
+    // Strip the scheme (e.g. "postgres://", "redis://", "https://").
+    let after_scheme = match url.find("://") {
+        Some(idx) => &url[idx + 3..],
+        None => {
+            // validate_url_scheme already caught this, but be defensive.
+            return Err(ConfigError::InvalidValue {
+                key,
+                reason: String::from("missing '://' separator"),
+            });
+        }
+    };
+
+    // The authority ends at the first '/', '?', or '#'.
+    let authority = match after_scheme.find(['/', '?', '#']) {
+        Some(idx) => &after_scheme[..idx],
+        None => after_scheme,
+    };
+
+    // Strip optional userinfo (user:pass@).
+    let host_and_port = match authority.rfind('@') {
+        Some(at) => &authority[at + 1..],
+        None => authority,
+    };
+
+    // Strip optional port.
+    let host = match host_and_port.rfind(':') {
+        Some(colon) => {
+            let port_str = &host_and_port[colon + 1..];
+            if port_str.chars().all(|c| c.is_ascii_digit()) {
+                &host_and_port[..colon]
+            } else {
+                host_and_port
+            }
+        }
+        None => host_and_port,
+    };
+
+    if host.is_empty() {
+        return Err(ConfigError::InvalidValue {
+            key,
+            reason: format!("URL '{}' has no host — check for a missing hostname", url),
+        });
+    }
+
+    Ok(())
 }
 
 /// Return the value of `key` from `vars`, or `Err(ConfigError::MissingRequired)` if absent.
@@ -1456,5 +1594,313 @@ mod tests {
         Config::default_for_test()
             .validate()
             .expect("default test config must be valid");
+    }
+
+    // ── New validations ───────────────────────────────────────────────────────
+
+    // -- host --
+
+    #[test]
+    fn validate_rejects_empty_host() {
+        let config = Config {
+            host: String::new(),
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_APP_HOST",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_rejects_empty_host_via_env() {
+        let vars = HashMap::from([(String::from("PREDIFI_APP_HOST"), String::new())]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_APP_HOST",
+                ..
+            })
+        ));
+    }
+
+    // -- URL host presence --
+
+    #[test]
+    fn validate_rejects_database_url_without_host() {
+        let config = Config {
+            database_url: String::from("postgres:///dbname"),
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DATABASE_URL",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_redis_url_without_host() {
+        let config = Config {
+            redis_url: String::from("redis:///"),
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_REDIS_URL",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_stellar_rpc_url_without_host() {
+        let config = Config {
+            stellar_rpc_url: String::from("https:///rpc"),
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_STELLAR_RPC_URL",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_urls_with_userinfo() {
+        // postgres://user:pass@host/db is a legitimate URL with userinfo — host must not be
+        // mistakenly parsed as empty.
+        let config = Config {
+            database_url: String::from("postgres://user:pass@db-host:5432/predifi"),
+            ..Config::default_for_test()
+        };
+        config.validate().expect("URL with userinfo should be valid");
+    }
+
+    // -- db_connect_timeout_secs --
+
+    #[test]
+    fn validate_rejects_zero_db_connect_timeout_secs() {
+        let config = Config {
+            db_connect_timeout_secs: 0,
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_CONNECT_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_rejects_zero_db_connect_timeout_via_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_CONNECT_TIMEOUT_SECS"),
+            String::from("0"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_CONNECT_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    // -- db_connect_base_delay_ms > db_connect_max_delay_ms --
+
+    #[test]
+    fn validate_rejects_base_delay_larger_than_max_delay_when_retries_enabled() {
+        let config = Config {
+            db_connect_max_attempts: 3,
+            db_connect_base_delay_ms: 10_000,
+            db_connect_max_delay_ms: 1_000,
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_CONNECT_BASE_DELAY_MS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_base_delay_larger_than_max_delay_when_only_one_attempt() {
+        // With a single attempt there are no retries so the delay values are
+        // never used — the constraint does not apply.
+        let config = Config {
+            db_connect_max_attempts: 1,
+            db_connect_base_delay_ms: 10_000,
+            db_connect_max_delay_ms: 0,
+            ..Config::default_for_test()
+        };
+        config
+            .validate()
+            .expect("base > max delay is harmless when max_attempts == 1");
+    }
+
+    #[test]
+    fn config_rejects_base_delay_larger_than_max_delay_via_env() {
+        let vars = HashMap::from([
+            (
+                String::from("PREDIFI_DB_CONNECT_MAX_ATTEMPTS"),
+                String::from("3"),
+            ),
+            (
+                String::from("PREDIFI_DB_CONNECT_BASE_DELAY_MS"),
+                String::from("9000"),
+            ),
+            (
+                String::from("PREDIFI_DB_CONNECT_MAX_DELAY_MS"),
+                String::from("1000"),
+            ),
+        ]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_CONNECT_BASE_DELAY_MS",
+                ..
+            })
+        ));
+    }
+
+    // -- rpc_health_timeout_secs > rpc_timeout_secs --
+
+    #[test]
+    fn validate_rejects_rpc_health_timeout_exceeding_rpc_timeout() {
+        let config = Config {
+            rpc_health_timeout_secs: 60,
+            rpc_timeout_secs: 30,
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_RPC_HEALTH_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_rpc_health_timeout_equal_to_rpc_timeout() {
+        let config = Config {
+            rpc_health_timeout_secs: 30,
+            rpc_timeout_secs: 30,
+            ..Config::default_for_test()
+        };
+        config
+            .validate()
+            .expect("health timeout equal to rpc timeout should be valid");
+    }
+
+    #[test]
+    fn config_rejects_rpc_health_timeout_exceeding_rpc_timeout_via_env() {
+        let vars = HashMap::from([
+            (
+                String::from("PREDIFI_RPC_HEALTH_TIMEOUT_SECS"),
+                String::from("100"),
+            ),
+            (String::from("RPC_TIMEOUT_SECS"), String::from("30")),
+        ]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_RPC_HEALTH_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    // -- production dev secret rejection --
+
+    #[test]
+    fn validate_rejects_default_dev_secret_in_production() {
+        let config = Config {
+            app_env: String::from("production"),
+            secret_key: String::from(DEFAULT_SECRET_KEY),
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SECRET_KEY",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn validate_accepts_default_dev_secret_outside_production() {
+        // The dev secret is only banned in production; development/staging are fine.
+        let config = Config {
+            app_env: String::from("staging"),
+            secret_key: String::from(DEFAULT_SECRET_KEY),
+            ..Config::default_for_test()
+        };
+        config
+            .validate()
+            .expect("dev secret is allowed outside production");
+    }
+
+    #[test]
+    fn validate_accepts_strong_secret_in_production() {
+        let config = Config {
+            app_env: String::from("production"),
+            secret_key: String::from("a-very-strong-production-secret-key-at-least-32-bytes"),
+            ..Config::default_for_test()
+        };
+        config
+            .validate()
+            .expect("strong secret should be valid in production");
+    }
+
+    #[test]
+    fn config_rejects_default_secret_in_production_via_env() {
+        let vars = HashMap::from([
+            (
+                String::from("PREDIFI_APP_ENV"),
+                String::from("production"),
+            ),
+            // Default secret key is not set, so from_map uses DEFAULT_SECRET_KEY.
+        ]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SECRET_KEY",
+                ..
+            })
+        ));
+    }
+
+    // -- app_env field --
+
+    #[test]
+    fn config_reads_app_env_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_APP_ENV"),
+            String::from("staging"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.app_env, "staging");
+    }
+
+    #[test]
+    fn config_app_env_defaults_to_development() {
+        let vars = HashMap::new();
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.app_env, DEFAULT_APP_ENV);
     }
 }
