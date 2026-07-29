@@ -1,0 +1,28 @@
+# syntax=docker/dockerfile:1
+
+# Development-only image used by the repository-root docker-compose.yml.
+# The workspace is bind-mounted at runtime and cargo-watch rebuilds on change,
+# so nothing is copied in here. Use ./Dockerfile for production images.
+
+FROM rust:1.85-bookworm
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN cargo install cargo-watch --locked --version 8.5.3
+
+# The compose service mounts ./backend here and ./contract alongside it, so the
+# `predifi-errors` path dependency in Cargo.toml resolves.
+WORKDIR /workspace/backend
+
+ENV PREDIFI_APP_HOST=0.0.0.0 \
+    PREDIFI_APP_PORT=3000 \
+    RUST_LOG=info
+
+EXPOSE 3000
+
+CMD ["cargo", "watch", "-w", "src", "-w", "Cargo.toml", "-x", "run --bin predifi-backend"]

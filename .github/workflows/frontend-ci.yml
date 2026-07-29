@@ -1,20 +1,39 @@
-name: Frontend CI
+name: Frontend CI/CD
+
 on:
   push:
     branches: ["main", "frontend"]
     paths:
       - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
   pull_request:
     branches: ["main", "frontend"]
     paths:
       - "frontend/**"
+      - ".github/workflows/frontend-ci.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: frontend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "20"
+  PNPM_VERSION: "9"
+
 jobs:
-  build-and-check:
-    name: Frontend Build & Format Check
+  quality:
+    name: Lint, Type Check & Unit Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+
     defaults:
       run:
         working-directory: ./frontend
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
