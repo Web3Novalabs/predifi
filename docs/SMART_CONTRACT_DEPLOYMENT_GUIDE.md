@@ -170,7 +170,7 @@ stellar network use mainnet
 
 ```bash
 git clone <repository-url>
-cd predifi3/contract
+cd predifi/contract
 ```
 
 ### 2. Build Contracts
@@ -183,9 +183,9 @@ cd predifi3/contract
 ```
 
 This script:
-- Compiles contracts to WASM using Soroban CLI
-- Optimizes WASM files with `wasm-opt -Oz`
-- Enables bulk memory operations (required by Soroban)
+- Compiles contracts to WASM with Cargo for the `wasm32-unknown-unknown` target
+- Optimizes WASM files with `wasm-opt`
+- Runs Stellar CLI contract optimization
 - Outputs optimized files to `target/wasm32-unknown-unknown/release/`
 
 #### Manual Build
@@ -196,12 +196,12 @@ cargo build --target wasm32-unknown-unknown --release
 
 # Optimize with wasm-opt
 wasm-opt -Oz --enable-bulk-memory \
-  target/wasm32-unknown-unknown/release/predifi_contract.wasm \
-  -o target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm
-
-wasm-opt -Oz --enable-bulk-memory \
   target/wasm32-unknown-unknown/release/access_control.wasm \
   -o target/wasm32-unknown-unknown/release/access_control_optimized.wasm
+
+wasm-opt -Oz --enable-bulk-memory \
+  target/wasm32-unknown-unknown/release/predifi_contract.wasm \
+  -o target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm
 ```
 
 ### 3. Verify Build Output
@@ -263,7 +263,7 @@ If you prefer manual control over each step:
 
 ```bash
 stellar contract deploy \
-  --wasm ../target/wasm32-unknown-unknown/release/access_control_optimized.wasm \
+  --wasm target/wasm32-unknown-unknown/release/access_control_optimized.wasm \
   --source deployer \
   --network testnet
 ```
@@ -286,7 +286,7 @@ stellar contract invoke \
 
 ```bash
 stellar contract deploy \
-  --wasm ../target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm \
+  --wasm target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm \
   --source deployer \
   --network testnet
 ```
@@ -377,7 +377,7 @@ The steps are identical to testnet, but use `--network mainnet`:
 
 ```bash
 stellar contract deploy \
-  --wasm ../target/wasm32-unknown-unknown/release/access_control_optimized.wasm \
+  --wasm target/wasm32-unknown-unknown/release/access_control_optimized.wasm \
   --source deployer \
   --network mainnet
 ```
@@ -398,7 +398,7 @@ stellar contract invoke \
 
 ```bash
 stellar contract deploy \
-  --wasm ../target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm \
+  --wasm target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm \
   --source deployer \
   --network mainnet
 ```
