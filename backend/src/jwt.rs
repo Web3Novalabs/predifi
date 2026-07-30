@@ -5,7 +5,9 @@
 //! signing secret meets minimum security requirements. [`verify_jwt_token`]
 //! combines both checks and verifies the token signature and claims.
 
-use crate::constants::{JWT_ACCESS_TOKEN_EXPIRY_SECS, JWT_MIN_LENGTH, JWT_PARTS_COUNT, JWT_SECRET_MIN_LENGTH};
+use crate::constants::{
+    JWT_ACCESS_TOKEN_EXPIRY_SECS, JWT_MIN_LENGTH, JWT_PARTS_COUNT, JWT_SECRET_MIN_LENGTH,
+};
 use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 
@@ -483,6 +485,8 @@ mod tests {
         let expired_claims = PredifiClaims {
             sub: "GABC123".to_string(),
             exp: 1,
+            token_type: "access".to_string(),
+            key_version: 0,
         };
         let token = encode(
             &Header::new(Algorithm::HS256),
