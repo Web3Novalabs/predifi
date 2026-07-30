@@ -289,7 +289,8 @@ impl WsRateLimiter {
     fn check(&mut self) -> bool {
         let now = Instant::now();
         // Remove timestamps outside the window
-        self.timestamps.retain(|t| now.duration_since(*t) < self.window_size);
+        self.timestamps
+            .retain(|t| now.duration_since(*t) < self.window_size);
         if self.timestamps.len() >= self.max_messages as usize {
             return false;
         }
@@ -314,7 +315,6 @@ async fn run_socket(
                         if !should_deliver_event(&msg, wallet_filter, pool_filter) {
                             continue;
                         }
-                        // Enforce message size limit to prevent memory exhaustion
                         if msg.len() > MAX_MESSAGE_SIZE {
                             tracing::warn!(
                                 message_size = msg.len(),
@@ -332,32 +332,46 @@ async fn run_socket(
                 }
             }
             msg = socket.recv() => {
-                if msg.is_none() { break; }
-                // Validate incoming message size for both Text and Binary frames
-                if let Some(Ok(message)) = msg {
-                    match message {
-                        Message::Text(text) => {
-                            if text.len() > MAX_MESSAGE_SIZE {
-                                tracing::warn!(
-                                    message_size = text.len(),
-                                    max_size = MAX_MESSAGE_SIZE,
-                                    "Incoming WebSocket text message exceeds size limit, closing connection"
-                                );
-                                break;
-                            }
+                let msg = match msg {
+                    Some(Ok(m)) => m,
+                    _ => break,
+                };
+
+                match &msg {
+                    Message::Text(text) => {
+                        if text.len() > MAX_MESSAGE_SIZE {
+                            tracing::warn!(
+                                message_size = text.len(),
+                                max_size = MAX_MESSAGE_SIZE,
+                                "Incoming WebSocket text message exceeds size limit, closing connection"
+                            );
+                            let _ = socket.send(Message::Close(None)).await;
+                            break;
                         }
-                        Message::Binary(bin) => {
-                            if bin.len() > MAX_MESSAGE_SIZE {
-                                tracing::warn!(
-                                    message_size = bin.len(),
-                                    max_size = MAX_MESSAGE_SIZE,
-                                    "Incoming WebSocket binary message exceeds size limit, closing connection"
-                                );
-                                break;
-                            }
-                        }
-                        _ => {}
                     }
+                    Message::Binary(data) => {
+                        if data.len() > MAX_MESSAGE_SIZE {
+                            tracing::warn!(
+                                message_size = data.len(),
+                                max_size = MAX_MESSAGE_SIZE,
+                                "Incoming WebSocket binary message exceeds size limit, closing connection"
+                            );
+                            let _ = socket.send(Message::Close(None)).await;
+                            break;
+                        }
+                    }
+                    Message::Ping(payload) => {
+                        let _ = socket.send(Message::Pong(payload.clone())).await;
+                        continue;
+                    }
+                    Message::Pong(_) => continue,
+                    Message::Close(_) => break,
+                }
+
+                if !rate_limiter.check() {
+                    tracing::warn!("WebSocket connection rate limited");
+                    let _ = socket.send(Message::Close(None)).await;
+                    break;
                 }
             }
         }
