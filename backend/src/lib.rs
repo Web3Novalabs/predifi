@@ -10,9 +10,14 @@ pub mod constants;
 pub mod db;
 pub mod errors;
 pub mod jwt;
+pub mod jwt_security;
 pub mod metrics;
+pub mod migration_checks;
+pub mod notifications;
 pub mod openapi;
+pub mod pool_cache;
 pub mod price_cache;
+pub mod profile;
 pub mod rate_limit;
 pub mod redis_cache;
 pub mod referrals;
@@ -23,6 +28,7 @@ pub mod seed;
 pub mod server;
 pub mod session;
 pub mod shutdown;
+pub mod tags;
 pub mod telemetry;
 pub mod tracing_context;
 pub mod validated_types;
@@ -236,6 +242,7 @@ pub fn build_router(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
@@ -279,6 +286,7 @@ pub fn build_router_with_db(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),
@@ -340,11 +348,13 @@ pub async fn run_server(config: Config) {
 
 #[cfg(all(test, feature = "integration-tests"))]
 mod db_integration_tests;
+#[cfg(test)]
+mod mock_rpc_helpers;
+#[cfg(test)]
+mod openapi_tests;
 #[cfg(all(test, feature = "integration-tests"))]
 mod redis_integration_tests;
 #[cfg(all(test, feature = "integration-tests"))]
 mod test_support;
-#[cfg(test)]
-mod mock_rpc_helpers;
 #[cfg(test)]
 mod tests;

@@ -185,7 +185,8 @@ mod tests {
 
     #[test]
     fn error_sets_status_and_message() {
-        let (code, Json(resp)) = ApiResponse::<()>::error(StatusCode::NOT_FOUND, "NOT_FOUND", "not found");
+        let (code, Json(resp)) =
+            ApiResponse::<()>::error(StatusCode::NOT_FOUND, "NOT_FOUND", "not found");
         assert_eq!(code, StatusCode::NOT_FOUND);
         assert_eq!(resp.status, "error");
         assert!(resp.data.is_none());
@@ -208,7 +209,8 @@ mod tests {
 
     #[test]
     fn error_serializes_without_data_field() {
-        let (_, Json(resp)) = ApiResponse::<()>::error(StatusCode::BAD_REQUEST, "INVALID_INPUT", "bad input");
+        let (_, Json(resp)) =
+            ApiResponse::<()>::error(StatusCode::BAD_REQUEST, "INVALID_INPUT", "bad input");
         let v = to_value(&resp);
         assert!(
             v.get("data").is_none(),

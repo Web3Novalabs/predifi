@@ -3,6 +3,12 @@
 //! Each route group in `routes/v1.rs` wraps its sub-router with the
 //! appropriate tier from this module. In test builds the layer is a no-op so
 //! parallel tests do not cross-contaminate each other's token buckets.
+//!
+//! Rate limiting uses client IP addresses as the key, with support for
+//! proxy headers (X-Forwarded-For, X-Real-IP) to identify clients behind
+//! reverse proxies.
+
+use tower_governor::key_extractor::SmartIpKeyExtractor;
 
 /// Rate-limit tier — maps to a `(burst_size, period_secs)` pair.
 #[derive(Clone, Copy, Debug)]
@@ -15,6 +21,10 @@ pub enum RateLimitTier {
     User,
     /// Indexer ingest endpoints (`/indexer/*`). 20 req / 60 s.
     Write,
+    /// Token operations (`/auth/refresh`). 10 req / 60 s (stricter to prevent brute force).
+    Token,
+    /// WebSocket inbound messages. 10 msg / 10 s per connection (stricter to prevent abuse).
+    WebSocket,
 }
 
 impl RateLimitTier {
@@ -22,9 +32,11 @@ impl RateLimitTier {
         use crate::constants::*;
         match self {
             RateLimitTier::Light => (RATE_LIMIT_LIGHT_BURST, RATE_LIMIT_LIGHT_PERIOD_SECS),
-            RateLimitTier::Read  => (RATE_LIMIT_READ_BURST,  RATE_LIMIT_READ_PERIOD_SECS),
-            RateLimitTier::User  => (RATE_LIMIT_USER_BURST,  RATE_LIMIT_USER_PERIOD_SECS),
+            RateLimitTier::Read => (RATE_LIMIT_READ_BURST, RATE_LIMIT_READ_PERIOD_SECS),
+            RateLimitTier::User => (RATE_LIMIT_USER_BURST, RATE_LIMIT_USER_PERIOD_SECS),
             RateLimitTier::Write => (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS),
+            RateLimitTier::Token => (RATE_LIMIT_TOKEN_BURST, RATE_LIMIT_TOKEN_PERIOD_SECS),
+            RateLimitTier::WebSocket => (RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS),
         }
     }
 }
@@ -44,6 +56,7 @@ pub fn with_rate_limit(router: axum::Router, tier: RateLimitTier) -> axum::Route
         GovernorConfigBuilder::default()
             .period(std::time::Duration::from_secs(period_secs))
             .burst_size(burst_size)
+            .key_extractor(SmartIpKeyExtractor)
             .error_handler(|_| crate::response::rate_limit_error_response())
             .finish()
             .expect("invalid governor config"),
@@ -66,7 +79,10 @@ mod tests {
         use crate::constants::*;
 
         let (b, p) = RateLimitTier::Light.burst_and_period();
-        assert_eq!((b, p), (RATE_LIMIT_LIGHT_BURST, RATE_LIMIT_LIGHT_PERIOD_SECS));
+        assert_eq!(
+            (b, p),
+            (RATE_LIMIT_LIGHT_BURST, RATE_LIMIT_LIGHT_PERIOD_SECS)
+        );
 
         let (b, p) = RateLimitTier::Read.burst_and_period();
         assert_eq!((b, p), (RATE_LIMIT_READ_BURST, RATE_LIMIT_READ_PERIOD_SECS));
@@ -75,7 +91,16 @@ mod tests {
         assert_eq!((b, p), (RATE_LIMIT_USER_BURST, RATE_LIMIT_USER_PERIOD_SECS));
 
         let (b, p) = RateLimitTier::Write.burst_and_period();
-        assert_eq!((b, p), (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS));
+        assert_eq!(
+            (b, p),
+            (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS)
+        );
+
+        let (b, p) = RateLimitTier::Token.burst_and_period();
+        assert_eq!(
+            (b, p),
+            (RATE_LIMIT_TOKEN_BURST, RATE_LIMIT_TOKEN_PERIOD_SECS)
+        );
     }
 
     #[test]
@@ -89,7 +114,10 @@ mod tests {
         // Each tier should be unique
         for i in 0..configs.len() {
             for j in (i + 1)..configs.len() {
-                assert_ne!(configs[i], configs[j], "tiers {i} and {j} share the same config");
+                assert_ne!(
+                    configs[i], configs[j],
+                    "tiers {i} and {j} share the same config"
+                );
             }
         }
     }

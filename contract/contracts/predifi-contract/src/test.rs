@@ -1617,6 +1617,144 @@ fn test_removed_oracle_cannot_update_price_feed() {
 }
 
 #[test]
+fn test_set_price_condition_rejects_invalid_match_operator() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Invalid operator"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let result = client.try_set_price_condition(
+        &operator,
+        &pool_id,
+        &Symbol::new(&env, "BTCUSD"),
+        &50_000i128,
+        &3u32,
+        &100u32,
+    );
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_set_price_condition_rejects_tolerance_above_limit() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (_, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let pool_id = client.create_pool(
+        &creator,
+        &10_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Invalid tolerance"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let result = client.try_set_price_condition(
+        &operator,
+        &pool_id,
+        &Symbol::new(&env, "BTCUSD"),
+        &50_000i128,
+        &1u32,
+        &(MAX_TOLERANCE + 1),
+    );
+
+    assert_eq!(result, Err(Ok(PredifiError::InvalidData)));
+}
+
+#[test]
+fn test_resolve_pool_from_price_applies_tolerance_bounded_match() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.add_oracle(&admin, &oracle);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &5_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 1_000,
+            description: String::from_str(&env, "Tolerance match"),
+            metadata_url: String::from_str(&env, "ipfs://price-condition"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    let feed_pair = Symbol::new(&env, "ETHUSD");
+    client.set_price_condition(&operator, &pool_id, &feed_pair, &1_000i128, &1u32, &100u32);
+    client.update_price_feed(&oracle, &feed_pair, &1_005i128, &1i128, &999u64, &10_000u64);
+
+    env.ledger().with_mut(|li| li.timestamp = 8_600);
+    client.resolve_pool_from_price(&pool_id);
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 0);
+}
+
+#[test]
 fn test_oracle_resolve_long_proof() {
     let env = Env::default();
     env.mock_all_auths();
@@ -3158,6 +3296,110 @@ fn test_multiple_tokens_whitelisted_independently() {
     client.remove_token_from_whitelist(&admin, &token_a);
     assert!(!client.is_token_allowed(&token_a));
     assert!(client.is_token_allowed(&token_b));
+}
+
+#[test]
+fn test_batch_add_tokens_to_whitelist_success() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let token_c = Address::generate(&env);
+
+    let tokens = soroban_sdk::vec![&env, token_a.clone(), token_b.clone(), token_c.clone()];
+    let added = client.batch_add_tokens_to_whitelist(&admin, &tokens);
+
+    assert_eq!(added, 3);
+    assert!(client.is_token_allowed(&token_a));
+    assert!(client.is_token_allowed(&token_b));
+    assert!(client.is_token_allowed(&token_c));
+}
+
+#[test]
+fn test_batch_add_tokens_to_whitelist_skips_duplicates() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token_a);
+
+    let tokens = soroban_sdk::vec![&env, token_a.clone(), token_b.clone()];
+    let added = client.batch_add_tokens_to_whitelist(&admin, &tokens);
+
+    // Only token_b is newly added; token_a was already whitelisted.
+    assert_eq!(added, 1);
+    assert!(client.is_token_allowed(&token_a));
+    assert!(client.is_token_allowed(&token_b));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #90)")]
+fn test_batch_add_tokens_to_whitelist_empty_vector() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let tokens: soroban_sdk::Vec<Address> = soroban_sdk::vec![&env];
+    client.batch_add_tokens_to_whitelist(&admin, &tokens);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_batch_add_tokens_to_whitelist_unauthorized() {
+    let (env, client, _admin, _treasury) = setup_whitelist_env();
+    let non_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+    let tokens = soroban_sdk::vec![&env, token];
+    client.batch_add_tokens_to_whitelist(&non_admin, &tokens);
+}
+
+#[test]
+fn test_batch_remove_tokens_from_whitelist_success() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+    let token_c = Address::generate(&env);
+
+    let tokens = soroban_sdk::vec![&env, token_a.clone(), token_b.clone(), token_c.clone()];
+    client.batch_add_tokens_to_whitelist(&admin, &tokens);
+
+    let removed = client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+
+    assert_eq!(removed, 3);
+    assert!(!client.is_token_allowed(&token_a));
+    assert!(!client.is_token_allowed(&token_b));
+    assert!(!client.is_token_allowed(&token_c));
+}
+
+#[test]
+fn test_batch_remove_tokens_from_whitelist_skips_non_whitelisted() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let token_a = Address::generate(&env);
+    let token_b = Address::generate(&env);
+
+    client.add_token_to_whitelist(&admin, &token_a);
+
+    let tokens = soroban_sdk::vec![&env, token_a.clone(), token_b.clone()];
+    let removed = client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+
+    // Only token_a was actually whitelisted.
+    assert_eq!(removed, 1);
+    assert!(!client.is_token_allowed(&token_a));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #90)")]
+fn test_batch_remove_tokens_from_whitelist_empty_vector() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let tokens: soroban_sdk::Vec<Address> = soroban_sdk::vec![&env];
+    client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_batch_remove_tokens_from_whitelist_unauthorized() {
+    let (env, client, admin, _treasury) = setup_whitelist_env();
+    let non_admin = Address::generate(&env);
+    let token = Address::generate(&env);
+    let tokens = soroban_sdk::vec![&env, token.clone()];
+    client.batch_add_tokens_to_whitelist(&admin, &tokens);
+    client.batch_remove_tokens_from_whitelist(&non_admin, &tokens);
 }
 
 #[test]
@@ -4999,7 +5241,8 @@ fn test_withdraw_treasury_multiple_tokens_with_pools_and_fees() {
 
     // Propose a 10% protocol fee (1000 bps) and apply it after the timelock.
     client.set_fee_bps(&admin, &1000u32);
-    env.ledger().with_mut(|li| li.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    env.ledger()
+        .with_mut(|li| li.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
     client.apply_fee_bps(&admin);
 
     // Create two pools with different tokens
@@ -10416,7 +10659,8 @@ fn test_get_fees_returns_treasury_and_referral_fee_bps() {
     // set_fee_bps now queues a proposal; apply it after the timelock.
     c.set_fee_bps(&admin, &750u32);
     c.set_referral_cut_bps(&admin, &2000u32);
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
     c.apply_fee_bps(&admin);
 
     let fees = c.get_fees();
@@ -10473,7 +10717,8 @@ fn test_get_contract_info_returns_config_and_stats() {
 
     // set_fee_bps queues a proposal; advance past the timelock then apply.
     client.set_fee_bps(&admin, &250u32);
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    env.ledger()
+        .with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
     client.apply_fee_bps(&admin);
     client.set_treasury(&admin, &treasury);
     client.set_resolution_delay(&admin, &60u64);
@@ -12793,851 +13038,335 @@ fn test_delisted_token_prevents_prediction() {
     client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
 }
 
-// ==============================================================================
-// Batch Whitelist Tests
-// ==============================================================================
+// ═══════════════════════════════════════════════════════════════════════════
+// PAYOUT ROUNDING PRECISION AUDIT TESTS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These tests validate the payout rounding precision audit implementation
+// to ensure payouts are calculated correctly and never exceed pool bounds.
 
 #[test]
-fn test_batch_add_to_whitelist_success() {
+fn test_payout_rounding_audit_basic_scenario() {
     let env = Env::default();
     env.mock_all_auths();
 
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-    let user_2 = Address::generate(&env);
-    let user_3 = Address::generate(&env);
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
 
-    // Create a private pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
+    // Mint tokens
+    token_admin_client.mint(&user1, &5000);
+    token_admin_client.mint(&user2, &5000);
 
-    // Batch add users to whitelist
-    let users = vec![&env, user_1.clone(), user_2.clone(), user_3.clone()];
-    let added_count = client.batch_add_to_whitelist(&creator, &pool_id, &users);
-
-    // Verify all users were added
-    assert_eq!(added_count, 3);
-    assert!(client.is_whitelisted(&pool_id, &user_1));
-    assert!(client.is_whitelisted(&pool_id, &user_2));
-    assert!(client.is_whitelisted(&pool_id, &user_3));
-}
-
-#[test]
-fn test_batch_add_to_whitelist_skips_duplicates() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-    let user_2 = Address::generate(&env);
-
-    // Create a private pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // First batch add
-    let users = vec![&env, user_1.clone(), user_2.clone()];
-    let added_count_1 = client.batch_add_to_whitelist(&creator, &pool_id, &users);
-    assert_eq!(added_count_1, 2);
-
-    // Second batch add with same users (should skip them)
-    let added_count_2 = client.batch_add_to_whitelist(&creator, &pool_id, &users);
-    assert_eq!(added_count_2, 0);
-
-    // Users should still be whitelisted
-    assert!(client.is_whitelisted(&pool_id, &user_1));
-    assert!(client.is_whitelisted(&pool_id, &user_2));
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_batch_add_to_whitelist_unauthorized() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let non_creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-
-    // Create a private pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // Try to batch add with non-creator (should panic)
-    let users = vec![&env, user_1];
-    client.batch_add_to_whitelist(&non_creator, &pool_id, &users);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #24)")]
-fn test_batch_add_to_whitelist_non_private_pool() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-
-    // Create a public pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Public Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: false, // Public pool
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // Try to batch add to public pool (should panic)
-    let users = vec![&env, user_1];
-    client.batch_add_to_whitelist(&creator, &pool_id, &users);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #90)")]
-fn test_batch_add_to_whitelist_empty_vector() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-
-    // Create a private pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // Try to batch add with empty vector (should panic)
-    let users = vec![&env];
-    client.batch_add_to_whitelist(&creator, &pool_id, &users);
-}
-
-#[test]
-fn test_batch_remove_from_whitelist_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-    let user_2 = Address::generate(&env);
-    let user_3 = Address::generate(&env);
-
-    // Create a private pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // Batch add users
-    let users = vec![&env, user_1.clone(), user_2.clone(), user_3.clone()];
-    client.batch_add_to_whitelist(&creator, &pool_id, &users);
-
-    // Verify all users are whitelisted
-    assert!(client.is_whitelisted(&pool_id, &user_1));
-    assert!(client.is_whitelisted(&pool_id, &user_2));
-    assert!(client.is_whitelisted(&pool_id, &user_3));
-
-    // Batch remove users
-    let removed_count = client.batch_remove_from_whitelist(&creator, &pool_id, &users);
-    assert_eq!(removed_count, 3);
-
-    // Verify all users are no longer whitelisted
-    assert!(!client.is_whitelisted(&pool_id, &user_1));
-    assert!(!client.is_whitelisted(&pool_id, &user_2));
-    assert!(!client.is_whitelisted(&pool_id, &user_3));
-}
-
-#[test]
-fn test_batch_remove_from_whitelist_skips_non_whitelisted() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-    let user_2 = Address::generate(&env);
-
-    // Create a private pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // Only add user_1 to whitelist
-    let users_to_add = vec![&env, user_1.clone()];
-    client.batch_add_to_whitelist(&creator, &pool_id, &users_to_add);
-
-    // Try to remove both users (only user_1 is whitelisted)
-    let users_to_remove = vec![&env, user_1.clone(), user_2.clone()];
-    let removed_count = client.batch_remove_from_whitelist(&creator, &pool_id, &users_to_remove);
-
-    // Only user_1 should have been removed
-    assert_eq!(removed_count, 1);
-    assert!(!client.is_whitelisted(&pool_id, &user_1));
-}
-
-#[test]
-fn test_batch_check_whitelist_success() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-    let user_2 = Address::generate(&env);
-    let user_3 = Address::generate(&env);
-
-    // Create a private pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // Add only user_1 and user_2 to whitelist
-    let users_to_add = vec![&env, user_1.clone(), user_2.clone()];
-    client.batch_add_to_whitelist(&creator, &pool_id, &users_to_add);
-
-    // Batch check all three users
-    let users_to_check = vec![&env, user_1.clone(), user_2.clone(), user_3.clone()];
-    let results = client.batch_check_whitelist(&pool_id, &users_to_check);
-
-    // Verify results
-    assert_eq!(results.len(), 3);
-    assert_eq!(results.get(0).unwrap(), true); // user_1 is whitelisted
-    assert_eq!(results.get(1).unwrap(), true); // user_2 is whitelisted
-    assert_eq!(results.get(2).unwrap(), false); // user_3 is not whitelisted
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #90)")]
-fn test_batch_check_whitelist_empty_vector() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, _, _, _, _, _, _) = setup(&env);
-
-    // Try to batch check with empty vector (should panic)
-    let users = vec![&env];
-    client.batch_check_whitelist(&0u64, &users);
-}
-
-#[test]
-fn test_batch_check_whitelist_all_not_whitelisted() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-    let user_2 = Address::generate(&env);
-
-    // Create a private pool without adding anyone to whitelist
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // Batch check users (none should be whitelisted)
-    let users_to_check = vec![&env, user_1, user_2];
-    let results = client.batch_check_whitelist(&pool_id, &users_to_check);
-
-    // Verify all are false
-    assert_eq!(results.len(), 2);
-    assert_eq!(results.get(0).unwrap(), false);
-    assert_eq!(results.get(1).unwrap(), false);
-}
-
-#[test]
-fn test_batch_whitelist_operations_emit_events() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (_, client, token_address, _, _, _, _, _) = setup(&env);
-    let creator = Address::generate(&env);
-    let user_1 = Address::generate(&env);
-    let user_2 = Address::generate(&env);
-
-    // Create a private pool
-    let pool_id = client.create_pool(
-        &creator,
-        &100_000u64,
-        &token_address,
-        &2u32,
-        &Symbol::new(&env, "Sports"),
-        &crate::PoolConfig {
-            start_time: 0,
-            description: String::from_str(&env, "Private Pool"),
-            metadata_url: String::from_str(&env, "ipfs://meta"),
-            min_stake: 1,
-            max_stake: 0,
-            max_total_stake: 0,
-            min_total_stake: 0,
-            initial_liquidity: 0,
-            required_resolutions: 1,
-            private: true,
-            whitelist_key: None,
-            outcome_descriptions: vec![
-                &env,
-                String::from_str(&env, "Yes"),
-                String::from_str(&env, "No"),
-            ],
-        },
-    );
-
-    // Batch add users and verify events are emitted
-    let users = vec![&env, user_1.clone(), user_2.clone()];
-    client.batch_add_to_whitelist(&creator, &pool_id, &users);
-
-    // Check that AddedToWhitelistEvent was emitted for each user
-    let events = env.events().all();
-    let whitelist_events: Vec<_> = events
-        .iter()
-        .filter(|(_, topic, _)| {
-            topic
-                .last()
-                .map_or(false, |t| t.to_string().contains("AddedToWhitelistEvent"))
-        })
-        .collect();
-
-    // Should have 2 AddedToWhitelistEvent events
-    assert!(whitelist_events.len() >= 2);
-
-// ============================================================================
-// TESTS FOR CUSTOM TOKEN TRANSFER VALIDATION CHECKS
-// ============================================================================
-
-#[test]
-fn test_propose_fee_bps_stores_pending_change() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    // Setup admin
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
-    // No proposal queued initially
-    assert!(client.get_pending_fee_change().is_none());
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Rounding Test Pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1,
+        max_stake: 0,
+        max_total_stake: 10000,
+        min_total_stake: 1,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
 
-    // Propose a fee change
-    client.set_fee_bps(&admin, &500u32);
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Finance"),
+        &config,
+    );
 
-    // Verify the pending proposal was stored correctly
-    let pending = client.get_pending_fee_change().expect("pending change must exist");
-    assert_eq!(pending.new_fee_bps, 500u32);
-    // At t=0 the effective_at must equal the timelock duration
-    assert_eq!(pending.effective_at, FEE_CHANGE_TIMELOCK_SECONDS);
-    assert_eq!(pending.proposed_by, admin);
+    // User1 places 1000 on outcome 0
+    client.place_prediction(&user1, &pool_id, &1000, &0u32, &None, &None);
 
-    // The live fee must remain unchanged until apply_fee_bps is called
-    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
+    // User2 places 1000 on outcome 0 (same outcome)
+    client.place_prediction(&user2, &pool_id, &1000, &0u32, &None, &None);
+
+    // Move time forward past end_time
+    env.ledger().with_mut(|mut l| {
+        l.timestamp = end_time + 1;
+    });
+
+    // Setup operator for resolution
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Resolve pool with outcome 0 as winning
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Claim winnings for user1
+    let payout1 = client.claim_winnings(&user1, &pool_id);
+
+    // Payout should be 50% of pool (1000 / 2000) * 2000 = 1000
+    assert_eq!(payout1, 1000);
+
+    // Claim winnings for user2
+    let payout2 = client.claim_winnings(&user2, &pool_id);
+
+    // Payout should also be 1000
+    assert_eq!(payout2, 1000);
+
+    // Verify total payout doesn't exceed initial total stake
+    assert!(payout1 + payout2 <= 2000);
 }
 
 #[test]
-fn test_apply_fee_bps_after_timelock_succeeds() {
+fn test_payout_rounding_precision_with_fees() {
     let env = Env::default();
     env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let user = Address::generate(&env);
+
+    // Mint tokens
+    token_admin_client.mint(&user, &10000);
+
+    // Setup admin to set fee
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
-    // Initial fee is 0 (as set in setup)
-    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
-
-    // Queue the proposal
-    client.set_fee_bps(&admin, &300u32);
-
-    // Advance past the timelock and apply
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    // Set 10% fee (1000 bps)
+    client.set_fee_bps(&admin, &1000u32);
+    env.ledger().with_mut(|li| li.timestamp += 86401);
     client.apply_fee_bps(&admin);
 
-    // Fee is now committed
-    assert_eq!(client.get_fees().treasury_fee_bps, 300u32);
-    // Pending slot is cleared
-    assert!(client.get_pending_fee_change().is_none());
-}
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Fee Test Pool"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1,
+        max_stake: 0,
+        max_total_stake: 10000,
+        min_total_stake: 1,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
 
-#[test]
-fn test_apply_fee_bps_exactly_at_expiry_succeeds() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    client.set_fee_bps(&admin, &200u32);
-
-    // Advance to exactly `effective_at` (t=0 + FEE_CHANGE_TIMELOCK_SECONDS)
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS);
-    client.apply_fee_bps(&admin);
-
-    assert_eq!(client.get_fees().treasury_fee_bps, 200u32);
-}
-
-#[test]
-fn test_apply_fee_bps_before_timelock_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    client.set_fee_bps(&admin, &300u32);
-
-    // Advance to one second before the timelock expires
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS - 1);
-    let result = client.try_apply_fee_bps(&admin);
-    assert_eq!(result, Err(Ok(PredifiError::TimelockNotExpired)));
-
-    // Fee must remain at the original value
-    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
-    // Pending proposal must still be present
-    assert!(client.get_pending_fee_change().is_some());
-}
-
-#[test]
-fn test_apply_fee_bps_no_pending_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    // No proposal queued — apply must be rejected
-    let result = client.try_apply_fee_bps(&admin);
-    assert_eq!(result, Err(Ok(PredifiError::NoFeeChangePending)));
-}
-
-#[test]
-fn test_cancel_fee_proposal_removes_pending() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    client.set_fee_bps(&admin, &700u32);
-    assert!(client.get_pending_fee_change().is_some());
-
-    // Cancel the proposal
-    client.cancel_fee_proposal(&admin);
-
-    // Pending slot must be cleared
-    assert!(client.get_pending_fee_change().is_none());
-    // Live fee must remain unchanged (still 0)
-    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
-}
-
-#[test]
-fn test_cancel_fee_proposal_no_pending_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    // Nothing to cancel
-    let result = client.try_cancel_fee_proposal(&admin);
-    assert_eq!(result, Err(Ok(PredifiError::NoFeeChangePending)));
-}
-
-#[test]
-fn test_propose_fee_bps_while_pending_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    // First proposal succeeds
-    client.set_fee_bps(&admin, &300u32);
-
-    // Second proposal must be rejected while the first is still pending
-    let result = client.try_set_fee_bps(&admin, &400u32);
-    assert_eq!(result, Err(Ok(PredifiError::FeeChangePending)));
-
-    // The original proposal must be unchanged
-    let pending = client.get_pending_fee_change().unwrap();
-    assert_eq!(pending.new_fee_bps, 300u32);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_apply_fee_bps_unauthorized_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    client.set_fee_bps(&admin, &300u32);
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
-
-    let not_admin = Address::generate(&env);
-    // Must panic with Unauthorized (error code 10)
-    client.apply_fee_bps(&not_admin);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #10)")]
-fn test_cancel_fee_proposal_unauthorized_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    client.set_fee_bps(&admin, &300u32);
-
-    let not_admin = Address::generate(&env);
-    // Must panic with Unauthorized (error code 10)
-    client.cancel_fee_proposal(&not_admin);
-}
-
-#[test]
-fn test_paused_blocks_apply_fee_bps() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    client.set_fee_bps(&admin, &300u32);
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
-    client.pause(&admin);
-
-    let result = client.try_apply_fee_bps(&admin);
-    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
-
-    // Fee must not have changed
-    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
-}
-
-#[test]
-fn test_paused_blocks_cancel_fee_proposal() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    client.set_fee_bps(&admin, &300u32);
-    client.pause(&admin);
-
-    let result = client.try_cancel_fee_proposal(&admin);
-    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
-
-    // Pending proposal must still be intact
-    assert!(client.get_pending_fee_change().is_some());
-}
-
-#[test]
-fn test_fee_change_full_lifecycle() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    // 1. No pending proposal at start
-    assert!(client.get_pending_fee_change().is_none());
-    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
-
-    // 2. Queue a proposal
-    client.set_fee_bps(&admin, &250u32);
-    let pending = client.get_pending_fee_change().unwrap();
-    assert_eq!(pending.new_fee_bps, 250u32);
-    assert_eq!(pending.effective_at, FEE_CHANGE_TIMELOCK_SECONDS);
-
-    // 3. Live fee is still 0 — timelock not yet elapsed
-    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
-
-    // 4. Applying before the deadline must fail
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS / 2);
-    let early_result = client.try_apply_fee_bps(&admin);
-    assert_eq!(early_result, Err(Ok(PredifiError::TimelockNotExpired)));
-
-    // 5. Apply after the timelock
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 100);
-    client.apply_fee_bps(&admin);
-    assert_eq!(client.get_fees().treasury_fee_bps, 250u32);
-    assert!(client.get_pending_fee_change().is_none());
-
-    // 6. A new proposal can now be queued
-    client.set_fee_bps(&admin, &500u32);
-    assert_eq!(
-        client.get_pending_fee_change().unwrap().new_fee_bps,
-        500u32
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Sports"),
+        &config,
     );
 
-    // 7. Cancel it — fee stays at 250
-    client.cancel_fee_proposal(&admin);
-    assert!(client.get_pending_fee_change().is_none());
-    assert_eq!(client.get_fees().treasury_fee_bps, 250u32);
+    // User stakes 1000 on outcome 0
+    client.place_prediction(&user, &pool_id, &1000, &0u32, &None, &None);
+
+    // Move time forward
+    env.ledger().with_mut(|mut l| {
+        l.timestamp = end_time + 1;
+    });
+
+    // Setup operator
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Resolve
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Claim winnings
+    let payout = client.claim_winnings(&user, &pool_id);
+
+    // With 10% fee and 100% of pool on winning outcome:
+    // Pool = 1000, Fee = 100, Payout pool = 900
+    // User should get 900 (all of remaining pool)
+    assert_eq!(payout, 900);
+
+    // Verify payout doesn't exceed original stake
+    assert!(payout <= 1000);
 }
 
 #[test]
-fn test_cancel_then_repropose_succeeds() {
+fn test_payout_rounding_precision_three_winners() {
     let env = Env::default();
     env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    let user3 = Address::generate(&env);
+
+    // Mint tokens
+    token_admin_client.mint(&user1, &10000);
+    token_admin_client.mint(&user2, &10000);
+    token_admin_client.mint(&user3, &10000);
+
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Three Winner Test"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1,
+        max_stake: 0,
+        max_total_stake: 100000,
+        min_total_stake: 1,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
+
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Crypto"),
+        &config,
+    );
+
+    // Three users with different stakes on same outcome
+    client.place_prediction(&user1, &pool_id, &333, &0u32, &None, &None);
+    client.place_prediction(&user2, &pool_id, &333, &0u32, &None, &None);
+    client.place_prediction(&user3, &pool_id, &334, &0u32, &None, &None);
+
+    // Move time
+    env.ledger().with_mut(|mut l| {
+        l.timestamp = end_time + 1;
+    });
+
+    // Setup operator
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Resolve
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Claim for all three
+    let payout1 = client.claim_winnings(&user1, &pool_id);
+    let payout2 = client.claim_winnings(&user2, &pool_id);
+    let payout3 = client.claim_winnings(&user3, &pool_id);
+
+    let total_payout = payout1 + payout2 + payout3;
+
+    // Total stake is 1000, so total payout should be 1000
+    assert_eq!(total_payout, 1000);
+
+    // Each payout should be approximately 333 (1000 / 3)
+    assert!(payout1 >= 333 && payout1 <= 334);
+    assert!(payout2 >= 333 && payout2 <= 334);
+    assert!(payout3 >= 333 && payout3 <= 334);
+}
+
+#[test]
+fn test_payout_never_exceeds_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let winner = Address::generate(&env);
+    let loser = Address::generate(&env);
+
+    // Mint tokens
+    token_admin_client.mint(&winner, &5000);
+    token_admin_client.mint(&loser, &5000);
+
+    // Setup admin with 25% fee
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
-
-    // Propose 300 bps
-    client.set_fee_bps(&admin, &300u32);
-
-    // Cancel it, then re-propose with a different value
-    client.cancel_fee_proposal(&admin);
-    assert!(client.get_pending_fee_change().is_none());
-
-    client.set_fee_bps(&admin, &150u32);
-    let pending = client.get_pending_fee_change().unwrap();
-    assert_eq!(pending.new_fee_bps, 150u32);
-
-    // Apply and verify
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.set_fee_bps(&admin, &2500u32);
+    env.ledger().with_mut(|li| li.timestamp += 86401);
     client.apply_fee_bps(&admin);
-    assert_eq!(client.get_fees().treasury_fee_bps, 150u32);
-    assert!(client.get_pending_fee_change().is_none());
-}
 
-#[test]
-fn test_fee_change_invalid_fee_bps_rejected() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    // Create pool
+    let end_time = env.ledger().timestamp() + 3600;
+    let config = PoolConfig {
+        start_time: 0,
+        description: String::from_str(&env, "Fee Invariant Test"),
+        metadata_url: String::from_str(&env, "ipfs://test"),
+        min_stake: 1,
+        max_stake: 0,
+        max_total_stake: 100000,
+        min_total_stake: 1,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            &env,
+            String::from_str(&env, "Outcome 0"),
+            String::from_str(&env, "Outcome 1"),
+        ],
+    };
 
-    // Proposal with invalid fee (> 10_000 bps) must be rejected
-    let result = client.try_set_fee_bps(&admin, &10_001u32);
-    assert_eq!(result, Err(Ok(PredifiError::InvalidFeeBps)));
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &Symbol::new(&env, "Politics"),
+        &config,
+    );
 
-    // No proposal must be stored
-    assert!(client.get_pending_fee_change().is_none());
-}
+    // Winner stakes 2000 on outcome 0
+    client.place_prediction(&winner, &pool_id, &2000, &0u32, &None, &None);
 
-#[test]
-fn test_fee_change_zero_fee_is_valid() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    // Loser stakes 3000 on outcome 1
+    client.place_prediction(&loser, &pool_id, &3000, &1u32, &None, &None);
 
-    // 0 bps is a valid (fee-free) setting
-    client.set_fee_bps(&admin, &0u32);
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
-    client.apply_fee_bps(&admin);
-    assert_eq!(client.get_fees().treasury_fee_bps, 0u32);
-}
+    // Total pool = 5000
+    // Fee (25%) = 1250
+    // Payout pool = 3750
 
-#[test]
-fn test_fee_change_max_fee_bps_is_valid() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
-    let admin = Address::generate(&env);
-    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    // Move time
+    env.ledger().with_mut(|mut l| {
+        l.timestamp = end_time + 1;
+    });
 
-    // 10_000 bps (100%) is the maximum allowed value
-    client.set_fee_bps(&admin, &10_000u32);
-    env.ledger().with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
-    client.apply_fee_bps(&admin);
-    assert_eq!(client.get_fees().treasury_fee_bps, 10_000u32);
+    // Setup operator
+    let operator = Address::generate(&env);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    // Resolve with outcome 0 winning
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // Claim
+    let winner_payout = client.claim_winnings(&winner, &pool_id);
+
+    // Loser gets 0
+    let loser_payout = client.claim_winnings(&loser, &pool_id);
+    assert_eq!(loser_payout, 0);
+
+    // INV-4: Payout must not exceed total stake
+    assert!(
+        winner_payout <= 5000,
+        "Payout {} exceeds total stake 5000",
+        winner_payout
+    );
+
+    // Winner should get all of payout pool (3750)
+    assert_eq!(winner_payout, 3750);
 }

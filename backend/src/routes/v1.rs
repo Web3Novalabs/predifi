@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query, State},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -9,11 +9,13 @@ use std::sync::Arc;
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::Config;
-use crate::db::{PoolCreatedEvent, PredictionPlacedEvent};
+use crate::db::PoolCreatedEvent;
+use crate::pool_cache::PoolCache;
+use crate::db::PredictionPlacedEvent;
 use crate::metrics::SharedMetrics;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
-use crate::response::{ApiResponse, error_codes};
+use crate::response::{error_codes, ApiResponse};
 use crate::validated_types::{BoundedI64, NonEmptyString, PoolSortBy, PoolStatus, StellarAddress};
 
 /// Struct representing fee information, matching the contract structure.
@@ -111,6 +113,22 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
         all_healthy = false;
     }
 
+    let mut disk_status = "ok";
+    let mut disk_error = String::new();
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    if let Some(disk) = disks.first() {
+        let available = disk.available_space();
+        let total = disk.total_space();
+        if total > 0 && (available as f64 / total as f64) < 0.05 {
+            disk_status = "degraded";
+            disk_error = format!("Low disk space: {}/{} bytes available", available, total);
+            all_healthy = false;
+        }
+    } else {
+        disk_status = "unknown";
+        disk_error = String::from("Could not determine disk space");
+    }
+
     let body = serde_json::json!({
         "status": if all_healthy { "ok" } else { "error" },
         "version": "v1",
@@ -118,13 +136,15 @@ pub async fn health(State(state): State<AppState>) -> axum::response::Response {
             "db": db_status,
             "rpc": rpc_status,
             "redis": redis_status,
-            "price_cache": price_cache_status
+            "price_cache": price_cache_status,
+            "disk": disk_status
         },
         "errors": {
             "db": if db_status == "unreachable" { Some(db_error.clone()) } else { None },
             "rpc": if rpc_status == "unreachable" { Some(last_error.clone()) } else { None },
             "redis": if redis_status == "unreachable" { Some(redis_error.clone()) } else { None },
-            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None }
+            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None },
+            "disk": if disk_status != "ok" { Some(disk_error) } else { None }
         }
     });
 
@@ -150,6 +170,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     /// In-memory oracle price cache refreshed every 60 seconds.
     pub cache: PriceCache,
+    /// Short-TTL cache for pool-detail lookups (#1369).
+    pub pool_cache: PoolCache,
     /// Redis cache client for hot-path response caching.
     pub redis: RedisCache,
     /// Optional DB pool — absent in unit tests that don't need a database.
@@ -201,6 +223,9 @@ pub struct PoolsQuery {
     pub category: Option<NonEmptyString>,
     /// Status filter: "active" | "closed" | "settled" (default: "active")
     pub status: Option<PoolStatus>,
+    /// Comma-separated tag filter, e.g. "btc,price-prediction". A pool
+    /// matches if any of its tags overlap this list.
+    pub tags: Option<String>,
     /// Page size, clamped to [1, 100].
     pub limit: Option<BoundedI64<1, 100>>,
     /// Zero-based page offset, minimum 0.
@@ -209,7 +234,7 @@ pub struct PoolsQuery {
 
 #[derive(Debug, Serialize)]
 pub struct PoolsResponse {
-    pub pools: Vec<crate::db::PoolRow>,
+    pub pools: Vec<crate::tags::PoolListingRow>,
     pub total: i64,
     pub limit: i64,
     pub offset: i64,
@@ -226,26 +251,36 @@ pub async fn get_pool_by_id_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    if let Some(cached) = state.pool_cache.get(pool_id) {
+        return ApiResponse::success(cached).into_response();
+    }
+
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     match crate::db::get_pool_with_odds(db, pool_id).await {
-        Ok(Some(pool)) => ApiResponse::success(pool).into_response(),
+        Ok(Some(pool)) => {
+            state.pool_cache.set(pool_id, pool.clone());
+            ApiResponse::success(pool).into_response()
+        }
         Ok(None) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
-            "pool not found"
-        ).into_response(),
+            "pool not found",
+        )
+        .into_response(),
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -253,9 +288,9 @@ pub async fn get_pool_by_id_handler(
 #[derive(Debug, Deserialize)]
 pub struct StatsQuery {
     /// Category filter, e.g. "Sports", "Crypto"
-    pub category: Option<String>,
+    pub category: Option<NonEmptyString>,
     /// Pool state filter: "active" | "closed" | "settled"
-    pub status: Option<String>,
+    pub status: Option<PoolStatus>,
 }
 
 /// `GET /api/v1/stats` — protocol-wide aggregate statistics.
@@ -276,35 +311,39 @@ pub async fn get_stats(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
-    let cache_key = crate::redis_cache::stats_cache_key(
-        params.category.as_deref(),
-        params.status.as_deref(),
-    );
+    let category = params.category.as_ref().map(|s| s.as_str());
+    let status = params.status.map(|s| s.as_str());
+
+    let cache_key = crate::redis_cache::stats_cache_key(category, status);
 
     if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
         return (StatusCode::OK, Json(cached)).into_response();
     }
 
-    match crate::db::get_protocol_stats(db, params.category.as_deref(), params.status.as_deref())
-        .await
-    {
+    match crate::db::get_protocol_stats(db, category, status).await {
         Ok(stats) => {
             let json_response = serde_json::json!(&stats);
             state
                 .redis
-                .set(&cache_key, &json_response, crate::redis_cache::STATS_CACHE_TTL)
+                .set(
+                    &cache_key,
+                    &json_response,
+                    crate::redis_cache::STATS_CACHE_TTL,
+                )
                 .await;
             ApiResponse::success(stats).into_response()
         }
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
@@ -338,17 +377,31 @@ pub async fn get_pools(
     let status = params.status.map(|s| s.as_str()).unwrap_or("active");
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
+    let tags: Option<Vec<String>> = params
+        .tags
+        .as_ref()
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty());
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     // Cache-aside pattern: Step 1 — Check cache
-    let cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
+    let mut cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
+    if let Some(tags) = &tags {
+        cache_key = format!("{cache_key}:tags:{}", tags.join(","));
+    }
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
         // Cache hit — return cached data
@@ -357,8 +410,8 @@ pub async fn get_pools(
 
     // Cache miss — Step 2: Fetch from database
     match tokio::try_join!(
-        crate::db::get_pools_with_filters(db, sort_by, category, status, limit, offset),
-        crate::db::count_pools_with_filters(db, category, status)
+        crate::tags::list_pools(db, sort_by, category, tags.as_deref(), status, limit, offset),
+        crate::tags::count_pools(db, category, tags.as_deref(), status)
     ) {
         Ok((pools, total)) => {
             if status == "active" {
@@ -393,8 +446,9 @@ pub async fn get_pools(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -412,7 +466,7 @@ pub struct PaginationQuery {
 /// `GET /api/v1/users/:address/history` — paginated prediction history for a user.
 pub async fn get_user_history(
     State(state): State<AppState>,
-    Path(address): Path<String>,
+    Path(address): Path<StellarAddress>,
     Query(params): Query<PaginationQuery>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
@@ -425,11 +479,12 @@ pub async fn get_user_history(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
-    match crate::db::get_user_prediction_history(db, &address, limit, offset).await {
+    match crate::db::get_user_prediction_history(db, address.as_str(), limit, offset).await {
         Ok(rows) => {
             let response = json!({
                 "address": address,
@@ -442,15 +497,16 @@ pub async fn get_user_history(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
 /// `GET /api/v1/users/:address/predictions` — enhanced user predictions with current pool status.
 pub async fn get_user_predictions(
     State(state): State<AppState>,
-    Path(address): Path<String>,
+    Path(address): Path<StellarAddress>,
     Query(params): Query<PaginationQuery>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
@@ -463,11 +519,12 @@ pub async fn get_user_predictions(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
-    match crate::db::get_user_predictions(db, &address, limit, offset).await {
+    match crate::db::get_user_predictions(db, address.as_str(), limit, offset).await {
         Ok(predictions) => {
             let response = json!({
                 "address": address,
@@ -481,8 +538,9 @@ pub async fn get_user_predictions(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -493,11 +551,15 @@ pub struct LeaderboardQuery {
     pub limit: Option<BoundedI64<1, 100>>,
     /// Zero-based offset for pagination (default 0).
     pub offset: Option<BoundedI64<0, 9223372036854775807>>,
-    /// Ranking type: "volume" | "winnings" (default: "volume")
-    pub rank_by: Option<String>,
+    /// Ranking type: "volume" | "winnings" | "win_rate" | "streak" (default: "volume")
+    pub rank_by: Option<NonEmptyString>,
+    /// Time window: "week" | "month" | "all" (default: "all"). Ignored for `rank_by=winnings`.
+    pub period: Option<NonEmptyString>,
 }
 
-/// `GET /api/v1/leaderboard` — user rankings by betting volume or winnings.
+/// `GET /api/v1/leaderboard` — user rankings by betting volume, winnings, win
+/// rate, or current win streak, optionally scoped to a time window
+/// ("week" | "month" | "all").
 pub async fn get_leaderboard(
     State(state): State<AppState>,
     Query(params): Query<LeaderboardQuery>,
@@ -507,14 +569,16 @@ pub async fn get_leaderboard(
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
-    let rank_by = params.rank_by.as_deref().unwrap_or("volume");
+    let rank_by = params.rank_by.as_ref().map(|s| s.as_str()).unwrap_or("volume");
+    let period = params.period.as_ref().map(|s| s.as_str()).unwrap_or("all");
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     match rank_by {
@@ -523,6 +587,7 @@ pub async fn get_leaderboard(
                 let response = json!({
                     "leaderboard": users,
                     "rank_by": "winnings",
+                    "period": "all",
                     "limit": limit,
                     "offset": offset,
                 });
@@ -531,16 +596,19 @@ pub async fn get_leaderboard(
             Err(e) => ApiResponse::<()>::error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 error_codes::INTERNAL_ERROR,
-                e.to_string()
-            ).into_response(),
+                e.to_string(),
+            )
+            .into_response(),
         },
-        _ => {
-            // Default to volume ranking
-            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
-                Ok(users) => {
+        "win_rate" | "streak" => {
+            match crate::db::get_leaderboard_extended(db, rank_by, period, None, limit, offset)
+                .await
+            {
+                Ok(entries) => {
                     let response = json!({
-                        "leaderboard": users,
-                        "rank_by": "volume",
+                        "leaderboard": entries,
+                        "rank_by": rank_by,
+                        "period": period,
                         "limit": limit,
                         "offset": offset,
                     });
@@ -549,10 +617,110 @@ pub async fn get_leaderboard(
                 Err(e) => ApiResponse::<()>::error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     error_codes::INTERNAL_ERROR,
-                    e.to_string()
-                ).into_response(),
+                    e.to_string(),
+                )
+                .into_response(),
             }
         }
+        _ if period != "all" => {
+            // Volume ranking scoped to a time window.
+            match crate::db::get_leaderboard_extended(db, "volume", period, None, limit, offset)
+                .await
+            {
+                Ok(entries) => {
+                    let response = json!({
+                        "leaderboard": entries,
+                        "rank_by": "volume",
+                        "period": period,
+                        "limit": limit,
+                        "offset": offset,
+                    });
+                    ApiResponse::success(response).into_response()
+                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
+            }
+        }
+        _ => {
+            // Default: all-time volume ranking (unchanged legacy behavior).
+            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
+                Ok(users) => {
+                    let response = json!({
+                        "leaderboard": users,
+                        "rank_by": "volume",
+                        "period": "all",
+                        "limit": limit,
+                        "offset": offset,
+                    });
+                    ApiResponse::success(response).into_response()
+                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
+            }
+        }
+    }
+}
+
+/// Query parameters for the `GET /api/v1/pools/:id/leaderboard` endpoint.
+#[derive(Debug, Deserialize)]
+pub struct PoolLeaderboardQuery {
+    /// Maximum number of results to return (capped at 100, default 20).
+    pub limit: Option<BoundedI64<1, 100>>,
+    /// Zero-based offset for pagination (default 0).
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Ranking type: "volume" | "win_rate" | "streak" (default: "volume")
+    pub rank_by: Option<NonEmptyString>,
+}
+
+/// `GET /api/v1/pools/:id/leaderboard` — top stakers for a single pool.
+pub async fn get_pool_leaderboard(
+    State(state): State<AppState>,
+    Path(pool_id): Path<i64>,
+    Query(params): Query<PoolLeaderboardQuery>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
+    let rank_by = params.rank_by.as_ref().map(|s| s.as_str()).unwrap_or("volume");
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::db::get_leaderboard_extended(db, rank_by, "all", Some(pool_id), limit, offset)
+        .await
+    {
+        Ok(entries) => {
+            let response = json!({
+                "pool_id": pool_id,
+                "leaderboard": entries,
+                "rank_by": rank_by,
+                "limit": limit,
+                "offset": offset,
+            });
+            ApiResponse::success(response).into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -586,8 +754,9 @@ pub async fn ingest_pool_created(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     let event = PoolCreatedEvent {
@@ -609,8 +778,9 @@ pub async fn ingest_pool_created(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -635,8 +805,9 @@ pub async fn ingest_prediction_placed(
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
             error_codes::DATABASE_UNAVAILABLE,
-            "database not available"
-        ).into_response();
+            "database not available",
+        )
+        .into_response();
     };
 
     let event = PredictionPlacedEvent {
@@ -662,8 +833,9 @@ pub async fn ingest_prediction_placed(
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
-            e.to_string()
-        ).into_response(),
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -743,7 +915,11 @@ pub async fn get_market_predictions(
             if has_next {
                 rows.truncate(limit as usize);
             }
-            let next_cursor: Option<i64> = if has_next { rows.last().map(|r| r.id) } else { None };
+            let next_cursor: Option<i64> = if has_next {
+                rows.last().map(|r| r.id)
+            } else {
+                None
+            };
 
             let response = serde_json::json!({
                 "market_id": market_id,
@@ -763,6 +939,418 @@ pub async fn get_market_predictions(
     }
 }
 
+// ── Pool creator incentive system (#1366) ─────────────────────────────────────
+
+/// `GET /api/v1/creators/:address/stats` — reputation/quality metrics for a pool creator.
+pub async fn get_creator_stats_handler(
+    State(state): State<AppState>,
+    Path(address): Path<String>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::get_creator_stats(db, &address).await {
+        Ok(Some(stats)) => Json(json!(stats)),
+        Ok(None) => Json(json!({ "error": "creator not found" })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+/// `POST /api/v1/pools/:id/pay-creator-incentive` — pay out a pool creator's
+/// incentive share once the pool has reached its participation threshold.
+/// Idempotent: a second call after payout is a no-op.
+pub async fn pay_creator_incentive_handler(
+    State(state): State<AppState>,
+    Path(pool_id): Path<i64>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::pay_creator_incentive(db, pool_id, state.config.treasury_fee_bps).await {
+        Ok(Some(amount)) => {
+            state.pool_cache.invalidate(pool_id);
+            Json(json!({ "status": "paid", "pool_id": pool_id, "amount": amount }))
+        }
+        Ok(None) => Json(json!({ "status": "not_eligible", "pool_id": pool_id })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+// ── Pool templates for recurring markets (#1368) ──────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePoolTemplateRequest {
+    pub creator: String,
+    pub name: String,
+    pub category: String,
+    pub description: String,
+    pub token: String,
+    pub duration_seconds: i64,
+    pub recurrence_interval_seconds: i64,
+}
+
+/// `POST /api/v1/pool-templates` — save a reusable pool configuration.
+pub async fn create_pool_template_handler(
+    State(state): State<AppState>,
+    Json(body): Json<CreatePoolTemplateRequest>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::create_pool_template(
+        db,
+        &body.creator,
+        &body.name,
+        &body.category,
+        &body.description,
+        &body.token,
+        body.duration_seconds,
+        body.recurrence_interval_seconds,
+    )
+    .await
+    {
+        Ok(template) => Json(json!(template)),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListPoolTemplatesQuery {
+    pub creator: String,
+}
+
+/// `GET /api/v1/pool-templates?creator=...` — list a creator's saved templates.
+pub async fn list_pool_templates_handler(
+    State(state): State<AppState>,
+    Query(params): Query<ListPoolTemplatesQuery>,
+) -> Json<serde_json::Value> {
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" }));
+    };
+
+    match crate::db::list_pool_templates(db, &params.creator).await {
+        Ok(templates) => Json(json!({ "creator": params.creator, "templates": templates })),
+        Err(e) => Json(json!({ "error": e.to_string() })),
+    }
+}
+
+// ── User profile ───────────────────────────────────────────────────────────────
+
+/// `GET /api/v1/users/:address/profile` — aggregated profile: win/loss stats,
+/// claim status per pool, and a daily activity series for performance charts.
+pub async fn get_user_profile_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::profile::get_full_profile(db, address.as_str()).await {
+        Ok(profile) => ApiResponse::success(profile).into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+// ── Pool tags ────────────────────────────────────────────────────────────────
+
+/// `GET /api/v1/tags` — distinct tags currently in use, for filter-UI dropdowns.
+pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::tags::list_distinct_tags(db).await {
+        Ok(tags) => ApiResponse::success(json!({ "tags": tags })).into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+/// Request body for `PATCH /api/v1/pools/:id/tags`.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePoolTagsRequest {
+    /// Must match the pool's on-chain creator — only the creator may retag a pool.
+    pub creator: StellarAddress,
+    pub tags: Vec<String>,
+}
+
+/// `PATCH /api/v1/pools/:id/tags` — creator-only: replace a pool's tag set.
+pub async fn update_pool_tags_handler(
+    State(state): State<AppState>,
+    Path(pool_id): Path<i64>,
+    Json(body): Json<UpdatePoolTagsRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::tags::update_pool_tags(db, pool_id, body.creator.as_str(), &body.tags).await {
+        Ok(true) => {
+            state.pool_cache.invalidate(pool_id);
+            state.redis.invalidate_pools_cache().await;
+            ApiResponse::success(json!({ "pool_id": pool_id, "tags": body.tags })).into_response()
+        }
+        Ok(false) => ApiResponse::<()>::error(
+            StatusCode::NOT_FOUND,
+            error_codes::NOT_FOUND,
+            "pool not found, or caller is not the creator",
+        )
+        .into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+// ── Claims (winnings / refunds) ───────────────────────────────────────────────
+
+/// Request body for the claim-event webhook / indexer endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ClaimPayload {
+    pub pool_id: u64,
+    pub user_address: StellarAddress,
+    /// Amount paid out by `claim_winnings` / `claim_refund` (0 for losers).
+    pub amount_paid: i64,
+}
+
+/// `POST /api/v1/indexer/claim` — ingest a decoded `WinningsClaimed` /
+/// `RefundClaimed` contract event and mark the user's predictions as claimed.
+pub async fn ingest_claim_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<ClaimPayload>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::profile::mark_predictions_claimed(
+        db,
+        payload.pool_id as i64,
+        payload.user_address.as_str(),
+        payload.amount_paid,
+    )
+    .await
+    {
+        Ok(rows) => {
+            ApiResponse::success(json!({ "status": "ok", "rows_updated": rows })).into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+// ── Notifications ──────────────────────────────────────────────────────────────
+
+/// Query parameters for `GET /api/v1/notifications/:address`.
+#[derive(Debug, Deserialize)]
+pub struct NotificationsQuery {
+    pub unread_only: Option<bool>,
+    pub limit: Option<BoundedI64<1, 100>>,
+    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+}
+
+/// `GET /api/v1/notifications/:address` — list a user's notifications, newest first.
+pub async fn list_notifications_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Query(params): Query<NotificationsQuery>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    let unread_only = params.unread_only.unwrap_or(false);
+    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    let offset = params.offset.map(|b| b.get()).unwrap_or(0);
+
+    match tokio::try_join!(
+        crate::notifications::list_notifications(db, address.as_str(), unread_only, limit, offset),
+        crate::notifications::count_unread(db, address.as_str())
+    ) {
+        Ok((notifications, unread_count)) => ApiResponse::success(json!({
+            "address": address,
+            "notifications": notifications,
+            "unread_count": unread_count,
+            "limit": limit,
+            "offset": offset,
+        }))
+        .into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+/// Request body for `POST /api/v1/notifications/:address/read`.
+#[derive(Debug, Deserialize)]
+pub struct MarkNotificationsReadRequest {
+    /// Specific notification IDs to mark read. Omit (or leave empty) to mark all as read.
+    #[serde(default)]
+    pub ids: Vec<i64>,
+}
+
+/// `POST /api/v1/notifications/:address/read` — mark notifications as read.
+pub async fn mark_notifications_read_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<MarkNotificationsReadRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    let ids = if body.ids.is_empty() {
+        None
+    } else {
+        Some(body.ids.as_slice())
+    };
+
+    match crate::notifications::mark_read(db, address.as_str(), ids).await {
+        Ok(updated) => ApiResponse::success(json!({ "updated": updated })).into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+/// `GET /api/v1/users/:address/interests` — categories/tags a user follows
+/// for "new pool matching your interests" alerts.
+pub async fn get_user_interests_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::notifications::get_user_interests(db, address.as_str()).await {
+        Ok(interests) => {
+            ApiResponse::success(json!({ "address": address, "interests": interests }))
+                .into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+/// `PUT /api/v1/users/:address/interests` — replace a user's interest list wholesale.
+pub async fn set_user_interests_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<crate::notifications::SetInterestsRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::notifications::set_user_interests(db, address.as_str(), &body.interests).await {
+        Ok(()) => {
+            ApiResponse::success(json!({ "address": address, "interests": body.interests }))
+                .into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
 /// Build the version 1 API router.
 pub fn router(
     config: Arc<Config>,
@@ -772,11 +1360,12 @@ pub fn router(
     metrics: SharedMetrics,
     event_bus: crate::ws::EventBus,
 ) -> Router {
-    use crate::rate_limit::{RateLimitTier, with_rate_limit};
+    use crate::rate_limit::{with_rate_limit, RateLimitTier};
 
     let state = AppState {
         config,
         cache,
+        pool_cache: PoolCache::new(),
         redis,
         db: pool,
         metrics,
@@ -800,10 +1389,16 @@ pub fn router(
         Router::new()
             .route("/pools", get(get_pools))
             .route("/pools/:id", get(get_pool_by_id_handler))
+            .route("/pools/:id/leaderboard", get(get_pool_leaderboard))
             .route("/stats", get(get_stats))
             .route("/leaderboard", get(get_leaderboard))
+            .route("/tags", get(list_tags_handler))
             .route("/referrals/{address}", get(referrals_handler))
-            .route("/referrals/{address}/estimate", get(referral_estimate_handler))
+            .route(
+                "/referrals/:address/estimate",
+                get(referral_estimate_handler),
+            )
+            .route("/markets/:id/predictions", get(get_market_predictions))
             .with_state(state.clone()),
         RateLimitTier::Read,
     );
@@ -813,7 +1408,23 @@ pub fn router(
         Router::new()
             .route("/users/{address}/history", get(get_user_history))
             .route("/users/{address}/predictions", get(get_user_predictions))
-            .route("/users/{address}/referrals", get(user_referral_earnings_handler))
+            .route("/users/{address}/profile", get(get_user_profile_handler))
+            .route(
+                "/users/:address/referrals",
+                get(user_referral_earnings_handler),
+            )
+            .route(
+                "/users/{address}/interests",
+                get(get_user_interests_handler).put(set_user_interests_handler),
+            )
+            .route(
+                "/notifications/{address}",
+                get(list_notifications_handler),
+            )
+            .route(
+                "/notifications/{address}/read",
+                post(mark_notifications_read_handler),
+            )
             .with_state(state.clone()),
         RateLimitTier::User,
     );
@@ -823,35 +1434,47 @@ pub fn router(
         Router::new()
             .route("/indexer/pool-created", post(ingest_pool_created))
             .route("/indexer/prediction-placed", post(ingest_prediction_placed))
-            .with_state(state),
+            .route("/indexer/claim", post(ingest_claim_handler))
+            .route("/pools/:id/tags", patch(update_pool_tags_handler))
+            .with_state(state.clone()),
         RateLimitTier::Write,
     );
 
+    // Routes without a rate-limit tier of their own. Anything already served by
+    // `light`/`read`/`user`/`write` above must NOT be repeated here: `merge`
+    // panics on an overlapping method route, which would take down the whole
+    // server at startup.
     Router::new()
         .route("/", get(index))
         .route("/health", get(health))
         .route("/pools", get(get_pools))
         .route("/pools/:id", get(get_pool_by_id_handler))
-        .route("/stats", get(get_stats))
+        .route("/pools/:id/leaderboard", get(get_pool_leaderboard))
         .route("/leaderboard", get(get_leaderboard))
         .route("/fees", get(get_fees))
         .route("/prices", get(crate::price_cache::get_prices))
         .route("/referrals/{address}", get(referrals_handler))
-        .route(
-            "/referrals/{address}/estimate",
-            get(referral_estimate_handler),
-        )
         .route(
             "/users/{address}/referrals",
             get(user_referral_earnings_handler),
         )
         .route("/users/{address}/history", get(get_user_history))
         .route("/users/{address}/predictions", get(get_user_predictions))
-        .route("/markets/{id}/predictions", get(get_market_predictions))
         .route("/indexer/pool-created", post(ingest_pool_created))
-        .route("/indexer/prediction-placed", post(ingest_prediction_placed))
-        .route("/ws", get(crate::ws::ws_handler))
+        .route("/creators/{address}/stats", get(get_creator_stats_handler))
+        .route(
+            "/pools/:id/pay-creator-incentive",
+            post(pay_creator_incentive_handler),
+        )
+        .route(
+            "/pool-templates",
+            get(list_pool_templates_handler).post(create_pool_template_handler),
+        )
         .with_state(state)
+        .merge(light)
+        .merge(read)
+        .merge(user)
+        .merge(write)
 }
 
 /// `GET /api/v1/fees` — reads fee config from the shared AppState.
@@ -866,32 +1489,32 @@ async fn get_fees(State(state): State<AppState>) -> Json<FeeInfo> {
 ///
 /// Requires a live DB pool; returns 503 if the pool is not configured.
 async fn referrals_handler(
-    axum::extract::Path(address): axum::extract::Path<String>,
+    axum::extract::Path(address): axum::extract::Path<StellarAddress>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    let address_str = address.as_str().to_string();
+
     match state.db {
         Some(pool) => {
-            match crate::referrals::get_referrals(axum::extract::Path(address), State(pool)).await {
+            match crate::referrals::get_referrals(axum::extract::Path(address_str), State(pool)).await {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => {
-                    ApiResponse::<()>::error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        error_codes::INTERNAL_ERROR,
-                        e.to_string()
-                    ).into_response()
-                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
             }
         }
-        None => {
-            ApiResponse::<()>::error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                error_codes::DATABASE_UNAVAILABLE,
-                "database not configured"
-            ).into_response()
-        }
+        None => ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not configured",
+        )
+        .into_response(),
     }
 }
 
@@ -899,16 +1522,18 @@ async fn referrals_handler(
 ///
 /// Requires a live DB pool; returns 503 if the pool is not configured.
 async fn referral_estimate_handler(
-    axum::extract::Path(address): axum::extract::Path<String>,
+    axum::extract::Path(address): axum::extract::Path<StellarAddress>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    let address_str = address.as_str().to_string();
+
     match state.db {
         Some(pool) => {
             match crate::referrals::estimate_referral_rewards(
-                address,
+                address_str,
                 &pool,
                 state.config.treasury_fee_bps,
                 state.config.referral_fee_bps,
@@ -916,64 +1541,61 @@ async fn referral_estimate_handler(
             .await
             {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => {
-                    ApiResponse::<()>::error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        error_codes::INTERNAL_ERROR,
-                        e.to_string()
-                    ).into_response()
-                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
             }
         }
-        None => {
-            ApiResponse::<()>::error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                error_codes::DATABASE_UNAVAILABLE,
-                "database not configured"
-            ).into_response()
-        }
+        None => ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not configured",
+        )
+        .into_response(),
     }
 }
 
 /// `GET /api/v1/users/:address/referrals` — per-pool referral earnings for a user.
 async fn user_referral_earnings_handler(
-    axum::extract::Path(address): axum::extract::Path<String>,
+    axum::extract::Path(address): axum::extract::Path<StellarAddress>,
     State(state): State<AppState>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    let address_str = address.as_str().to_string();
+
     match state.db {
         Some(pool) => {
             match crate::referrals::get_user_referral_earnings(
-                axum::extract::Path(address),
+                axum::extract::Path(address_str),
                 State(pool),
             )
             .await
             {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => {
-                    ApiResponse::<()>::error(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        error_codes::INTERNAL_ERROR,
-                        e.to_string()
-                    ).into_response()
-                }
+                Err(e) => ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    e.to_string(),
+                )
+                .into_response(),
             }
         }
-        None => {
-            ApiResponse::<()>::error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                error_codes::DATABASE_UNAVAILABLE,
-                "database not configured"
-            ).into_response()
-        }
+        None => ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not configured",
+        )
+        .into_response(),
     }
 }
 
 #[cfg(test)]
 mod cache_aside_tests {
-    use super::*;
     use crate::redis_cache::{pools_cache_key, POOLS_CACHE_TTL};
 
     /// Test the cache-aside pattern: cache miss, database fetch, and cache population

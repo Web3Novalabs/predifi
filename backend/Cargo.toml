@@ -15,6 +15,10 @@ path = "src/main.rs"
 name = "predifi-seed"
 path = "src/bin/seed.rs"
 
+[[bin]]
+name = "predifi-openapi"
+path = "src/bin/openapi_export.rs"
+
 [dependencies]
 axum = { version = "0.7.9", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }
@@ -50,6 +54,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 predifi-errors = { path = "../contract/contracts/predifi-errors", features = ["std"] }
 jsonwebtoken = "9"
 governor = "0.8"
+tower_governor = "0.4"
 
 [features]
 integration-tests = []
@@ -61,4 +66,6 @@ required-features = ["integration-tests"]
 
 [dev-dependencies]
 http-body-util = "0.1"
+testcontainers = "0.27.3"
+testcontainers-modules = { version = "0.15.0", features = ["redis", "postgres"] }
 tower = { version = "0.4", features = ["util"] }

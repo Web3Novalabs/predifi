@@ -91,6 +91,7 @@ export function AspectRatioContainer({
     <div
       className={`relative w-full ${className}`}
       style={{
+        width: "100%",
         aspectRatio,
       }}
     >

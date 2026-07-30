@@ -66,7 +66,7 @@ export default function AboutPage() {
     <div className="text-sm min-h-screen bg-[#001112]">
       <Navbar />
 
-      <main className="w-full overflow-x-hidden">
+      <main id="main-content" tabIndex={-1} className="w-full overflow-x-hidden">
         <Hero />
 
         <Suspense

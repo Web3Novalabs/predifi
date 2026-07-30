@@ -158,17 +158,13 @@ mod tests {
             EventBus::new(),
         );
 
-        let response = app
-            .oneshot(get("/v1/fees"))
-            .await
-            .expect("request failed");
+        let response = app.oneshot(get("/v1/fees")).await.expect("request failed");
 
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = body_string(response.into_body()).await;
         assert!(
-            body.contains("\"treasury_fee_bps\":250")
-                && body.contains("\"referral_fee_bps\":5000"),
+            body.contains("\"treasury_fee_bps\":250") && body.contains("\"referral_fee_bps\":5000"),
             "body should contain configured fee values, got: {body}"
         );
     }
@@ -233,9 +229,7 @@ mod tests {
             .await
             .expect("request failed");
 
-        // The current get_pools handler also returns 200 for DATABASE_UNAVAILABLE,
-        // so we follow the same convention here.
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
         let body = body_string(response.into_body()).await;
         assert!(
@@ -246,13 +240,13 @@ mod tests {
 
     /// A non-numeric market ID must return 422 (Axum path extraction failure).
     #[tokio::test]
-    async fn market_predictions_bad_market_id_returns_422() {
+    async fn market_predictions_bad_market_id_returns_400() {
         let response = build_router_without_db()
             .oneshot(get("/v1/markets/not-a-number/predictions"))
             .await
             .expect("request failed");
 
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     /// `?limit` values outside the 1-100 range are clamped, not rejected.

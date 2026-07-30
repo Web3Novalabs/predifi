@@ -1,11 +1,4 @@
-//! `predifi-backend` — Axum HTTP server entry point.
-//!
-//! All routers, handlers, and shared modules live in the `predifi_backend`
-//! library crate so they can be reused by other binaries (notably
-//! `predifi-seed`).  This file only wires environment loading to
-//! [`predifi_backend::run_server`].
-
-use predifi_backend::{config::Config, run_server};
+use predifi_backend::{config::Config, server::run};
 
 #[tokio::main]
 async fn main() {
@@ -16,5 +9,5 @@ async fn main() {
         std::process::exit(1);
     });
 
-    run_server(config).await;
+    run(config).await;
 }

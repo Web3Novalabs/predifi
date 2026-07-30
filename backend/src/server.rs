@@ -161,7 +161,10 @@ async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::respon
     }
 
     let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
-        ("not_configured", Some("Redis is not configured".to_string()))
+        (
+            "not_configured",
+            Some("Redis is not configured".to_string()),
+        )
     } else if !state.redis.ping().await {
         ("unreachable", Some("Redis ping failed".to_string()))
     } else {
@@ -268,6 +271,7 @@ pub fn build_router_with_rate_limit(
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
@@ -293,7 +297,10 @@ pub fn build_router_with_rate_limit(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
+        .layer(from_fn_with_state(
+            prometheus_metrics.clone(),
+            metrics_middleware,
+        ))
         .layer(build_cors(&config))
         .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
 }
@@ -310,6 +317,7 @@ fn build_router_with_db(
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::new(),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),
@@ -335,7 +343,10 @@ fn build_router_with_db(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(prometheus_metrics.clone(), metrics_middleware))
+        .layer(from_fn_with_state(
+            prometheus_metrics.clone(),
+            metrics_middleware,
+        ))
         .layer(build_cors(&config))
         .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
 }
@@ -405,12 +416,24 @@ where
             .await;
         });
 
+    // Periodically sweeps pool/prediction state to generate notifications
+    // (pool ending soon, resolved, claim window expiring, interest matches).
+    // Every insert is deduplicated on the DB side, so this can run on a fixed
+    // interval without ever double-notifying a user.
+    let notifications_pool = pool.clone();
+    let notifications_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("notification_sweep", async move {
+            crate::notifications::run_sweep_loop(notifications_pool, Duration::from_secs(300))
+                .await;
+        });
+
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
         warn!("Redis cache unavailable - running without caching");
     }
 
+    let app = build_router_with_db(config.clone(), cache, redis, pool.clone(), event_bus);
     let app = build_router_with_db(
         config.clone(),
         cache,
@@ -443,7 +466,9 @@ where
             timeout_secs = drain_timeout.as_secs(),
             "HTTP server drained in-flight requests cleanly"
         ),
-        Ok(Err(error)) => warn!(error = %error, "HTTP server returned an error during shutdown drain"),
+        Ok(Err(error)) => {
+            warn!(error = %error, "HTTP server returned an error during shutdown drain")
+        }
         Err(_) => warn!(
             component = "http server drain",
             timeout_secs = drain_timeout.as_secs(),
@@ -454,6 +479,7 @@ where
     // Abort workers before closing the pool so they cannot race it.
     fetcher_handle.abort();
     listener_handle.abort();
+    notifications_handle.abort();
 
     // Close the pool after aborting workers.
     shutdown::with_shutdown_timeout(drain_timeout, "database pool close", pool.close()).await;
