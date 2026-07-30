@@ -1,7 +1,8 @@
 "use client";
 
 import { Sun, Moon, Monitor } from "lucide-react";
-import { useTheme, type Theme } from "@/lib/hooks/useTheme";
+import { useThemeContext } from "@/lib/context";
+import type { Theme } from "@/lib/hooks/useTheme";
 import { cn } from "@/lib/utils";
 
 const CYCLE: Theme[] = ["dark", "light", "system"];
@@ -23,7 +24,7 @@ interface ThemeToggleProps {
 }
 
 export function ThemeToggle({ className }: ThemeToggleProps) {
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme } = useThemeContext();
 
   function handleClick() {
     const next = CYCLE[(CYCLE.indexOf(theme) + 1) % CYCLE.length];

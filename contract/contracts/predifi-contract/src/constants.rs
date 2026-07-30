@@ -131,23 +131,23 @@ pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
 /// Default cooldown in seconds between consecutive place_prediction calls by the same user.
 ///
 /// **Units:** Seconds
-/// **Value:** 0 (disabled by default)
+/// **Value:** 30 seconds (enabled by default)
 ///
-/// **Rationale:** Rate limiting prevents spam and potential front-running attacks by
-/// limiting how quickly a single user can place predictions. Defaulting to 0 (disabled)
-/// allows existing deployments to continue operating without disruption, while new
-/// deployments can opt-in via admin configuration by setting `Config::prediction_cooldown_seconds`.
+/// **Rationale:** Rate limiting prevents spam and front-running attacks by limiting how
+/// quickly a single user can place predictions. A 30-second cooldown slows down
+/// rapid-fire prediction strategies that could be used to exploit temporary price
+/// discrepancies or to front-run other users' predictions.
 ///
 /// **Impact of changes:**
-/// - Increasing this value (e.g., to 60) would enforce a cooldown by default, preventing
-///   rapid consecutive predictions but potentially frustrating legitimate users.
+/// - Increasing this value enforces a stricter cooldown by default, preventing rapid
+///   consecutive predictions but potentially frustrating legitimate users.
 /// - Decreasing this value is not possible (cannot go below 0).
-/// - Setting to 0 disables the cooldown mechanism entirely.
+/// - Setting to 0 via admin disables the cooldown mechanism entirely.
 /// - When enabled, the cooldown is enforced via `LastPredictionTime(user)` storage.
 /// - Can be overridden via `Config::prediction_cooldown_seconds` by admin.
 ///
 /// **Used for:** Initializing `Config::prediction_cooldown_seconds` during contract initialization.
-pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 0;
+pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 30;
 
 /// Maximum number of options/outcomes allowed in a single pool.
 ///

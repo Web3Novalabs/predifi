@@ -10,6 +10,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use std::time::Instant;
 
 use axum::{
     extract::{
@@ -268,12 +269,43 @@ async fn handle_socket(
     run_socket(&mut socket, &mut rx, wallet_filter.as_deref(), pool_filter).await;
 }
 
+/// Per-connection message rate limiter using a sliding window.
+struct WsRateLimiter {
+    window_size: std::time::Duration,
+    max_messages: u32,
+    timestamps: Vec<Instant>,
+}
+
+impl WsRateLimiter {
+    fn new(max_messages: u32, window_secs: u64) -> Self {
+        Self {
+            window_size: std::time::Duration::from_secs(window_secs),
+            max_messages,
+            timestamps: Vec::with_capacity(max_messages as usize + 1),
+        }
+    }
+
+    /// Returns `true` if the message is allowed, `false` if rate-limited.
+    fn check(&mut self) -> bool {
+        let now = Instant::now();
+        // Remove timestamps outside the window
+        self.timestamps.retain(|t| now.duration_since(*t) < self.window_size);
+        if self.timestamps.len() >= self.max_messages as usize {
+            return false;
+        }
+        self.timestamps.push(now);
+        true
+    }
+}
+
 async fn run_socket(
     socket: &mut WebSocket,
     rx: &mut broadcast::Receiver<String>,
     wallet_filter: Option<&str>,
     pool_filter: Option<u64>,
 ) {
+    let mut rate_limiter = WsRateLimiter::new(10, 10);
+
     loop {
         tokio::select! {
             result = rx.recv() => {

@@ -21,6 +21,10 @@ pub enum RateLimitTier {
     User,
     /// Indexer ingest endpoints (`/indexer/*`). 20 req / 60 s.
     Write,
+    /// Token operations (`/auth/refresh`). 10 req / 60 s (stricter to prevent brute force).
+    Token,
+    /// WebSocket inbound messages. 10 msg / 10 s per connection (stricter to prevent abuse).
+    WebSocket,
 }
 
 impl RateLimitTier {
@@ -31,6 +35,8 @@ impl RateLimitTier {
             RateLimitTier::Read => (RATE_LIMIT_READ_BURST, RATE_LIMIT_READ_PERIOD_SECS),
             RateLimitTier::User => (RATE_LIMIT_USER_BURST, RATE_LIMIT_USER_PERIOD_SECS),
             RateLimitTier::Write => (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS),
+            RateLimitTier::Token => (RATE_LIMIT_TOKEN_BURST, RATE_LIMIT_TOKEN_PERIOD_SECS),
+            RateLimitTier::WebSocket => (RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS),
         }
     }
 }
@@ -88,6 +94,12 @@ mod tests {
         assert_eq!(
             (b, p),
             (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS)
+        );
+
+        let (b, p) = RateLimitTier::Token.burst_and_period();
+        assert_eq!(
+            (b, p),
+            (RATE_LIMIT_TOKEN_BURST, RATE_LIMIT_TOKEN_PERIOD_SECS)
         );
     }
 

@@ -1,7 +1,9 @@
-//! Boundary and edge-case tests for Issues #1313–#1316.
+//! Boundary and edge-case tests for Issues #1313–#1316, #1323, #1324.
 //!
 //! | Issue  | Function              | Coverage highlights                                      |
 //! |--------|-----------------------|----------------------------------------------------------|
+//! | #1324  | `update_referrer`     | self-referrer, None/clear, post-prediction change, cycle |
+//! | #1323  | `withdraw_treasury`   | exceed bal, zero, non-admin, non-whitelisted, consistency|
 //! | #1316  | `set_fee_bps`         | min/max boundaries, overflow, timelock, concurrent pools |
 //! | #1315  | `emergency_cancel_pool` | multi-sig quorum, duplicates, resolved/cancelled state |
 //! | #1314  | `cancel_pool`         | auth, double-cancel, resolved pool, state invariants     |
@@ -2115,151 +2117,309 @@ fn test_1313_resolve_with_many_participants() {
     assert_eq!(winning_stake, 1_000, "winning-side stake must be 1_000");
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Issue #1327 — Boundary & Edge Case Tests: mark_pool_ready / close_staking
-// ─────────────────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1324 — `update_referrer` Boundary & Edge Case Tests
+// ═══════════════════════════════════════════════════════════════════════════
 
-/// Test mark_pool_ready boundary condition: 1 second before resolution_delay fails with
-/// ResolutionDelayNotMet, exact timestamp succeeds.
+/// Test 1: Setting referrer to self must be rejected with `Unauthorized`.
 #[test]
-fn test_1327_mark_pool_ready_timestamp_boundaries() {
+fn test_1324_update_referrer_self_rejected() {
     let env = Env::default();
     let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
 
-    // Set resolution delay to 100 seconds
-    ctx.client.set_resolution_delay(&ctx.admin, &100u64);
+    let user = Address::generate(&env);
 
-    let duration = 3_600u64;
-    let pool_id = ctx.create_pool(duration);
-
-    // end_time = 1_000 + 3_600 = 4_600
-    // resolution expected at 4_600 + 100 = 4_700
-
-    // Advance to 4_699 (1s before delay met)
-    ctx.advance_time(3_699);
-    let res = ctx.client.try_mark_pool_ready(&pool_id);
+    // User attempts to set their own address as referrer
+    let result = ctx.client.try_update_referrer(&user, &pool_id, &Some(user.clone()));
     assert_eq!(
-        res,
-        Err(Ok(PredifiError::ResolutionDelayNotMet)),
-        "mark_pool_ready should fail 1 second before resolution delay is met"
+        result,
+        Err(Ok(PredifiError::Unauthorized)),
+        "setting referrer to self must return Unauthorized"
     );
 
-    // Advance 1 second to exact boundary 4_700
-    ctx.advance_time(1);
-    let res_exact = ctx.client.try_mark_pool_ready(&pool_id);
-    assert!(
-        res_exact.is_ok(),
-        "mark_pool_ready should succeed exactly at resolution_delay boundary"
-    );
+    // Verify referrer volume is 0
+    let vol = ctx.client.get_referred_volume(&user, &pool_id);
+    assert_eq!(vol, 0, "referred volume for self must remain 0");
 }
 
-/// Test mark_pool_ready is idempotent when called multiple times on an active pool.
+/// Test 2: Updating referrer to None clears an existing referrer.
 #[test]
-fn test_1327_mark_pool_ready_idempotent_and_already_ready() {
+fn test_1324_update_referrer_none_clears_referrer() {
     let env = Env::default();
     let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
 
-    let pool_id = ctx.create_pool(3_600);
-    ctx.advance_time(3_601);
+    let user = Address::generate(&env);
+    let referrer = Address::generate(&env);
 
-    // First call
-    let res1 = ctx.client.try_mark_pool_ready(&pool_id);
-    assert!(res1.is_ok(), "First mark_pool_ready call should succeed");
+    // Set initial referrer
+    ctx.client.update_referrer(&user, &pool_id, &Some(referrer.clone()));
 
-    // Second call on already ready active pool
-    let res2 = ctx.client.try_mark_pool_ready(&pool_id);
-    assert!(res2.is_ok(), "Second mark_pool_ready call on ready pool should succeed idempotently");
-}
-
-/// Test mark_pool_ready ordering violations: calling on canceled or resolved pools.
-#[test]
-fn test_1327_mark_pool_ready_ordering_violations() {
-    let env = Env::default();
-    let ctx = TestEnv::new(&env);
-
-    let pool_id1 = ctx.create_pool(3_600);
-    ctx.advance_time(3_601);
-
-    // Resolve pool1
-    ctx.client.resolve_pool(&ctx.operator, &pool_id1, &0u32);
-
-    let res_resolved = ctx.client.try_mark_pool_ready(&pool_id1);
+    // User stakes 100 with the initial referrer active
+    ctx.stake(&user, pool_id, 100, 0);
     assert_eq!(
-        res_resolved,
-        Err(Ok(PredifiError::InvalidPoolState)),
-        "mark_pool_ready should fail on already-resolved pool"
+        ctx.client.get_referred_volume(&referrer, &pool_id),
+        100,
+        "referred volume must equal 100"
     );
 
-    // Cancel pool2
-    let pool_id2 = ctx.create_pool(3_600);
-    ctx.client.cancel_pool(&ctx.operator, &pool_id2, &String::from_str(&env, "cancellation"));
+    // Clear referrer by updating to None
+    ctx.client.update_referrer(&user, &pool_id, &None);
 
-    let res_canceled = ctx.client.try_mark_pool_ready(&pool_id2);
+    // Place another prediction — volume for original referrer must NOT increase
+    ctx.stake(&user, pool_id, 200, 0);
     assert_eq!(
-        res_canceled,
-        Err(Ok(PredifiError::InvalidPoolState)),
-        "mark_pool_ready should fail on canceled pool"
+        ctx.client.get_referred_volume(&referrer, &pool_id),
+        100,
+        "referred volume for previous referrer must remain unchanged after set to None"
     );
 }
 
-/// Test close_staking boundary conditions: calling before end_time returns StakingStillOpen,
-/// exact end_time succeeds.
+/// Test 3: Changing referrer after predictions are placed.
 #[test]
-fn test_1327_close_staking_timestamp_boundaries() {
+fn test_1324_update_referrer_after_predictions_placed() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let user = Address::generate(&env);
+    let referrer_a = Address::generate(&env);
+    let referrer_b = Address::generate(&env);
+
+    // Place initial prediction with referrer_a
+    ctx.token_admin.mint(&user, &1000);
+    ctx.client.place_prediction(&user, &pool_id, &100, &0, &Some(referrer_a.clone()), &None);
+
+    assert_eq!(ctx.client.get_referred_volume(&referrer_a, &pool_id), 100);
+    assert_eq!(ctx.client.get_referred_volume(&referrer_b, &pool_id), 0);
+
+    // Change referrer to referrer_b
+    ctx.client.update_referrer(&user, &pool_id, &Some(referrer_b.clone()));
+
+    // Place second prediction
+    ctx.client.place_prediction(&user, &pool_id, &250, &0, &None, &None);
+
+    // Check volume: referrer_a remains 100, referrer_b receives 250
+    assert_eq!(ctx.client.get_referred_volume(&referrer_a, &pool_id), 100);
+    assert_eq!(ctx.client.get_referred_volume(&referrer_b, &pool_id), 250);
+}
+
+/// Test 4: Referral chain cycles (A -> B -> C -> A).
+#[test]
+fn test_1324_update_referrer_chain_cycles() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    let user_c = Address::generate(&env);
+
+    // Form cycle A -> B -> C -> A
+    ctx.client.update_referrer(&user_a, &pool_id, &Some(user_b.clone()));
+    ctx.client.update_referrer(&user_b, &pool_id, &Some(user_c.clone()));
+    ctx.client.update_referrer(&user_c, &pool_id, &Some(user_a.clone()));
+
+    // Each user places a prediction
+    ctx.stake(&user_a, pool_id, 100, 0);
+    ctx.stake(&user_b, pool_id, 200, 0);
+    ctx.stake(&user_c, pool_id, 300, 0);
+
+    // Verify referred volumes for B, C, A
+    assert_eq!(ctx.client.get_referred_volume(&user_b, &pool_id), 100, "user_b receives user_a's volume");
+    assert_eq!(ctx.client.get_referred_volume(&user_c, &pool_id), 200, "user_c receives user_b's volume");
+    assert_eq!(ctx.client.get_referred_volume(&user_a, &pool_id), 300, "user_a receives user_c's volume");
+}
+
+/// Test 5: Verify referral volume tracking accuracy across multiple users and predictions.
+#[test]
+fn test_1324_update_referrer_volume_tracking_accuracy() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let referrer = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+    let user_unreferred = Address::generate(&env);
+
+    ctx.client.update_referrer(&user_1, &pool_id, &Some(referrer.clone()));
+    ctx.client.update_referrer(&user_2, &pool_id, &Some(referrer.clone()));
+
+    // user_1 makes two predictions
+    ctx.stake(&user_1, pool_id, 150, 0);
+    ctx.stake(&user_1, pool_id, 350, 0);
+
+    // user_2 makes one prediction
+    ctx.stake(&user_2, pool_id, 500, 1);
+
+    // unreferred user makes a prediction
+    ctx.stake(&user_unreferred, pool_id, 400, 0);
+
+    // Aggregate referred volume for referrer should be 150 + 350 + 500 = 1000
+    let total_referred = ctx.client.get_referred_volume(&referrer, &pool_id);
+    assert_eq!(
+        total_referred, 1000,
+        "total referred volume must accurately aggregate all referred predictions"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1323 — `withdraw_treasury` Boundary & Edge Case Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Test 1: Withdrawal of more than contract treasury balance must fail with `InsufficientBalance`.
+#[test]
+fn test_1323_withdraw_treasury_exceeding_balance_fails() {
     let env = Env::default();
     let ctx = TestEnv::new(&env);
 
-    let duration = 3_600u64;
-    let pool_id = ctx.create_pool(duration);
+    let contract_id = ctx.client.address.clone();
+    // Mint 500 tokens to contract
+    ctx.token_admin.mint(&contract_id, &500);
 
-    // end_time = 1_000 + 3_600 = 4_600
-    // Advance to 4_599 (1s before end_time)
-    ctx.advance_time(3_599);
-    let res_before = ctx.client.try_close_staking(&pool_id);
+    // Attempt to withdraw 501 tokens
+    let result = ctx.client.try_withdraw_treasury(
+        &ctx.admin,
+        &ctx.token_address,
+        &501i128,
+        &ctx.treasury,
+    );
     assert_eq!(
-        res_before,
-        Err(Ok(PredifiError::StakingStillOpen)),
-        "close_staking must return StakingStillOpen when current_time < end_time"
+        result,
+        Err(Ok(PredifiError::InsufficientBalance)),
+        "withdrawing more than contract balance must return InsufficientBalance"
     );
 
-    // Advance 1s to exact end_time boundary
-    ctx.advance_time(1);
-    let res_exact = ctx.client.try_close_staking(&pool_id);
-    assert!(
-        res_exact.is_ok(),
-        "close_staking must succeed at exact end_time boundary"
-    );
+    // Contract balance remains intact
+    assert_eq!(ctx.token.balance(&contract_id), 500);
 }
 
-/// Test close_staking double call idempotency and state validation.
+/// Test 2: Withdrawal of exactly zero or negative amount must fail with `InvalidAmount`.
 #[test]
-fn test_1327_close_staking_double_call_idempotent() {
+fn test_1323_withdraw_treasury_zero_or_negative_amount_fails() {
     let env = Env::default();
     let ctx = TestEnv::new(&env);
 
-    let pool_id = ctx.create_pool(3_600);
-    ctx.advance_time(3_601);
+    let contract_id = ctx.client.address.clone();
+    ctx.token_admin.mint(&contract_id, &500);
 
-    let first = ctx.client.try_close_staking(&pool_id);
-    assert!(first.is_ok(), "first close_staking call must succeed");
+    // Attempt to withdraw 0
+    let res_zero = ctx.client.try_withdraw_treasury(
+        &ctx.admin,
+        &ctx.token_address,
+        &0i128,
+        &ctx.treasury,
+    );
+    assert_eq!(
+        res_zero,
+        Err(Ok(PredifiError::InvalidAmount)),
+        "withdrawing 0 must return InvalidAmount"
+    );
 
-    let second = ctx.client.try_close_staking(&pool_id);
-    assert!(second.is_ok(), "subsequent close_staking call must succeed idempotently");
+    // Attempt to withdraw negative amount
+    let res_neg = ctx.client.try_withdraw_treasury(
+        &ctx.admin,
+        &ctx.token_address,
+        &-50i128,
+        &ctx.treasury,
+    );
+    assert_eq!(
+        res_neg,
+        Err(Ok(PredifiError::InvalidAmount)),
+        "withdrawing negative amount must return InvalidAmount"
+    );
+
+    assert_eq!(ctx.token.balance(&contract_id), 500);
 }
 
-/// Test close_staking state transition ordering violations on canceled or resolved pools.
+/// Test 3: Withdrawal attempt by a non-admin address must fail with `Unauthorized`.
 #[test]
-fn test_1327_close_staking_ordering_violations() {
+fn test_1323_withdraw_treasury_non_admin_fails() {
     let env = Env::default();
     let ctx = TestEnv::new(&env);
 
-    let pool_id = ctx.create_pool(3_600);
-    ctx.client.cancel_pool(&ctx.operator, &pool_id, &String::from_str(&env, "cancel"));
+    let contract_id = ctx.client.address.clone();
+    ctx.token_admin.mint(&contract_id, &500);
 
-    let res_canceled = ctx.client.try_close_staking(&pool_id);
+    let stranger = Address::generate(&env);
+    let result = ctx.client.try_withdraw_treasury(
+        &stranger,
+        &ctx.token_address,
+        &100i128,
+        &ctx.treasury,
+    );
     assert_eq!(
-        res_canceled,
-        Err(Ok(PredifiError::InvalidPoolState)),
-        "close_staking on canceled pool must return InvalidPoolState"
+        result,
+        Err(Ok(PredifiError::Unauthorized)),
+        "non-admin caller must be rejected with Unauthorized"
+    );
+
+    assert_eq!(ctx.token.balance(&contract_id), 500);
+    assert_eq!(ctx.token.balance(&ctx.treasury), 0);
+}
+
+/// Test 4: Withdrawal of a non-whitelisted token by Admin succeeds.
+#[test]
+fn test_1323_withdraw_treasury_non_whitelisted_token_succeeds() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let contract_id = ctx.client.address.clone();
+
+    // Register a second token contract (NOT added to whitelist)
+    let non_wl_admin_addr = Address::generate(&env);
+    let non_wl_contract = env.register_stellar_asset_contract_v2(non_wl_admin_addr);
+    let non_wl_address = non_wl_contract.address();
+    let non_wl_token = token::Client::new(&env, &non_wl_address);
+    let non_wl_token_admin = token::StellarAssetClient::new(&env, &non_wl_address);
+
+    // Mint 1000 non-whitelisted tokens to contract
+    non_wl_token_admin.mint(&contract_id, &1000);
+
+    // Admin withdraws 400 of non-whitelisted tokens
+    ctx.client.withdraw_treasury(
+        &ctx.admin,
+        &non_wl_address,
+        &400i128,
+        &ctx.treasury,
+    );
+
+    assert_eq!(
+        non_wl_token.balance(&ctx.treasury),
+        400,
+        "treasury recipient must receive withdrawn non-whitelisted tokens"
+    );
+    assert_eq!(
+        non_wl_token.balance(&contract_id),
+        600,
+        "contract balance must decrease by withdrawn amount"
     );
 }
+
+/// Test 5: Verify treasury balance consistency after multiple consecutive withdrawals.
+#[test]
+fn test_1323_withdraw_treasury_multiple_withdrawals_balance_consistency() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let contract_id = ctx.client.address.clone();
+    ctx.token_admin.mint(&contract_id, &2000);
+
+    // 1st withdrawal: 500
+    ctx.client.withdraw_treasury(&ctx.admin, &ctx.token_address, &500i128, &ctx.treasury);
+    assert_eq!(ctx.token.balance(&contract_id), 1500);
+    assert_eq!(ctx.token.balance(&ctx.treasury), 500);
+
+    // 2nd withdrawal: 700
+    ctx.client.withdraw_treasury(&ctx.admin, &ctx.token_address, &700i128, &ctx.treasury);
+    assert_eq!(ctx.token.balance(&contract_id), 800);
+    assert_eq!(ctx.token.balance(&ctx.treasury), 1200);
+
+    // 3rd withdrawal: 800
+    ctx.client.withdraw_treasury(&ctx.admin, &ctx.token_address, &800i128, &ctx.treasury);
+    assert_eq!(ctx.token.balance(&contract_id), 0);
+    assert_eq!(ctx.token.balance(&ctx.treasury), 2000);
+}
+

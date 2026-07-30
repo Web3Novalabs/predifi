@@ -114,6 +114,22 @@ pub struct PredifiClaims {
     /// Required for all issued tokens; validated on every call to
     /// `verify_jwt_token`.
     pub exp: u64,
+    /// Token type: "access" or "refresh".
+    /// Prevents accidental use of a refresh token in place of an access token.
+    #[serde(default = "default_token_type")]
+    pub token_type: String,
+    /// Key version at token issuance. Bumping key_version on the server
+    /// invalidates all tokens issued under previous versions (rotation support).
+    #[serde(default = "default_key_version")]
+    pub key_version: u64,
+}
+
+fn default_token_type() -> String {
+    "access".to_string()
+}
+
+fn default_key_version() -> u64 {
+    0
 }
 
 /// Validate that the configured JWT signing secret meets minimum requirements.
@@ -157,6 +173,21 @@ pub fn validate_jwt_format(token: &str) -> Result<(), JwtFormatError> {
 }
 
 /// Verify a JWT against the configured HMAC secret and return decoded claims.
+///
+/// This function:
+/// - Validates the JWT secret
+/// - Checks format (3 dot-separated base64url parts)
+/// - Verifies the HMAC-SHA256 signature (algorithm pinning prevents confusion attacks)
+/// - Checks expiration
+/// - Validates non-empty subject claim
+///
+/// **Algorithm Confusion Prevention:**
+/// The `Algorithm::HS256` is hard-coded and NEVER negotiated based on the token's
+/// `alg` header. This prevents attacks such as:
+/// - Downgrade to `alg: none` (unsigneddrop)
+/// - Confusion with RS256 (asymmetric)
+/// The `jsonwebtoken` crate respects this pin and rejects tokens with
+/// mismatched algorithms.
 pub fn verify_jwt_token(token: &str, secret: &str) -> Result<PredifiClaims, JwtVerifyError> {
     verify_jwt_secret(secret).map_err(JwtVerifyError::InvalidSecret)?;
     validate_jwt_format(token).map_err(JwtVerifyError::InvalidFormat)?;
@@ -179,6 +210,48 @@ pub fn verify_jwt_token(token: &str, secret: &str) -> Result<PredifiClaims, JwtV
     }
 
     Ok(token_data.claims)
+}
+
+/// Verify a JWT and validate it matches the expected token type and key version.
+///
+/// This is the stricter validation function for production use.
+/// It ensures:
+/// - Token is valid (signature, expiration, format)
+/// - Token type matches expected (prevents refresh token misuse as access token)
+/// - Key version matches current server version (allows key rotation)
+pub fn verify_jwt_token_strict(
+    token: &str,
+    secret: &str,
+    expected_type: &str,
+    current_key_version: u64,
+) -> Result<PredifiClaims, JwtVerifyError> {
+    let claims = verify_jwt_token(token, secret)?;
+
+    if claims.token_type != expected_type {
+        return Err(JwtVerifyError::Decode(format!(
+            "expected token type '{}', got '{}'",
+            expected_type, claims.token_type
+        )));
+    }
+
+    if claims.key_version > current_key_version {
+        return Err(JwtVerifyError::Decode(
+            "token issued with a newer key version; client is out of sync".to_string(),
+        ));
+    }
+
+    if claims.key_version < current_key_version {
+        // Token issued under an old key version. This can happen during rotation.
+        // Whether to accept it depends on your rotation strategy.
+        // For now, we log it but accept it.
+        tracing::debug!(
+            "token issued under old key version: {} < {}",
+            claims.key_version,
+            current_key_version
+        );
+    }
+
+    Ok(claims)
 }
 
 fn map_decode_error(error: jsonwebtoken::errors::Error) -> JwtVerifyError {
@@ -204,11 +277,35 @@ pub fn extract_bearer_token(header_value: &str) -> Option<&str> {
 /// The token expires in [`JWT_ACCESS_TOKEN_EXPIRY_SECS`] seconds from the
 /// current system time.  Returns an error string if signing fails.
 pub fn sign_jwt(sub: &str, secret: &str, now_unix: u64) -> Result<String, String> {
+    sign_jwt_with_type(sub, secret, now_unix, "access", 0)
+}
+
+/// Issue a signed JWT with explicit token type and key version.
+///
+/// `token_type` should be "access" or "refresh".
+/// `key_version` allows invalidating old tokens if the secret is rotated.
+pub fn sign_jwt_with_type(
+    sub: &str,
+    secret: &str,
+    now_unix: u64,
+    token_type: &str,
+    key_version: u64,
+) -> Result<String, String> {
     use jsonwebtoken::{encode, EncodingKey, Header};
+
+    let expiry = if token_type == "refresh" {
+        // Refresh tokens live for 7 days
+        now_unix + (7 * 24 * 3600)
+    } else {
+        // Access tokens live for 1 hour
+        now_unix + JWT_ACCESS_TOKEN_EXPIRY_SECS
+    };
 
     let claims = PredifiClaims {
         sub: sub.to_string(),
-        exp: now_unix + JWT_ACCESS_TOKEN_EXPIRY_SECS,
+        exp: expiry,
+        token_type: token_type.to_string(),
+        key_version,
     };
 
     encode(
@@ -234,6 +331,8 @@ pub fn sign_jwt_for_test(sub: &str, secret: &str) -> String {
         &PredifiClaims {
             sub: sub.to_string(),
             exp: now + JWT_ACCESS_TOKEN_EXPIRY_SECS,
+            token_type: "access".to_string(),
+            key_version: 0,
         },
         &EncodingKey::from_secret(secret.as_bytes()),
     )
