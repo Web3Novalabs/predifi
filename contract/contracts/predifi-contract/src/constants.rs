@@ -108,10 +108,12 @@ pub const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
 /// **Used for:** Determining when any user (not just operators) can cancel an overdue pool.
 pub const CANCELATION_DELAY: u64 = 604_800;
 
-/// Default global minimum stake amount (1 unit in base token units).
+/// Default global minimum stake amount (1 unit in token base units).
 ///
-/// **Units:** Base token units (smallest divisible unit, e.g., stroops for XLM)
-/// **Value:** 1 base unit
+/// **Units:** Token base units, which are the smallest divisible units accepted
+/// by the Stellar token contract. For native XLM this is stroops, where
+/// 1 XLM = 10,000,000 stroops.
+/// **Value:** 1 base unit/stroop-equivalent
 ///
 /// **Rationale:** To prevent spam and dust transactions, there must be a minimum stake
 /// requirement. Setting this to 1 (the smallest possible unit) allows maximum flexibility
@@ -170,7 +172,8 @@ pub const MAX_OPTIONS_COUNT: u32 = 100;
 
 /// Maximum initial liquidity that can be provided (100M tokens at 7 decimals).
 ///
-/// **Units:** Base token units (smallest divisible unit)
+/// **Units:** Token base units. For native XLM, these are stroops; for issued
+/// Stellar assets, this is the asset's smallest contract unit.
 /// **Value:** 100,000,000,000,000 base units
 /// **Equivalent:** 100,000,000 tokens at 7 decimal places (e.g., 100M USDC)
 ///
@@ -314,9 +317,10 @@ pub const EMERGENCY_CANCEL_MULTISIG_THRESHOLD: u32 = 2;
 // MONITORING & ALERT THRESHOLDS
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Stake amount (in base token units) above which a `HighValuePredictionEvent` is emitted.
+/// Stake amount above which a `HighValuePredictionEvent` is emitted.
 ///
-/// **Units:** Base token units (smallest divisible unit)
+/// **Units:** Token base units. For XLM-denominated pools, this value is in
+/// stroops; for other Stellar tokens it uses that token contract's base units.
 /// **Value:** 1,000,000,000 base units
 /// **Equivalent:** 100 tokens at 7 decimal places (e.g., 100 USDC)
 ///
