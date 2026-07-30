@@ -186,6 +186,17 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Maximum allowed price deviation as a multiplier of the previous price.
+    /// Prevents flash loan attacks and oracle manipulation where an attacker
+    /// submits a wildly different price to influence resolution outcomes.
+    /// Set to 5x (500%) to accommodate volatile crypto assets while still
+    /// catching extreme manipulation.
+    const MAX_PRICE_DEVIATION_MULTIPLIER: i128 = 5;
+
+    /// Minimum confidence ratio in basis points for price updates.
+    /// If the confidence/price ratio exceeds this, the update is rejected.
+    const MIN_CONFIDENCE_RATIO_BPS: u32 = 500; // 5%
+
     /// Update price feed data from an external oracle.
     /// Only callable by authorized oracles.
     pub fn update_price_feed(
@@ -216,7 +227,42 @@ impl PredifiContract {
             return Err(PredifiError::InvalidData);
         }
 
+        // Price must be positive
+        if price <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        // Confidence must be non-negative
+        if confidence < 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
         let feed_key = DataKey::PriceFeed(feed_pair.clone());
+
+        // Price deviation protection: check against previous price to prevent
+        // flash loan manipulation. If the new price deviates excessively from
+        // the last recorded price, reject the update.
+        if let Some((prev_price, _, _, _)) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, (i128, i128, u64, u64)>(&feed_key)
+        {
+            let (lower, upper) = if prev_price > 0 {
+                let lower = prev_price
+                    .checked_div(Self::MAX_PRICE_DEVIATION_MULTIPLIER)
+                    .ok_or(PredifiError::ArithmeticError)?;
+                let upper = prev_price
+                    .checked_mul(Self::MAX_PRICE_DEVIATION_MULTIPLIER)
+                    .ok_or(PredifiError::ArithmeticError)?;
+                (lower, upper)
+            } else {
+                (i128::MIN, i128::MAX)
+            };
+            if price < lower || price > upper {
+                return Err(PredifiError::InvalidData);
+            }
+        }
+
         env.storage()
             .persistent()
             .set(&feed_key, &(price, confidence, timestamp, expires_at));

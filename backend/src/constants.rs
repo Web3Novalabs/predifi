@@ -79,6 +79,13 @@ pub const JWT_REFRESH_TOKEN_EXPIRY_SECS: u64 = 7 * 24 * 3_600;
 /// Prevents brute-force attacks on refresh token rotation.
 pub const RATE_LIMIT_TOKEN_BURST: u32 = 10;
 pub const RATE_LIMIT_TOKEN_PERIOD_SECS: u64 = 60;
+
+/// **WebSocket tier** — inbound messages per connection.
+/// 10 messages / 10 s window (~1 msg/s sustained, burst up to 10).
+/// Prevents a single WS client from flooding the server with messages.
+pub const RATE_LIMIT_WS_BURST: u32 = 10;
+pub const RATE_LIMIT_WS_PERIOD_SECS: u64 = 10;
+
 pub const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = 500;
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────

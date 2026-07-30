@@ -20,6 +20,8 @@ mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
 #[cfg(test)]
+mod access_control_audit_tests;
+#[cfg(test)]
 mod storage_test;
 #[cfg(test)]
 mod stress_test;

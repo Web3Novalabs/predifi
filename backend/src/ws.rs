@@ -10,6 +10,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use std::time::Instant;
 
 use axum::{
     extract::{
@@ -222,12 +223,43 @@ async fn handle_socket(mut socket: WebSocket, bus: EventBus, wallet_filter: Opti
     tracing::info!(active_connections = count, "websocket client disconnected");
 }
 
+/// Per-connection message rate limiter using a sliding window.
+struct WsRateLimiter {
+    window_size: std::time::Duration,
+    max_messages: u32,
+    timestamps: Vec<Instant>,
+}
+
+impl WsRateLimiter {
+    fn new(max_messages: u32, window_secs: u64) -> Self {
+        Self {
+            window_size: std::time::Duration::from_secs(window_secs),
+            max_messages,
+            timestamps: Vec::with_capacity(max_messages as usize + 1),
+        }
+    }
+
+    /// Returns `true` if the message is allowed, `false` if rate-limited.
+    fn check(&mut self) -> bool {
+        let now = Instant::now();
+        // Remove timestamps outside the window
+        self.timestamps.retain(|t| now.duration_since(*t) < self.window_size);
+        if self.timestamps.len() >= self.max_messages as usize {
+            return false;
+        }
+        self.timestamps.push(now);
+        true
+    }
+}
+
 async fn run_socket(
     socket: &mut WebSocket,
     rx: &mut broadcast::Receiver<String>,
     wallet_filter: Option<&str>,
     pool_filter: Option<u64>,
 ) {
+    let mut rate_limiter = WsRateLimiter::new(10, 10);
+
     loop {
         tokio::select! {
             result = rx.recv() => {
@@ -255,17 +287,37 @@ async fn run_socket(
             }
             msg = socket.recv() => {
                 if msg.is_none() { break; }
-                // Also validate incoming message size
                 if let Some(Ok(message)) = msg {
-                    if let Message::Text(text) = message {
-                        if text.len() > MAX_MESSAGE_SIZE {
-                            tracing::warn!(
-                                message_size = text.len(),
-                                max_size = MAX_MESSAGE_SIZE,
-                                "Incoming WebSocket message exceeds size limit, closing connection"
-                            );
-                            break;
+                    match message {
+                        Message::Text(text) => {
+                            // Enforce message size limit
+                            if text.len() > MAX_MESSAGE_SIZE {
+                                tracing::warn!(
+                                    message_size = text.len(),
+                                    max_size = MAX_MESSAGE_SIZE,
+                                    "Incoming WebSocket message exceeds size limit, closing connection"
+                                );
+                                break;
+                            }
+                            // Per-message rate limiting: disconnect if client sends too many messages
+                            if !rate_limiter.check() {
+                                tracing::warn!(
+                                    wallet = ?wallet_filter,
+                                    "WebSocket client exceeded message rate limit, closing connection"
+                                );
+                                let _ = socket.send(Message::Text(
+                                    r#"{"error":"rate_limit_exceeded","message":"too many messages"}"#.into()
+                                )).await;
+                                break;
+                            }
                         }
+                        Message::Ping(data) => {
+                            if socket.send(Message::Pong(data)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Message::Close(_) => break,
+                        _ => {}
                     }
                 }
             }

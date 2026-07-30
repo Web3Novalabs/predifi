@@ -23,6 +23,8 @@ pub enum RateLimitTier {
     Write,
     /// Token operations (`/auth/refresh`). 10 req / 60 s (stricter to prevent brute force).
     Token,
+    /// WebSocket inbound messages. 10 msg / 10 s per connection (stricter to prevent abuse).
+    WebSocket,
 }
 
 impl RateLimitTier {
@@ -34,6 +36,7 @@ impl RateLimitTier {
             RateLimitTier::User => (RATE_LIMIT_USER_BURST, RATE_LIMIT_USER_PERIOD_SECS),
             RateLimitTier::Write => (RATE_LIMIT_WRITE_BURST, RATE_LIMIT_WRITE_PERIOD_SECS),
             RateLimitTier::Token => (RATE_LIMIT_TOKEN_BURST, RATE_LIMIT_TOKEN_PERIOD_SECS),
+            RateLimitTier::WebSocket => (RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS),
         }
     }
 }
