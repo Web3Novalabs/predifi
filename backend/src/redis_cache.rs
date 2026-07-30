@@ -33,6 +33,27 @@ pub const POOLS_CACHE_PATTERN: &str = "pools:*";
 /// Redis key pattern matching all cached stats queries.
 pub const STATS_CACHE_PATTERN: &str = "stats:*";
 
+/// Maximum length for a cache key component after sanitization.
+/// Prevents excessively long keys from being used as Redis keys.
+const MAX_KEY_COMPONENT_LENGTH: usize = 128;
+
+/// Sanitize a user-supplied string for safe use as a Redis key component.
+///
+/// Strips characters that could be used for Redis key injection or namespace
+/// escape (newlines, carriage returns, null bytes, colons used as namespace
+/// separators, wildcards, and whitespace). Truncates to [`MAX_KEY_COMPONENT_LENGTH`].
+fn sanitize_key_component(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .filter(|&c| !matches!(c, '\n' | '\r' | '\0' | ':' | '*' | '?' | ' ' | '\t'))
+        .collect();
+    if sanitized.len() > MAX_KEY_COMPONENT_LENGTH {
+        sanitized[..MAX_KEY_COMPONENT_LENGTH].to_string()
+    } else {
+        sanitized
+    }
+}
+
 /// Thread-safe Redis cache client with graceful fail-open behaviour.
 ///
 /// All operations silently no-op when Redis is unavailable so the application
@@ -304,6 +325,7 @@ fn is_connection_error(kind: ErrorKind) -> bool {
 ///
 /// The key encodes all query parameters so that different filter/sort/page
 /// combinations are stored independently in Redis.
+/// User-provided inputs (`category`) are sanitized to prevent key injection.
 pub fn pools_cache_key(
     sort_by: &str,
     category: Option<&str>,
@@ -312,8 +334,21 @@ pub fn pools_cache_key(
     offset: i64,
 ) -> String {
     match category {
-        Some(cat) => format!("pools:{}:{}:{}:{}:{}", sort_by, cat, status, limit, offset),
-        None => format!("pools:{}:all:{}:{}:{}", sort_by, status, limit, offset),
+        Some(cat) => format!(
+            "pools:{}:{}:{}:{}:{}",
+            sanitize_key_component(sort_by),
+            sanitize_key_component(cat),
+            sanitize_key_component(status),
+            limit,
+            offset
+        ),
+        None => format!(
+            "pools:{}:all:{}:{}:{}",
+            sanitize_key_component(sort_by),
+            sanitize_key_component(status),
+            limit,
+            offset
+        ),
     }
 }
 
@@ -323,18 +358,31 @@ pub fn pool_details_cache_key(pool_id: i64) -> String {
 }
 
 /// Generate a cache key for a user's paginated predictions list.
+///
+/// The `address` is sanitized to prevent cache key injection via malicious
+/// wallet addresses containing Redis special characters.
 pub fn user_predictions_cache_key(address: &str, limit: i64, offset: i64) -> String {
-    format!("user:{}:predictions:{}:{}", address, limit, offset)
+    format!(
+        "user:{}:predictions:{}:{}",
+        sanitize_key_component(address),
+        limit,
+        offset
+    )
 }
 
 /// Generate a cache key for the protocol stats endpoint.
 ///
 /// The key encodes the optional `category` and `status` filter parameters so
 /// that different filter combinations are cached independently.
+/// User-provided inputs are sanitized to prevent key injection.
 pub fn stats_cache_key(category: Option<&str>, status: Option<&str>) -> String {
     let cat = category.unwrap_or("all");
     let st = status.unwrap_or("all");
-    format!("stats:{}:{}", cat, st)
+    format!(
+        "stats:{}:{}",
+        sanitize_key_component(cat),
+        sanitize_key_component(st)
+    )
 }
 
 #[cfg(test)]
@@ -557,5 +605,56 @@ mod tests {
     #[test]
     fn test_stats_cache_ttl() {
         assert_eq!(STATS_CACHE_TTL, 30);
+    }
+
+    // ── Key sanitization tests ───────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_removes_newlines_and_colons() {
+        let input = "user\naddr\ress:bad*?stuff";
+        let result = sanitize_key_component(input);
+        assert!(!result.contains('\n'));
+        assert!(!result.contains('\r'));
+        assert!(!result.contains(':'));
+        assert!(!result.contains('*'));
+        assert!(!result.contains('?'));
+    }
+
+    #[test]
+    fn sanitize_removes_wildcards_and_spaces() {
+        let input = "G*ABC?123 DEF";
+        let result = sanitize_key_component(input);
+        assert_eq!(result, "GABC123DEF");
+    }
+
+    #[test]
+    fn sanitize_truncates_long_input() {
+        let long = "a".repeat(MAX_KEY_COMPONENT_LENGTH + 100);
+        let result = sanitize_key_component(&long);
+        assert_eq!(result.len(), MAX_KEY_COMPONENT_LENGTH);
+    }
+
+    #[test]
+    fn sanitize_preserves_safe_characters() {
+        let input = "GABC123-_./@";
+        let result = sanitize_key_component(input);
+        assert_eq!(result, "GABC123-_./@");
+    }
+
+    #[test]
+    fn sanitized_cache_key_prevents_injection_attempts() {
+        let malicious_category = "sports\nSET keys *\nsports";
+        let key = pools_cache_key("new", Some(malicious_category), "active", 10, 0);
+        assert!(!key.contains('\n'));
+        assert!(!key.contains('*'));
+        assert!(key.contains("sports"));
+    }
+
+    #[test]
+    fn sanitized_user_key_prevents_injection_attempts() {
+        let malicious_address = "GABC123\nDEL user:*\n";
+        let key = user_predictions_cache_key(malicious_address, 10, 0);
+        assert!(!key.contains('\n'));
+        assert!(!key.contains('*'));
     }
 }
