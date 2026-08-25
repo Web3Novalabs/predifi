@@ -2421,5 +2421,16 @@ fn test_1323_withdraw_treasury_multiple_withdrawals_balance_consistency() {
     ctx.client.withdraw_treasury(&ctx.admin, &ctx.token_address, &800i128, &ctx.treasury);
     assert_eq!(ctx.token.balance(&contract_id), 0);
     assert_eq!(ctx.token.balance(&ctx.treasury), 2000);
+
+    // A later withdrawal must not underflow or alter either balance.
+    let result = ctx.client.try_withdraw_treasury(
+        &ctx.admin,
+        &ctx.token_address,
+        &1i128,
+        &ctx.treasury,
+    );
+    assert_eq!(result, Err(Ok(PredifiError::InsufficientBalance)));
+    assert_eq!(ctx.token.balance(&contract_id), 0);
+    assert_eq!(ctx.token.balance(&ctx.treasury), 2000);
 }
 

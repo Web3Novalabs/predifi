@@ -218,23 +218,54 @@ fn upgrade_contract_rejects_non_admin() {
 
     // The operator role is privileged but must not reach the upgrade path —
     // an upgrade replaces every other control in the contract.
-    assert!(client.try_upgrade_contract(&operator, &hash).is_err());
+    assert_eq!(
+        client.try_upgrade_contract(&operator, &hash),
+        Err(Ok(PredifiError::Unauthorized))
+    );
 
     let stranger = Address::generate(&env);
-    assert!(client.try_upgrade_contract(&stranger, &hash).is_err());
+    assert_eq!(
+        client.try_upgrade_contract(&stranger, &hash),
+        Err(Ok(PredifiError::Unauthorized))
+    );
 }
 
 #[test]
 fn upgrade_contract_rejects_unknown_wasm_hash() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
     let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &0u32);
 
-    // A hash with no uploaded WASM behind it must not be applied; the guard is
-    // what stops an upgrade bricking the contract into an empty executable.
+    // A hash with no uploaded WASM behind it must fail after authorization.
     let hash = BytesN::from_array(&env, &[7u8; 32]);
     assert!(client.try_upgrade_contract(&admin, &hash).is_err());
+    assert_eq!(client.get_version(), 1);
+}
+
+#[test]
+fn upgrade_with_active_pool_preserves_state_and_allows_migration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &0u32);
+
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 1, 100);
+    let before = client.get_pool(&pool_id);
+    let invalid_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+    // An upgrade attempt must not be able to discard an active pool.
+    assert!(client.try_upgrade_contract(&admin, &invalid_hash).is_err());
+    let after = client.get_pool(&pool_id);
+    assert_eq!(after, before);
+    assert_eq!(client.get_version(), 1);
+
+    // Migration is a separate, authorized post-upgrade operation and must be
+    // safe to invoke with the preserved active state.
+    client.migrate_state(&admin);
+    assert_eq!(client.get_pool(&pool_id), before);
 }
 
 // ─── #1326: update_pool_description ──────────────────────────────────────────
