@@ -1463,6 +1463,17 @@ impl PredifiContract {
         Err(PredifiError::InvalidData)
     }
 
+    /// Validate that a private-pool whitelist key meets the referral code format.
+    ///
+    /// A valid code must be 6–12 characters long and consist only of uppercase ASCII
+    /// letters (`A`–`Z`) and digits (`0`–`9`). Lowercase letters, spaces, and special
+    /// characters are all rejected so that codes remain URL-safe and easy to share.
+    ///
+    /// Called by `create_pool` when `config.whitelist_key` is `Some`.
+    ///
+    /// # Errors
+    /// Returns `Err(PredifiError::InvalidData)` if the code is too short, too long,
+    /// or contains any character outside `[A-Z0-9]`.
     fn validate_referral_code(env: &Env, code: &Symbol) -> Result<(), PredifiError> {
         let code_str = SymbolStr::try_from_val(env, &code.to_symbol_val())
             .map_err(|_| PredifiError::InvalidData)?;
@@ -1702,18 +1713,39 @@ impl PredifiContract {
 
     // ── Storage & Side-Effect Functions ───────────────────────────────────────
 
+    /// Extend the TTL of the contract's instance storage entry.
+    ///
+    /// Instance storage holds global contract state (e.g., `Config`, `PoolIdCtr`).
+    /// Extending its TTL every time the contract is called ensures the instance entry
+    /// does not expire and become inaccessible between pool operations.
+    ///
+    /// Uses `BUMP_THRESHOLD` as the minimum remaining ledgers before extension and
+    /// `BUMP_AMOUNT` as the target TTL after extension.
     fn extend_instance(env: &Env) {
         env.storage()
             .instance()
             .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
     }
 
+    /// Extend the TTL of a single persistent storage entry identified by `key`.
+    ///
+    /// Persistent storage entries (e.g., pool state, category indexes, outcome stakes)
+    /// can expire if they are not accessed frequently enough. This function must be
+    /// called whenever a key is written or read so that the data survives until the
+    /// next expected access. Failure to call this after a write would leave the entry
+    /// at its default ledger TTL, which may be shorter than `BUMP_AMOUNT`.
     fn extend_persistent(env: &Env, key: &DataKey) {
         env.storage()
             .persistent()
             .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
     }
 
+    /// Extend the TTL of a temporary storage entry identified by `key`.
+    ///
+    /// Temporary storage is used for short-lived state such as the reentrancy guard
+    /// (`DataKey::RentGuard`) and per-user prediction cooldown timestamps. The TTL
+    /// is extended on each access to prevent the entry from expiring mid-transaction
+    /// in edge cases where a ledger is unusually slow to close.
     fn extend_temporary(env: &Env, key: &DataKey) {
         env.storage()
             .temporary()
@@ -1879,6 +1911,17 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Set the reentrancy guard for the current transaction.
+    ///
+    /// Writes `DataKey::RentGuard = true` to temporary storage. Because Soroban's
+    /// temporary storage lives only for the duration of the current contract invocation
+    /// tree, the flag is automatically cleared when the outermost call returns — but
+    /// `exit_reentrancy_guard` removes it explicitly so that gas is not wasted on the
+    /// automatic expiry path.
+    ///
+    /// # Panics
+    /// Panics with `"Reentrancy detected"` if the guard is already set, which means
+    /// the contract has been re-entered before the current top-level call has returned.
     fn enter_reentrancy_guard(env: &Env) {
         let key = DataKey::RentGuard;
         if env.storage().temporary().has(&key) {
@@ -1887,6 +1930,11 @@ impl PredifiContract {
         env.storage().temporary().set(&key, &true);
     }
 
+    /// Clear the reentrancy guard after a protected operation completes.
+    ///
+    /// Must always be called after `enter_reentrancy_guard` — even when the protected
+    /// operation returns an error — to avoid leaving the guard set and permanently
+    /// blocking future calls within the same ledger snapshot.
     fn exit_reentrancy_guard(env: &Env) {
         env.storage().temporary().remove(&DataKey::RentGuard);
     }

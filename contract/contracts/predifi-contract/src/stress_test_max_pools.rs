@@ -537,3 +537,101 @@ fn test_active_index_consistency_under_load() {
 
     println!("[stress] ✅ No duplicates in enumeration");
 }
+
+/// Stress test: verify that the active pool index remains consistent when the
+/// maximum number of pools are created and retrieved in a single ledger snapshot.
+///
+/// This test validates issue #1459 — the system must correctly track, enumerate,
+/// and retrieve all active pools even when the index grows to its operational
+/// maximum. It checks:
+/// 1. Pool count matches the number of created pools.
+/// 2. Every created pool ID appears in the paginated active-pool list.
+/// 3. No pool ID appears more than once in the active-pool index.
+#[test]
+fn test_simultaneous_max_active_pools_index_integrity() {
+    use soroban_sdk::token;
+
+    let env = Env::new();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+
+    // Set up access control and predifi contracts using the correct current API.
+    let ac_id = env.register(crate::test::dummy_access_control::DummyAccessControl, ());
+    let ac_client = crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &crate::test::ROLE_ADMIN);
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    let token_id = token_contract.address();
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_id);
+
+    // min_pool_duration = 3600 so end_time for each pool must be >= current_time + 3600.
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_id);
+
+    let num_pools: u32 = 100;
+    let mut created_ids: std::vec::Vec<u64> = std::vec::Vec::new();
+
+    for i in 0..num_pools {
+        let creator = Address::generate(&env);
+        token_admin_client.mint(&creator, &100_000i128);
+
+        let config = PoolConfig {
+            start_time: 0u64,
+            description: String::from_slice(&env, &std::format!("Simultaneous pool {}", i)),
+            metadata_url: String::from_slice(&env, "https://predifi.app"),
+            min_stake: 1_000i128,
+            max_stake: 0i128,
+            min_total_stake: 1_000i128,
+            max_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::Vec::new(&env),
+        };
+
+        let pool_id = client.create_pool(
+            &creator,
+            &(10_000u64 + i as u64),
+            &token_id,
+            &2u32,
+            &symbol_short!("SPORTS"),
+            &config,
+        );
+        created_ids.push(pool_id);
+    }
+
+    // 1. Count must match exactly.
+    let active_count = client.get_active_pools_count();
+    assert_eq!(
+        active_count, num_pools,
+        "Active pool count mismatch after creating {} pools", num_pools
+    );
+
+    // 2. Every created pool must appear in the paginated enumeration.
+    let page = client.get_active_pools(&0u32, &num_pools).unwrap();
+    for &pool_id in created_ids.iter() {
+        assert!(
+            page.iter().any(|id| id == pool_id),
+            "Pool {} missing from active index", pool_id
+        );
+    }
+
+    // 3. No duplicates in the index page.
+    for i in 0..page.len() {
+        for j in (i + 1)..page.len() {
+            assert_ne!(
+                page.get(i).unwrap(),
+                page.get(j).unwrap(),
+                "Duplicate pool in active index at positions {} and {}", i, j
+            );
+        }
+    }
+}

@@ -87,4 +87,33 @@ proptest! {
         // The difference (dust) should be less than the number of winners
         prop_assert!(payout_pool - total_winnings < num_winners as i128);
     }
+
+    /// Invariant: the protocol fee is always non-negative and never exceeds the
+    /// total stake, regardless of fee rate.
+    ///
+    /// This is a separate, minimal property that gives the test runner maximum
+    /// freedom to find corner cases (e.g. fee_bps = 0 or fee_bps = 10_000).
+    #[test]
+    fn test_fee_always_within_stake_bounds(
+        total_stake in 1..100_000_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+    ) {
+        let fee_bps_i = fee_bps as i128;
+        let protocol_fee = SafeMath::percentage(total_stake, fee_bps_i, RoundingMode::ProtocolFavor).unwrap();
+
+        // Fee is non-negative — the protocol never owes money to participants
+        prop_assert!(protocol_fee >= 0, "fee must be >= 0");
+
+        // Fee never exceeds the stake pool — payouts would go negative otherwise
+        prop_assert!(
+            protocol_fee <= total_stake,
+            "fee ({}) must not exceed total_stake ({})",
+            protocol_fee,
+            total_stake
+        );
+
+        // Payout pool is non-negative after fee deduction
+        let payout_pool = total_stake - protocol_fee;
+        prop_assert!(payout_pool >= 0, "payout_pool must be >= 0");
+    }
 }
