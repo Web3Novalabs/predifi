@@ -980,6 +980,44 @@ fn test_create_pool_zero_duration_rejected() {
     );
 }
 
+/// Creating a pool exactly at the configured minimum duration boundary must be accepted.
+#[test]
+fn test_create_pool_exact_min_duration_boundary_accepted() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let end_time = ctx.env.ledger().timestamp() + 3_600;
+    let pool_id = ctx.client.create_pool(
+        &ctx.creator,
+        &end_time,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Exact minimum duration pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://min-duration"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    );
+
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(pool.end_time, end_time);
+    assert_eq!(pool.state, MarketState::Active);
+}
+
 /// Creating a pool with end_time == u64::MAX should be rejected if it exceeds
 /// MAX_POOL_DURATION from current time.
 #[test]
