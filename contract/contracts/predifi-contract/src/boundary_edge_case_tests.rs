@@ -2678,3 +2678,657 @@ fn test_1323_withdraw_treasury_multiple_withdrawals_balance_consistency() {
     assert_eq!(ctx.token.balance(&ctx.treasury), 2000);
 }
 
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1516 — `set_fee_bps` Advanced Boundary & Edge Case Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// fee_bps = 0 (0%) is a valid boundary value and must be accepted, queued,
+/// and, after the timelock, committed to config.
+#[test]
+fn test_1516_fee_bps_zero_is_valid_and_commits() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    ctx.client.set_fee_bps(&ctx.admin, &0u32);
+    ctx.advance_time(FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+
+    assert_eq!(
+        ctx.client.get_fees().treasury_fee_bps,
+        0,
+        "fee_bps = 0 must persist after apply"
+    );
+}
+
+/// fee_bps = 10_000 (100%) is the maximum valid value and must be accepted.
+#[test]
+fn test_1516_fee_bps_10000_is_valid_maximum() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    ctx.client.set_fee_bps(&ctx.admin, &10_000u32);
+    ctx.advance_time(FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+
+    assert_eq!(
+        ctx.client.get_fees().treasury_fee_bps,
+        10_000,
+        "fee_bps = 10_000 must persist after apply"
+    );
+}
+
+/// fee_bps = 10_001 exceeds the 100% cap and must be rejected immediately with
+/// `InvalidFeeBps`.  No pending proposal should be created.
+#[test]
+fn test_1516_fee_bps_10001_overflow_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_set_fee_bps(&ctx.admin, &10_001u32);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidFeeBps)),
+        "fee_bps = 10_001 must be rejected with InvalidFeeBps"
+    );
+    assert!(
+        ctx.client.get_pending_fee_change().is_none(),
+        "no pending proposal must exist after a rejected call"
+    );
+}
+
+/// fee_bps = u32::MAX is far above the 10_000 ceiling and must be rejected.
+#[test]
+fn test_1516_fee_bps_u32_max_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let result = ctx.client.try_set_fee_bps(&ctx.admin, &u32::MAX);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidFeeBps)),
+        "fee_bps = u32::MAX must be rejected with InvalidFeeBps"
+    );
+}
+
+/// Rapid successive fee changes: propose → cancel → propose → apply → propose → apply.
+/// Every transition must leave state consistent; the final committed value must
+/// equal the value from the last applied proposal.
+#[test]
+fn test_1516_rapid_successive_fee_changes_state_consistency() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Round 1: propose then cancel — leaves fee at its initial value (0 bps).
+    ctx.client.set_fee_bps(&ctx.admin, &500u32);
+    ctx.client.cancel_fee_proposal(&ctx.admin);
+    assert!(ctx.client.get_pending_fee_change().is_none());
+
+    // Round 2: propose and apply.
+    ctx.client.set_fee_bps(&ctx.admin, &1_000u32);
+    ctx.advance_time(FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+    assert_eq!(ctx.client.get_fees().treasury_fee_bps, 1_000);
+
+    // Round 3: propose a new value immediately after round 2 applied.
+    ctx.client.set_fee_bps(&ctx.admin, &2_500u32);
+    ctx.advance_time(FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+    assert_eq!(ctx.client.get_fees().treasury_fee_bps, 2_500);
+
+    // No pending proposal must remain.
+    assert!(ctx.client.get_pending_fee_change().is_none());
+}
+
+/// Fee change while pools are active: the running pool's captured fee_bps must
+/// not be retroactively modified.  Only pools created *after* the new fee is
+/// applied will inherit it.
+#[test]
+fn test_1516_fee_change_while_pool_active_does_not_affect_pool() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Pool A created at the initial fee (0 bps from init).
+    let pool_a = ctx.create_pool(10_000);
+    let fee_at_creation = ctx.client.get_pool(&pool_a).fee_bps;
+
+    // Queue and apply a fee change while pool A is still running.
+    ctx.client.set_fee_bps(&ctx.admin, &3_000u32);
+    ctx.advance_time(FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+
+    // Pool A's captured fee must be unchanged.
+    let pool_a_after = ctx.client.get_pool(&pool_a);
+    assert_eq!(
+        pool_a_after.fee_bps, fee_at_creation,
+        "pool_a fee_bps must not change when the global fee is updated"
+    );
+
+    // Pool B created after the update must use the new fee.
+    let pool_b = ctx.create_pool(5_000);
+    let pool_b_fee = ctx.client.get_pool(&pool_b).fee_bps;
+    assert_eq!(
+        pool_b_fee, 3_000,
+        "pool_b must inherit the newly applied fee"
+    );
+}
+
+/// Verify pending fee change state transitions:
+/// propose → pending exists → apply → pending cleared.
+#[test]
+fn test_1516_pending_fee_change_state_transitions() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Initially no pending proposal.
+    assert!(ctx.client.get_pending_fee_change().is_none());
+
+    // After set_fee_bps a pending proposal must exist.
+    ctx.client.set_fee_bps(&ctx.admin, &700u32);
+    let pending = ctx
+        .client
+        .get_pending_fee_change()
+        .expect("pending proposal must exist after set_fee_bps");
+    assert_eq!(pending.new_fee_bps, 700);
+
+    // After apply the pending proposal must be cleared.
+    ctx.advance_time(FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    ctx.client.apply_fee_bps(&ctx.admin);
+    assert!(
+        ctx.client.get_pending_fee_change().is_none(),
+        "pending proposal must be cleared after apply_fee_bps"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1518 — `set_stake_limits` Advanced Boundary & Edge Case Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// min_stake > max_stake (when max > 0) must be rejected.
+#[test]
+fn test_1518_set_stake_limits_min_greater_than_max_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.client.create_pool(
+        &ctx.creator,
+        &(env.ledger().timestamp() + 7_200),
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Stake limits test"),
+            metadata_url: String::from_str(&env, "ipfs://sl"),
+            min_stake: 10i128,
+            max_stake: 100i128,
+            max_total_stake: 0i128,
+            min_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    // min > max must be rejected
+    let result = ctx
+        .client
+        .try_set_stake_limits(&ctx.operator, &pool_id, &500i128, &100i128);
+    assert!(
+        result.is_err(),
+        "min_stake > max_stake must be rejected"
+    );
+}
+
+/// Both limits set to zero: min_stake = 0 is invalid (must be > 0).
+#[test]
+fn test_1518_set_stake_limits_both_zero_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(7_200);
+
+    let result = ctx
+        .client
+        .try_set_stake_limits(&ctx.operator, &pool_id, &0i128, &0i128);
+    assert!(
+        result.is_err(),
+        "min_stake = 0 must be rejected (StakeBelowMinimum)"
+    );
+}
+
+/// max_stake = i128::MAX is a valid upper bound; no overflow must occur in
+/// any comparison inside validate_stake_limits.
+#[test]
+fn test_1518_set_stake_limits_i128_max_is_valid_ceiling() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(7_200);
+
+    // min = 1, max = i128::MAX — must succeed without arithmetic panic.
+    ctx.client
+        .set_stake_limits(&ctx.operator, &pool_id, &1i128, &i128::MAX);
+
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(pool.min_stake, 1, "min_stake must be 1");
+    assert_eq!(pool.max_stake, i128::MAX, "max_stake must be i128::MAX");
+}
+
+/// Changing limits while predictions are active: the updated limits must be
+/// persisted and new predictions must be checked against the new limits.
+#[test]
+fn test_1518_set_stake_limits_while_predictions_active() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(7_200);
+
+    // Place a prediction before changing limits.
+    let early_user = Address::generate(&env);
+    ctx.stake(&early_user, pool_id, 100, 0);
+
+    // Update limits: new min = 50, max = unlimited (0).
+    ctx.client
+        .set_stake_limits(&ctx.operator, &pool_id, &50i128, &0i128);
+
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(pool.min_stake, 50, "min_stake must be updated to 50");
+    assert_eq!(pool.max_stake, 0, "max_stake = 0 means unlimited");
+
+    // A new prediction below the new min_stake must be rejected.
+    let new_user = Address::generate(&env);
+    ctx.token_admin.mint(&new_user, &10);
+    let result = ctx
+        .client
+        .try_place_prediction(&new_user, &pool_id, &10i128, &0u32, &None, &None);
+    assert!(
+        result.is_err(),
+        "stake below updated min_stake must be rejected"
+    );
+}
+
+/// Existing predictions remain valid after limits are tightened: the pool's
+/// total_stake must not change due to a limit adjustment alone.
+#[test]
+fn test_1518_existing_predictions_remain_valid_after_limit_change() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(7_200);
+
+    // Place two predictions at stake = 50.
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    ctx.stake(&user1, pool_id, 50, 0);
+    ctx.stake(&user2, pool_id, 50, 1);
+
+    let total_before = ctx.client.get_pool(&pool_id).total_stake;
+    assert_eq!(total_before, 100, "total_stake must be 100 before limit change");
+
+    // Raise the minimum — existing predictions are NOT evicted.
+    ctx.client
+        .set_stake_limits(&ctx.operator, &pool_id, &100i128, &0i128);
+
+    let total_after = ctx.client.get_pool(&pool_id).total_stake;
+    assert_eq!(
+        total_after, total_before,
+        "total_stake must be unchanged after limit update"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1524 — `update_referrer` Advanced Boundary & Edge Case Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Setting referrer to the caller's own address must be rejected with
+/// `Unauthorized` and must not persist any referrer state.
+#[test]
+fn test_1524_update_referrer_self_referral_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let user = Address::generate(&env);
+
+    let result = ctx
+        .client
+        .try_update_referrer(&user, &pool_id, &Some(user.clone()));
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::Unauthorized)),
+        "self-referral must return Unauthorized"
+    );
+
+    // No volume must have been accumulated.
+    assert_eq!(
+        ctx.client.get_referred_volume(&user, &pool_id),
+        0,
+        "self-referred volume must remain 0"
+    );
+}
+
+/// Updating referrer to None clears an existing referrer; subsequent
+/// predictions must not increase the old referrer's volume.
+#[test]
+fn test_1524_update_referrer_none_clears_and_stops_volume_accumulation() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let user = Address::generate(&env);
+    let referrer = Address::generate(&env);
+
+    ctx.client
+        .update_referrer(&user, &pool_id, &Some(referrer.clone()));
+    ctx.stake(&user, pool_id, 100, 0);
+
+    // Confirm volume tracked.
+    assert_eq!(ctx.client.get_referred_volume(&referrer, &pool_id), 100);
+
+    // Clear referrer.
+    ctx.client.update_referrer(&user, &pool_id, &None);
+
+    // Further prediction must NOT increase old referrer's volume.
+    ctx.stake(&user, pool_id, 200, 0);
+    assert_eq!(
+        ctx.client.get_referred_volume(&referrer, &pool_id),
+        100,
+        "old referrer volume must not increase after referrer is cleared"
+    );
+}
+
+/// Changing referrer after predictions have been placed: the new referrer must
+/// accumulate volume for subsequent predictions, while the old referrer's
+/// volume is frozen at the amount attributed before the change.
+#[test]
+fn test_1524_update_referrer_change_after_predictions_placed() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let user = Address::generate(&env);
+    let referrer_a = Address::generate(&env);
+    let referrer_b = Address::generate(&env);
+
+    // First prediction attributed to referrer_a.
+    ctx.token_admin.mint(&user, &1_000);
+    ctx.client
+        .place_prediction(&user, &pool_id, &100, &0u32, &Some(referrer_a.clone()), &None);
+
+    assert_eq!(ctx.client.get_referred_volume(&referrer_a, &pool_id), 100);
+    assert_eq!(ctx.client.get_referred_volume(&referrer_b, &pool_id), 0);
+
+    // Switch to referrer_b.
+    ctx.client
+        .update_referrer(&user, &pool_id, &Some(referrer_b.clone()));
+
+    // Second prediction attributed to referrer_b.
+    ctx.client
+        .place_prediction(&user, &pool_id, &250, &0u32, &None, &None);
+
+    assert_eq!(
+        ctx.client.get_referred_volume(&referrer_a, &pool_id),
+        100,
+        "referrer_a volume must stay at 100 after referrer switch"
+    );
+    assert_eq!(
+        ctx.client.get_referred_volume(&referrer_b, &pool_id),
+        250,
+        "referrer_b must receive 250 from the post-switch prediction"
+    );
+}
+
+/// Referral chain cycles (A → B → C → A) must be storable without error.
+/// Each node's referred volume must equal exactly the stake of the node that
+/// points to it — no infinite recursion or cross-contamination.
+#[test]
+fn test_1524_referral_chain_cycle_no_infinite_recursion() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    let user_c = Address::generate(&env);
+
+    // Form cycle A → B → C → A.
+    ctx.client
+        .update_referrer(&user_a, &pool_id, &Some(user_b.clone()));
+    ctx.client
+        .update_referrer(&user_b, &pool_id, &Some(user_c.clone()));
+    ctx.client
+        .update_referrer(&user_c, &pool_id, &Some(user_a.clone()));
+
+    // Each user stakes.
+    ctx.stake(&user_a, pool_id, 100, 0);
+    ctx.stake(&user_b, pool_id, 200, 0);
+    ctx.stake(&user_c, pool_id, 300, 0);
+
+    // Volume: B receives A's stake, C receives B's, A receives C's.
+    assert_eq!(
+        ctx.client.get_referred_volume(&user_b, &pool_id),
+        100,
+        "user_b must receive exactly user_a's volume"
+    );
+    assert_eq!(
+        ctx.client.get_referred_volume(&user_c, &pool_id),
+        200,
+        "user_c must receive exactly user_b's volume"
+    );
+    assert_eq!(
+        ctx.client.get_referred_volume(&user_a, &pool_id),
+        300,
+        "user_a must receive exactly user_c's volume"
+    );
+}
+
+/// Verify referral volume tracking accuracy: two referred users plus one
+/// unreferred user.  The referrer's total must be the exact sum of referred
+/// stakes and must exclude the unreferred user's stake.
+#[test]
+fn test_1524_referral_volume_tracking_accuracy() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let referrer = Address::generate(&env);
+    let user_1 = Address::generate(&env);
+    let user_2 = Address::generate(&env);
+    let unreferred = Address::generate(&env);
+
+    ctx.client
+        .update_referrer(&user_1, &pool_id, &Some(referrer.clone()));
+    ctx.client
+        .update_referrer(&user_2, &pool_id, &Some(referrer.clone()));
+
+    // user_1: two predictions totalling 500.
+    ctx.stake(&user_1, pool_id, 150, 0);
+    ctx.stake(&user_1, pool_id, 350, 0);
+
+    // user_2: one prediction of 500.
+    ctx.stake(&user_2, pool_id, 500, 1);
+
+    // Unreferred user: must not affect referrer's volume.
+    ctx.stake(&unreferred, pool_id, 400, 0);
+
+    let total = ctx.client.get_referred_volume(&referrer, &pool_id);
+    assert_eq!(
+        total, 1_000,
+        "referrer volume must be 150 + 350 + 500 = 1_000"
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1525 — `increase_max_total_stake` Boundary & Edge Case Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Helper: create a pool that has an explicit max_total_stake cap.
+fn create_capped_pool(ctx: &TestEnv, max_total_stake: i128, end_offset: u64) -> u64 {
+    let now = ctx.env.ledger().timestamp();
+    ctx.client.create_pool(
+        &ctx.creator,
+        &(now + end_offset),
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&ctx.env, "Capped pool"),
+            metadata_url: String::from_str(&ctx.env, "ipfs://capped"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake,
+            min_total_stake: 0i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &ctx.env,
+                String::from_str(&ctx.env, "No"),
+                String::from_str(&ctx.env, "Yes"),
+            ],
+        },
+    )
+}
+
+/// Increasing max_total_stake to i128::MAX must succeed without arithmetic
+/// overflow, and the cap must be stored exactly.
+#[test]
+fn test_1525_increase_max_total_stake_to_i128_max() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = create_capped_pool(&ctx, 1_000i128, 7_200);
+
+    ctx.client
+        .increase_max_total_stake(&ctx.creator, &pool_id, &i128::MAX);
+
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(
+        pool.max_total_stake,
+        i128::MAX,
+        "max_total_stake must be i128::MAX after the call"
+    );
+}
+
+/// Increasing by zero (new == current) must succeed — zero is the sentinel for
+/// "unlimited" and is always ≥ any finite cap.
+#[test]
+fn test_1525_increase_max_total_stake_by_zero_sets_unlimited() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = create_capped_pool(&ctx, 500i128, 7_200);
+
+    // new_max_total_stake = 0 means unlimited.
+    ctx.client
+        .increase_max_total_stake(&ctx.creator, &pool_id, &0i128);
+
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(
+        pool.max_total_stake, 0,
+        "max_total_stake = 0 means unlimited"
+    );
+}
+
+/// Attempting to decrease the cap (new < current and new > 0) must be
+/// rejected.  The implementation uses `assert!` which panics in Soroban, so
+/// the call must return an error.
+#[test]
+fn test_1525_decrease_max_total_stake_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = create_capped_pool(&ctx, 1_000i128, 7_200);
+
+    // Attempt to lower the cap from 1_000 to 500.
+    let result = ctx
+        .client
+        .try_increase_max_total_stake(&ctx.creator, &pool_id, &500i128);
+    assert!(
+        result.is_err(),
+        "decreasing max_total_stake must be rejected"
+    );
+
+    // Original cap must be unchanged.
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(
+        pool.max_total_stake, 1_000,
+        "max_total_stake must remain 1_000 after rejected decrease"
+    );
+}
+
+/// Calling increase_max_total_stake on a resolved pool must be rejected.
+#[test]
+fn test_1525_increase_max_total_stake_on_resolved_pool_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = create_capped_pool(&ctx, 1_000i128, 3_600);
+
+    // Stake so the pool is resolvable.
+    ctx.stake(&Address::generate(&env), pool_id, 100, 0);
+    ctx.stake(&Address::generate(&env), pool_id, 100, 1);
+
+    // Advance past end_time and resolve.
+    ctx.advance_time(3_601);
+    ctx.client.resolve_pool(&ctx.operator, &pool_id, &0u32);
+
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved, "pool must be Resolved");
+
+    // Increase on a resolved pool must fail.
+    let result = ctx
+        .client
+        .try_increase_max_total_stake(&ctx.creator, &pool_id, &5_000i128);
+    assert!(
+        result.is_err(),
+        "increase_max_total_stake on a Resolved pool must be rejected"
+    );
+}
+
+/// After a successful increase, a new prediction that was previously blocked
+/// by the old cap must now be accepted.
+#[test]
+fn test_1525_prediction_respects_updated_max_total_stake() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    // Create a pool capped at 200 total stake.
+    let pool_id = create_capped_pool(&ctx, 200i128, 7_200);
+
+    // Fill the pool to the cap.
+    let user1 = Address::generate(&env);
+    let user2 = Address::generate(&env);
+    ctx.stake(&user1, pool_id, 100, 0);
+    ctx.stake(&user2, pool_id, 100, 1);
+
+    // A new prediction at this point must be rejected (cap reached).
+    let user3 = Address::generate(&env);
+    ctx.token_admin.mint(&user3, &50);
+    let blocked = ctx
+        .client
+        .try_place_prediction(&user3, &pool_id, &50i128, &0u32, &None, &None);
+    assert!(
+        blocked.is_err(),
+        "prediction beyond cap must be rejected before cap increase"
+    );
+
+    // Creator raises the cap to 500.
+    ctx.client
+        .increase_max_total_stake(&ctx.creator, &pool_id, &500i128);
+
+    // The same user can now stake 50 (total would be 250 ≤ 500).
+    ctx.client
+        .place_prediction(&user3, &pool_id, &50i128, &0u32, &None, &None);
+
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(
+        pool.total_stake, 250,
+        "total_stake must be 250 after cap raise and new prediction"
+    );
+}
