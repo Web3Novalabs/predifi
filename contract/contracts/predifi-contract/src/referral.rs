@@ -94,7 +94,7 @@ impl PredifiContract {
         let referrer_key = DataKey::Referrer(user.clone(), pool_id);
         match new_referrer {
             Some(ref addr) => {
-                if addr == &user {
+                if addr == &user || addr == &env.current_contract_address() {
                     return Err(PredifiError::Unauthorized);
                 }
                 env.storage().persistent().set(&referrer_key, addr);

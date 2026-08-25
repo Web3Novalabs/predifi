@@ -2398,6 +2398,25 @@ fn test_1324_update_referrer_self_rejected() {
     assert_eq!(vol, 0, "referred volume for self must remain 0");
 }
 
+/// A contract address is not a valid referrer.
+#[test]
+fn test_1324_update_referrer_contract_address_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(4_000);
+
+    let user = Address::generate(&env);
+    let result = ctx
+        .client
+        .try_update_referrer(&user, &pool_id, &Some(ctx.client.address.clone()));
+
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::Unauthorized)),
+        "the contract address must not be accepted as a referrer"
+    );
+}
+
 /// Test 2: Updating referrer to None clears an existing referrer.
 #[test]
 fn test_1324_update_referrer_none_clears_referrer() {
