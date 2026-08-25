@@ -92,6 +92,9 @@ impl PredifiContract {
         if Self::require_admin_role(&env, &admin, "pause").is_err() {
             panic!("Unauthorized: missing required role");
         }
+        if Self::is_paused(&env) {
+            panic!("Contract already paused");
+        }
         env.storage().instance().set(&DataKey::Paused, &true);
         Self::extend_instance(&env);
 
@@ -116,6 +119,9 @@ impl PredifiContract {
         admin.require_auth();
         if Self::require_admin_role(&env, &admin, "unpause").is_err() {
             panic!("Unauthorized: missing required role");
+        }
+        if !Self::is_paused(&env) {
+            panic!("Contract already unpaused");
         }
         env.storage().instance().set(&DataKey::Paused, &false);
         Self::extend_instance(&env);

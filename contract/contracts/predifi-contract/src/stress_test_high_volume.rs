@@ -54,6 +54,7 @@ mod high_volume_stress_tests {
     ) -> (
         PredifiContractClient<'_>,
         Address,
+        Address,
         token::Client<'_>,
         token::StellarAssetClient<'_>,
     ) {
@@ -86,7 +87,7 @@ mod high_volume_stress_tests {
 
         client.add_token_to_whitelist(&admin, &token_id);
 
-        (client, admin, token_client, token_admin_client)
+        (client, admin, ac_id, token_client, token_admin_client)
     }
 
     /// Test: 1000 concurrent predictions on a single 2-outcome pool
@@ -94,11 +95,11 @@ mod high_volume_stress_tests {
     #[test]
     fn test_1000_concurrent_predictions_binary_pool() {
         let env = Env::new();
-        let (client, admin, token_client, token_admin_client) = stress_setup(&env);
+        let (client, _admin, ac_id, token_client, token_admin_client) = stress_setup(&env);
 
         // Setup token
         let token_id = token_client.address();
-        let mut users = Vec::new();
+        let mut users = std::vec::Vec::with_capacity(1000);
         for i in 0..1000u32 {
             let user = Address::generate(&env);
             token_admin_client.mint(&user, &1_000_000_000i128);
@@ -137,7 +138,7 @@ mod high_volume_stress_tests {
 
         // Phase 1: Place 500 predictions on outcome 0
         let start = Instant::now();
-        let mut gas_costs_outcome_0 = Vec::new();
+        let mut gas_costs_outcome_0 = std::vec::Vec::with_capacity(500);
 
         for i in 0..500u32 {
             let user = &users[i as usize];
@@ -158,7 +159,7 @@ mod high_volume_stress_tests {
 
         // Phase 2: Place 500 predictions on outcome 1
         let start = Instant::now();
-        let mut gas_costs_outcome_1 = Vec::new();
+        let mut gas_costs_outcome_1 = std::vec::Vec::with_capacity(500);
 
         for i in 500..1000u32 {
             let user = &users[i as usize];
@@ -185,14 +186,11 @@ mod high_volume_stress_tests {
 
         // Phase 3: Resolve pool to outcome 0
         let operator = Address::generate(&env);
-        ac_client.grant_role(&operator, &ROLE_OPERATOR);
-        
-        let ac_id = client.get_ac_id();
         let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
         ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
         env.ledger().with_mut(|li| {
-            li.timestamp = 5001;
+            li.timestamp = 9001;
         });
 
         client.resolve_pool(&operator, &pool_id, &0i32);
@@ -203,6 +201,7 @@ mod high_volume_stress_tests {
         let protocol_fee_bps = 500i128; // From config
         
         println!("[stress] Verifying payouts for 500 winners...");
+        let mut claimed_total = 0i128;
         for i in 0..500u32 {
             let user = &users[i as usize];
             let user_stake = 1_000i128;
@@ -226,7 +225,10 @@ mod high_volume_stress_tests {
             
             // Allow 1% rounding error
             assert!(diff_pct < 1.0, "Payout mismatch for user {}: {:.2}% off", i, diff_pct);
+
+            claimed_total += client.claim_winnings(&user, &pool_id);
         }
+        assert_eq!(claimed_total, 995_000i128);
         println!("[stress] ✅ All 500 payouts verified (±1% tolerance)");
 
         // Algorithmic Complexity Analysis
@@ -248,10 +250,10 @@ mod high_volume_stress_tests {
     #[test]
     fn test_1000_predictions_16_outcomes() {
         let env = Env::new();
-        let (client, admin, token_client, token_admin_client) = stress_setup(&env);
+        let (client, _admin, ac_id, token_client, token_admin_client) = stress_setup(&env);
 
         let token_id = token_client.address();
-        let mut users = Vec::new();
+        let mut users = std::vec::Vec::with_capacity(1000);
         for i in 0..1000u32 {
             let user = Address::generate(&env);
             token_admin_client.mint(&user, &1_000_000_000i128);
@@ -288,7 +290,7 @@ mod high_volume_stress_tests {
         println!("[stress] 16-outcome pool created: {}", pool_id);
 
         // Place predictions on each outcome (62-63 per outcome, total 1000)
-        let mut gas_costs = Vec::new();
+        let mut gas_costs = std::vec::Vec::with_capacity(1000);
         let predictions_per_outcome = 1000 / 16;
 
         for outcome in 0..16i32 {
@@ -314,9 +316,12 @@ mod high_volume_stress_tests {
         println!("[stress] 1000 predictions on 16 outcomes completed");
         
         // Analyze gas per outcome
-        let mut gas_by_outcome: HashMap<i32, Vec<u64>> = HashMap::new();
+        let mut gas_by_outcome: HashMap<i32, std::vec::Vec<u64>> = HashMap::new();
         for (outcome, gas) in gas_costs.iter() {
-            gas_by_outcome.entry(*outcome).or_insert_with(Vec::new).push(*gas);
+            gas_by_outcome
+                .entry(*outcome)
+                .or_insert_with(std::vec::Vec::new)
+                .push(*gas);
         }
 
         for outcome in 0..16i32 {
@@ -353,7 +358,7 @@ mod high_volume_stress_tests {
     fn test_payout_accuracy_scaling_winners() {
         println!("\n[stress] Testing payout accuracy with varying winner counts...");
 
-        let winner_counts = vec![10, 50, 100, 500, 1000];
+        let winner_counts = std::vec![10usize, 50, 100, 500, 1000];
         let pool_total_stake = 1_000_000i128;
         let fee_bps = 500i128; // 5%
         let protocol_fee = (pool_total_stake * fee_bps) / 10_000;
@@ -399,10 +404,10 @@ mod high_volume_stress_tests {
     #[test]
     fn test_claim_processing_complexity() {
         let env = Env::new();
-        let (client, admin, token_client, token_admin_client) = stress_setup(&env);
+        let (client, _admin, _ac_id, token_client, token_admin_client) = stress_setup(&env);
 
         let token_id = token_client.address();
-        let mut users = Vec::new();
+        let mut users = std::vec::Vec::with_capacity(200);
         for i in 0..200u32 {
             let user = Address::generate(&env);
             token_admin_client.mint(&user, &1_000_000_000i128);
@@ -443,25 +448,24 @@ mod high_volume_stress_tests {
 
         // Resolve to outcome 0
         let operator = Address::generate(&env);
-        
-        let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
         let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
         ac_client.grant_role(&operator, &ROLE_OPERATOR);
 
         env.ledger().with_mut(|li| {
-            li.timestamp = 5001;
+            li.timestamp = 9001;
         });
 
         client.resolve_pool(&operator, &pool_id, &0i32);
 
         // Measure claim processing time for increasing winner counts
-        let winner_counts = vec![10, 50, 100, 200];
-        let mut claim_times = Vec::new();
+        let winner_counts = std::vec![10usize, 50, 100, 200];
+        let mut claim_times = std::vec::Vec::with_capacity(winner_counts.len());
 
+        let mut previous_count = 0usize;
         for count in winner_counts.iter() {
             let start = Instant::now();
 
-            for i in 0..*count {
+            for i in previous_count..*count {
                 let user = &users[i];
                 client.claim_winnings(&user, &pool_id);
             }
@@ -469,6 +473,7 @@ mod high_volume_stress_tests {
             let elapsed = start.elapsed();
             claim_times.push((*count, elapsed.as_secs_f64()));
             println!("[claim] {} winners: {:.3}s", count, elapsed.as_secs_f64());
+            previous_count = *count;
         }
 
         // Analyze complexity
@@ -493,7 +498,7 @@ mod high_volume_stress_tests {
     }
 
     // Helper functions
-    fn average(values: &Vec<u64>) -> u64 {
+    fn average(values: &[u64]) -> u64 {
         if values.is_empty() { return 0; }
         values.iter().sum::<u64>() / values.len() as u64
     }
@@ -503,7 +508,7 @@ mod high_volume_stress_tests {
         values.iter().sum::<u64>() / values.len() as u64
     }
 
-    fn min_or_zero(values: &Vec<u64>) -> u64 {
+    fn min_or_zero(values: &[u64]) -> u64 {
         values.iter().copied().min().unwrap_or(0)
     }
 
@@ -511,7 +516,7 @@ mod high_volume_stress_tests {
         values.iter().copied().min().unwrap_or(0)
     }
 
-    fn max_or_zero(values: &Vec<u64>) -> u64 {
+    fn max_or_zero(values: &[u64]) -> u64 {
         values.iter().copied().max().unwrap_or(0)
     }
 

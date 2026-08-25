@@ -4576,6 +4576,7 @@ fn test_mark_pool_ready() {
     env.ledger().with_mut(|li| li.timestamp = end_time + 10);
     let res = client.try_mark_pool_ready(&pool_id);
     assert!(res.is_err());
+    client.close_staking(&pool_id);
 
     // Test after delay
     env.ledger().with_mut(|li| li.timestamp = end_time + 3600);
