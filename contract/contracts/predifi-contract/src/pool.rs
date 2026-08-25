@@ -685,6 +685,17 @@ impl PredifiContract {
     /// [`PredifiError::ResolutionConflict`] is returned and the pool stays active so
     /// administrators can intervene.
     ///
+    /// # Parameters
+    ///
+    /// - `env` — The Soroban execution environment (ledger, storage, auth).
+    /// - `operator` — The address casting a resolution vote; must hold Operator role (`1`)
+    ///   and must sign the transaction via `require_auth`.
+    /// - `pool_id` — The unique identifier of the pool to resolve.  The pool must exist
+    ///   in persistent storage.
+    /// - `outcome` — The 0-based index of the winning outcome the operator is voting for.
+    ///   Must satisfy `0 <= outcome < pool.options_count` and must not equal
+    ///   `UNRESOLVED_OUTCOME` (`u32::MAX`).
+    ///
     /// # Resolution flow
     ///
     /// 1. **Auth & role check** — `operator` must sign the transaction and hold the
