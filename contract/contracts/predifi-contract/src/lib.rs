@@ -33,6 +33,14 @@ mod stress_test_high_volume;
 mod stress_test_max_pools;
 #[cfg(test)]
 mod test_utils;
+#[cfg(test)]
+mod pause_unpause_boundary_tests;
+#[cfg(test)]
+mod max_pools_stress_tests;
+#[cfg(test)]
+mod update_pool_description_boundary_tests;
+#[cfg(test)]
+mod withdraw_treasury_boundary_tests;
 mod treasury;
 
 use soroban_sdk::{
