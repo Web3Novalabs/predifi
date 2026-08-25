@@ -959,10 +959,25 @@ impl PredifiContract {
             return Err(PredifiError::InvalidPoolState);
         }
 
+        if env.storage().persistent().has(&DataKey::PoolReady(pool_id)) {
+            return Ok(());
+        }
+
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::StakingClosed(pool_id))
+        {
+            return Err(PredifiError::StakingStillOpen);
+        }
+
         let config = Self::get_config(&env);
         let current_time = env.ledger().timestamp();
 
         if current_time >= pool.end_time.saturating_add(config.resolution_delay) {
+            let ready_key = DataKey::PoolReady(pool_id);
+            env.storage().persistent().set(&ready_key, &true);
+            Self::extend_persistent(&env, &ready_key);
             PoolReadyForResolutionEvent {
                 pool_id,
                 timestamp: current_time,
@@ -1002,6 +1017,7 @@ impl PredifiContract {
     /// POST: StakingClosed(pool_id) sentinel written; StakingClosedEvent emitted
     ///       exactly once per pool.
     pub fn close_staking(env: Env, pool_id: u64) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env)?;
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
             .storage()
@@ -1017,7 +1033,7 @@ impl PredifiContract {
         let current_time = env.ledger().timestamp();
 
         // Staking closes when the ledger passes end_time.
-        if current_time < pool.end_time {
+        if current_time < pool.start_time || current_time < pool.end_time {
             return Err(PredifiError::StakingStillOpen);
         }
 

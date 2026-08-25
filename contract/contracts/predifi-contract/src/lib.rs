@@ -728,6 +728,9 @@ pub enum DataKey {
     /// Optional reason string captured when the first approval is recorded.
     /// `EmergencyCancelReason(pool_id)` -> `String`.
     EmergencyCancelReason(u64),
+    /// Sentinel that records a pool has been marked ready for resolution.
+    /// `PoolReady(pool_id)` -> `bool`.
+    PoolReady(u64),
 }
 
 /// Represents a user's individual stake in a prediction market.

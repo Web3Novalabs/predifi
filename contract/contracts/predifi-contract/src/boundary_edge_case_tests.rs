@@ -8,6 +8,7 @@
 //! | #1315  | `emergency_cancel_pool` | multi-sig quorum, duplicates, resolved/cancelled state |
 //! | #1314  | `cancel_pool`         | auth, double-cancel, resolved pool, state invariants     |
 //! | #1313  | `resolve_pool`        | zero stakes, one-sided, delay boundary, re-resolution    |
+//! | #1331  | `mark_pool_ready` / `close_staking` | ordering, idempotency, timestamp boundaries |
 
 #![cfg(test)]
 
@@ -167,6 +168,35 @@ impl<'a> TestEnv<'a> {
         )
     }
 
+    fn create_pool_with_start(&self, start_time_offset: u64, end_time_offset: u64) -> u64 {
+        let now = self.env.ledger().timestamp();
+        self.client.create_pool(
+            &self.creator,
+            &(now + end_time_offset),
+            &self.token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: now + start_time_offset,
+                description: String::from_str(&self.env, "Timestamp boundary pool"),
+                metadata_url: String::from_str(&self.env, "ipfs://boundary-time"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0,
+                min_total_stake: 0,
+                initial_liquidity: 0,
+                required_resolutions: 1,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: vec![
+                    &self.env,
+                    String::from_str(&self.env, "No"),
+                    String::from_str(&self.env, "Yes"),
+                ],
+            },
+        )
+    }
+
     /// Create a pool with a custom `required_resolutions` value.
     fn create_pool_with_resolutions(&self, end_time_offset: u64, required: u32) -> u64 {
         let now = self.env.ledger().timestamp();
@@ -215,6 +245,193 @@ impl<'a> TestEnv<'a> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Issue #1331 — `mark_pool_ready` / `close_staking` Boundary Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_1331_mark_pool_ready_is_idempotent() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(1_000);
+
+    ctx.advance_time(1_000);
+    ctx.client.close_staking(&pool_id);
+    ctx.advance_time(1);
+
+    assert!(ctx.client.mark_pool_ready(&pool_id).is_ok());
+    assert!(ctx.client.try_mark_pool_ready(&pool_id).is_ok());
+}
+
+#[test]
+fn test_1331_mark_ready_before_close_is_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(1_000);
+
+    ctx.advance_time(1_001);
+    let result = ctx.client.try_mark_pool_ready(&pool_id);
+    assert_eq!(result, Err(Ok(PredifiError::StakingStillOpen)));
+}
+
+#[test]
+fn test_1331_close_staking_before_start_and_at_boundaries() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool_with_start(100, 1_000);
+
+    assert_eq!(
+        ctx.client.try_close_staking(&pool_id),
+        Err(Ok(PredifiError::StakingStillOpen))
+    );
+
+    ctx.advance_time(100);
+    assert_eq!(
+        ctx.client.try_close_staking(&pool_id),
+        Err(Ok(PredifiError::StakingStillOpen))
+    );
+
+    ctx.advance_time(900);
+    assert!(ctx.client.try_close_staking(&pool_id).is_ok());
+}
+
+#[test]
+fn test_1331_close_staking_is_idempotent() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(1_000);
+
+    ctx.advance_time(1_000);
+    assert!(ctx.client.close_staking(&pool_id).is_ok());
+    assert!(ctx.client.try_close_staking(&pool_id).is_ok());
+}
+
+#[test]
+fn test_1331_mark_ready_after_resolve_is_rejected() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(1_000);
+
+    ctx.advance_time(1_000);
+    ctx.client.resolve_pool(&ctx.operator, &pool_id, &0u32);
+
+    assert_eq!(
+        ctx.client.try_mark_pool_ready(&pool_id),
+        Err(Ok(PredifiError::InvalidPoolState))
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Issue #1328 — `pause` / `unpause` Boundary Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_1328_repeated_pause_and_unpause_preserve_state() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    assert!(!ctx.client.is_contract_paused());
+    assert!(ctx.client.try_unpause(&ctx.admin).is_err());
+    assert!(!ctx.client.is_contract_paused());
+
+    ctx.client.pause(&ctx.admin);
+    assert!(ctx.client.is_contract_paused());
+    assert!(ctx.client.try_pause(&ctx.admin).is_err());
+    assert!(ctx.client.is_contract_paused());
+
+    ctx.client.unpause(&ctx.admin);
+    assert!(!ctx.client.is_contract_paused());
+    assert!(ctx.client.try_unpause(&ctx.admin).is_err());
+    assert!(!ctx.client.is_contract_paused());
+}
+
+#[test]
+fn test_1328_non_admin_cannot_pause_or_unpause() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let stranger = Address::generate(&env);
+
+    assert!(ctx.client.try_pause(&stranger).is_err());
+    assert!(!ctx.client.is_contract_paused());
+
+    ctx.client.pause(&ctx.admin);
+    assert!(ctx.client.try_unpause(&stranger).is_err());
+    assert!(ctx.client.is_contract_paused());
+}
+
+#[test]
+fn test_1328_unpause_restores_operations_without_state_loss() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(7_200);
+    let original_description = ctx.client.get_pool(&pool_id).description;
+
+    ctx.client.pause(&ctx.admin);
+    let paused_result = ctx.client.try_update_pool_description(
+        &ctx.creator,
+        &pool_id,
+        &String::from_str(&env, "paused update"),
+    );
+    assert_eq!(paused_result, Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(ctx.client.get_pool(&pool_id).description, original_description);
+
+    ctx.client.unpause(&ctx.admin);
+    ctx.client.update_pool_description(
+        &ctx.creator,
+        &pool_id,
+        &String::from_str(&env, "resumed update"),
+    );
+    assert_eq!(
+        ctx.client.get_pool(&pool_id).description,
+        String::from_str(&env, "resumed update")
+    );
+}
+
+#[test]
+fn test_1328_paused_blocks_batch_and_emergency_operations() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(7_200);
+    let token_to_add = Address::generate(&env);
+    let token_to_remove = ctx.token_address.clone();
+    let reason = String::from_str(&env, "paused operation");
+
+    ctx.client.pause(&ctx.admin);
+
+    let add_result = ctx
+        .client
+        .try_batch_add_tokens_to_whitelist(&ctx.admin, &vec![&env, token_to_add.clone()]);
+    assert_eq!(add_result, Err(Ok(PredifiError::ContractPaused)));
+    assert!(!ctx.client.is_token_allowed(token_to_add));
+
+    let remove_result = ctx
+        .client
+        .try_batch_remove_tokens_from_whitelist(&ctx.admin, &vec![&env, token_to_remove]);
+    assert_eq!(remove_result, Err(Ok(PredifiError::ContractPaused)));
+    assert!(ctx.client.is_token_allowed(ctx.token_address.clone()));
+
+    let emergency_result = ctx
+        .client
+        .try_emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+    assert_eq!(emergency_result, Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(ctx.client.get_pool(&pool_id).state, MarketState::Active);
+}
+
+#[test]
+fn test_1328_paused_blocks_close_staking_and_preserves_cycle_state() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+    let pool_id = ctx.create_pool(1_000);
+    ctx.advance_time(1_000);
+
+    ctx.client.pause(&ctx.admin);
+    let result = ctx.client.try_close_staking(&pool_id);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+
+    ctx.client.unpause(&ctx.admin);
+    ctx.client.close_staking(&pool_id);
+    ctx.client.close_staking(&pool_id);
+}
+
 // Issue #1316 — `set_fee_bps` Boundary Tests
 // ═══════════════════════════════════════════════════════════════════════════
 
