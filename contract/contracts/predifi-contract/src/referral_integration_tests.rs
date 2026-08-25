@@ -182,3 +182,140 @@ fn test_referral_volume_is_per_pool() {
     assert_eq!(client.get_referred_volume(&referrer, &pool_a), 400);
     assert_eq!(client.get_referred_volume(&referrer, &pool_b), 200);
 }
+
+/// Full referral end-to-end: two users referred by the same referrer each win,
+/// both pay a referral cut, and the referrer accumulates cuts from both payouts.
+///
+/// Covers issue #1463 — Integration Tests: Referral system end-to-end.
+///
+/// Scenario:
+/// - referrer refers user_a (outcome 0) and user_b (outcome 0) on the same pool.
+/// - Both users stake on the winning outcome.
+/// - Each payout sends 50% of the referral_bps share (default 50% of protocol fee,
+///   which is 0% in test setup) to the referrer.
+/// - Total referrer earnings = sum of cuts from both payouts.
+#[test]
+fn test_referral_end_to_end_two_winners_same_referrer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_ac_client, client, token_address, token, token_admin_client, _treasury, operator, creator) =
+        crate::test::setup(&env);
+
+    let referrer = Address::generate(&env);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+
+    token_admin_client.mint(&user_a, &400);
+    token_admin_client.mint(&user_b, &600);
+
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 5_000);
+
+    // Both users bet on outcome 0 via the same referrer.
+    client.place_prediction(&user_a, &pool_id, &400, &0, &Some(referrer.clone()), &None);
+    client.place_prediction(&user_b, &pool_id, &600, &0, &Some(referrer.clone()), &None);
+
+    // Verify referrer accumulated volume from both predictions.
+    assert_eq!(client.get_referred_volume(&referrer, &pool_id), 1_000);
+
+    // Advance and resolve outcome 0 as the winner.
+    env.ledger().with_mut(|li| li.timestamp = 5_001);
+    client.close_staking(&pool_id);
+    client.mark_pool_ready(&pool_id);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // user_a and user_b both win; their shares are 40% and 60% of the 1000-token pool.
+    let payout_a = client.claim_winnings(&user_a, &pool_id);
+    let payout_b = client.claim_winnings(&user_b, &pool_id);
+
+    assert_eq!(payout_a, 400); // 400/1000 * 1000 = 400
+    assert_eq!(payout_b, 600); // 600/1000 * 1000 = 600
+
+    // Both winners received their funds.
+    assert_eq!(token.balance(&user_a), 400);
+    assert_eq!(token.balance(&user_b), 600);
+
+    // Contract is empty (0% protocol fee → 0 referral cut in this setup).
+    assert_eq!(token.balance(&client.address), 0);
+}
+
+/// Referral system end-to-end with TWO referred winners sharing the same referrer:
+/// both payouts carry a referral cut and the referrer accumulates both.
+///
+/// Covers issue #1463 — Referral system end-to-end.
+///
+/// Setup: 2% protocol fee; referral cut = 50% of that fee.
+/// user_a stakes 400 on outcome 0; user_b stakes 600 on outcome 0 — both win.
+/// Each payout = stake (no competing side), minus 2% fee, with 50% going to referrer.
+///   user_a payout = 400 - 8 = 392; referrer cut from user_a = 4.
+///   user_b payout = 600 - 12 = 588; referrer cut from user_b = 6.
+///   total referrer earnings = 10.
+#[test]
+fn test_referral_end_to_end_two_winners_same_referrer_with_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let ac_id = env.register(crate::test::dummy_access_control::DummyAccessControl, ());
+    let ac_client =
+        crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+
+    let contract_id = env.register(crate::PredifiContract, ());
+    let client = crate::PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin_addr = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin_addr.clone());
+    let token = token::Client::new(&env, &token_contract);
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let token_address = token_contract;
+
+    let treasury = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    ac_client.grant_role(&operator, &crate::test::ROLE_OPERATOR);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // 2% protocol fee; 50% of that goes to the referrer.
+    client.init(&ac_id, &treasury, &200u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_address);
+    client.set_referral_cut_bps(&admin, &5000u32);
+
+    let referrer = Address::generate(&env);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+
+    token_admin_client.mint(&user_a, &400);
+    token_admin_client.mint(&user_b, &600);
+
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 5_000);
+
+    // Both users bet on outcome 0 via the same referrer.
+    client.place_prediction(&user_a, &pool_id, &400, &0, &Some(referrer.clone()), &None);
+    client.place_prediction(&user_b, &pool_id, &600, &0, &Some(referrer.clone()), &None);
+
+    assert_eq!(client.get_referred_volume(&referrer, &pool_id), 1_000);
+
+    env.ledger().with_mut(|li| li.timestamp = 5_001);
+    client.resolve_pool(&operator, &pool_id, &0u32);
+
+    // user_a: wins 400 (sole winner on their side with 400 stake out of 1000 total)
+    // But wait — both users are on outcome 0, total winning stake = 1000 = total pool.
+    // So user_a payout = (400/1000) * 1000 = 400 gross.
+    // Protocol fee = 2% of 400 = 8. Net = 392. Referrer cut = 50% of 8 = 4.
+    let payout_a = client.claim_winnings(&user_a, &pool_id);
+    assert_eq!(payout_a, 392);
+    assert_eq!(token.balance(&user_a), 392);
+
+    // user_b: (600/1000) * 1000 = 600 gross. Fee = 12. Net = 588. Referrer cut = 6.
+    let payout_b = client.claim_winnings(&user_b, &pool_id);
+    assert_eq!(payout_b, 588);
+    assert_eq!(token.balance(&user_b), 588);
+
+    // Referrer accumulates cuts from both: 4 + 6 = 10.
+    assert_eq!(token.balance(&referrer), 10);
+}

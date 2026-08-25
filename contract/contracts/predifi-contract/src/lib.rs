@@ -1824,6 +1824,17 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Verify that `operator` holds Operator role (`1`) and emit an audit event on failure.
+    ///
+    /// This wrapper adds observability around the raw `require_role` check: if the caller
+    /// lacks the Operator role, a [`UnauthorizedResolveAttemptEvent`] is published before
+    /// the error is returned so that indexers can alert on unauthorised resolution attempts
+    /// without having to parse panic traces.
+    ///
+    /// Called at the start of `resolve_pool` before any state is read or mutated.
+    ///
+    /// # Errors
+    /// Returns the same error as `require_role` — typically `PredifiError::Unauthorized`.
     fn require_operator_role_for_resolution(
         env: &Env,
         operator: &Address,
@@ -1841,6 +1852,15 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Verify that `oracle` holds Oracle role (`3`) and emit an audit event on failure.
+    ///
+    /// Mirrors `require_operator_role_for_resolution` but uses Oracle role (`3`) instead
+    /// of Operator role (`1`).  Used by price-feed-based resolution paths
+    /// (`resolve_pool_from_price`) where a whitelisted oracle triggers settlement rather
+    /// than a human operator.
+    ///
+    /// # Errors
+    /// Returns the same error as `require_role` — typically `PredifiError::Unauthorized`.
     fn require_oracle_role_for_resolution(
         env: &Env,
         oracle: &Address,
@@ -2043,10 +2063,33 @@ impl PredifiContract {
     }
 
     /// Returns true if the pool has a properly resolved outcome (not the sentinel value).
+    /// Returns `true` if the pool has been assigned a definitive winning outcome.
+    ///
+    /// A pool is considered resolved when `pool.outcome` differs from
+    /// `UNRESOLVED_OUTCOME` (`u32::MAX`), the sentinel used while the pool is
+    /// still accepting predictions or awaiting operator votes.
     fn is_pool_resolved(pool: &Pool) -> bool {
         pool.outcome != UNRESOLVED_OUTCOME
     }
 
+    /// Determine the protocol fee rate (in basis points) to apply at resolution time.
+    ///
+    /// The fee is chosen by walking the configured fee tiers in ascending order and
+    /// selecting the tier whose `stake_threshold` is the highest value that is still
+    /// `<= pool.total_stake`.  If no tier threshold is met, the base fee from
+    /// `Config.fee_bps` is used as a fallback.
+    ///
+    /// Tiers allow the protocol to offer reduced fees for high-volume pools as a
+    /// liquidity incentive — the more total stake a pool attracts, the lower the cut
+    /// taken from winners.
+    ///
+    /// Called by `resolve_pool` and `resolve_pool_from_price` immediately before the
+    /// pool's state is written as `Resolved`, so the fee is fixed at the moment of
+    /// resolution rather than at prediction time.
+    ///
+    /// # Returns
+    /// A fee rate in basis points (0–10 000).  The caller is responsible for ensuring
+    /// the returned value satisfies `is_valid_fee_bps`.
     fn calculate_dynamic_fee(env: &Env, pool: &Pool) -> u32 {
         let config = Self::get_config(env);
         let tiers = Self::get_fee_tiers(env.clone());

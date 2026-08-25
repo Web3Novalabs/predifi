@@ -117,3 +117,59 @@ proptest! {
         prop_assert!(payout_pool >= 0, "payout_pool must be >= 0");
     }
 }
+
+// ─── Issue #1461 — Property-based Tests: Safe math operations ────────────────
+//
+// The following proptests target the SafeMath primitives directly and are
+// independent of the pool lifecycle.  They validate arithmetic invariants
+// that must hold for all representable input values.
+
+#[cfg(test)]
+proptest! {
+    /// SafeMath::safe_add must be commutative: a + b == b + a.
+    #[test]
+    fn prop_safe_add_commutative(
+        a in 0..i128::MAX / 2,
+        b in 0..i128::MAX / 2,
+    ) {
+        let ab = SafeMath::safe_add(a, b).unwrap();
+        let ba = SafeMath::safe_add(b, a).unwrap();
+        prop_assert_eq!(ab, ba);
+    }
+
+    /// SafeMath::safe_add followed by SafeMath::safe_sub returns the original value.
+    #[test]
+    fn prop_safe_add_sub_roundtrip(
+        a in 0..=i128::MAX / 2,
+        b in 0..=i128::MAX / 2,
+    ) {
+        let sum = SafeMath::safe_add(a, b).unwrap();
+        let back = SafeMath::safe_sub(sum, b).unwrap();
+        prop_assert_eq!(back, a);
+    }
+
+    /// SafeMath::proportion output is always <= the `amount` argument for any valid inputs.
+    ///
+    /// A user's proportional share of a pool can never exceed the pool itself.
+    #[test]
+    fn prop_proportion_result_bounded_by_amount(
+        numerator in 1i128..=1_000_000_000_000i128,
+        denominator_extra in 0i128..=1_000_000_000_000i128,
+        amount in 1i128..=1_000_000_000_000i128,
+    ) {
+        let denominator = numerator + denominator_extra; // guarantees numerator <= denominator
+        let result = SafeMath::proportion(numerator, denominator, amount, RoundingMode::Neutral).unwrap();
+        prop_assert!(result <= amount, "proportion result ({}) exceeded amount ({})", result, amount);
+    }
+
+    /// SafeMath::safe_mul result equals manual multiplication for inputs that do not overflow.
+    #[test]
+    fn prop_safe_mul_matches_checked_mul(
+        a in 0i128..=1_000_000_000i128,
+        b in 0i128..=1_000_000_000i128,
+    ) {
+        let expected = a.checked_mul(b).unwrap();
+        let result = SafeMath::safe_mul(a, b).unwrap();
+        prop_assert_eq!(result, expected);
+    }
+}
