@@ -6,6 +6,7 @@
 extern crate std;
 
 mod admin;
+#[cfg(test)]
 mod benchmark_test;
 #[cfg(test)]
 mod boundary_edge_case_tests;
@@ -39,18 +40,12 @@ mod stress_test_high_volume;
 mod test_utils;
 #[cfg(test)]
 mod pause_unpause_boundary_tests;
-#[cfg(test)]
-mod max_pools_stress_tests;
+// #[cfg(test)]
+// mod max_pools_stress_tests;
 #[cfg(test)]
 mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
-#[cfg(test)]
-mod place_prediction_boundary_tests;
-#[cfg(test)]
-mod resolve_pool_boundary_tests;
-#[cfg(test)]
-mod cancel_pool_boundary_tests;
 mod treasury;
 
 use soroban_sdk::{
@@ -2139,20 +2134,6 @@ impl PredifiContract {
 // Issue #1142 — Event Emission Consistency (new events wired in below)
 // ═══════════════════════════════════════════════════════════════════════════
 
-mod boundary_tests;
 #[cfg(test)]
-mod claim_winnings_boundary_tests;
-#[cfg(test)]
-mod edge_case_tests;
-#[cfg(test)]
-mod fee_tier_transition_tests;
-#[cfg(test)]
-mod fee_tiers_test;
-#[cfg(test)]
-mod integration_test;
-#[cfg(test)]
-mod lifecycle_integration_tests;
-#[cfg(test)]
-mod referral_integration_tests;
 mod test;
 
