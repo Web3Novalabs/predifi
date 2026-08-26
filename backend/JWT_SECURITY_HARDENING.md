@@ -1,6 +1,6 @@
 # JWT Security Hardening Implementation
 
-**Issue:** #1483 Security: Backend JWT token security hardening
+**Issue:** #1554 Security: Backend JWT token security hardening
 
 ## Overview
 
@@ -98,14 +98,18 @@ pub async fn is_token_valid_for_user(
 - Access tokens: 1 hour (existing)
 - Refresh tokens: 7 days (new)
 
-**Refresh Endpoint Flow (to be implemented in routes):**
+**Refresh Endpoint Flow:**
 ```
-Client sends refresh token → 
-  Verify token (strict: type="refresh") →
-  Check revocation status →
-  Issue new access token + new refresh token (rotated) →
-  Return both tokens + invalidate old refresh token
+POST /api/v1/auth/refresh { "refresh_token": "..." }
+  → Verify token (strict: type="refresh", matching key_version)
+  → Fail closed if Redis is unavailable
+  → Reject if JTI is already revoked (replay)
+  → Revoke presented JTI
+  → Issue new access token + new refresh token (rotated)
+  → Return both tokens
 ```
+
+Rate-limited at the Token tier: **10 requests / 60 seconds per IP**.
 
 **Benefits:**
 - Reduces impact of refresh token compromise
@@ -273,9 +277,9 @@ cargo test --lib rate_limit
 ```
 
 ## Related Issues
-- #1483: JWT token security hardening (this implementation)
+- #1554: JWT token security hardening (this implementation)
 - Session fixation prevention: Already implemented in session.rs
-- Rate limiting: Already implemented, extended with Token tier
+- Rate limiting: Token tier applied to `/auth/refresh` and `/ws`
 
 ## References
 - [OWASP JWT Best Practices](https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html)

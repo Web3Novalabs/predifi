@@ -4,12 +4,19 @@
 //! cryptographic work. [`verify_jwt_secret`] validates that the configured
 //! signing secret meets minimum security requirements. [`verify_jwt_token`]
 //! combines both checks and verifies the token signature and claims.
+//!
+//! Algorithm pinning: verification always uses HMAC-SHA256. The token `alg`
+//! header is never trusted, which blocks `alg:none` and RS256/HS256 confusion.
 
 use crate::constants::{
-    JWT_ACCESS_TOKEN_EXPIRY_SECS, JWT_MIN_LENGTH, JWT_PARTS_COUNT, JWT_SECRET_MIN_LENGTH,
+    JWT_ACCESS_TOKEN_EXPIRY_SECS, JWT_MIN_LENGTH, JWT_PARTS_COUNT, JWT_REFRESH_TOKEN_EXPIRY_SECS,
+    JWT_SECRET_MIN_LENGTH,
 };
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
+
+/// Clock-skew leeway applied to `exp` (seconds).
+const JWT_EXP_LEEWAY_SECS: u64 = 30;
 
 /// Errors returned when a token string fails the structural JWT check.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +96,14 @@ pub enum JwtVerifyError {
     InvalidSignature,
     /// The token has expired.
     Expired,
+    /// The `token_type` claim does not match the expected type.
+    WrongTokenType,
+    /// The token was issued under a different signing-key version.
+    KeyVersionMismatch,
+    /// The token has been revoked (logout, rotation, or user-wide revoke).
+    Revoked,
+    /// Refresh-token rotation requires a reachable token store (Redis).
+    TokenStoreUnavailable,
     /// The token could not be decoded.
     Decode(String),
 }
@@ -100,6 +115,12 @@ impl std::fmt::Display for JwtVerifyError {
             Self::InvalidFormat(error) => write!(f, "invalid JWT format: {error}"),
             Self::InvalidSignature => write!(f, "JWT signature verification failed"),
             Self::Expired => write!(f, "JWT has expired"),
+            Self::WrongTokenType => write!(f, "JWT token type is not valid for this endpoint"),
+            Self::KeyVersionMismatch => write!(f, "JWT was issued under a different key version"),
+            Self::Revoked => write!(f, "JWT has been revoked"),
+            Self::TokenStoreUnavailable => {
+                write!(f, "token store unavailable; cannot rotate refresh tokens")
+            }
             Self::Decode(message) => write!(f, "failed to decode JWT: {message}"),
         }
     }
@@ -116,6 +137,12 @@ pub struct PredifiClaims {
     /// Required for all issued tokens; validated on every call to
     /// `verify_jwt_token`.
     pub exp: u64,
+    /// Issued-at time as a Unix timestamp. Used for user-wide revocation.
+    #[serde(default)]
+    pub iat: u64,
+    /// Unique token identifier used for revocation and refresh rotation.
+    #[serde(default)]
+    pub jti: String,
     /// Token type: "access" or "refresh".
     /// Prevents accidental use of a refresh token in place of an access token.
     #[serde(default = "default_token_type")]
@@ -174,34 +201,42 @@ pub fn validate_jwt_format(token: &str) -> Result<(), JwtFormatError> {
     Ok(())
 }
 
+/// Build a validation config that pins HS256 and always enforces `exp`.
+fn hs256_validation() -> Validation {
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.validate_exp = true;
+    validation.leeway = JWT_EXP_LEEWAY_SECS;
+    validation.required_spec_claims.insert("exp".to_string());
+    validation
+}
+
 /// Verify a JWT against the configured HMAC secret and return decoded claims.
 ///
 /// This function:
 /// - Validates the JWT secret
 /// - Checks format (3 dot-separated base64url parts)
-/// - Verifies the HMAC-SHA256 signature (algorithm pinning prevents confusion attacks)
-/// - Checks expiration
+/// - Rejects any `alg` other than HS256 (`alg:none`, RS256 confusion, etc.)
+/// - Verifies the HMAC-SHA256 signature
+/// - Checks expiration (`exp` is required)
 /// - Validates non-empty subject claim
 ///
 /// **Algorithm Confusion Prevention:**
 /// The `Algorithm::HS256` is hard-coded and NEVER negotiated based on the token's
-/// `alg` header. This prevents attacks such as:
-/// - Downgrade to `alg: none` (unsigneddrop)
-/// - Confusion with RS256 (asymmetric)
-/// The `jsonwebtoken` crate respects this pin and rejects tokens with
-/// mismatched algorithms.
+/// `alg` header. The header is inspected first and any mismatch is rejected
+/// before signature verification.
 pub fn verify_jwt_token(token: &str, secret: &str) -> Result<PredifiClaims, JwtVerifyError> {
     verify_jwt_secret(secret).map_err(JwtVerifyError::InvalidSecret)?;
     validate_jwt_format(token).map_err(JwtVerifyError::InvalidFormat)?;
 
-    // Pin algorithm to HS256 — prevents alg:none and algorithm confusion attacks.
-    // validate_exp defaults to true; do NOT override it so expired tokens are rejected.
-    let validation = Validation::new(Algorithm::HS256);
+    let header = decode_header(token).map_err(|_| JwtVerifyError::InvalidSignature)?;
+    if header.alg != Algorithm::HS256 {
+        return Err(JwtVerifyError::InvalidSignature);
+    }
 
     let token_data = decode::<PredifiClaims>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
+        &hs256_validation(),
     )
     .map_err(map_decode_error)?;
 
@@ -230,27 +265,11 @@ pub fn verify_jwt_token_strict(
     let claims = verify_jwt_token(token, secret)?;
 
     if claims.token_type != expected_type {
-        return Err(JwtVerifyError::Decode(format!(
-            "expected token type '{}', got '{}'",
-            expected_type, claims.token_type
-        )));
+        return Err(JwtVerifyError::WrongTokenType);
     }
 
-    if claims.key_version > current_key_version {
-        return Err(JwtVerifyError::Decode(
-            "token issued with a newer key version; client is out of sync".to_string(),
-        ));
-    }
-
-    if claims.key_version < current_key_version {
-        // Token issued under an old key version. This can happen during rotation.
-        // Whether to accept it depends on your rotation strategy.
-        // For now, we log it but accept it.
-        tracing::debug!(
-            "token issued under old key version: {} < {}",
-            claims.key_version,
-            current_key_version
-        );
+    if claims.key_version != current_key_version {
+        return Err(JwtVerifyError::KeyVersionMismatch);
     }
 
     Ok(claims)
@@ -259,7 +278,9 @@ pub fn verify_jwt_token_strict(
 fn map_decode_error(error: jsonwebtoken::errors::Error) -> JwtVerifyError {
     match error.kind() {
         jsonwebtoken::errors::ErrorKind::ExpiredSignature => JwtVerifyError::Expired,
-        jsonwebtoken::errors::ErrorKind::InvalidSignature => JwtVerifyError::InvalidSignature,
+        jsonwebtoken::errors::ErrorKind::InvalidSignature
+        | jsonwebtoken::errors::ErrorKind::InvalidAlgorithm
+        | jsonwebtoken::errors::ErrorKind::InvalidAlgorithmName => JwtVerifyError::InvalidSignature,
         _ => JwtVerifyError::Decode(error.to_string()),
     }
 }
@@ -296,16 +317,16 @@ pub fn sign_jwt_with_type(
     use jsonwebtoken::{encode, EncodingKey, Header};
 
     let expiry = if token_type == "refresh" {
-        // Refresh tokens live for 7 days
-        now_unix + (7 * 24 * 3600)
+        now_unix + JWT_REFRESH_TOKEN_EXPIRY_SECS
     } else {
-        // Access tokens live for 1 hour
         now_unix + JWT_ACCESS_TOKEN_EXPIRY_SECS
     };
 
     let claims = PredifiClaims {
         sub: sub.to_string(),
         exp: expiry,
+        iat: now_unix,
+        jti: uuid::Uuid::new_v4().to_string(),
         token_type: token_type.to_string(),
         key_version,
     };
@@ -333,6 +354,8 @@ pub fn sign_jwt_for_test(sub: &str, secret: &str) -> String {
         &PredifiClaims {
             sub: sub.to_string(),
             exp: now + JWT_ACCESS_TOKEN_EXPIRY_SECS,
+            iat: now,
+            jti: "test-jti".to_string(),
             token_type: "access".to_string(),
             key_version: 0,
         },
@@ -344,12 +367,24 @@ pub fn sign_jwt_for_test(sub: &str, secret: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jsonwebtoken::{encode, EncodingKey, Header};
 
     const TEST_SECRET: &str = "predifi-dev-secret-do-not-use-in-production-32";
 
     // A minimal but structurally valid JWT-shaped token (not a real signed token).
     const VALID_TOKEN: &str =
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+
+    fn claims(sub: &str, exp: u64, token_type: &str, key_version: u64) -> PredifiClaims {
+        PredifiClaims {
+            sub: sub.to_string(),
+            exp,
+            iat: 1_700_000_000,
+            jti: "test-jti".to_string(),
+            token_type: token_type.to_string(),
+            key_version,
+        }
+    }
 
     #[test]
     fn accepts_well_formed_jwt() {
@@ -462,6 +497,9 @@ mod tests {
         let token = sign_jwt_for_test("GABC123", TEST_SECRET);
         let claims = verify_jwt_token(&token, TEST_SECRET).expect("valid token");
         assert_eq!(claims.sub, "GABC123");
+        assert_eq!(claims.token_type, "access");
+        assert!(!claims.jti.is_empty());
+        assert!(claims.exp > claims.iat);
     }
 
     #[test]
@@ -480,14 +518,7 @@ mod tests {
 
     #[test]
     fn verify_jwt_token_rejects_expired_token() {
-        use jsonwebtoken::{encode, EncodingKey, Header};
-        // Build a token with exp in the past (Unix epoch 1 = 1970-01-01T00:00:01Z).
-        let expired_claims = PredifiClaims {
-            sub: "GABC123".to_string(),
-            exp: 1,
-            token_type: "access".to_string(),
-            key_version: 0,
-        };
+        let expired_claims = claims("GABC123", 1, "access", 0);
         let token = encode(
             &Header::new(Algorithm::HS256),
             &expired_claims,
@@ -496,6 +527,60 @@ mod tests {
         .expect("signed expired token");
         let error = verify_jwt_token(&token, TEST_SECRET).expect_err("expired token");
         assert_eq!(error, JwtVerifyError::Expired);
+    }
+
+    #[test]
+    fn verify_jwt_token_rejects_alg_none() {
+        // Header alg:none, dummy non-empty signature so format checks pass.
+        // Payload: {"sub":"GABC123","exp":9999999999,"token_type":"access","key_version":0}
+        let token = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJHQUJDMTIzIiwiZXhwIjo5OTk5OTk5OTk5LCJ0b2tlbl90eXBlIjoiYWNjZXNzIiwia2V5X3ZlcnNpb24iOjB9.e30";
+        let error = verify_jwt_token(token, TEST_SECRET).expect_err("alg none");
+        assert_eq!(error, JwtVerifyError::InvalidSignature);
+    }
+
+    #[test]
+    fn verify_jwt_token_strict_rejects_refresh_used_as_access() {
+        let token = sign_jwt_with_type("GABC123", TEST_SECRET, 1_800_000_000, "refresh", 0)
+            .expect("signed refresh");
+        let error = verify_jwt_token_strict(&token, TEST_SECRET, "access", 0)
+            .expect_err("refresh must not authenticate as access");
+        assert_eq!(error, JwtVerifyError::WrongTokenType);
+    }
+
+    #[test]
+    fn verify_jwt_token_strict_rejects_old_key_version() {
+        let token = sign_jwt_with_type("GABC123", TEST_SECRET, 1_800_000_000, "access", 0)
+            .expect("signed access");
+        let error = verify_jwt_token_strict(&token, TEST_SECRET, "access", 1)
+            .expect_err("old key version");
+        assert_eq!(error, JwtVerifyError::KeyVersionMismatch);
+    }
+
+    #[test]
+    fn verify_jwt_token_strict_accepts_matching_type_and_version() {
+        let token = sign_jwt_with_type("GABC123", TEST_SECRET, 1_800_000_000, "refresh", 2)
+            .expect("signed refresh");
+        let claims = verify_jwt_token_strict(&token, TEST_SECRET, "refresh", 2).expect("ok");
+        assert_eq!(claims.token_type, "refresh");
+        assert_eq!(claims.key_version, 2);
+    }
+
+    #[test]
+    fn refresh_tokens_live_longer_than_access_tokens() {
+        let now = 1_800_000_000u64;
+        let access = sign_jwt_with_type("GABC123", TEST_SECRET, now, "access", 0).unwrap();
+        let refresh = sign_jwt_with_type("GABC123", TEST_SECRET, now, "refresh", 0).unwrap();
+        let access_claims = verify_jwt_token(&access, TEST_SECRET).unwrap();
+        let refresh_claims = verify_jwt_token(&refresh, TEST_SECRET).unwrap();
+        assert_eq!(
+            access_claims.exp,
+            now + JWT_ACCESS_TOKEN_EXPIRY_SECS
+        );
+        assert_eq!(
+            refresh_claims.exp,
+            now + JWT_REFRESH_TOKEN_EXPIRY_SECS
+        );
+        assert_ne!(access_claims.jti, refresh_claims.jti);
     }
 
     #[test]

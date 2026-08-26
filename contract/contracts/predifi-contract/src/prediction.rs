@@ -298,8 +298,12 @@ impl PredifiContract {
             }
         }
 
-        // Enforce maximum predictions per user limit (across all pools)
         let config = Self::get_config(&env);
+
+        // Enforce prediction cooldown to limit automated copy-trading / front-running
+        // bots that react to observed `place_prediction` submissions. See
+        // `docs/security-front-running-analysis.md` (#1553) for MEV context on
+        // Stellar/Soroban and why commit-reveal remains opt-in rather than required.
         if config.prediction_cooldown_seconds > 0 {
             let last_prediction_key = DataKey::LastPredictionTime(user.clone());
             if let Some(last_prediction_time) = env
