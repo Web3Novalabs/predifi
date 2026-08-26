@@ -1,0 +1,23 @@
+name: Auto Tag New Issues
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-tag:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Add good-first-issue tag
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            github.rest.issues.addLabels({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['good-first-issue']
+            })
