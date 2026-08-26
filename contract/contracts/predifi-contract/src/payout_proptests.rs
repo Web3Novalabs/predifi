@@ -116,6 +116,99 @@ proptest! {
         let payout_pool = total_stake - protocol_fee;
         prop_assert!(payout_pool >= 0, "payout_pool must be >= 0");
     }
+
+    #[test]
+    fn prop_total_payouts_never_exceed_pool_stake(
+        total_stake in 1..100_000_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+        winning_stake in 1..=100_000_000i128,
+        first_winner_stake in 0..=100_000_000i128,
+    ) {
+        let protocol_fee = SafeMath::percentage(
+            total_stake,
+            fee_bps as i128,
+            RoundingMode::ProtocolFavor,
+        ).unwrap();
+        let payout_pool = total_stake - protocol_fee;
+        let first_winner_stake = first_winner_stake.min(winning_stake);
+        let second_winner_stake = winning_stake - first_winner_stake;
+
+        let first_payout = SafeMath::calculate_share(
+            first_winner_stake,
+            winning_stake,
+            payout_pool,
+        ).unwrap();
+        let second_payout = SafeMath::calculate_share(
+            second_winner_stake,
+            winning_stake,
+            payout_pool,
+        ).unwrap();
+
+        prop_assert!(first_payout + second_payout <= total_stake);
+    }
+
+    #[test]
+    fn prop_fee_deduction_is_mathematically_consistent(
+        total_stake in 1..100_000_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+    ) {
+        let fee = SafeMath::percentage(
+            total_stake,
+            fee_bps as i128,
+            RoundingMode::ProtocolFavor,
+        ).unwrap();
+        let payout_pool = total_stake - fee;
+        let expected_fee = (total_stake * fee_bps as i128) / 10_000;
+
+        prop_assert_eq!(fee, expected_fee);
+        prop_assert_eq!(payout_pool + fee, total_stake);
+    }
+
+    #[test]
+    fn prop_no_user_receives_negative_payout(
+        user_stake in 0..=100_000_000i128,
+        winning_stake in 0..=100_000_000i128,
+        payout_pool in 0..=100_000_000_000_000i128,
+    ) {
+        let user_stake = user_stake.min(winning_stake);
+        let payout = SafeMath::calculate_share(user_stake, winning_stake, payout_pool).unwrap();
+
+        prop_assert!(payout >= 0);
+    }
+
+    #[test]
+    fn prop_all_claims_equal_pool_balance_minus_fees(
+        total_stake in 1..100_000_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+        first_winner_stake in 0..=100_000_000i128,
+    ) {
+        let fee = SafeMath::percentage(
+            total_stake,
+            fee_bps as i128,
+            RoundingMode::ProtocolFavor,
+        ).unwrap();
+        let payout_pool = total_stake - fee;
+        if payout_pool == 0 {
+            return Ok(());
+        }
+
+        let winning_stake = payout_pool;
+        let first_winner_stake = first_winner_stake.min(winning_stake);
+        let second_winner_stake = winning_stake - first_winner_stake;
+
+        let first_claim = SafeMath::calculate_share(
+            first_winner_stake,
+            winning_stake,
+            payout_pool,
+        ).unwrap();
+        let second_claim = SafeMath::calculate_share(
+            second_winner_stake,
+            winning_stake,
+            payout_pool,
+        ).unwrap();
+
+        prop_assert_eq!(first_claim + second_claim, payout_pool);
+    }
 }
 
 // ─── Issue #1461 — Property-based Tests: Safe math operations ────────────────
