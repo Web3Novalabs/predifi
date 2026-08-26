@@ -72,6 +72,7 @@ fn test_price_based_pool_mock_resolution() {
     let token_address = Address::generate(&env);
     client.add_token_to_whitelist(&admin, &token_address);
     client.add_oracle(&admin, &oracle);
+    client.init_oracle(&admin, &Address::generate(&env), &10_000u64, &100u32);
 
     // 2. Create a Prediction Pool
     let end_time = 4000u64; // > min_pool_duration (3600)
@@ -255,6 +256,7 @@ fn test_price_based_pool_resolves_less_than_condition() {
     let token_address = Address::generate(&env);
     client.add_token_to_whitelist(&admin, &token_address);
     client.add_oracle(&admin, &oracle);
+    client.init_oracle(&admin, &Address::generate(&env), &10_000u64, &100u32);
 
     // Pool: "Will BTC drop below $50k?" with end_time = 4000
     let end_time = 4000u64;
@@ -287,7 +289,7 @@ fn test_price_based_pool_resolves_less_than_condition() {
     // Set price condition: BTC < $50_000 (ComparisonOp::LessThan = 0)
     let asset = symbol_short!("BTC_USD");
     let target_price = 50_000_0000000i128; // 7-decimal representation
-    client.set_price_condition(&operator, &pool_id, &asset, &target_price, &0u32, &100u32);
+    client.set_price_condition(&operator, &pool_id, &asset, &target_price, &2u32, &100u32);
 
     // Push a price feed showing BTC at $45_000 — below the $50_000 threshold
     env.ledger().with_mut(|li| li.timestamp = 1000);

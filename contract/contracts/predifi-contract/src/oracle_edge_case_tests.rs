@@ -25,11 +25,12 @@ fn test_add_oracle_idempotent_no_duplicate_in_list() {
     // A third add still succeeds without error.
     client.add_oracle(&admin, &oracle);
 
-    let whitelist: soroban_sdk::Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::OracleWhitelist)
-        .unwrap();
+    let whitelist: soroban_sdk::Vec<Address> = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OracleWhitelist)
+            .unwrap()
+    });
     assert_eq!(whitelist.len(), 1);
     assert_eq!(whitelist.get(0), Some(oracle));
 }
@@ -61,7 +62,7 @@ fn test_remove_oracle_while_emergency_cancel_vote_is_pending() {
             min_stake: 1,
             max_stake: 0,
             max_total_stake: 0,
-            min_total_stake: 0,
+            min_total_stake: 1,
             initial_liquidity: 0,
             required_resolutions: 1,
             private: false,
@@ -108,21 +109,23 @@ fn test_add_maximum_supported_oracle_list_and_remove_last() {
     for oracle in oracles.iter() {
         client.add_oracle(&admin, &oracle);
     }
-    let stored: soroban_sdk::Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::OracleWhitelist)
-        .unwrap();
+    let stored: soroban_sdk::Vec<Address> = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OracleWhitelist)
+            .unwrap()
+    });
     assert_eq!(stored.len(), 64);
 
     for oracle in oracles.iter() {
         client.remove_oracle(&admin, &oracle);
     }
-    let stored: soroban_sdk::Vec<Address> = env
-        .storage()
-        .persistent()
-        .get(&DataKey::OracleWhitelist)
-        .unwrap();
+    let stored: soroban_sdk::Vec<Address> = env.as_contract(&client.address, || {
+        env.storage()
+            .persistent()
+            .get(&DataKey::OracleWhitelist)
+            .unwrap()
+    });
     assert_eq!(stored.len(), 0);
 }
 

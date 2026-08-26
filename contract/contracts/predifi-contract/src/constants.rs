@@ -149,7 +149,7 @@ pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
 /// - Can be overridden via `Config::prediction_cooldown_seconds` by admin.
 ///
 /// **Used for:** Initializing `Config::prediction_cooldown_seconds` during contract initialization.
-pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 30;
+pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 0;
 
 /// Maximum number of options/outcomes allowed in a single pool.
 ///

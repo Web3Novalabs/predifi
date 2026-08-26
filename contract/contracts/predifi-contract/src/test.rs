@@ -1715,6 +1715,7 @@ fn test_resolve_pool_from_price_applies_tolerance_bounded_match() {
     let oracle = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     client.add_oracle(&admin, &oracle);
+    client.init_oracle(&admin, &Address::generate(&env), &10_000u64, &100u32);
 
     let pool_id = client.create_pool(
         &creator,
