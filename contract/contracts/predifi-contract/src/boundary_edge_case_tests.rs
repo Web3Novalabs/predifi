@@ -916,6 +916,311 @@ fn test_1315_emergency_cancel_with_active_stakes() {
     );
 }
 
+/// An admin (role 0) and an operator (role 1) together can reach the
+/// multi-sig threshold and cancel the pool.
+#[test]
+fn test_1315_admin_and_operator_reach_quorum() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(7_200);
+    let reason = String::from_str(&env, "admin-operator quorum");
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.admin, &pool_id, &reason);
+    assert_eq!(ctx.client.get_pool(&pool_id).state, MarketState::Active);
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+    assert_eq!(
+        ctx.client.get_pool(&pool_id).state,
+        MarketState::Canceled,
+        "admin + operator must reach quorum"
+    );
+}
+
+/// Calling `emergency_cancel_pool` on a non-existent pool must return
+/// `PoolNotFound`.
+#[test]
+fn test_1315_pool_not_found_returns_error() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let reason = String::from_str(&env, "nonexistent pool");
+    let result = ctx
+        .client
+        .try_emergency_cancel_pool(&ctx.operator, &999_999u64, &reason);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::PoolNotFound)),
+        "non-existent pool must return PoolNotFound"
+    );
+}
+
+/// `get_emergency_cancel_approvals` on a non-existent pool must return an
+/// empty vec (no panic, no storage error).
+#[test]
+fn test_1315_get_approvals_nonexistent_pool_returns_empty() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let approvals = ctx.client.get_emergency_cancel_approvals(&999_999u64);
+    assert_eq!(approvals.len(), 0, "non-existent pool must have 0 approvals");
+}
+
+/// If `cancel_pool` is called first (single-signer path) the pool is already
+/// `Canceled`. A subsequent `emergency_cancel_pool` must return
+/// `InvalidPoolState` — the pool-state check short-circuits before the
+/// duplicate-approval check.
+#[test]
+fn test_1315_normal_cancel_then_emergency_fails() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(7_200);
+    let reason = String::from_str(&env, "normal cancel first");
+
+    ctx.client.cancel_pool(&ctx.operator, &pool_id, &reason);
+    assert_eq!(ctx.client.get_pool(&pool_id).state, MarketState::Canceled);
+
+    let result = ctx
+        .client
+        .try_emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidPoolState)),
+        "emergency cancel after normal cancel must return InvalidPoolState"
+    );
+}
+
+/// If an emergency approval is recorded first and then `cancel_pool` is
+/// called, the stale approval remains in storage (the normal cancel path
+/// does not clear emergency-cancel state), but the pool is already
+/// `Canceled` so further emergency attempts still fail.
+#[test]
+fn test_1315_stale_approvals_after_normal_cancel() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(7_200);
+    let reason = String::from_str(&env, "stale approval test");
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+    assert_eq!(
+        ctx.client.get_emergency_cancel_approvals(&pool_id).len(),
+        1
+    );
+
+    ctx.client.cancel_pool(&ctx.operator2, &pool_id, &reason);
+    assert_eq!(ctx.client.get_pool(&pool_id).state, MarketState::Canceled);
+
+    let result = ctx
+        .client
+        .try_emergency_cancel_pool(&ctx.operator2, &pool_id, &reason);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidPoolState)),
+        "emergency cancel after normal cancel must return InvalidPoolState"
+    );
+}
+
+/// With three operators and threshold = 2, the third operator's attempt
+/// after quorum has been met must fail with `InvalidPoolState` because
+/// the pool is already `Canceled`.
+#[test]
+fn test_1315_third_operator_after_quorum_fails() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let operator3 = Address::generate(&env);
+    ctx.ac.grant_role(&operator3, &1u32);
+
+    let pool_id = ctx.create_pool(7_200);
+    let reason = String::from_str(&env, "three operators");
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator2, &pool_id, &reason);
+    assert_eq!(ctx.client.get_pool(&pool_id).state, MarketState::Canceled);
+
+    let result = ctx
+        .client
+        .try_emergency_cancel_pool(&operator3, &pool_id, &reason);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidPoolState)),
+        "third operator after quorum must get InvalidPoolState"
+    );
+}
+
+/// The same privileged address can participate in emergency-cancel
+/// proposals for *multiple* pools simultaneously without interference.
+#[test]
+fn test_1315_same_approver_multiple_pools() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_a = ctx.create_pool(7_200);
+    let pool_b = ctx.create_pool(7_200);
+    let reason_a = String::from_str(&env, "pool a");
+    let reason_b = String::from_str(&env, "pool b");
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_a, &reason_a);
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_b, &reason_b);
+
+    assert_eq!(
+        ctx.client.get_emergency_cancel_approvals(&pool_a).len(),
+        1,
+        "pool a must have 1 approval"
+    );
+    assert_eq!(
+        ctx.client.get_emergency_cancel_approvals(&pool_b).len(),
+        1,
+        "pool b must have 1 approval"
+    );
+    assert_eq!(ctx.client.get_pool(&pool_a).state, MarketState::Active);
+    assert_eq!(ctx.client.get_pool(&pool_b).state, MarketState::Active);
+}
+
+/// After N-1 approvals the pool must remain fully `Active`: staking,
+/// `get_pool`, and all other Active-state operations must work correctly.
+/// This verifies no partial state corruption occurs during the pending
+/// multi-sig window.
+#[test]
+fn test_1315_state_rollback_after_n_minus_1() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(7_200);
+    let user = Address::generate(&env);
+    ctx.stake(&user, pool_id, 150, 0);
+
+    let reason = String::from_str(&env, "rollback test");
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+
+    let pool = ctx.client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Active);
+    assert_eq!(pool.total_stake, 150, "total_stake must be preserved");
+
+    ctx.stake(&user, pool_id, 250, 1);
+    assert_eq!(ctx.client.get_pool(&pool_id).total_stake, 400);
+
+    let approvals = ctx.client.get_emergency_cancel_approvals(&pool_id);
+    assert_eq!(approvals.len(), 1);
+}
+
+/// Approval lists are isolated per pool: pool A's approvals must not
+/// appear in pool B's list and vice-versa.
+#[test]
+fn test_1315_approvals_list_isolated_per_pool() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_a = ctx.create_pool(7_200);
+    let pool_b = ctx.create_pool(7_200);
+    let reason = String::from_str(&env, "isolation test");
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_a, &reason);
+
+    assert_eq!(
+        ctx.client.get_emergency_cancel_approvals(&pool_a).len(),
+        1,
+        "pool a must have 1 approval"
+    );
+    assert_eq!(
+        ctx.client.get_emergency_cancel_approvals(&pool_b).len(),
+        0,
+        "pool b must have 0 approvals"
+    );
+    assert_eq!(ctx.client.get_pool(&pool_a).state, MarketState::Active);
+    assert_eq!(ctx.client.get_pool(&pool_b).state, MarketState::Active);
+}
+
+/// `emergency_cancel_pool` can be called before the pool's `end_time`
+/// (unlike `resolve_pool`, which requires the delay to have passed).
+/// This allows fast-tracking cancellation of suspicious markets.
+#[test]
+fn test_1315_emergency_cancel_before_end_time() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(7_200);
+    let reason = String::from_str(&env, "cancel before end");
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+    assert_eq!(ctx.client.get_pool(&pool_id).state, MarketState::Active);
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator2, &pool_id, &reason);
+    assert_eq!(
+        ctx.client.get_pool(&pool_id).state,
+        MarketState::Canceled,
+        "emergency cancel must work before end_time"
+    );
+}
+
+/// An empty reason string is accepted by `emergency_cancel_pool`; the
+/// contract does not enforce a minimum reason length.
+#[test]
+fn test_1315_empty_reason_accepted() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(7_200);
+    let reason = String::from_str(&env, "");
+
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator2, &pool_id, &reason);
+
+    assert_eq!(
+        ctx.client.get_pool(&pool_id).state,
+        MarketState::Canceled,
+        "empty reason must not prevent cancellation"
+    );
+}
+
+/// A pool with N-1 pending emergency approvals can still be resolved
+/// normally (because it is still `Active`). Once resolved, further
+/// emergency-cancel attempts must fail with `InvalidPoolState`.
+#[test]
+fn test_1315_resolve_with_pending_emergency_then_emergency_fails() {
+    let env = Env::default();
+    let ctx = TestEnv::new(&env);
+
+    let pool_id = ctx.create_pool(4_000);
+    ctx.stake(&ctx.creator, pool_id, 100, 0);
+
+    let reason = String::from_str(&env, "pending during resolve");
+    ctx.client
+        .emergency_cancel_pool(&ctx.operator, &pool_id, &reason);
+    assert_eq!(
+        ctx.client.get_emergency_cancel_approvals(&pool_id).len(),
+        1
+    );
+
+    ctx.advance_time(4_001);
+    ctx.client.resolve_pool(&ctx.operator, &pool_id, &0u32);
+    assert_eq!(ctx.client.get_pool(&pool_id).state, MarketState::Resolved);
+
+    let result = ctx
+        .client
+        .try_emergency_cancel_pool(&ctx.operator2, &pool_id, &reason);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::InvalidPoolState)),
+        "emergency cancel on resolved pool must return InvalidPoolState"
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Issue #1314 — `cancel_pool` Boundary Tests
 // ═══════════════════════════════════════════════════════════════════════════
