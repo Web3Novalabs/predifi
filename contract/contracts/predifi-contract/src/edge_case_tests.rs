@@ -597,10 +597,10 @@ fn test_add_token_to_whitelist_duplicate_token() {
     let token = Address::generate(&env);
 
     client.add_token_to_whitelist(&admin, &token);
-    assert!(client.is_token_whitelisted(&token), "Token should be whitelisted");
+    assert!(client.is_token_allowed(&token), "Token should be whitelisted");
 
     client.add_token_to_whitelist(&admin, &token);
-    assert!(client.is_token_whitelisted(&token), "Token should remain whitelisted after duplicate call");
+    assert!(client.is_token_allowed(&token), "Token should remain whitelisted after duplicate call");
 }
 
 /// Test adding token to whitelist by non-admin is rejected.
@@ -613,7 +613,7 @@ fn test_add_token_to_whitelist_unauthorized() {
 
     let res = client.try_add_token_to_whitelist(&non_admin, &token);
     assert!(res.is_err(), "Non-admin cannot add token to whitelist");
-    assert!(!client.is_token_whitelisted(&token), "Token should not be whitelisted");
+    assert!(!client.is_token_allowed(&token), "Token should not be whitelisted");
 }
 
 /// Test removing and re-adding same token to whitelist.
@@ -624,13 +624,13 @@ fn test_add_token_to_whitelist_remove_and_readd() {
     let token = Address::generate(&env);
 
     client.add_token_to_whitelist(&admin, &token);
-    assert!(client.is_token_whitelisted(&token));
+    assert!(client.is_token_allowed(&token));
 
     client.remove_token_from_whitelist(&admin, &token);
-    assert!(!client.is_token_whitelisted(&token));
+    assert!(!client.is_token_allowed(&token));
 
     client.add_token_to_whitelist(&admin, &token);
-    assert!(client.is_token_whitelisted(&token));
+    assert!(client.is_token_allowed(&token));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -644,9 +644,9 @@ fn test_remove_token_from_whitelist_non_existent() {
     let (client, _, _, admin) = setup(&env);
     let token = Address::generate(&env);
 
-    assert!(!client.is_token_whitelisted(&token));
+    assert!(!client.is_token_allowed(&token));
     let res = client.try_remove_token_from_whitelist(&admin, &token);
-    assert!(!client.is_token_whitelisted(&token));
+    assert!(!client.is_token_allowed(&token));
 }
 
 /// Test non-admin attempt to remove token from whitelist is rejected.
@@ -658,11 +658,11 @@ fn test_remove_token_from_whitelist_unauthorized() {
     let token = Address::generate(&env);
 
     client.add_token_to_whitelist(&admin, &token);
-    assert!(client.is_token_whitelisted(&token));
+    assert!(client.is_token_allowed(&token));
 
     let res = client.try_remove_token_from_whitelist(&non_admin, &token);
     assert!(res.is_err(), "Non-admin cannot remove token from whitelist");
-    assert!(client.is_token_whitelisted(&token), "Token remains whitelisted after failed removal");
+    assert!(client.is_token_allowed(&token), "Token remains whitelisted after failed removal");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -676,10 +676,10 @@ fn test_pause_already_paused_contract() {
     let (client, _, _, admin) = setup(&env);
 
     client.pause(&admin);
-    assert!(client.is_paused(), "Contract should be paused");
+    assert!(client.is_contract_paused(), "Contract should be paused");
 
     let res = client.try_pause(&admin);
-    assert!(client.is_paused(), "Contract should remain paused");
+    assert!(client.is_contract_paused(), "Contract should remain paused");
 }
 
 /// Test unpausing an unpaused contract.
@@ -688,10 +688,10 @@ fn test_unpause_already_unpaused_contract() {
     let env = Env::default();
     let (client, _, _, admin) = setup(&env);
 
-    assert!(!client.is_paused(), "Contract initially unpaused");
+    assert!(!client.is_contract_paused(), "Contract initially unpaused");
 
     let res = client.try_unpause(&admin);
-    assert!(!client.is_paused(), "Contract remains unpaused");
+    assert!(!client.is_contract_paused(), "Contract remains unpaused");
 }
 
 /// Test non-admin pause and unpause attempts are rejected.
@@ -703,7 +703,7 @@ fn test_pause_unpause_unauthorized() {
 
     let res_pause = client.try_pause(&non_admin);
     assert!(res_pause.is_err(), "Non-admin cannot pause contract");
-    assert!(!client.is_paused());
+    assert!(!client.is_contract_paused());
 
     let res_unpause = client.try_unpause(&non_admin);
     assert!(res_unpause.is_err(), "Non-admin cannot unpause contract");

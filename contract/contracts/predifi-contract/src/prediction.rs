@@ -472,11 +472,10 @@ impl PredifiContract {
 
         let result: Result<i128, PredifiError> = (|| {
             let pool_key = DataKey::Pool(pool_id);
-            let pool: Pool = env
-                .storage()
-                .persistent()
-                .get(&pool_key)
-                .expect("Pool not found");
+            let pool: Pool = match env.storage().persistent().get(&pool_key) {
+                Some(p) => p,
+                None => return Err(PredifiError::PoolNotFound),
+            };
             Self::extend_persistent(env, &pool_key);
 
             if pool.state == MarketState::Active {
