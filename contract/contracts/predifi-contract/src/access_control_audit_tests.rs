@@ -47,9 +47,11 @@ fn test_remove_oracle_rejects_unauthorized() {
     env.mock_all_auths();
     let (ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, _creator) =
         crate::test::setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
     let attacker = Address::generate(&env);
     let oracle = Address::generate(&env);
-    client.add_oracle(&Address::generate(&env), &oracle);
+    client.add_oracle(&admin, &oracle);
     let result = client.try_remove_oracle(&attacker, &oracle);
     assert!(result.is_err());
 }

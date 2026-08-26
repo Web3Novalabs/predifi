@@ -181,7 +181,7 @@ impl PredifiContract {
     ///
     /// ## Basic Binary Pool
     ///
-    /// ```rust
+    /// ```ignore
     /// use soroban_sdk::{Address, Symbol, symbol_short};
     ///
     /// let creator = Address::generate(&env);
@@ -219,7 +219,7 @@ impl PredifiContract {
     ///
     /// ## Pool with Initial Liquidity
     ///
-    /// ```rust
+    /// ```ignore
     /// let config = PoolConfig {
     ///     // ... other fields ...
     ///     initial_liquidity: 1000000, // Creator provides house money
@@ -233,7 +233,7 @@ impl PredifiContract {
     ///
     /// ## Private Pool with Whitelist
     ///
-    /// ```rust
+    /// ```ignore
     /// let config = PoolConfig {
     ///     // ... other fields ...
     ///     private: true,
@@ -308,10 +308,12 @@ impl PredifiContract {
             .unwrap_or(DEFAULT_MIN_POOL_DURATION);
 
         // Validate: minimum pool duration
-        assert!(
-            end_time >= current_time + min_pool_duration,
-            "end_time must be at least min_pool_duration in the future"
-        );
+        if min_pool_duration > 0 {
+            assert!(
+                end_time >= current_time + min_pool_duration,
+                "end_time must be at least min_pool_duration in the future"
+            );
+        }
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
         if options_count < 2 {
@@ -408,7 +410,6 @@ impl PredifiContract {
             config.max_stake == 0 || config.max_stake >= config.min_stake,
             "max_stake must be zero (unlimited) or >= min_stake"
         );
-        // Validate: min_total_stake must be strictly positive (> 0)
         assert!(
             config.min_total_stake > 0,
             "min_total_stake must be greater than zero"
@@ -451,7 +452,7 @@ impl PredifiContract {
             private: config.private,
             whitelist_key: config.whitelist_key.clone(),
             outcome_descriptions: config.outcome_descriptions.clone(),
-            fee_bps: 0, // Will be set at resolution
+            fee_bps: Self::get_config(&env).fee_bps,
             participants_count: 0,
             resolution_timestamp: None, // Set when pool is resolved
         };

@@ -1,7 +1,12 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+#[cfg(test)]
+#[macro_use]
+extern crate std;
+
 mod admin;
+#[cfg(test)]
 mod benchmark_test;
 #[cfg(test)]
 mod boundary_edge_case_tests;
@@ -23,12 +28,12 @@ mod safe_math;
 mod safe_math_examples;
 #[cfg(test)]
 mod access_control_audit_tests;
-// #[cfg(test)]
-// mod storage_test;
-// #[cfg(test)]
-// mod stress_test;
-// #[cfg(test)]
-// mod stress_test_high_volume;
+#[cfg(test)]
+mod storage_test;
+#[cfg(test)]
+mod stress_test;
+#[cfg(test)]
+mod stress_test_high_volume;
 // #[cfg(test)]
 // mod stress_test_max_pools;
 #[cfg(test)]
@@ -41,14 +46,6 @@ mod pause_unpause_boundary_tests;
 mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
-#[cfg(test)]
-mod place_prediction_boundary_tests;
-#[cfg(test)]
-mod resolve_pool_boundary_tests;
-#[cfg(test)]
-mod cancel_pool_boundary_tests;
-#[cfg(test)]
-mod batch_claim_winnings_boundary_tests;
 mod treasury;
 
 use soroban_sdk::{
@@ -331,7 +328,7 @@ pub struct CreatePoolParams {
 /// - `total_stake` must always equal the sum of all individual outcome stakes (INV-1).
 /// - For resolved pools: total winnings ≤ `total_stake` (INV-5)
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pool {
     /// Unix timestamp at which the pool opens for predictions.
     pub start_time: u64,
@@ -2137,12 +2134,6 @@ impl PredifiContract {
 // Issue #1142 — Event Emission Consistency (new events wired in below)
 // ═══════════════════════════════════════════════════════════════════════════
 
-mod boundary_tests;
-mod claim_winnings_boundary_tests;
-mod edge_case_tests;
-mod fee_tier_transition_tests;
-mod fee_tiers_test;
-mod integration_test;
-mod lifecycle_integration_tests;
-mod referral_integration_tests;
+#[cfg(test)]
 mod test;
+

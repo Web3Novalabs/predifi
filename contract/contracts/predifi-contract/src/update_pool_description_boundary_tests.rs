@@ -100,7 +100,7 @@ impl<'a> DescTestEnv<'a> {
 
         let contract_id = env.register(PredifiContract, ());
         let client = PredifiContractClient::new(env, &contract_id);
-        client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+        client.init(&ac_id, &treasury, &0u32, &0u64, &0u64, &0u32);
 
         let token_admin_addr = Address::generate(env);
         let token_contract = env.register_stellar_asset_contract_v2(token_admin_addr);
@@ -137,7 +137,7 @@ impl<'a> DescTestEnv<'a> {
                 min_stake: 1i128,
                 max_stake: 0i128,
                 max_total_stake: 0i128,
-                min_total_stake: 0i128,
+                min_total_stake: 1i128,
                 initial_liquidity: 0i128,
                 required_resolutions: 1u32,
                 private: false,

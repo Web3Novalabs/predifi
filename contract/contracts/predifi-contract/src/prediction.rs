@@ -148,6 +148,9 @@ impl PredifiContract {
     /// - `RateLimitOrSuspiciousActivity` - The prediction cooldown period has not elapsed
     /// - `MaxPredictionsExceeded` - The user has exceeded the maximum number of pools they can participate in
     /// - `ArithmeticError` - An overflow occurred during stake calculations
+    /// - `InvalidReferralCode` - The provided `invite_key` failed validation
+    /// - `InsufficientBalance` - The user balance is insufficient to fulfill the token transfer
+    /// - `TransferFailed` - Token transfer validation or execution failed
     ///
     /// # Pre-conditions
     ///
@@ -370,10 +373,16 @@ impl PredifiContract {
             // Store referrer on first prediction and track referred volume.
             // NOTE: Only one referrer per (user, pool) is supported today.
             // See DataKey::Referrer for a note on extending this to multiple referrers.
-            if let Some(ref referrer_addr) = referrer {
-                let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+            let referrer_key = DataKey::Referrer(user.clone(), pool_id);
+            let active_referrer = if let Some(ref referrer_addr) = referrer {
                 env.storage().persistent().set(&referrer_key, referrer_addr);
                 Self::extend_persistent(&env, &referrer_key);
+                Some(referrer_addr.clone())
+            } else {
+                env.storage().persistent().get::<_, Address>(&referrer_key)
+            };
+
+            if let Some(referrer_addr) = active_referrer {
                 let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
                 let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
                 env.storage().persistent().set(&vol_key, &(vol + amount));

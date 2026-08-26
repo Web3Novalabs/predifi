@@ -645,7 +645,7 @@ fn test_remove_token_from_whitelist_non_existent() {
     let token = Address::generate(&env);
 
     assert!(!client.is_token_allowed(&token));
-    let res = client.try_remove_token_from_whitelist(&admin, &token);
+    let _res = client.try_remove_token_from_whitelist(&admin, &token);
     assert!(!client.is_token_allowed(&token));
 }
 
@@ -676,10 +676,10 @@ fn test_pause_already_paused_contract() {
     let (client, _, _, admin) = setup(&env);
 
     client.pause(&admin);
-    assert!(client.is_contract_paused(), "Contract should be paused");
+    assert!(client.get_contract_info().is_paused, "Contract should be paused");
 
-    let res = client.try_pause(&admin);
-    assert!(client.is_contract_paused(), "Contract should remain paused");
+    let _res = client.try_pause(&admin);
+    assert!(client.get_contract_info().is_paused, "Contract should remain paused");
 }
 
 /// Test unpausing an unpaused contract.
@@ -688,10 +688,10 @@ fn test_unpause_already_unpaused_contract() {
     let env = Env::default();
     let (client, _, _, admin) = setup(&env);
 
-    assert!(!client.is_contract_paused(), "Contract initially unpaused");
+    assert!(!client.get_contract_info().is_paused, "Contract initially unpaused");
 
-    let res = client.try_unpause(&admin);
-    assert!(!client.is_contract_paused(), "Contract remains unpaused");
+    let _res = client.try_unpause(&admin);
+    assert!(!client.get_contract_info().is_paused, "Contract remains unpaused");
 }
 
 /// Test non-admin pause and unpause attempts are rejected.
@@ -703,7 +703,7 @@ fn test_pause_unpause_unauthorized() {
 
     let res_pause = client.try_pause(&non_admin);
     assert!(res_pause.is_err(), "Non-admin cannot pause contract");
-    assert!(!client.is_contract_paused());
+    assert!(!client.get_contract_info().is_paused);
 
     let res_unpause = client.try_unpause(&non_admin);
     assert!(res_unpause.is_err(), "Non-admin cannot unpause contract");
