@@ -3359,7 +3359,7 @@ fn test_batch_remove_tokens_from_whitelist_success() {
     let tokens = soroban_sdk::vec![&env, token_a.clone(), token_b.clone(), token_c.clone()];
     client.batch_add_tokens_to_whitelist(&admin, &tokens);
 
-    let removed = client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+    let removed = client.batch_remove_tokens_from_wl(&admin, &tokens);
 
     assert_eq!(removed, 3);
     assert!(!client.is_token_allowed(&token_a));
@@ -3376,7 +3376,7 @@ fn test_batch_remove_tokens_from_whitelist_skips_non_whitelisted() {
     client.add_token_to_whitelist(&admin, &token_a);
 
     let tokens = soroban_sdk::vec![&env, token_a.clone(), token_b.clone()];
-    let removed = client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+    let removed = client.batch_remove_tokens_from_wl(&admin, &tokens);
 
     // Only token_a was actually whitelisted.
     assert_eq!(removed, 1);
@@ -3388,7 +3388,7 @@ fn test_batch_remove_tokens_from_whitelist_skips_non_whitelisted() {
 fn test_batch_remove_tokens_from_whitelist_empty_vector() {
     let (env, client, admin, _treasury) = setup_whitelist_env();
     let tokens: soroban_sdk::Vec<Address> = soroban_sdk::vec![&env];
-    client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+    client.batch_remove_tokens_from_wl(&admin, &tokens);
 }
 
 #[test]
@@ -3399,7 +3399,7 @@ fn test_batch_remove_tokens_from_whitelist_unauthorized() {
     let token = Address::generate(&env);
     let tokens = soroban_sdk::vec![&env, token.clone()];
     client.batch_add_tokens_to_whitelist(&admin, &tokens);
-    client.batch_remove_tokens_from_whitelist(&non_admin, &tokens);
+    client.batch_remove_tokens_from_wl(&non_admin, &tokens);
 }
 
 #[test]

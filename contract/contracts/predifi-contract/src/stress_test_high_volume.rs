@@ -404,7 +404,7 @@ mod high_volume_stress_tests {
     #[test]
     fn test_claim_processing_complexity() {
         let env = Env::new();
-        let (client, _admin, _ac_id, token_client, token_admin_client) = stress_setup(&env);
+        let (client, _admin, ac_id, token_client, token_admin_client) = stress_setup(&env);
 
         let token_id = token_client.address();
         let mut users = std::vec::Vec::with_capacity(200);

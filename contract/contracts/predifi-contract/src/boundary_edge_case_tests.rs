@@ -21,7 +21,7 @@ use crate::{
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
-    token, vec, Address, Env, String,
+    token, vec, Address, Env, String, Symbol,
 };
 
 // ─── Shared dummy access-control stub ────────────────────────────────────────
@@ -154,7 +154,7 @@ impl<'a> TestEnv<'a> {
                 min_stake: 1i128,
                 max_stake: 0i128,
                 max_total_stake: 0i128,
-                min_total_stake: 0i128,
+                min_total_stake: 1i128,
                 initial_liquidity: 0i128,
                 required_resolutions: 1u32,
                 private: false,
@@ -258,7 +258,7 @@ fn test_1331_mark_pool_ready_is_idempotent() {
     ctx.client.close_staking(&pool_id);
     ctx.advance_time(1);
 
-    assert!(ctx.client.mark_pool_ready(&pool_id).is_ok());
+    ctx.client.mark_pool_ready(&pool_id);
     assert!(ctx.client.try_mark_pool_ready(&pool_id).is_ok());
 }
 
@@ -301,7 +301,7 @@ fn test_1331_close_staking_is_idempotent() {
     let pool_id = ctx.create_pool(1_000);
 
     ctx.advance_time(1_000);
-    assert!(ctx.client.close_staking(&pool_id).is_ok());
+    ctx.client.close_staking(&pool_id);
     assert!(ctx.client.try_close_staking(&pool_id).is_ok());
 }
 
@@ -401,13 +401,13 @@ fn test_1328_paused_blocks_batch_and_emergency_operations() {
         .client
         .try_batch_add_tokens_to_whitelist(&ctx.admin, &vec![&env, token_to_add.clone()]);
     assert_eq!(add_result, Err(Ok(PredifiError::ContractPaused)));
-    assert!(!ctx.client.is_token_allowed(token_to_add));
+    assert!(!ctx.client.is_token_allowed(&token_to_add));
 
-    let remove_result = ctx
+    let result = ctx
         .client
-        .try_batch_remove_tokens_from_whitelist(&ctx.admin, &vec![&env, token_to_remove]);
-    assert_eq!(remove_result, Err(Ok(PredifiError::ContractPaused)));
-    assert!(ctx.client.is_token_allowed(ctx.token_address.clone()));
+        .try_batch_remove_tokens_from_wl(&ctx.admin, &vec![&env, token_to_remove]);
+    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+    assert!(ctx.client.is_token_allowed(&ctx.token_address));
 
     let emergency_result = ctx
         .client
@@ -1459,8 +1459,7 @@ fn test_create_pool_duplicate_descriptions_allowed() {
                     String::from_str(&ctx.env, "Yes"),
                 ],
             },
-        )
-        .unwrap();
+        );
 
     // Create second pool with same description
     let pool_id2 = ctx
@@ -1489,8 +1488,7 @@ fn test_create_pool_duplicate_descriptions_allowed() {
                     String::from_str(&ctx.env, "Yes"),
                 ],
             },
-        )
-        .unwrap();
+        );
 
     // Both pools should exist with different IDs
     assert_ne!(pool_id1, pool_id2, "pools must have different IDs");
@@ -1857,7 +1855,7 @@ fn test_create_pool_invalid_category_rejected() {
         &100_000u64,
         &ctx.token_address,
         &2u32,
-        &symbol_short!("INVALID_CATEGORY"), // Not in allowed list
+        &Symbol::new(&ctx.env, "INVALID_CATEGORY"), // Not in allowed list
         &PoolConfig {
             start_time: 0,
             description: String::from_str(&ctx.env, "Invalid category pool"),
@@ -1888,7 +1886,7 @@ fn test_create_pool_failure_does_not_increment_pool_id() {
     let ctx = TestEnv::new(&env);
 
     // Get initial pool_id counter
-    let initial_counter = ctx.client.get_pool_id_counter();
+    let initial_counter = ctx.client.get_contract_info().total_pools;
 
     // Attempt to create a pool with invalid token (will fail)
     let invalid_token = Address::generate(&ctx.env);
@@ -1920,7 +1918,7 @@ fn test_create_pool_failure_does_not_increment_pool_id() {
     assert!(result.is_err(), "pool creation should fail");
 
     // Verify counter did not increment
-    let final_counter = ctx.client.get_pool_id_counter();
+    let final_counter = ctx.client.get_contract_info().total_pools;
     assert_eq!(
         initial_counter, final_counter,
         "pool_id counter must not increment on failed creation"
@@ -1933,12 +1931,12 @@ fn test_create_pool_success_increments_pool_id() {
     let env = Env::default();
     let ctx = TestEnv::new(&env);
 
-    let initial_counter = ctx.client.get_pool_id_counter();
+    let initial_counter = ctx.client.get_contract_info().total_pools;
 
     // Create a valid pool
     let _pool_id = ctx.create_pool(100_000);
 
-    let final_counter = ctx.client.get_pool_id_counter();
+    let final_counter = ctx.client.get_contract_info().total_pools;
     assert_eq!(
         initial_counter + 1, final_counter,
         "pool_id counter must increment by 1 on successful creation"
@@ -3211,7 +3209,7 @@ fn create_capped_pool(ctx: &TestEnv, max_total_stake: i128, end_offset: u64) -> 
             min_stake: 1i128,
             max_stake: 0i128,
             max_total_stake,
-            min_total_stake: 0i128,
+            min_total_stake: 1i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,
             private: false,

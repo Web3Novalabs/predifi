@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+extern crate std;
+
 use crate::test::ROLE_ADMIN;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
