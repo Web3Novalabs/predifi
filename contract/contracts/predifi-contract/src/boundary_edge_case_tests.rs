@@ -405,8 +405,8 @@ fn test_1328_paused_blocks_batch_and_emergency_operations() {
 
     let result = ctx
         .client
-        .try_batch_remove_tokens_from_wl(&ctx.admin, &vec![&env, token_to_remove]);
-    assert_eq!(result, Err(Ok(PredifiError::ContractPaused)));
+        .try_batch_remove_tokens_whitelist(&ctx.admin, &vec![&env, token_to_remove]);
+    assert_eq!(remove_result, Err(Ok(PredifiError::ContractPaused)));
     assert!(ctx.client.is_token_allowed(&ctx.token_address));
 
     let emergency_result = ctx
@@ -1854,7 +1854,7 @@ fn test_create_pool_invalid_category_rejected() {
         &100_000u64,
         &ctx.token_address,
         &2u32,
-        &Symbol::new(&ctx.env, "INVALID_CATEGORY"), // Not in allowed list
+        &soroban_sdk::Symbol::new(&ctx.env, "INVALID_CATEGORY"), // Not in allowed list
         &PoolConfig {
             start_time: 0,
             description: String::from_str(&ctx.env, "Invalid category pool"),

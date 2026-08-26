@@ -581,7 +581,7 @@ impl PredifiContract {
     /// # Errors
     /// * `Unauthorized` - If caller does not hold the Admin role.
     /// * `InvalidData` - If `tokens` is empty or exceeds `MAX_BATCH_SIZE` (100).
-    pub fn batch_remove_tokens_from_wl(
+    pub fn batch_remove_tokens_whitelist(
         env: Env,
         admin: Address,
         tokens: Vec<Address>,
@@ -590,7 +590,7 @@ impl PredifiContract {
 
         Self::require_not_paused(&env)?;
         admin.require_auth();
-        Self::require_admin_role(&env, &admin, "batch_remove_tokens_from_wl")?;
+        Self::require_admin_role(&env, &admin, "batch_remove_tokens_whitelist")?;
 
         let batch_size = tokens.len();
         if batch_size == 0 || batch_size > MAX_BATCH_SIZE {

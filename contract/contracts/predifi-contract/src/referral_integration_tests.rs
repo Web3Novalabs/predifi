@@ -183,6 +183,98 @@ fn test_referral_volume_is_per_pool() {
     assert_eq!(client.get_referred_volume(&referrer, &pool_b), 200);
 }
 
+/// Registration before the first prediction is used when no referrer is
+/// supplied at placement time, and later updates route only new volume.
+#[test]
+fn test_referrer_registration_and_updates_route_new_predictions() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_ac_client, client, token_address, _token, token_admin_client, _treasury, _operator, creator) =
+        crate::test::setup(&env);
+
+    let user = Address::generate(&env);
+    let first_referrer = Address::generate(&env);
+    let second_referrer = Address::generate(&env);
+    token_admin_client.mint(&user, &600);
+
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 5_000);
+
+    // Register before placement; the explicit placement referrer is omitted.
+    client.update_referrer(&user, &pool_id, &Some(first_referrer.clone()));
+    client.place_prediction(&user, &pool_id, &100, &0, &None, &None);
+    assert_eq!(client.get_referred_volume(&first_referrer, &pool_id), 100);
+
+    // Changing the referrer does not rewrite historical volume.
+    client.update_referrer(&user, &pool_id, &Some(second_referrer.clone()));
+    client.place_prediction(&user, &pool_id, &200, &0, &None, &None);
+    assert_eq!(client.get_referred_volume(&first_referrer, &pool_id), 100);
+    assert_eq!(client.get_referred_volume(&second_referrer, &pool_id), 200);
+
+    // Clearing the registration stops referral tracking for subsequent stake.
+    client.update_referrer(&user, &pool_id, &None);
+    client.place_prediction(&user, &pool_id, &300, &0, &None, &None);
+    assert_eq!(client.get_referred_volume(&second_referrer, &pool_id), 200);
+}
+
+/// Referral cuts from referred winners accumulate across independent pools.
+#[test]
+fn test_referral_cuts_and_volume_accumulate_across_pools() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let ac_id = env.register(
+        crate::test::dummy_access_control::DummyAccessControl,
+        (),
+    );
+    let ac_client =
+        crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(crate::PredifiContract, ());
+    let client = crate::PredifiContractClient::new(&env, &contract_id);
+
+    let token_admin_addr = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract(token_admin_addr.clone());
+    let token = token::Client::new(&env, &token_contract);
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+    let treasury = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let creator = Address::generate(&env);
+
+    ac_client.grant_role(&operator, &crate::test::ROLE_OPERATOR);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init(&ac_id, &treasury, &200u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_contract);
+    client.set_referral_cut_bps(&admin, &5000u32);
+
+    let referrer = Address::generate(&env);
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_admin_client.mint(&user_a, &500);
+    token_admin_client.mint(&user_b, &300);
+
+    let pool_a = make_pool(&env, &client, &creator, &token_contract, 5_000);
+    let pool_b = make_pool(&env, &client, &creator, &token_contract, 5_000);
+    client.place_prediction(&user_a, &pool_a, &500, &0, &Some(referrer.clone()), &None);
+    client.place_prediction(&user_b, &pool_b, &300, &0, &Some(referrer.clone()), &None);
+
+    assert_eq!(client.get_referred_volume(&referrer, &pool_a), 500);
+    assert_eq!(client.get_referred_volume(&referrer, &pool_b), 300);
+
+    env.ledger().with_mut(|li| li.timestamp = 5_001);
+    client.resolve_pool(&operator, &pool_a, &0u32);
+    client.resolve_pool(&operator, &pool_b, &0u32);
+
+    // Each sole winner pays 2% protocol fee, half of which goes to the referrer.
+    assert_eq!(client.claim_winnings(&user_a, &pool_a), 490);
+    assert_eq!(client.claim_winnings(&user_b, &pool_b), 294);
+    assert_eq!(token.balance(&referrer), 8);
+}
+
 /// Full referral end-to-end: two users referred by the same referrer each win,
 /// both pay a referral cut, and the referrer accumulates cuts from both payouts.
 ///

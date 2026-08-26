@@ -1,6 +1,10 @@
 #![no_std]
 #![allow(clippy::too_many_arguments)]
 
+#[cfg(test)]
+#[macro_use]
+extern crate std;
+
 mod admin;
 #[cfg(test)]
 mod benchmark_test;
@@ -24,12 +28,12 @@ mod safe_math;
 mod safe_math_examples;
 #[cfg(test)]
 mod access_control_audit_tests;
-// #[cfg(test)]
-// mod storage_test;
-// #[cfg(test)]
-// mod stress_test;
-// #[cfg(test)]
-// mod stress_test_high_volume;
+#[cfg(test)]
+mod storage_test;
+#[cfg(test)]
+mod stress_test;
+#[cfg(test)]
+mod stress_test_high_volume;
 // #[cfg(test)]
 // mod stress_test_max_pools;
 #[cfg(test)]
@@ -324,7 +328,7 @@ pub struct CreatePoolParams {
 /// - `total_stake` must always equal the sum of all individual outcome stakes (INV-1).
 /// - For resolved pools: total winnings ≤ `total_stake` (INV-5)
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pool {
     /// Unix timestamp at which the pool opens for predictions.
     pub start_time: u64,
@@ -2132,5 +2136,4 @@ impl PredifiContract {
 
 #[cfg(test)]
 mod test;
-
 
