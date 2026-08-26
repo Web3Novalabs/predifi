@@ -1,31 +1,31 @@
 #![cfg(test)]
 use crate::*;
 use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdminClient};
 use soroban_sdk::{symbol_short, Address, Env, String, Symbol, Vec};
 use std::time::Instant;
 
 fn stress_setup(env: &Env) -> (PredifiContractClient, Address, TokenClient, TokenAdminClient) {
     env.mock_all_auths();
 
-    let predifi_contract = PredifiContractClient::new(env, &env.register_contract(None, PredifiContract));
+    let ac_id = env.register(crate::test::dummy_access_control::DummyAccessControl, ());
+    let contract_id = env.register(PredifiContract, ());
+    let predifi_contract = PredifiContractClient::new(env, &contract_id);
     let admin = Address::generate(env);
-    let dummy_ac = env.register_contract(None, dummy_access_control::DummyAccessControl);
 
     predifi_contract.init(
-        &admin,
-        &dummy_ac,
+        &ac_id,
+        &Address::generate(env),
         &100u32,
-        &symbol_short!("USDC"),
-        &500u32,
+        &0u64,
         &86400u64,
-        &604800u64,
-        &Vec::new(env),
-        &Vec::new(env),
+        &0u32,
     );
 
-    let token = soroban_sdk::testutils::register_stellar_asset_contract(env, &admin);
-    let token_client = TokenClient::new(env, &token);
-    let token_admin_client = TokenAdminClient::new(env, &token);
+    let token_contract = env.register_stellar_asset_contract_v2(admin.clone());
+    let token_address = token_contract.address();
+    let token_client = TokenClient::new(env, &token_address);
+    let token_admin_client = TokenAdminClient::new(env, &token_address);
 
     (predifi_contract, admin, token_client, token_admin_client)
 }
