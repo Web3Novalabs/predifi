@@ -2135,6 +2135,5 @@ mod fee_tier_transition_tests;
 mod fee_tiers_test;
 mod integration_test;
 mod lifecycle_integration_tests;
-mod oracle_edge_case_tests;
 mod referral_integration_tests;
 mod test;

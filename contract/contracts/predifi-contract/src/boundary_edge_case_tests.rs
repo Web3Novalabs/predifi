@@ -1857,7 +1857,7 @@ fn test_create_pool_invalid_category_rejected() {
         &100_000u64,
         &ctx.token_address,
         &2u32,
-        &symbol_short!("INVALID_CATEGORY"), // Not in allowed list
+        &soroban_sdk::Symbol::new(&ctx.env, "INVALID_CATEGORY"), // Not in allowed list
         &PoolConfig {
             start_time: 0,
             description: String::from_str(&ctx.env, "Invalid category pool"),
