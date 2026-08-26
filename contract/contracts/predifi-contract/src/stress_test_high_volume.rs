@@ -94,11 +94,11 @@ mod high_volume_stress_tests {
     /// Measures: Gas scaling, transaction throughput, payout accuracy
     #[test]
     fn test_1000_concurrent_predictions_binary_pool() {
-        let env = Env::new();
+        let env = Env::default();
         let (client, _admin, ac_id, token_client, token_admin_client) = stress_setup(&env);
 
         // Setup token
-        let token_id = token_client.address();
+        let token_id = token_client.address.clone();
         let mut users = std::vec::Vec::with_capacity(1000);
         for i in 0..1000u32 {
             let user = Address::generate(&env);
@@ -144,7 +144,7 @@ mod high_volume_stress_tests {
             let user = &users[i as usize];
             let gas_before = env.budget().cpu_instruction_cost();
             
-            client.place_prediction(&user, &pool_id, &1_000i128, &0i32, &None, &None);
+            client.place_prediction(&user, &pool_id, &1_000i128, &0u32, &None, &None);
             
             let gas_after = env.budget().cpu_instruction_cost();
             let gas_used = gas_after.saturating_sub(gas_before);
@@ -165,7 +165,7 @@ mod high_volume_stress_tests {
             let user = &users[i as usize];
             let gas_before = env.budget().cpu_instruction_cost();
             
-            client.place_prediction(&user, &pool_id, &1_000i128, &1i32, &None, &None);
+            client.place_prediction(&user, &pool_id, &1_000i128, &1u32, &None, &None);
             
             let gas_after = env.budget().cpu_instruction_cost();
             let gas_used = gas_after.saturating_sub(gas_before);
@@ -193,7 +193,7 @@ mod high_volume_stress_tests {
             li.timestamp = 9001;
         });
 
-        client.resolve_pool(&operator, &pool_id, &0i32);
+        client.resolve_pool(&operator, &pool_id, &0u32);
         println!("[stress] Pool resolved to outcome 0");
 
         // Phase 4: Verify payout accuracy for all 500 winners
@@ -249,10 +249,10 @@ mod high_volume_stress_tests {
     /// Measures: Gas scaling with outcome count, outcome stake updates
     #[test]
     fn test_1000_predictions_16_outcomes() {
-        let env = Env::new();
+        let env = Env::default();
         let (client, _admin, ac_id, token_client, token_admin_client) = stress_setup(&env);
 
-        let token_id = token_client.address();
+        let token_id = token_client.address.clone();
         let mut users = std::vec::Vec::with_capacity(1000);
         for i in 0..1000u32 {
             let user = Address::generate(&env);
@@ -305,7 +305,7 @@ mod high_volume_stress_tests {
                 let user = &users[i];
                 let gas_before = env.budget().cpu_instruction_cost();
                 
-                client.place_prediction(&user, &pool_id, &1_000i128, &outcome, &None, &None);
+                client.place_prediction(&user, &pool_id, &1_000i128, &(outcome as u32), &None, &None);
                 
                 let gas_after = env.budget().cpu_instruction_cost();
                 let gas_used = gas_after.saturating_sub(gas_before);
@@ -403,10 +403,10 @@ mod high_volume_stress_tests {
     /// Measures: Claim latency scaling with winner count
     #[test]
     fn test_claim_processing_complexity() {
-        let env = Env::new();
-        let (client, _admin, _ac_id, token_client, token_admin_client) = stress_setup(&env);
+        let env = Env::default();
+        let (client, _admin, ac_id, token_client, token_admin_client) = stress_setup(&env);
 
-        let token_id = token_client.address();
+        let token_id = token_client.address.clone();
         let mut users = std::vec::Vec::with_capacity(200);
         for i in 0..200u32 {
             let user = Address::generate(&env);
@@ -443,7 +443,7 @@ mod high_volume_stress_tests {
 
         // Place 200 predictions on outcome 0
         for user in users.iter() {
-            client.place_prediction(&user, &pool_id, &1_000i128, &0i32, &None, &None);
+            client.place_prediction(&user, &pool_id, &1_000i128, &0u32, &None, &None);
         }
 
         // Resolve to outcome 0
@@ -455,7 +455,7 @@ mod high_volume_stress_tests {
             li.timestamp = 9001;
         });
 
-        client.resolve_pool(&operator, &pool_id, &0i32);
+        client.resolve_pool(&operator, &pool_id, &0u32);
 
         // Measure claim processing time for increasing winner counts
         let winner_counts = std::vec![10usize, 50, 100, 200];

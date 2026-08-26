@@ -664,8 +664,7 @@ mod tests {
                         String::from_str(&env, "No"),
                     ],
                 },
-            )
-            .unwrap();
+            );
 
         // Verify that participants_count in Pool struct is the source of truth
         let pool = client.get_pool(&pool_id);
@@ -750,8 +749,7 @@ mod tests {
                         String::from_str(&env, "No"),
                     ],
                 },
-            )
-            .unwrap();
+            );
 
         let contract_id = client.address;
         env.as_contract(&contract_id, || {

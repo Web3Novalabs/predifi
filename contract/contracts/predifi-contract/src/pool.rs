@@ -652,7 +652,7 @@ impl PredifiContract {
         // "pool has started" in this contract's model (no separate start_time).
         // We read the pool's participants_count field which is the authoritative participant counter.
         let pool_key = DataKey::Pool(pool_id);
-        let pool: Pool = env.storage().persistent().get(&pool_key).expect("Pool not found");
+        let mut pool: Pool = env.storage().persistent().get(&pool_key).expect("Pool not found");
         if pool.participants_count > 0 {
             return Err(PredifiError::InvalidPoolState);
         }
