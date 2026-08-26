@@ -41,6 +41,12 @@ mod max_pools_stress_tests;
 mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
+#[cfg(test)]
+mod place_prediction_boundary_tests;
+#[cfg(test)]
+mod resolve_pool_boundary_tests;
+#[cfg(test)]
+mod cancel_pool_boundary_tests;
 mod treasury;
 
 use soroban_sdk::{
@@ -2130,11 +2136,11 @@ impl PredifiContract {
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod boundary_tests;
+mod claim_winnings_boundary_tests;
 mod edge_case_tests;
 mod fee_tier_transition_tests;
 mod fee_tiers_test;
 mod integration_test;
 mod lifecycle_integration_tests;
-mod oracle_edge_case_tests;
 mod referral_integration_tests;
 mod test;

@@ -537,6 +537,88 @@ fn test_claim_one_second_before_end_time_is_rejected() {
     ctx.client.claim_winnings(&bettor, &pool_id);
 }
 
+/// Claim succeeds at the exact `claim_window_seconds` deadline
+/// (`resolution_timestamp + claim_window_seconds`), using a short,
+/// admin-configured window (`MIN_CLAIM_WINDOW` = 86_400s / 1 day) so the
+/// boundary can be exercised without simulating the default 30-day window.
+///
+/// Complements `test_claim_succeeds_long_after_resolution`, which only
+/// verifies that claiming still works long after resolution under the
+/// *default* window; this test pins down the precise deadline itself
+/// (`current_time == claim_deadline` must succeed — the check in
+/// `claim_winnings_internal` is `current_time > claim_deadline`, so equality
+/// is inside the allowed window).
+#[test]
+fn test_claim_at_exact_claim_window_deadline_succeeds() {
+    let env = Env::default();
+    let ctx = setup(&env);
+
+    // Shrink the claim window to the protocol minimum (1 day) via admin.
+    ctx.client.set_claim_window(&ctx.admin, &86_400u64);
+
+    let bettor = Address::generate(&env);
+    ctx.token_admin.mint(&bettor, &1_000);
+
+    let end_time = 10_000u64;
+    let pool_id = ctx.client.create_pool(
+        &bettor,
+        &end_time,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &two_outcome_config(&env),
+    );
+
+    ctx.client
+        .place_prediction(&bettor, &pool_id, &1_000, &1, &None, &None);
+
+    resolve_at(&ctx, &env, pool_id, end_time, 1);
+    // resolution_timestamp == end_time (resolution_delay = 0).
+    let claim_deadline = end_time + 86_400;
+
+    env.ledger().with_mut(|li| li.timestamp = claim_deadline);
+    let winnings = ctx.client.claim_winnings(&bettor, &pool_id);
+    assert_eq!(
+        winnings, 1_000,
+        "claim must succeed at the exact claim window deadline"
+    );
+}
+
+/// One second past the claim window deadline, claims must be rejected with
+/// `InvalidTimestamp` (#80) — the mirror boundary case of the test above.
+#[test]
+#[should_panic(expected = "Error(Contract, #80)")]
+fn test_claim_one_second_after_claim_window_deadline_is_rejected() {
+    let env = Env::default();
+    let ctx = setup(&env);
+
+    ctx.client.set_claim_window(&ctx.admin, &86_400u64);
+
+    let bettor = Address::generate(&env);
+    ctx.token_admin.mint(&bettor, &1_000);
+
+    let end_time = 10_000u64;
+    let pool_id = ctx.client.create_pool(
+        &bettor,
+        &end_time,
+        &ctx.token_address,
+        &2u32,
+        &symbol_short!("Sports"),
+        &two_outcome_config(&env),
+    );
+
+    ctx.client
+        .place_prediction(&bettor, &pool_id, &1_000, &1, &None, &None);
+
+    resolve_at(&ctx, &env, pool_id, end_time, 1);
+    let claim_deadline = end_time + 86_400;
+
+    // One second past the deadline — must be rejected.
+    env.ledger()
+        .with_mut(|li| li.timestamp = claim_deadline + 1);
+    ctx.client.claim_winnings(&bettor, &pool_id);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 4. DOUBLE-CLAIM PREVENTION
 // ═══════════════════════════════════════════════════════════════════════════
