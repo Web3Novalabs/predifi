@@ -41,6 +41,8 @@ mod max_pools_stress_tests;
 mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
+#[cfg(test)]
+mod issues_1438_1441_1444_1445_boundary_tests;
 mod treasury;
 
 use soroban_sdk::{
