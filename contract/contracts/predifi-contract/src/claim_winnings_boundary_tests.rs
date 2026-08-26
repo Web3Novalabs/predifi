@@ -115,8 +115,8 @@ fn setup(env: &Env) -> Ctx<'_> {
 
     let contract_id = env.register(PredifiContract, ());
     let client = PredifiContractClient::new(env, &contract_id);
-    // fee_bps = 0, resolution_delay = 0, min_pool_duration = 3600, max_pred_per_user = 0
-    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+    // fee_bps = 0, resolution_delay = 0, min_pool_duration = 0, max_pred_per_user = 0
+    client.init(&ac_id, &treasury, &0u32, &0u64, &0u64, &0u32);
 
     let token_deployer = Address::generate(env);
     let token_contract = env.register_stellar_asset_contract_v2(token_deployer.clone());
@@ -146,7 +146,7 @@ fn two_outcome_config(env: &Env) -> PoolConfig {
         metadata_url: String::from_str(env, "ipfs://boundary"),
         min_stake: 1i128,
         max_stake: 0i128,
-        min_total_stake: 0i128,
+        min_total_stake: 1i128,
         max_total_stake: 0i128,
         initial_liquidity: 0i128,
         required_resolutions: 1u32,
@@ -977,7 +977,7 @@ fn test_all_same_outcome_with_fee_payout_reduced_proportionally() {
             metadata_url: String::from_str(&env, "ipfs://fee-test"),
             min_stake: 1i128,
             max_stake: 0i128,
-            min_total_stake: 0i128,
+            min_total_stake: 1i128,
             max_total_stake: 0i128,
             initial_liquidity: 0i128,
             required_resolutions: 1u32,

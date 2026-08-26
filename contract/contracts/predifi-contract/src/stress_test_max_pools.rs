@@ -5,7 +5,14 @@ use soroban_sdk::token::{Client as TokenClient, StellarAssetClient as TokenAdmin
 use soroban_sdk::{symbol_short, Address, Env, String, Symbol, Vec};
 use std::time::Instant;
 
-fn stress_setup(env: &Env) -> (PredifiContractClient, Address, TokenClient, TokenAdminClient) {
+fn stress_setup(
+    env: &Env,
+) -> (
+    PredifiContractClient<'_>,
+    Address,
+    token::Client<'_>,
+    token::StellarAssetClient<'_>,
+) {
     env.mock_all_auths();
 
     let ac_id = env.register(crate::test::dummy_access_control::DummyAccessControl, ());
@@ -150,7 +157,7 @@ fn test_max_pools_active_index_integrity() {
         let offset = page * page_size;
         let page_start = Instant::now();
 
-        let page_pools = client.get_active_pools(&offset, &page_size).unwrap();
+        let page_pools = client.get_active_pools(&offset, &page_size);
 
         let page_elapsed = page_start.elapsed();
         enumeration_times.push(page_elapsed.as_micros() as u64);
@@ -200,7 +207,7 @@ fn test_max_pools_active_index_integrity() {
     println!("[stress] Testing category index across many pools...");
     let category = symbol_short!("TEST");
 
-    let category_pools = client.get_pools_by_category(&category, &0u32, &1000u32).unwrap();
+    let category_pools = client.get_pools_by_category(&category, &0u32, &1000u32);
     assert_eq!(category_pools.len() as u32, num_pools);
     println!(
         "[stress] ✅ Category index intact: {} pools in category",
@@ -284,7 +291,7 @@ fn test_max_pools_active_index_integrity() {
     );
 
     // Verify no gaps in active pool index
-    let final_pools = client.get_active_pools(&0u32, &final_active_count).unwrap();
+    let final_pools = client.get_active_pools(&0u32, &final_active_count);
     assert_eq!(final_pools.len() as u32, final_active_count);
     println!("[stress] ✅ No gaps in active pool index after removals");
 
@@ -347,7 +354,7 @@ fn test_pool_enumeration_performance_scaling() {
 
         // Measure enumeration time
         let start = Instant::now();
-        let pools = client.get_active_pools(&0u32, &(test_size + 10)).unwrap();
+        let pools = client.get_active_pools(&0u32, &(test_size + 10));
         let elapsed = start.elapsed();
 
         timings.push((test_size, elapsed.as_micros() as u64));
@@ -503,7 +510,7 @@ fn test_active_index_consistency_under_load() {
 
     // Enumerate all pools and verify they match created pools
     println!("[stress] Verifying enumeration consistency...");
-    let all_pools = client.get_active_pools(&0u32, &(num_pools + 100)).unwrap();
+    let all_pools = client.get_active_pools(&0u32, &(num_pools + 100));
 
     let mut found_all = true;
     for created_pool_id in pool_ids.iter() {
@@ -616,7 +623,7 @@ fn test_simultaneous_max_active_pools_index_integrity() {
     );
 
     // 2. Every created pool must appear in the paginated enumeration.
-    let page = client.get_active_pools(&0u32, &num_pools).unwrap();
+    let page = client.get_active_pools(&0u32, &num_pools);
     for &pool_id in created_ids.iter() {
         assert!(
             page.iter().any(|id| id == pool_id),
