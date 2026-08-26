@@ -1,117 +1,301 @@
-# PrediFi - Decentralized outcome prediction protocol (on-chain prediction platform )
+# PrediFi – Decentralized Outcome Prediction Protocol (Stellar / Soroban)
 
-Telegram Community: [here](https://t.me/predifi_onchain_build/1)
-## Project Overview:
-PrediFi is a decentralized prediction protocol built on StarkNet. In a trustless, transparent, and secure environment, it allows users to predict future outcomes across various fields, including sports, finance, and global events. By utilizing starknet technology, PrediFi ensures that all predictions and their results are verifiable onchain and immutable, thus eliminating the need for intermediaries.
+PrediFi is a decentralized prediction protocol built on the **Stellar network** using **Soroban smart contracts**. It enables users to create and participate in prediction markets in a **trustless, transparent, and verifiable** environment.
 
-PrediFi is a groundbreaking decentralized platform designed to empower individuals, influencers, and communities to enter the dynamic world of prediction markets. Leveraging the transformative power of blockchain technology, PrediFi allows anyone to establish custom prediction markets focused on any event imaginable. This innovative approach provides a lively, engaging, and rewarding way to foster interaction within your community while monetizing the buzz and excitement surrounding trending topics.
+All market logic, outcomes, and settlements are executed **on-chain**, ensuring immutability and eliminating reliance on centralized intermediaries.
 
-In our fast-paced digital age, conversations about predictions are captivating; they span a wide range of subjects, from sports matchups and political elections to the latest pop culture phenomena. Imagine if you could transform those engaging discussions into tangible rewards! With PrediFi, you have the opportunity to create markets where individuals can wager on the outcomes of these events, turning their insights and forecasts into real-world returns.
+Telegram Community: https://t.me/predifi_onchain_build/1
 
-PrediFi makes it easy to create prediction pools for a wide range of cultural and local events. You can set up pools for major sports championships and awards shows, but that's just the beginning. It's also perfect for engaging with the latest viral trends, community events, environmental happenings, and anything else that sparks buzz in your area. Whether it’s predicting the outcome of a local music festival or the next viral sensation.
+---
 
-## Development:
+## 🧠 Architecture Overview
 
-Requirements:
-- Rust
-- Cairo
-- Starknet foundry
-- Node
-- Pnpm
+PrediFi follows a **modular smart contract architecture** designed for composability, security, and maintainability, aligned with **Soroban and Rust best practices**.
 
-## Installation Guide:
+### Core Design Principles
 
-Step 1:
+* **Separation of Concerns** – Each contract has a single responsibility.
+* **Reusability** – Shared logic is abstracted into reusable crates.
+* **Deterministic Execution** – All state transitions are predictable and verifiable on-chain.
+* **Minimal Storage Footprint** – Efficient storage usage to reduce on-chain costs.
+* **Explicit Error Handling** – Strongly typed errors across all contracts.
 
-1. Fork the repo
+---
 
-2. Clone the forked repo to your local machine 
-  ``` bash
-  git clone https://github.com/your-user-name/auto-swap
-  ```
+### 🏗️ Contract Architecture
 
-3. Setup contract:
+#### 1. PrediFi Core Contract (`predifi-contract`)
 
-  ```
-  cd contracts
-  ```
-  
-  // Install asdf scarb and starknet foundry:
-  
-  ``` bash
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.starkup.dev | sh
-  ```
-  
-  // Method 2:
-  
-  Install asdf and install scarb, and starknet foundry: https://foundry-rs.github.io/starknet-foundry/getting-started/installation.html
+Main protocol contract.
 
-4. Add development tools
-  ``` bash
-  asdf set --home scarb 2.9.2
-  
-  asdf set --home starknet-foundry 0.36.0
-  
-  ```
-   
-5. Ensure installed properly
+**Responsibilities:**
 
- ``` bash
- snforge --version
+* Prediction pool creation and configuration
+* User participation (staking on outcomes)
+* Pool lifecycle management (open → closed → resolved)
+* Outcome resolution (manual or oracle-based)
+* Reward distribution
 
- scarb --version
- ```
+---
 
-6. Build
-``` bash
-scarb build
+#### 2. Access Control Contract (`access-control`)
+
+Reusable **role-based access control (RBAC)** module.
+
+**Responsibilities:**
+
+* Admin and role management
+* Permission enforcement
+* Decoupled authorization logic
+
+---
+
+#### 3. Shared Errors Crate (`predifi-errors`)
+
+Common error handling across contracts.
+
+**Responsibilities:**
+
+* Standardized error enums
+* Consistent failure handling
+* Improved debugging and testing
+
+---
+
+### 🔗 Interaction Flow
+
+1. **Pool Creation**
+
+   * Authorized user creates a pool
+   * Optional: attach a `PriceCondition`
+
+2. **Participation**
+
+   * Users stake tokens on outcomes
+
+3. **Pool Closure**
+
+   * Pool stops accepting entries after end time
+
+4. **Resolution**
+
+   * Manual OR oracle-based resolution
+
+5. **Payout**
+
+   * Winners claim rewards
+
+---
+
+### 📡 Oracle Integration (PriceFeed)
+
+PrediFi supports automated price-based resolution using external oracles (e.g., Pyth).
+
+**Flow:**
+
+1. Fetch latest price
+2. Validate freshness
+3. Evaluate condition
+4. Resolve outcome
+
+---
+
+## 📁 Project Structure
+
+The repository is organized into two main workspaces:
+
+* `contract/`: Soroban smart contracts (Rust)
+* `frontend/`: Next.js app (TypeScript)
+
+### Smart Contracts (`contract/`)
+
+* `contracts/predifi-contract/`: Core prediction logic
+* `contracts/access-control/`: RBAC module
+* `contracts/predifi-errors/`: Shared error definitions
+
+### Frontend (`frontend/`)
+
+Built with **Next.js**, **Tailwind CSS**, and **TypeScript**
+
+---
+
+## 🚀 Development
+
+### Prerequisites
+
+* Rust → https://www.rust-lang.org/tools/install
+* Soroban CLI → https://soroban.stellar.org/docs/getting-started/setup
+* Node.js → https://nodejs.org/
+* pnpm → https://pnpm.io/installation
+
+---
+
+### Installation & Setup
+
+#### 1. Clone Repository
+
+```bash
+git clone https://github.com/Web3Novalabs/predifi.git
+cd predifi
 ```
-7. Test
-``` bash
-snforge test
+
+---
+
+#### 2. Smart Contracts
+
+```bash
+cd contract
 ```
 
-# Contributing
+Build:
 
-We welcome contributions! Please follow these steps:
+```bash
+soroban contract build
+```
 
-## Getting Started
+Run tests:
 
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/your-feature-name`)
-3. Commit your changes with meaningful messages (`git commit -m 'feat: add new capability'`)
-4. Test your changes thoroughly before submission
+```bash
+cargo test
+```
 
-## Testing Requirements
+Install WASM target:
 
-Before submitting your PR:
-1. Run `bash test_local.sh` to ensure compatibility with our workflow actions
-2. Set up your environment variable: `export RPC_URL=https://api.cartridge.gg/x/starknet/mainnet`
-3. All tests must pass locally before proceeding
+```bash
+rustup target add wasm32-unknown-unknown
+```
 
-## Pull Request Process
+Match CI checks:
 
-1. Ensure your branch is up to date with main (`git pull origin main`)
-2. Include comprehensive test cases covering your changes
-3. Update documentation to reflect your modifications
-4. Provide a detailed description in your PR explaining:
-   - The problem solved
-   - Implementation approach
-   - Any potential impacts
-5. Request review from project maintainers
+```bash
+cargo fmt --all -- --check
+cargo clippy --workspace --target wasm32-unknown-unknown -- -D warnings
+cargo build --workspace --target wasm32-unknown-unknown --release
+cargo test --workspace
+bash scripts/wasm_size_check.sh
+```
 
-## Code Standards
+---
 
-- Follow the existing code style and conventions
-- Write clean, readable, and maintainable code
-- Include comments for complex logic
-- Keep commits focused and atomic
+#### 3. Frontend
 
-## Support
+```bash
+cd ../frontend
+pnpm install
+pnpm dev
+```
 
-Need help with your contribution? You can:
-- Open an issue in the GitHub repository
-- Join our Telegram channel for community assistance
-- Check existing documentation and discussions
+Open: http://localhost:3000
 
-We aim to review all contributions promptly and appreciate your efforts to improve the project!
+---
+
+## ⚙️ Backend CI
+
+The backend workflow lives at:
+
+```
+.github/workflows/backend.yml
+```
+
+Runs:
+
+* Formatting checks
+* Clippy
+* WASM build
+* Unit tests
+* Contract size checks
+
+---
+
+## 📊 PriceFeed Integration
+
+PrediFi supports automated, price-based resolution via external oracles.
+
+### Price-based Pool Creation
+
+1. Initialize oracle (admin only)
+2. Define `PriceCondition`
+3. Attach to pool
+
+---
+
+### PriceCondition Parameters
+
+| Parameter       | Type   | Description                |
+| --------------- | ------ | -------------------------- |
+| `feed_pair`     | Symbol | Asset pair (e.g., BTC/USD) |
+| `target_price`  | i128   | Target price               |
+| `operator`      | u32    | 0=Equal, 1=Greater, 2=Less |
+| `tolerance_bps` | u32    | Noise buffer               |
+
+---
+
+### Automated Resolution
+
+`resolve_pool_from_price` will:
+
+1. Fetch oracle price
+2. Validate data
+3. Evaluate condition
+4. Resolve outcome
+
+---
+
+## ❗ Backend Error Handling
+
+Unified error system via `AppError`.
+
+| Variant            | HTTP | Description       |
+| ------------------ | ---- | ----------------- |
+| Validation         | 400  | Invalid input     |
+| Unauthorized       | 401  | Auth failure      |
+| NotFound           | 404  | Missing resource  |
+| Database           | 500  | Query failure     |
+| DatabaseConnection | 500  | Connection issues |
+
+Example:
+
+```rust
+use predifi_backend::AppError;
+
+fn get_pool(id: u64) -> Result<Pool, AppError> {
+    db.find(id).ok_or_else(|| AppError::NotFound(format!("pool {id}")))
+}
+```
+
+Run backend tests:
+
+```bash
+cd backend
+cargo test
+```
+
+---
+
+## 🧪 Testing
+
+* Unit tests across contracts
+* Deterministic execution via Soroban SDK
+* Edge case coverage
+
+Run:
+
+```bash
+cargo test --workspace
+```
+
+---
+
+## 🤝 Contributing
+
+1. Fork repo
+2. Create branch (`feature/your-feature`)
+3. Commit clean code
+4. Run tests
+5. Open PR
+
+---
+
+## 📄 License
+
+(MIT)[LICENSE]

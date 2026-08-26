@@ -1,0 +1,13 @@
+fix(security): enforce strict Active state check in cancel_pool
+
+Prevents operators from canceling resolved pools, which would allow
+users to claim refunds instead of winnings. Simplifies validation
+logic and ensures correct error codes are returned.
+
+- Remove redundant Resolved state check with wrong error code
+- Consolidate to single is_pool_active() validation
+- Return InvalidPoolState (#24) consistently for all invalid states
+- Add comprehensive test case for resolved pool cancellation attempt
+- Update existing tests to expect correct error code
+
+Fixes state transition invariant (INV-2) enforcement.

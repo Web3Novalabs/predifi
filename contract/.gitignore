@@ -1,2 +1,10 @@
+# Rust's output directory
 target
-.snfoundry_cache/
+
+# Local settings
+.soroban
+.stellar
+
+# Test snapshots
+test_snapshots
+    

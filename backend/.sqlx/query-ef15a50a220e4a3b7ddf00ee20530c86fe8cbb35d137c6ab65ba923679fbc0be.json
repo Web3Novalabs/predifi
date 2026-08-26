@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO pools (pool_id, name, category, total_stake, end_time, state, creator, token, created_at)\n        VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW())\n        ON CONFLICT (pool_id) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "Text",
+        "Text",
+        "Float8",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ef15a50a220e4a3b7ddf00ee20530c86fe8cbb35d137c6ab65ba923679fbc0be"
+}

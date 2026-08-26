@@ -1,0 +1,917 @@
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{symbol, testutils::Address as TestAddress, testutils::BytesN as TestBytesN};
+    use crate::test_utils::{create_test_contract, create_test_pool, MockAccessControl};
+
+    #[test]
+    fn test_oracle_initialization() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let pyth_contract = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Test oracle initialization
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            pyth_contract.clone(),
+            300, // 5 minutes max price age
+            100, // 1% min confidence ratio
+        )
+        .unwrap();
+
+        // Verify oracle config
+        let config = PredifiContract::get_oracle_config(env.clone()).unwrap();
+        assert_eq!(config.pyth_contract, pyth_contract);
+        assert_eq!(config.max_price_age, 300);
+        assert_eq!(config.min_confidence_ratio, 100);
+    }
+
+    #[test]
+    fn test_init_oracle_rejects_zero_max_price_age() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        let result = PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            0, // zero max_price_age — every feed would be immediately stale
+            100,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::InvalidData));
+    }
+
+    #[test]
+    fn test_init_oracle_rejects_confidence_ratio_above_10000() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        let result = PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            10_001, // above 100% in bps — confidence check can never pass
+        );
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::InvalidFeeBps));
+    }
+
+    #[test]
+    fn test_price_feed_update_and_retrieval() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle
+        PredifiContract::init_oracle(env.clone(), admin.clone(), TestAddress::generate(&env), 300, 100).unwrap();
+
+        // Set up oracle role
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Update price feed
+        let feed_pair = symbol!("ETH/USD");
+        let price = 3000_000000_i128; // $3000 with 6 decimals
+        let confidence = 10_000_i128; // ±$0.01
+        let timestamp = env.ledger().timestamp();
+        let expires_at = timestamp + 60;
+
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            price,
+            confidence,
+            timestamp,
+            expires_at,
+        )
+        .unwrap();
+
+        // Retrieve price feed
+        let feed = PredifiContract::get_price_feed(env.clone(), feed_pair.clone()).unwrap();
+        assert_eq!(feed.pair, feed_pair);
+        assert_eq!(feed.price, price);
+        assert_eq!(feed.confidence, confidence);
+        assert_eq!(feed.timestamp, timestamp);
+        assert_eq!(feed.expires_at, expires_at);
+    }
+
+    #[test]
+    fn test_price_condition_setting_and_evaluation() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle
+        PredifiContract::init_oracle(env.clone(), admin.clone(), TestAddress::generate(&env), 300, 100).unwrap();
+
+        // Set up operator role
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator role
+
+        // Create a test pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // Set price condition: ETH > $3000
+        let feed_pair = symbol!("ETH/USD");
+        let target_price = 3000_000000_i128;
+        let operator_type = 1; // Greater than
+        let tolerance_bps = 100; // 1%
+
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            feed_pair.clone(),
+            target_price,
+            operator_type,
+            tolerance_bps,
+        )
+        .unwrap();
+
+        // Verify price condition
+        let condition = PredifiContract::get_price_condition(env.clone(), pool_id).unwrap();
+        assert_eq!(condition.feed_pair, feed_pair);
+        assert_eq!(condition.target_price, target_price);
+        assert_eq!(condition.operator, operator_type);
+        assert_eq!(condition.tolerance_bps, tolerance_bps);
+    }
+
+    #[test]
+    fn test_price_based_pool_resolution() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle
+        PredifiContract::init_oracle(env.clone(), admin.clone(), TestAddress::generate(&env), 300, 100).unwrap();
+
+        // Set up roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator role
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Create a test pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // Set price condition: ETH > $3000
+        let feed_pair = symbol!("ETH/USD");
+        let target_price = 3000_000000_i128;
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            feed_pair.clone(),
+            target_price,
+            1, // Greater than
+            100, // 1% tolerance
+        )
+        .unwrap();
+
+        // Update price feed with ETH at $3100 (condition should be met)
+        let current_time = env.ledger().timestamp();
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3100_000000_i128, // $3100
+            10_000_i128,
+            current_time,
+            current_time + 60,
+        )
+        .unwrap();
+
+        // Fast forward time to meet resolution delay
+        env.ledger().set_timestamp(current_time + 3600); // 1 hour later
+
+        // Resolve pool from price
+        PredifiContract::resolve_pool_from_price(env.clone(), oracle.clone(), pool_id).unwrap();
+
+        // Verify pool is resolved with outcome 1 (condition met)
+        let pool = PredifiContract::get_pool(env.clone(), pool_id).unwrap();
+        assert_eq!(pool.state, MarketState::Resolved);
+        assert_eq!(pool.outcome, 1);
+    }
+
+    #[test]
+    fn test_batch_price_feed_updates() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle
+        PredifiContract::init_oracle(env.clone(), admin.clone(), TestAddress::generate(&env), 300, 100).unwrap();
+
+        // Set up oracle role
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Create batch updates
+        let mut updates = Vec::new(&env);
+        let current_time = env.ledger().timestamp();
+
+        updates.push_back((
+            symbol!("ETH/USD"),
+            3000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 60,
+        ));
+        updates.push_back((
+            symbol!("BTC/USD"),
+            60000_000000_i128,
+            100_000_i128,
+            current_time,
+            current_time + 60,
+        ));
+
+        // Batch update
+        PredifiContract::batch_update_price_feeds(env.clone(), oracle.clone(), updates).unwrap();
+
+        // Verify both feeds are updated
+        let eth_feed = PredifiContract::get_price_feed(env.clone(), symbol!("ETH/USD")).unwrap();
+        assert_eq!(eth_feed.price, 3000_000000_i128);
+
+        let btc_feed = PredifiContract::get_price_feed(env.clone(), symbol!("BTC/USD")).unwrap();
+        assert_eq!(btc_feed.price, 60000_000000_i128);
+    }
+
+    #[test]
+    fn test_price_validation() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle with strict validation
+        PredifiContract::init_oracle(env.clone(), admin.clone(), TestAddress::generate(&env), 60, 50).unwrap();
+
+        // Set up oracle role
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        let current_time = env.ledger().timestamp();
+
+        // Test 1: Expired price data should be invalid
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            symbol!("ETH/USD"),
+            3000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 30, // Expires in 30 seconds
+        )
+        .unwrap();
+
+        // Fast forward past expiration
+        env.ledger().set_timestamp(current_time + 120); // 2 minutes later
+
+        // Try to resolve with expired data - should fail
+        let pool_id = create_test_pool(&env, &admin);
+        PredifiContract::set_price_condition(
+            env.clone(),
+            admin.clone(),
+            pool_id,
+            symbol!("ETH/USD"),
+            3000_000000_i128,
+            1,
+            100,
+        )
+        .unwrap();
+
+        let result = PredifiContract::resolve_pool_from_price(env.clone(), oracle.clone(), pool_id);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::PriceDataInvalid));
+    }
+
+    #[test]
+    fn test_authorization_checks() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let unauthorized_user = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle
+        PredifiContract::init_oracle(env.clone(), admin.clone(), TestAddress::generate(&env), 300, 100).unwrap();
+
+        // Test unauthorized oracle update
+        let result = PredifiContract::update_price_feed(
+            env.clone(),
+            unauthorized_user.clone(),
+            symbol!("ETH/USD"),
+            3000_000000_i128,
+            10_000_i128,
+            env.ledger().timestamp(),
+            env.ledger().timestamp() + 60,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::Unauthorized));
+
+        // Test unauthorized oracle initialization
+        let result = PredifiContract::init_oracle(
+            env.clone(),
+            unauthorized_user.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        );
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::Unauthorized));
+    }
+
+    #[test]
+    fn test_price_condition_operators() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle
+        PredifiContract::init_oracle(env.clone(), admin.clone(), TestAddress::generate(&env), 300, 100).unwrap();
+
+        // Set up roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&admin, 1); // Operator role
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        let current_time = env.ledger().timestamp();
+        let feed_pair = symbol!("ETH/USD");
+        let target_price = 3000_000000_i128;
+
+        // Test equal operator (0) - should resolve to outcome 1 when price equals target
+        let pool_id1 = create_test_pool(&env, &admin);
+        PredifiContract::set_price_condition(
+            env.clone(),
+            admin.clone(),
+            pool_id1,
+            feed_pair.clone(),
+            target_price,
+            0, // Equal
+            100, // 1% tolerance
+        )
+        .unwrap();
+
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3000_000000_i128, // Exactly equal
+            10_000_i128,
+            current_time,
+            current_time + 60,
+        )
+        .unwrap();
+
+        env.ledger().set_timestamp(current_time + 3600);
+        PredifiContract::resolve_pool_from_price(env.clone(), oracle.clone(), pool_id1).unwrap();
+        let pool1 = PredifiContract::get_pool(env.clone(), pool_id1).unwrap();
+        assert_eq!(pool1.outcome, 1); // Condition met
+
+        // Test less than operator (2) - should resolve to outcome 1 when price is less
+        let pool_id2 = create_test_pool(&env, &admin);
+        PredifiContract::set_price_condition(
+            env.clone(),
+            admin.clone(),
+            pool_id2,
+            feed_pair.clone(),
+            target_price,
+            2, // Less than
+            100,
+        )
+        .unwrap();
+
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            2900_000000_i128, // Less than target
+            10_000_i128,
+            current_time,
+            current_time + 60,
+        )
+        .unwrap();
+
+        PredifiContract::resolve_pool_from_price(env.clone(), oracle.clone(), pool_id2).unwrap();
+        let pool2 = PredifiContract::get_pool(env.clone(), pool_id2).unwrap();
+        assert_eq!(pool2.outcome, 1); // Condition met
+    }
+
+    #[test]
+    fn test_error_conditions() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // Test getting oracle config before initialization
+        let config = PredifiContract::get_oracle_config(env.clone());
+        assert!(config.is_none());
+
+        // Test getting price feed for non-existent pair
+        let feed = PredifiContract::get_price_feed(env.clone(), symbol!("NONEXISTENT"));
+        assert!(feed.is_none());
+
+        // Test getting price condition for non-existent pool
+        let condition = PredifiContract::get_price_condition(env.clone(), 999);
+        assert!(condition.is_none());
+
+        // Initialize oracle
+        PredifiContract::init_oracle(env.clone(), admin.clone(), TestAddress::generate(&env), 300, 100).unwrap();
+
+        // Test resolving pool without price condition
+        let pool_id = create_test_pool(&env, &admin);
+        let oracle = TestAddress::generate(&env);
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3);
+
+        let result = PredifiContract::resolve_pool_from_price(env.clone(), oracle.clone(), pool_id);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::PriceConditionNotSet));
+    }
+
+    #[test]
+    fn test_automated_price_resolution_integration() {
+        let env = Env::default();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let contract_id = create_test_contract(&env, &admin);
+
+        // 1. Initialize Oracle
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300, // 5 minutes max age
+            100, // 1% confidence ratio
+        )
+        .unwrap();
+
+        // 2. Grant roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator
+        access_control.grant_role(&oracle, 3); // Oracle
+
+        // 3. Create a pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // 4. Set Price Condition: BTC/USD > $60,000
+        let btc_feed = symbol!("BTC/USD");
+        let target_price = 60_000_000000_i128;
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            btc_feed.clone(),
+            target_price,
+            1,   // Greater than
+            100, // 1% tolerance
+        )
+        .unwrap();
+
+        // 5. Update Price Feed: BTC at $61,000
+        let current_time = env.ledger().timestamp();
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            btc_feed.clone(),
+            61_000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 60,
+        )
+        .unwrap();
+
+        // 6. Fast forward to resolution phase
+        env.ledger().set_timestamp(current_time + 3600);
+
+        // 7. Resolve the pool automatically from price
+        PredifiContract::resolve_pool_from_price(env.clone(), oracle.clone(), pool_id).unwrap();
+
+        // 8. Verify the result
+        let pool = PredifiContract::get_pool(env.clone(), pool_id).unwrap();
+        assert_eq!(pool.state, MarketState::Resolved);
+        assert_eq!(pool.state, MarketState::Resolved);
+        assert_eq!(pool.outcome, 1); // Condition Met
+    }
+
+    // ── cleanup_expired_feeds tests ──────────────────────────────────────────
+
+    /// Calling cleanup on an empty registry returns 0 and is a no-op.
+    #[test]
+    fn test_cleanup_with_no_feeds_returns_zero() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        let removed = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(removed, 0);
+    }
+
+    /// An expired feed is deleted from storage and the count reflects it.
+    #[test]
+    fn test_cleanup_removes_expired_feed() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        )
+        .unwrap();
+
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        let current_time = env.ledger().timestamp();
+        let feed_pair = symbol!("ETH/USD");
+
+        // Push a feed that expires in 30 seconds
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 30,
+        )
+        .unwrap();
+
+        // Confirm the feed is present before cleanup
+        assert!(PredifiContract::get_price_feed(env.clone(), feed_pair.clone()).is_some());
+
+        // Fast-forward past expiration
+        env.ledger().set_timestamp(current_time + 60);
+
+        let removed = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(removed, 1);
+
+        // Feed must be gone from storage
+        assert!(PredifiContract::get_price_feed(env.clone(), feed_pair).is_none());
+    }
+
+    /// A non-expired feed survives cleanup.
+    #[test]
+    fn test_cleanup_preserves_active_feed() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        )
+        .unwrap();
+
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3);
+
+        let current_time = env.ledger().timestamp();
+        let feed_pair = symbol!("BTC/USD");
+
+        // Feed that expires far in the future
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            60_000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600,
+        )
+        .unwrap();
+
+        // Advance time, but feed is still valid
+        env.ledger().set_timestamp(current_time + 30);
+
+        let removed = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(removed, 0);
+
+        // Feed must still be retrievable
+        let feed = PredifiContract::get_price_feed(env.clone(), feed_pair.clone()).unwrap();
+        assert_eq!(feed.price, 60_000_000000_i128);
+    }
+
+    /// With multiple feeds, only the expired ones are removed.
+    #[test]
+    fn test_cleanup_mixed_expired_and_active_feeds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        )
+        .unwrap();
+
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3);
+
+        let current_time = env.ledger().timestamp();
+
+        // ETH feed — expires in 30 s (short-lived)
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            symbol!("ETH/USD"),
+            3000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 30,
+        )
+        .unwrap();
+
+        // BTC feed — expires in 1 h (long-lived)
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            symbol!("BTC/USD"),
+            60_000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600,
+        )
+        .unwrap();
+
+        // Fast-forward past the ETH expiry but not the BTC expiry
+        env.ledger().set_timestamp(current_time + 60);
+
+        let removed = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(removed, 1, "only the ETH/USD feed should be removed");
+
+        assert!(
+            PredifiContract::get_price_feed(env.clone(), symbol!("ETH/USD")).is_none(),
+            "expired ETH feed should be gone"
+        );
+        assert!(
+            PredifiContract::get_price_feed(env.clone(), symbol!("BTC/USD")).is_some(),
+            "active BTC feed should still be present"
+        );
+    }
+
+    /// Cleanup is idempotent — calling it twice when nothing new has expired
+    /// returns 0 on the second call and leaves state consistent.
+    #[test]
+    fn test_cleanup_is_idempotent() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            300,
+            100,
+        )
+        .unwrap();
+
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&oracle, 3);
+
+        let current_time = env.ledger().timestamp();
+
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            symbol!("ETH/USD"),
+            3000_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 30,
+        )
+        .unwrap();
+
+        // Advance past expiry and run cleanup once
+        env.ledger().set_timestamp(current_time + 60);
+        let first = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(first, 1);
+
+        // Run again — nothing left to remove
+        let second = PredifiContract::cleanup_expired_feeds(env.clone());
+        assert_eq!(second, 0);
+    }
+
+    /// Verify that price age is validated against oracle config's max_price_age
+    /// during price-based pool resolution.
+    #[test]
+    fn test_price_age_limit_enforcement() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle with max_price_age = 60 seconds
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            60, // 60 seconds max price age
+            100,
+        )
+        .unwrap();
+
+        // Set up roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator role
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Create a test pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // Set price condition
+        let feed_pair = symbol!("ETH/USD");
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            feed_pair.clone(),
+            3000_000000_i128,
+            1, // Greater than
+            100,
+        )
+        .unwrap();
+
+        let current_time = env.ledger().timestamp();
+
+        // Update price feed with timestamp
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3100_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600, // expires far in the future
+        )
+        .unwrap();
+
+        // Fast forward past max_price_age but before expires_at
+        env.ledger().set_timestamp(current_time + 120); // 120 seconds later (> 60s max_age)
+
+        // Try to resolve - should fail due to price age exceeding max_price_age
+        let result = PredifiContract::resolve_pool_from_price(env.clone(), pool_id);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::PriceDataInvalid));
+    }
+
+    /// Verify that fresh price data within max_price_age is accepted.
+    #[test]
+    fn test_fresh_price_within_max_age_accepted() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        // Initialize oracle with max_price_age = 60 seconds
+        PredifiContract::init_oracle(
+            env.clone(),
+            admin.clone(),
+            TestAddress::generate(&env),
+            60, // 60 seconds max price age
+            100,
+        )
+        .unwrap();
+
+        // Set up roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator role
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Create a test pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // Set price condition
+        let feed_pair = symbol!("ETH/USD");
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            feed_pair.clone(),
+            3000_000000_i128,
+            1, // Greater than
+            100,
+        )
+        .unwrap();
+
+        let current_time = env.ledger().timestamp();
+
+        // Update price feed with timestamp
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3100_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600, // expires far in the future
+        )
+        .unwrap();
+
+        // Fast forward within max_price_age (30 seconds later)
+        env.ledger().set_timestamp(current_time + 30); // 30 seconds later (< 60s max_age)
+
+        // Resolve should succeed - price is fresh
+        let result = PredifiContract::resolve_pool_from_price(env.clone(), pool_id);
+        assert!(result.is_ok());
+
+        // Verify pool is resolved
+        let pool = PredifiContract::get_pool(env.clone(), pool_id).unwrap();
+        assert_eq!(pool.state, MarketState::Resolved);
+        assert_eq!(pool.outcome, 1); // Condition met
+    }
+
+    /// Verify that resolution fails when oracle is not initialized.
+    #[test]
+    fn test_price_resolution_without_oracle_config_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = TestAddress::generate(&env);
+        let operator = TestAddress::generate(&env);
+        let oracle = TestAddress::generate(&env);
+        let _contract_id = create_test_contract(&env, &admin);
+
+        // Do NOT initialize oracle
+
+        // Set up roles
+        let access_control = MockAccessControl::new(&env, &admin);
+        access_control.grant_role(&operator, 1); // Operator role
+        access_control.grant_role(&oracle, 3); // Oracle role
+
+        // Create a test pool
+        let pool_id = create_test_pool(&env, &admin);
+
+        // Set price condition
+        let feed_pair = symbol!("ETH/USD");
+        PredifiContract::set_price_condition(
+            env.clone(),
+            operator.clone(),
+            pool_id,
+            feed_pair.clone(),
+            3000_000000_i128,
+            1,
+            100,
+        )
+        .unwrap();
+
+        let current_time = env.ledger().timestamp();
+
+        // Update price feed (this should work even without oracle config)
+        PredifiContract::update_price_feed(
+            env.clone(),
+            oracle.clone(),
+            feed_pair.clone(),
+            3100_000000_i128,
+            10_000_i128,
+            current_time,
+            current_time + 3600,
+        )
+        .unwrap();
+
+        // Fast forward to resolution time
+        env.ledger().set_timestamp(current_time + 3600);
+
+        // Resolution should fail - oracle config not initialized
+        let result = PredifiContract::resolve_pool_from_price(env.clone(), pool_id);
+        assert!(result.is_err());
+        assert_eq!(result.err(), Some(PredifiError::OracleNotInitialized));
+    }
+}

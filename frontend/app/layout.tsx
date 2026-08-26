@@ -1,29 +1,88 @@
 import type { Metadata } from "next";
-import { Jersey_10, Work_Sans } from "next/font/google";
+import { DM_Mono } from "next/font/google";
 import "./globals.css";
-import Footer from "@/components/layout/footer";
-import Nav from "@/components/layout/nav";
-import StarknetProvider from "@/components/starknet-provider";
-import FilterContextProvider from "@/context/filter-context-provider";
-import AllFilterContextProvider from "@/context/all-contex-provider";
-import Script from "next/script";
-import { Toaster } from "@/components/ui/sonner";
+import { SWRProvider } from "@/components/providers/SWRProvider";
+import { NetworkGuardProvider } from "@/components/providers/NetworkGuardProvider";
+import { ToastProvider, SkipLink, LiveRegionProvider } from "@/components/ui";
+import { WalletProvider, ThemeProvider } from "@/lib/context";
 
-const Jersey10 = Jersey_10({
-  subsets: ["latin"],
-  weight: "400",
-  variable: "--font-jersey-10",
-});
+const SITE_DESCRIPTION =
+  "PrediFi is a decentralized prediction market protocol built on the Stellar network with Soroban smart contracts.";
 
-const WorkSans = Work_Sans({
-  variable: "--font-work-sans",
+const dmMono = DM_Mono({
   subsets: ["latin"],
+  weight: ["300", "400", "500"],
+  variable: "--font-dm-mono",
+  display: "swap",
+  preload: true,
 });
 
 export const metadata: Metadata = {
-  title: "PrediFI - Onchain Prediction Protocol",
-  description:
-    "Prediction Protocol built on starknet, predict various outcomes across various fields",
+  title: {
+    default: "Predifi | Web3 Prediction Markets",
+    template: "%s | Predifi",
+  },
+  description: SITE_DESCRIPTION,
+  keywords: [
+    "decentralized prediction",
+    "predifi",
+    "payment",
+    "protocol",
+    "automated rewards",
+    "trustless",
+    "Web3 payment",
+    "betting",
+    "crowd funding",
+    "stellar",
+    "prediction",
+    "crypto payment",
+  ],
+  openGraph: {
+    title: "Predifi- Decentralized prediction protocol built on the Stellar",
+    description: SITE_DESCRIPTION,
+    url: "https://predifi.app",
+    siteName: "nevo",
+    images: [
+      {
+        url: "https://predifi.app/logo.jpeg",
+        width: 1200,
+        height: 630,
+        alt: "predifi - Decentralized prediction protocol built on the Stellar",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Predifi - Decentralized prediction protocol built on the Stellarr",
+    description: SITE_DESCRIPTION,
+    images: ["https://predifi.app/logo.jpeg"],
+    creator: "@nevoapp",
+  },
+
+  icons: {
+    icon: [
+      { url: "/Group 1.svg" },
+      {
+        url: "/Group 1.svg",
+        sizes: "192x192",
+        type: "image/svg+xml",
+      },
+      {
+        url: "/Group 1.svg",
+        sizes: "512x512",
+        type: "image/svg+xml",
+      },
+    ],
+    apple: [
+      {
+        url: "/Group 1.svg",
+        sizes: "180x180",
+        type: "image/svg+xml",
+      },
+    ],
+  },
 };
 
 export default function RootLayout({
@@ -32,36 +91,29 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en">
       <head>
-        {" "}
-        <Script src="https://telegram.org/js/telegram-web-app.js"></Script>
+        {/* Preload critical hero images to improve LCP */}
+        <link rel="preload" as="image" href="/swirl-pattern.webp" />
+        <link rel="preload" as="image" href="/gradient.webp" />
+
+        {/* Inline minimal critical CSS for hero to paint immediately */}
+        <style>{`.hero-critical{min-height:calc(100vh - 40px);display:flex;flex-direction:column;align-items:center;text-align:center}`}</style>
       </head>
-      <body
-        className={`${Jersey10.variable} ${WorkSans.variable} antialiased text-[#FFFFFF] font-work bg-[#100e16]`}
-      >
-        <StarknetProvider>
-          <Nav />
-          <AllFilterContextProvider>
-            <FilterContextProvider>
-              <section className="max-w-screen-[1500px] mx-auto min-h-screen pb-14">
-                {children}
-              </section>
-            </FilterContextProvider>
-          </AllFilterContextProvider>
-          <Footer />
-          <Toaster
-            toastOptions={{
-              unstyled: true,
-              classNames: {
-                error: "toaster toast-error",
-                success: "toaster toast-success",
-                warning: "toaster toast-warning",
-                info: "toaster toast-info",
-              },
-            }}
-          />
-        </StarknetProvider>
+      <body className={`antialiased text-sm ${dmMono.variable}`}>
+        {/* First tab stop: lets keyboard users bypass the nav (WCAG 2.4.1) */}
+        <SkipLink />
+        <SWRProvider>
+          <WalletProvider>
+            <ThemeProvider>
+              <NetworkGuardProvider>
+                <LiveRegionProvider>
+                  <ToastProvider>{children}</ToastProvider>
+                </LiveRegionProvider>
+              </NetworkGuardProvider>
+            </ThemeProvider>
+          </WalletProvider>
+        </SWRProvider>
       </body>
     </html>
   );

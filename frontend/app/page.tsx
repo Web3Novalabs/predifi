@@ -1,92 +1,188 @@
-"use client"
-import PredictionType from "@/components/predicton-type-detail";
-import HowITWork from "@/components/how-it-work";
-import PoolTypes from "@/components/pool-types";
-import Link from "next/link";
-import { routes } from "@/lib/route";
-//import bgImg from "@/public/code.png"
+/**
+ * Home (marketing) page
+ *
+ * Performance strategy — above vs. below the fold:
+ *
+ * Above the fold (eagerly imported):
+ *   - NavBar      — always visible; must render immediately
+ *   - HeroSection — first thing the user sees; no lazy loading
+ *
+ * Below the fold (lazily imported via next/dynamic):
+ *   - PredictionProtocol, Features, InstinctsToSignals, FAQ, Footer
+ *
+ * `next/dynamic` is Next.js's built-in wrapper around React.lazy + Suspense
+ * that works correctly in both Server and Client Component trees. Using
+ * React.lazy directly in a Server Component is not supported by the App Router,
+ * so next/dynamic is the idiomatic equivalent here.
+ *
+ * Each dynamic import is given a lightweight skeleton fallback so the page
+ * doesn't shift when the component loads in.
+ */
+
+import dynamic from "next/dynamic";
+import { Suspense } from "react";
+import Image from "next/image";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { title: "Web3 Prediction Markets" };
+import NavBar from "./(marketing)/components/NavBar";
+import HeroSection from "./(marketing)/components/HeroSection";
+
+// ---------------------------------------------------------------------------
+// Below-the-fold components — loaded lazily after the initial paint
+// ---------------------------------------------------------------------------
+
+/**
+ * PredictionProtocol sits just below the hero stats bar.
+ * It is a "use client" component (uses useState/useRef for the tab switcher),
+ * so ssr:false avoids a hydration mismatch while still deferring its JS bundle.
+ */
+const PredictionProtocol = dynamic(
+  () => import("./(marketing)/components/PredictionProtocol"),
+  {
+    loading: () => (
+      <div
+        className="h-[500px] w-full animate-pulse bg-white/5 rounded-2xl"
+        aria-hidden="true"
+      />
+    ),
+  },
+);
+
+/**
+ * Features — three feature cards with images; well below the fold.
+ * Pure server-renderable component, so ssr:true (default) is fine.
+ */
+const Features = dynamic(() => import("./(marketing)/components/Features"), {
+  loading: () => (
+    <div
+      className="h-[600px] w-full animate-pulse bg-white/5 rounded-2xl"
+      aria-hidden="true"
+    />
+  ),
+});
+
+/**
+ * InstinctsToSignals — stats/feature grid; well below the fold.
+ */
+const InstinctsToSignals = dynamic(
+  () => import("./(marketing)/components/InstinctsToSignals"),
+  {
+    loading: () => (
+      <div
+        className="h-[300px] w-full animate-pulse bg-white/5 rounded-2xl"
+        aria-hidden="true"
+      />
+    ),
+  },
+);
+
+/**
+ * FAQ — accordion; "use client" component (uses useState for open/close).
+ * Deferred with ssr:false to keep the initial bundle lean.
+ */
+const FAQ = dynamic(() => import("./(marketing)/components/FAQ"), {
+  loading: () => (
+    <div
+      className="h-[400px] w-full animate-pulse bg-white/5 rounded-2xl"
+      aria-hidden="true"
+    />
+  ),
+});
+
+/**
+ * Footer — bottom of page; no interactivity, but deferred to prioritise
+ * above-the-fold content in the initial JS bundle.
+ */
+const Footer = dynamic(() => import("./(marketing)/components/Footer"), {
+  loading: () => (
+    <div
+      className="h-[120px] w-full animate-pulse bg-white/5 rounded-t-[40px]"
+      aria-hidden="true"
+    />
+  ),
+});
+
+// ---------------------------------------------------------------------------
 
 export default function Home() {
   return (
-    <div className="">
-      <header className="flex flex-col items-center justify-center gap-5 p-6 header-bg h-[70vh]">  
-        <h1 className="font-jersey font-normal text-center text-5xl">
-          Transform Predictions Into Profits!
-        </h1>
-        <p className="font-normal text-center text-xl">
-          Create and participate in decentralized prediction markets across
-          sports, finance, and pop culture.
-        </p>
-        <div className="flex gap-x-2">
-          <Link href={routes.createPool} className="bg-transparent rounded-full transition-all duration-200 hover:bg-[#37B7C3] hover:border-[#37B7C3] shadow-none border border-[#fff] text-[#fff] hover:text-[#071952] py-1 px-4">
-            Create a Pool
-          </Link>
-          <Link href={routes.dashboard} className="bg-transparent rounded-full transition-all duration-200 hover:bg-[#37B7C3] hover:border-[#37B7C3] shadow-none border border-[#fff] text-[#fff] hover:text-[#071952] px-4 py-1">
-            Explore Markets
-          </Link>
-        </div>
-      </header>
-      <section className="px-2 md:px-10 xl:px-16 my-[3em] lg:my-[6em]">
-        <div className="text-center grid gap-1">
-          <h2 className="text-[#37B7C3]">Features overview</h2>
-          <h1 className="font-jersey text-3xl">Why Choose PredFi?</h1>
-        </div>
-        <div className="mt-10">
-          <PredictionType />
-        </div>
-      </section>
-      <section className="px-2 md:px-10 xl:px-[100px] bg-[#00020F] py-[3em] lg:py-[6em]">
-        <div className="text-center grid gap-1">
-          <h2 className="text-[#37B7C3]">Step-by-step</h2>
-          <h1 className="font-jersey text-3xl">How It Works</h1>
-        </div>
-        <div className="mt-5 lg:mt-10">
-          <HowITWork />
-        </div>
-      </section>
-      <section className="mt-16 px-5 md:px-10 xl:px-[100px]">
-        <div className="text-center grid gap-1">
-          <h2 className="text-[#37B7C3]">Step-by-step</h2>
-          <h1 className="font-jersey text-3xl">Types of Prediction Pools </h1>
-        </div>
-        <div className="mt-10 lg:mt-[4em]">
-          <PoolTypes />
-        </div>
-      </section>
-      <section className="my-10 px-5 md:px-10 xl:px-[100px]">
-        <div className="bg-[#E68369] p-[3em] lg:p-[100px] rounded-lg">
-          <h2 className="text-3xl font-normal font-jersey text-center mb-10">Site Metrics</h2>
-          <div className="flex flex-col lg:flex-row justify-center gap-4">
-            <div className="border-[#fff] w-full lg:w-[205px] h-[119px] border text-center grid place-content-center rounded-lg">
-              <h2 className="text-sm font-semibold">Total Bets Open</h2>
-              <h3 className="font-bold text-3xl">17</h3>
-            </div>
-            <div className="border-[#fff] w-full lg:w-[205px] h-[119px] border text-center grid place-content-center rounded-lg">
-              <h2 className="text-sm font-semibold">Total Bets Open</h2>
-              <h3 className="font-bold text-3xl">17</h3>
-            </div>
-            <div className="border-[#fff] w-full lg:w-[205px] h-[119px] border text-center grid place-content-center rounded-lg">
-              <h2 className="text-sm font-semibold">Total Bets Open</h2>
-              <h3 className="font-bold text-3xl">17</h3>
-            </div>
-          </div>
-        </div>
-      </section>
-      <section className="gap-3 mt-10 px-5 md:px-10 xl:px-[100px]">
-        <div className="lg:p-[100px] rounded-lg">
-          <h2 className="text-sm font-semibold text-center">Don’t be loner</h2>
-          <h2 className="text-3xl font-normal font-jersey text-center mb-5">Connect and Predict Together!</h2>
-          <div className="flex justify-center gap-4">
-            <Link href={routes.createPool} className="bg-transparent rounded-full transition-all duration-200 hover:bg-[#37B7C3] hover:border-[#37B7C3] shadow-none border border-[#fff] text-[#fff] hover:text-[#071952] py-1 px-4">
-              Twitter
-            </Link>
-            <Link href={routes.dashboard} className="bg-transparent rounded-full transition-all duration-200 hover:bg-[#37B7C3] hover:border-[#37B7C3] shadow-none border border-[#fff] text-[#fff] hover:text-[#071952] px-4 py-1">
-              Telegram
-            </Link >
-          </div>
-        </div>
-      </section>
+    <div className="text-sm min-h-screen bg-[#001112]">
+      <main id="main-content" tabIndex={-1} className="w-full overflow-x-hidden">
+        {/* Above the fold — eagerly loaded */}
+        <NavBar />
+        <HeroSection />
 
+        {/* Below the fold — lazily loaded; each wrapped in Suspense so the
+            rest of the page can stream in independently */}
+        <div className="relative space-y-10 lg:space-y-[150px] pt-[80px] lg:pt-[180px]">
+          {/* Decorative background gradient — loaded eagerly as it is above the fold */}
+          <Image
+            src="/gradient.webp"
+            alt=""
+            aria-hidden="true"
+            fill
+            className="absolute top-0 left-0 w-full pointer-events-none z-0 object-cover"
+            priority
+            loading="eager"
+            fetchPriority="high"
+          />
+          <Suspense
+            fallback={
+              <div
+                className="h-[500px] w-full animate-pulse bg-white/5 rounded-2xl"
+                aria-hidden="true"
+              />
+            }
+          >
+            <PredictionProtocol />
+          </Suspense>
+
+          <Suspense
+            fallback={
+              <div
+                className="h-[600px] w-full animate-pulse bg-white/5 rounded-2xl"
+                aria-hidden="true"
+              />
+            }
+          >
+            <Features />
+          </Suspense>
+
+          <Suspense
+            fallback={
+              <div
+                className="h-[300px] w-full animate-pulse bg-white/5 rounded-2xl"
+                aria-hidden="true"
+              />
+            }
+          >
+            <InstinctsToSignals />
+          </Suspense>
+        </div>
+
+        <Suspense
+          fallback={
+            <div
+              className="h-[400px] w-full animate-pulse bg-white/5 rounded-2xl"
+              aria-hidden="true"
+            />
+          }
+        >
+          <FAQ />
+        </Suspense>
+
+        <Suspense
+          fallback={
+            <div
+              className="h-[120px] w-full animate-pulse bg-white/5 rounded-t-[40px]"
+              aria-hidden="true"
+            />
+          }
+        >
+          <Footer />
+        </Suspense>
+      </main>
     </div>
   );
 }

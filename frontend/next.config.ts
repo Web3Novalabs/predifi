@@ -1,13 +1,44 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  env: {
-    NEXT_PUBLIC_ALCHEMY_API_KEY:
-      "https://starknet-mainnet.g.alchemy.com/starknet/version/rpc/v0_7/dvHmwiGiA_uE22lKpZKLk4FoGlC_Xzy4",
+  async headers() {
+    return [
+      {
+        // Build-time hashed assets — safe to cache forever
+        source: "/_next/static/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+        ],
+      },
+      {
+        // Public folder assets (images, icons, manifests, fonts)
+        source: "/(:path*\.(?:ico|png|jpg|jpeg|svg|webp|woff|woff2|ttf|otf|json|txt|xml))",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, must-revalidate",
+          },
+        ],
+      },
+    ];
+  },
+  // Enable CSS minification and optimization in production
+  compress: true,
+  // Optimize CSS loading
+  experimental: {
+    optimizeCss: true,
   },
   images: {
-    domains: ["starknet.id", "images.unsplash.com", "firebasestorage.googleapis.com"],
+    // Allow Next.js to optimise SVG files served from the /public directory.
+    // The Content-Security-Policy header set below mitigates the XSS risk that
+    // comes with serving SVGs as images (they cannot execute scripts when loaded
+    // via <img> / next/image).
+    dangerouslyAllowSVG: true,
+    contentDispositionType: "attachment",
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
   },
 };
 

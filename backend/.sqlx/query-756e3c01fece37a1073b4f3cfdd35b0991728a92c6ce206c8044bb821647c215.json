@@ -1,0 +1,54 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            p.pool_id,\n            pl.name   AS pool_name,\n            pl.result AS pool_result,\n            p.outcome,\n            p.amount,\n            p.created_at\n        FROM predictions p\n        JOIN pools pl ON pl.pool_id = p.pool_id\n        WHERE p.user_address = $1\n        ORDER BY p.created_at DESC\n        LIMIT $2 OFFSET $3\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "pool_id",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "pool_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "pool_result",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "outcome",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 4,
+        "name": "amount",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Int8",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "756e3c01fece37a1073b4f3cfdd35b0991728a92c6ce206c8044bb821647c215"
+}

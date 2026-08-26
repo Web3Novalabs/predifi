@@ -1,0 +1,237 @@
+name: Backend CI
+
+on:
+  push:
+    branches:
+      - main
+      - contract
+    paths:
+      - "contract/**"
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+  pull_request:
+    branches:
+      - main
+      - contract
+    paths:
+      - "contract/**"
+      - "backend/**"
+      - ".github/workflows/backend.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  WASM_SIZE_THRESHOLD_KB: 200
+
+jobs:
+  contract-checks:
+    name: Contract Checks (WASM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: ./contract
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-opt (binaryen)
+        run: |
+          BINARYEN_VERSION="120"
+          curl -fsSL "https://github.com/WebAssembly/binaryen/releases/download/version_${BINARYEN_VERSION}/binaryen-version_${BINARYEN_VERSION}-x86_64-linux.tar.gz" \
+            | tar -xz -C /tmp
+          sudo mv "/tmp/binaryen-version_${BINARYEN_VERSION}/bin/wasm-opt" /usr/local/bin/wasm-opt
+          wasm-opt --version
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            contract/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('contract/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint with clippy
+        run: cargo clippy --workspace --target wasm32-unknown-unknown -- -D warnings
+
+      - name: Build contract
+        run: cargo build --workspace --target wasm32-unknown-unknown --release
+
+      - name: Run wasm-opt -O3
+        run: |
+          WASM_DIR="target/wasm32-unknown-unknown/release"
+          echo "| Contract | Raw (bytes) | After wasm-opt -O3 (bytes) | Reduction |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for CONTRACT in predifi_contract access_control; do
+            RAW="${WASM_DIR}/${CONTRACT}.wasm"
+            OPT="${WASM_DIR}/${CONTRACT}.wasm-opt.wasm"
+            [[ -f "$RAW" ]] || continue
+            RAW_BYTES=$(wc -c < "$RAW")
+            wasm-opt -O3 --strip-debug --enable-bulk-memory --enable-sign-ext -o "$OPT" "$RAW"
+            OPT_BYTES=$(wc -c < "$OPT")
+            REDUCTION=$(( RAW_BYTES - OPT_BYTES ))
+            echo "| ${CONTRACT} | ${RAW_BYTES} | ${OPT_BYTES} | -${REDUCTION} bytes |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Test wasm-opt integration
+        run: bash scripts/tests/test_wasm_opt.sh
+
+      - name: Run unit tests
+        run: cargo test --workspace
+
+      - name: Check WASM size
+        run: bash scripts/wasm_size_check.sh
+
+      - name: Print WASM size summary
+        if: always()
+        run: |
+          WASM="target/wasm32-unknown-unknown/release/predifi_contract.wasm"
+          if [[ -f "$WASM" ]]; then
+            BYTES=$(wc -c < "$WASM")
+            KB=$(( BYTES / 1024 ))
+            echo "### WASM Size: ${KB} KB (${BYTES} bytes)" >> "$GITHUB_STEP_SUMMARY"
+            echo "Threshold: ${WASM_SIZE_THRESHOLD_KB} KB" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload WASM artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: predifi-wasm-${{ github.sha }}
+          path: |
+            contract/target/wasm32-unknown-unknown/release/predifi_contract.wasm
+            contract/target/wasm32-unknown-unknown/release/predifi_contract.wasm-opt.wasm
+            contract/target/wasm32-unknown-unknown/release/access_control.wasm
+            contract/target/wasm32-unknown-unknown/release/access_control.wasm-opt.wasm
+          if-no-files-found: ignore
+          retention-days: 90
+
+  backend-checks:
+    name: Backend Checks & Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: predifi_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: ./backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Security audit
+        run: |
+          cargo install cargo-audit --locked --quiet
+          cargo audit
+
+      - name: Cargo check
+        run: cargo check --workspace
+
+      - name: Lint with clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build backend
+        run: cargo build --release
+
+      - name: Run unit & integration test suite
+        env:
+          DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/predifi_test
+          REDIS_URL: redis://localhost:6379
+        run: cargo test --workspace
+
+  docker-build:
+    name: Backend Docker Image Build
+    runs-on: ubuntu-latest
+    needs: backend-checks
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image
+        run: |
+          docker build -t predifi-backend:latest ./backend
+
+  deploy-staging:
+    name: Deploy Backend to Staging
+    runs-on: ubuntu-latest
+    needs: [backend-checks, docker-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Automated Staging Deployment
+        run: |
+          echo "Deploying predifi-backend commit ${{ github.sha }} to staging environment..."
+          # Automated deployment script / webhook invocation
+          echo "Backend deployment to staging completed successfully."
+

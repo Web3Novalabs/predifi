@@ -1,0 +1,14 @@
+# Local PR drafts — not part of the repository history
+PULL_REQUEST.md
+**/PULL_REQUEST.md
+PULL_REQUEST_DB_REFACTOR.md
+PULL_REQUEST_AUDIT_1408.md
+PULL_REQUEST_STATE_MANAGEMENT_1406.md
+
+# Local documentation generated during implementation — not part of the repository history
+**/VALIDATION_ENHANCEMENTS.md
+**/DEPENDENCY_AUDIT_LOCAL.md
+README_CLS_IMPLEMENTATION.md
+
+# Kiro IDE workspace metadata
+.kiro/
