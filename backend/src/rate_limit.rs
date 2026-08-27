@@ -101,6 +101,9 @@ mod tests {
             (b, p),
             (RATE_LIMIT_TOKEN_BURST, RATE_LIMIT_TOKEN_PERIOD_SECS)
         );
+
+        let (b, p) = RateLimitTier::WebSocket.burst_and_period();
+        assert_eq!((b, p), (RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS));
     }
 
     #[test]
@@ -110,6 +113,8 @@ mod tests {
             RateLimitTier::Read.burst_and_period(),
             RateLimitTier::User.burst_and_period(),
             RateLimitTier::Write.burst_and_period(),
+            RateLimitTier::Token.burst_and_period(),
+            RateLimitTier::WebSocket.burst_and_period(),
         ];
         // Each tier should be unique
         for i in 0..configs.len() {
