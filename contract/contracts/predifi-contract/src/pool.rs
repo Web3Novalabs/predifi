@@ -702,12 +702,20 @@ impl PredifiContract {
 
     /// Finalises a prediction pool by recording an operator's vote for a winning outcome.
     ///
-    /// Resolution uses a **multi-vote / threshold model**: each address with Operator
-    /// role (role `1`) calls this function once to cast a vote.  The pool transitions
-    /// to [`MarketState::Resolved`] only when a single outcome accumulates at least
-    /// `pool.required_resolutions` votes.  If operators disagree on the outcome a
-    /// [`PredifiError::ResolutionConflict`] is returned and the pool stays active so
-    /// administrators can intervene.
+    /// This is the manual, operator-backed resolution entry point. Resolution uses a
+    /// **multi-vote / threshold model**: each address with Operator role (role `1`)
+    /// calls this function once to cast a vote. The pool transitions to
+    /// [`MarketState::Resolved`] only when one outcome accumulates at least
+    /// `pool.required_resolutions` votes. If operators disagree, the conflicting vote
+    /// is recorded and [`PredifiError::ResolutionConflict`] is returned; the pool stays
+    /// active so administrators can investigate and retry with the agreed outcome.
+    ///
+    /// This function does not read an oracle or price feed. For an automated price
+    /// condition, [`Self::resolve_pool_from_price`] validates the configured feed,
+    /// evaluates its target and tolerance, and persists the resulting outcome directly.
+    /// An external oracle can instead submit a signed outcome through `oracle_resolve`,
+    /// which participates in the same threshold and conflict model. These paths share
+    /// the resolution-delay guard and emit [`PoolResolvedEvent`] when finalisation occurs.
     ///
     /// # Parameters
     ///
@@ -727,8 +735,12 @@ impl PredifiContract {
     /// 2. **State guard** — the pool must be in `MarketState::Active`; Locked,
     ///    Resolved, and Cancelled pools are rejected with [`PredifiError::InvalidPoolState`].
     /// 3. **Resolution delay** — `current_ledger_time >= pool.end_time + config.resolution_delay`
-    ///    must hold.  This cooling-off period allows late price feeds to settle before
-    ///    any outcome is locked in.  Violations return [`PredifiError::ResolutionDelayNotMet`].
+    ///    must hold. This cooling-off period allows late price-feed updates and oracle
+    ///    observations to settle before any outcome is locked in. The comparison is
+    ///    inclusive: resolution is allowed at the exact eligibility timestamp.
+    ///    The addition is saturating, so timestamp overflow cannot make a pool resolvable
+    ///    earlier than intended. Violations return
+    ///    [`PredifiError::ResolutionDelayNotMet`].
     /// 4. **Outcome validation** — `outcome` must satisfy
     ///    `0 <= outcome < pool.options_count` and must not equal `UNRESOLVED_OUTCOME`
     ///    (the sentinel value reserved for pools that have not yet been decided).
@@ -751,18 +763,34 @@ impl PredifiContract {
     ///    - The pool is removed from the global active index.
     ///    - [`PoolResolvedEvent`] and [`PoolResolvedDiagEvent`] are published.
     ///
+    /// # Oracle and price-feed relationship
+    ///
+    /// The outcome passed to this function is already an operator determination; this
+    /// function intentionally does not interpret prices. The automated path performs
+    /// the following before persisting an outcome: load the pool's [`PriceCondition`],
+    /// load its configured feed, reject stale or expired data, compare the normalized
+    /// feed price with the target using the configured operator and tolerance, and map
+    /// the condition to outcome `1` (met) or `0` (not met). The oracle callback path
+    /// accepts an oracle-authenticated outcome and records it as a vote. Both paths
+    /// enforce the same active-state, valid-outcome, and resolution-delay invariants.
+    ///
     /// # Payout calculation (post-resolution)
     ///
-    /// This function does **not** distribute funds directly.  Winners call
-    /// `claim_winnings` (or a payout helper) after resolution.  The payout for a
-    /// winning stake `s` out of a total winning-side stake `W` and a total pool
-    /// stake `T` is:
+    /// This function does **not** distribute funds directly. Winners call
+    /// `claim_winnings` after resolution. The payout helper first calculates the
+    /// protocol fee from the entire pool, then distributes the remainder
+    /// proportionally. For a winning stake `s`, total winning-side stake `W`, total
+    /// pool stake `T`, and fee rate `f = pool.fee_bps / 10_000`, the stages are:
     ///
     /// ```text
-    /// gross_payout = s * T / W
-    /// fee          = gross_payout * pool.fee_bps / 10_000
-    /// net_payout   = gross_payout - fee
+    /// protocol_fee = T * f
+    /// payout_pool  = T - protocol_fee
+    /// winnings     = s * payout_pool / W
     /// ```
+    ///
+    /// Arithmetic is checked and uses protocol-favouring rounding. A zero winning
+    /// stake or zero user stake produces zero winnings, and the no-value-creation
+    /// invariant ensures a claimant cannot receive more than the pool total.
     ///
     /// # Emitted events
     ///
@@ -770,7 +798,7 @@ impl PredifiContract {
     /// |---|---|
     /// | [`ResolutionVoteCastEvent`] | Every successful vote, regardless of threshold |
     /// | [`ResolutionConflictEvent`] | When a vote conflicts with an earlier outcome |
-    /// | [`PoolResolvedEvent`] | When the threshold is reached and the pool is finalised |
+    /// | [`PoolResolvedEvent`] | When the threshold is reached and the pool is finalised; contains `pool_id`, the finalising operator, and the winning `outcome` |
     /// | [`PoolResolvedDiagEvent`] | Same trigger as `PoolResolvedEvent`; carries stake diagnostics |
     ///
     /// # Errors
