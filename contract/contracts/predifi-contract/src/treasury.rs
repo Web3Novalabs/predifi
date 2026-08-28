@@ -1,5 +1,49 @@
-//! Treasury domain: treasury configuration, fee withdrawal and emergency
-//! fund recovery.
+//! # Treasury Domain (#1653)
+//!
+//! Manages the protocol treasury: the configured recipient address for protocol
+//! fees, and the admin-gated functions that move funds out of the contract.
+//!
+//! ## What the Treasury Holds
+//!
+//! The treasury does not hold funds directly on-chain — it is simply an [`Address`]
+//! stored in [`crate::Config::treasury`] (set at `initialize` and updatable via
+//! [`PredifiContract::set_treasury`]). The actual token balances that back the
+//! protocol's fee revenue accumulate in the contract's own balance: when a pool
+//! is created or a user claims winnings, the protocol fee (`Config.fee_bps`, or
+//! a matching fee tier) is deducted from the total stake/payout pool and simply
+//! left in the contract rather than transferred out immediately.
+//!
+//! ## How Fees Flow Into the Treasury
+//!
+//! Fee accrual and fee withdrawal are two separate steps:
+//! 1. **Accrual (automatic)** — `create_pool` and `claim_winnings` compute the
+//!    protocol fee via [`crate::safe_math::SafeMath::percentage`] and simply
+//!    don't pay that portion out, so it remains part of the contract's token
+//!    balance.
+//! 2. **Withdrawal (manual, admin-only)** — [`PredifiContract::withdraw_treasury`]
+//!    is the only function that actually moves those accrued fees out of the
+//!    contract, transferring them to a `recipient` address (typically the
+//!    configured treasury address, though the function accepts any recipient).
+//!    Nothing is pushed to the treasury automatically; an admin must call
+//!    `withdraw_treasury` to sweep it.
+//!
+//! ## Who Is Authorised
+//!
+//! Every function in this module requires the caller to hold the **Admin role
+//! (role 0)** in the access control contract, verified via
+//! [`PredifiContract::require_admin_role`], plus `admin.require_auth()`:
+//! - [`PredifiContract::set_treasury`] — repoints the treasury address.
+//! - [`PredifiContract::withdraw_treasury`] — withdraws accrued protocol fees
+//!   (or any unused liquidity) to a recipient; enforces
+//!   [`crate::MIN_WITHDRAWAL_AMOUNT`] and a sufficient contract balance.
+//! - [`PredifiContract::emergency_withdraw`] — an escape hatch for rescuing any
+//!   token balance held by the contract (e.g. after an oracle or protocol
+//!   failure), bypassing the pause check so funds can still be recovered while
+//!   the contract is paused.
+//!
+//! All three emit an audit event ([`crate::TreasuryUpdateEvent`],
+//! [`crate::TreasuryWithdrawnEvent`], [`crate::EmergencyWithdrawEvent`]) and are
+//! reentrancy-guarded around the token transfer.
 
 use soroban_sdk::{contractimpl, token, Address, Env};
 
