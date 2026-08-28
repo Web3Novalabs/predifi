@@ -20,15 +20,22 @@ impl PredifiContract {
     /// Create a new prediction pool with configurable parameters.
     ///
     /// This function creates a new prediction market pool where users can stake tokens on
-    /// specific outcomes. The pool is initialized in the `Active` state and immediately
-    /// accepts predictions once the `start_time` is reached (or immediately if `start_time` is 0).
+    /// specific outcomes. The pool is initialized in the `Active` state and accepts
+    /// predictions once `start_time` is reached (or immediately if `start_time` is 0).
+    ///
+    /// There is no separate `pool_type` argument. The `category` argument is the pool's
+    /// classification/type and must be one of the canonical category symbols accepted by
+    /// the contract, such as `CATEGORY_SPORTS`, `CATEGORY_CRYPTO`, or `CATEGORY_FINANCE`.
     ///
     /// # Parameters
     ///
     /// - `env` - The Soroban environment, providing access to storage, ledger, and auth
     /// - `creator` - The address creating the pool (must authenticate via `require_auth`)
-    /// - `end_time` - Unix timestamp after which no more predictions are accepted (must be > current_time)
-    /// - `token` - The Stellar token contract address used for staking (must be whitelisted)
+    /// - `end_time` - Unix timestamp after which no more predictions are accepted. It must be
+    ///   later than `start_time`, the current ledger timestamp, and the configured minimum
+    ///   pool duration, and no later than `MAX_POOL_DURATION` from the current ledger time.
+    /// - `token` - The Stellar token contract address used for staking. It must be whitelisted;
+    ///   the token contract itself is called only when a stake or initial liquidity is transferred.
     /// - `options_count` - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT = 100)
     /// - `category` - Market category symbol (e.g., `CATEGORY_SPORTS`, `CATEGORY_FINANCE`)
     /// - `config` - Pool configuration parameters via `PoolConfig` struct:
@@ -37,18 +44,29 @@ impl PredifiContract {
     ///   - `metadata_url` - URL to extended metadata, e.g., IPFS link (max 512 bytes)
     ///   - `min_stake` - Minimum stake amount per prediction (must be > 0)
     ///   - `max_stake` - Maximum stake per prediction (0 = no limit, else must be >= min_stake)
-    ///   - `min_total_stake` - Minimum total stake required for resolution (must be > 0)
-    ///   - `max_total_stake` - Hard cap on total stake (0 = no limit)
-    ///   - `initial_liquidity` - Optional house money provided by creator (must be >= 0)
+    ///   - `min_total_stake` - Minimum total stake required for resolution (must be > 0).
+    ///   - `max_total_stake` - Hard cap on total stake (0 = no limit); when non-zero, any
+    ///     supplied initial liquidity must satisfy the configured safety margin.
+    ///   - `initial_liquidity` - Optional house money transferred from the creator to the
+    ///     contract (must be non-negative and no greater than `MAX_INITIAL_LIQUIDITY`).
     ///   - `required_resolutions` - Number of oracle/operator votes needed for resolution (must be >= 1)
     ///   - `private` - If true, only whitelisted addresses can participate
-    ///   - `whitelist_key` - Optional symbol for private pool access
-    ///   - `outcome_descriptions` - Human-readable labels for each outcome (length must equal options_count)
+    ///   - `whitelist_key` - Optional symbol for private pool access; when present it must
+    ///     pass referral-code validation.
+    ///   - `outcome_descriptions` - Human-readable labels for each outcome. The number of
+    ///     labels must equal `options_count`, and every label must be 1..=`MAX_OUTCOME_DESCRIPTION_LEN`
+    ///     bytes long.
     ///
-    /// # Return Value
+    /// # Returns
     ///
     /// Returns `Ok(pool_id)` - The unique identifier of the newly created pool.
-    /// The pool_id is auto-incremented and can be used to reference the pool in all subsequent operations.
+    /// The pool ID is auto-incremented and can be used to reference the pool in all subsequent
+    /// operations. The returned pool starts in `MarketState::Active` with
+    /// `UNRESOLVED_OUTCOME`; its total stake initially equals `config.initial_liquidity`.
+    ///
+    /// The `Err` result is used for `PredifiError::ContractPaused` and for invalid
+    /// `options_count`. Other validation failures are raised as Soroban contract errors or
+    /// assertion failures, as described below.
     ///
     /// # Emitted Events
     ///
@@ -65,7 +83,6 @@ impl PredifiContract {
     ///   - `category` - Market category
     ///   - `required_resolutions` - Resolution threshold
     ///   - `max_total_stake` - Total stake cap
-    ///   - `outcome_descriptions` - Labels for each outcome
     ///
     /// 2. **`InitialLiquidityProvidedEvent`** (conditional):
     ///   - Emitted only if `initial_liquidity > 0`
@@ -73,22 +90,28 @@ impl PredifiContract {
     ///   - `creator` - The address providing liquidity
     ///   - `amount` - The amount of liquidity transferred
     ///
-    /// # Error Conditions
+    /// # Errors and Validation Failures
     ///
-    /// The function can return the following errors:
+    /// The function returns or raises the following typed protocol errors:
     ///
     /// - `ContractPaused` - The contract is currently paused; all state-mutating operations are blocked
-    /// - `Unauthorized` - Caller is not authorized (creator authentication failed)
+    /// - `InvalidData` - `options_count` is less than 2 or greater than `MAX_OPTIONS_COUNT`.
     /// - `TokenNotWhitelisted` - The specified token is not on the allowed betting whitelist
     /// - `InvalidTimestamp` - `end_time` is not in the future, exceeds MAX_POOL_DURATION, or `end_time <= start_time`
     /// - `DeadlineInPast` - `end_time` or `start_time` is in the past (issue #1130)
-    /// - `InvalidData` - `options_count` < 2 or > MAX_OPTIONS_COUNT
     /// - `MetadataUrlInvalid` - `metadata_url` exceeds 512 bytes
-    /// - `InvalidTargetPrice` - Invalid target price (for price-based pools)
     /// - `InitialLiquidityBelowSafetyMargin` - Initial liquidity is insufficient relative to `max_total_stake` (issue #1131)
     /// - `RequiredResolutionsExceedOperators` - `required_resolutions` > number of active operators
     /// - `OutcomeDescriptionTooLong` - An outcome description exceeds MAX_OUTCOME_DESCRIPTION_LEN (128 bytes)
-    /// - `OutcomeDescriptionEmpty` - An outcome description is empty or below MIN_OUTCOME_DESCRIPTION_LEN (1 byte)
+    /// - `OutcomeDescriptionEmpty` / `OutcomeDescriptionTooLong` - An outcome label is
+    ///   outside the allowed length range.
+    ///
+    /// Authentication failure for `creator.require_auth()` is reported by the Soroban
+    /// authorization system, not as `PredifiError::Unauthorized`. Invalid description,
+    /// stake-limit, liquidity, resolution-count, and minimum-duration values use the
+    /// contract's assertion diagnostics. A failed initial-liquidity token transfer also
+    /// propagates the token contract's failure. These failures abort the transaction and
+    /// do not leave a partially initialized pool.
     ///
     /// # Validation Rules
     ///
