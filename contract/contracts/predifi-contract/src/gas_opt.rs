@@ -64,6 +64,25 @@ mod tests {
     }
 
     #[test]
+    fn alloc_zero_stakes_zero_returns_empty_vec() {
+        let env = Env::default();
+        let stakes = alloc_zero_stakes(&env, 0);
+        assert_eq!(stakes.len(), 0);
+    }
+
+    #[test]
+    fn alloc_zero_stakes_all_elements_are_zero() {
+        let env = Env::default();
+        for n in [0, 1, 5, 100] {
+            let stakes = alloc_zero_stakes(&env, n);
+            assert_eq!(stakes.len(), n as u32);
+            for i in 0..n {
+                assert_eq!(stakes.get(i), Some(0));
+            }
+        }
+    }
+
+    #[test]
     fn apply_stake_delta_updates_index() {
         let env = Env::default();
         let mut stakes = alloc_zero_stakes(&env, 3);

@@ -475,8 +475,25 @@ mod tests {
     }
 
     #[test]
+    fn test_ledger_time_constant_relationships() {
+        assert_eq!(DAY_IN_LEDGERS, 17280);
+        assert_eq!(DAY_IN_LEDGERS, 86400 / 5);
+        assert_eq!(BUMP_THRESHOLD, 14 * DAY_IN_LEDGERS);
+        assert_eq!(BUMP_AMOUNT, 30 * DAY_IN_LEDGERS);
+    }
+
+    #[test]
+    fn test_bump_threshold_is_14_days() {
+        assert_eq!(BUMP_THRESHOLD, 14 * DAY_IN_LEDGERS);
+    }
+
+    #[test]
+    fn test_bump_amount_is_30_days() {
+        assert_eq!(BUMP_AMOUNT, 30 * DAY_IN_LEDGERS);
+    }
+
+    #[test]
     fn test_ledger_calculations() {
-        // Verify that BUMP_THRESHOLD and BUMP_AMOUNT are correctly calculated
         assert_eq!(BUMP_THRESHOLD, 14 * DAY_IN_LEDGERS);
         assert_eq!(BUMP_AMOUNT, 30 * DAY_IN_LEDGERS);
     }
