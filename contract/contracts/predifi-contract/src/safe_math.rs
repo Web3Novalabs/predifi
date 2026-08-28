@@ -1,28 +1,37 @@
 #![allow(dead_code)]
 
-//! # Safe Math Module for Proportion Calculations
+//! # Safe Math Module for Proportion and Payout Calculations
 //!
-//! This module provides safe arithmetic operations for proportion and percentage
-//! calculations, critical for payout logic where rounding errors or division by
-//! zero could lead to locked funds or unfair distributions.
+//! This module provides audited, overflow-safe arithmetic operations specifically tailored for
+//! proportional payout allocations, fee calculations, and percentage distribution in PrediFi prediction markets.
 //!
-//! ## Features
+//! ## Security Rationale & Overflow/Underflow Protection Strategies
 //!
-//! - Fixed-point arithmetic with configurable precision
-//! - Protection against overflow, underflow, and division by zero
-//! - Configurable rounding strategies (protocol-favoring, neutral, user-favoring)
-//! - Proportion calculations that maintain fairness in payouts
+//! In decentralized prediction markets, incorrect arithmetic operations (such as integer overflows,
+//! unchecked division by zero, or rounding exploitation) can lead to critical vulnerabilities,
+//! including draining contract liquidity or permanently locking user stakes.
 //!
-//! ## Usage Example
+//! To prevent these risks, `SafeMath` enforces:
+//! 1. **Checked Arithmetic**: All operations utilize Rust's checked primitives (`checked_mul`, `checked_div`, `checked_add`, `checked_sub`, `checked_rem`). Any overflow or underflow immediately returns a `PrediFiError::ArithmeticError` or `PrediFiError::InvalidAmount`.
+//! 2. **Explicit Zero-Division Prevention**: Divisors are validated prior to execution. A zero denominator safely aborts execution with `PrediFiError::ArithmeticError`.
+//! 3. **Configurable Rounding Modes**:
+//!    - `ProtocolFavor`: Performs floor division (rounding down). Any fractional dust remains within contract pool reserves, preventing exploiters from draining single-stroop rounding remainders.
+//!    - `Neutral`: Performs standard half-up rounding to the nearest integer.
+//!    - `UserFavor`: Performs ceiling division (rounding up), giving fractional remainders to the beneficiary.
+//! 4. **Range & Bound Validation**: Percentage calculations strictly require basis points `bps` to lie in `[0, 10_000]` (where 10,000 bps = 100%). Out-of-bound fee rates return `PrediFiError::InvalidFeeBps`.
+//!
+//! ## Common Usage Patterns
 //!
 //! ```rust,ignore
 //! use safe_math::{SafeMath, RoundingMode};
 //!
-//! // Calculate 30% of 1000 with protocol-favoring rounding
-//! let result = SafeMath::percentage(1000, 3000, RoundingMode::ProtocolFavor)?;
+//! // Calculate a 2.5% (250 bps) protocol fee on 1,000,000 tokens
+//! let fee = SafeMath::percentage(1_000_000, 250, RoundingMode::ProtocolFavor)?;
+//! assert_eq!(fee, 25_000);
 //!
-//! // Calculate proportional payout
-//! let payout = SafeMath::proportion(user_stake, total_stake, pool_balance, RoundingMode::Neutral)?;
+//! // Calculate proportional user payout: (user_stake / total_winning_stake) * pool_reward
+//! let user_payout = SafeMath::proportion(300, 1000, 5000, RoundingMode::ProtocolFavor)?;
+//! assert_eq!(user_payout, 1500);
 //! ```
 
 use predifi_errors::PrediFiError;
@@ -971,6 +980,186 @@ mod tests {
         assert_eq!(payout, 0);
 
         assert!(audit.validate_payout().is_ok());
+    }
+
+    #[cfg(test)]
+    mod property_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn rounded_reference(numerator: i128, denominator: i128, rounding: RoundingMode) -> i128 {
+            let quotient = numerator / denominator;
+            let remainder = numerator % denominator;
+
+            match rounding {
+                RoundingMode::ProtocolFavor => quotient,
+                RoundingMode::Neutral => {
+                    if remainder >= denominator / 2 {
+                        quotient + 1
+                    } else {
+                        quotient
+                    }
+                }
+                RoundingMode::UserFavor => {
+                    if remainder > 0 {
+                        quotient + 1
+                    } else {
+                        quotient
+                    }
+                }
+            }
+        }
+
+        fn rounding_modes() -> impl Strategy<Value = RoundingMode> {
+            prop_oneof![
+                Just(RoundingMode::ProtocolFavor),
+                Just(RoundingMode::Neutral),
+                Just(RoundingMode::UserFavor),
+            ]
+        }
+
+        proptest! {
+            #[test]
+            fn safe_add_matches_standard_math_in_range(
+                a in -1_000_000_000_000i128..=1_000_000_000_000i128,
+                b in -1_000_000_000_000i128..=1_000_000_000_000i128,
+            ) {
+                prop_assert_eq!(SafeMath::safe_add(a, b), Ok(a + b));
+            }
+
+            #[test]
+            fn safe_sub_matches_standard_math_in_range(
+                a in -1_000_000_000_000i128..=1_000_000_000_000i128,
+                b in -1_000_000_000_000i128..=1_000_000_000_000i128,
+            ) {
+                prop_assert_eq!(SafeMath::safe_sub(a, b), Ok(a - b));
+            }
+
+            #[test]
+            fn safe_mul_matches_standard_math_in_range(
+                a in -1_000_000i128..=1_000_000i128,
+                b in -1_000_000i128..=1_000_000i128,
+            ) {
+                prop_assert_eq!(SafeMath::safe_mul(a, b), Ok(a * b));
+            }
+
+            #[test]
+            fn safe_add_rejects_overflow(
+                a in 1i128..=i128::MAX,
+                excess in 1i128..=i128::MAX,
+            ) {
+                let excess = excess.min(a);
+                let b = i128::MAX - a + excess;
+                prop_assert!(a.checked_add(b).is_none());
+                prop_assert_eq!(SafeMath::safe_add(a, b), Err(PrediFiError::ArithmeticError));
+            }
+
+            #[test]
+            fn safe_sub_rejects_underflow(
+                a in i128::MIN..=0,
+                deficit in 1i128..=i128::MAX,
+            ) {
+                let b = a.saturating_add(deficit);
+                prop_assume!(a.checked_sub(b).is_none());
+                prop_assert_eq!(SafeMath::safe_sub(a, b), Err(PrediFiError::ArithmeticError));
+            }
+
+            #[test]
+            fn safe_mul_rejects_overflow(a in 2i128..=i128::MAX) {
+                let b = i128::MAX / 2 + 1;
+                prop_assume!(a.checked_mul(b).is_none());
+                prop_assert_eq!(SafeMath::safe_mul(a, b), Err(PrediFiError::InvalidAmount));
+            }
+
+            #[test]
+            fn percentage_matches_integer_math_in_range(
+                amount in 0i128..=1_000_000_000_000i128,
+                bps in 0i128..=MAX_BPS,
+                rounding in rounding_modes(),
+            ) {
+                let numerator = amount * bps;
+                let expected = rounded_reference(numerator, MAX_BPS, rounding);
+                prop_assert_eq!(SafeMath::percentage(amount, bps, rounding), Ok(expected));
+            }
+
+            #[test]
+            fn proportion_matches_integer_math_in_range(
+                numerator in 0i128..=1_000_000_000i128,
+                denominator in 1i128..=1_000_000_000i128,
+                amount in 0i128..=1_000_000_000i128,
+                rounding in rounding_modes(),
+            ) {
+                prop_assume!(numerator <= denominator);
+                let expected = rounded_reference(numerator * amount, denominator, rounding);
+                prop_assert_eq!(SafeMath::proportion(numerator, denominator, amount, rounding), Ok(expected));
+            }
+
+            #[test]
+            fn proportion_rejects_zero_denominator(
+                numerator in 1i128..=i128::MAX,
+                amount in 0i128..=i128::MAX,
+                rounding in rounding_modes(),
+            ) {
+                prop_assert_eq!(
+                    SafeMath::proportion(numerator, 0, amount, rounding),
+                    Err(PrediFiError::ArithmeticError),
+                );
+            }
+
+            #[test]
+            fn divide_with_rounding_rejects_zero_denominator(
+                numerator in i128::MIN..=i128::MAX,
+                rounding in rounding_modes(),
+            ) {
+                prop_assert_eq!(
+                    SafeMath::divide_with_rounding(numerator, 0, rounding),
+                    Err(PrediFiError::ArithmeticError),
+                );
+            }
+
+            #[test]
+            fn calculate_share_matches_standard_math_in_range(
+                user_stake in 0i128..=1_000_000i128,
+                winning_stake in 1i128..=1_000_000i128,
+                payout_pool in 0i128..=1_000_000i128,
+            ) {
+                prop_assume!(user_stake <= winning_stake);
+                let expected = (user_stake * payout_pool) / winning_stake;
+                prop_assert_eq!(SafeMath::calculate_share(user_stake, winning_stake, payout_pool), Ok(expected));
+            }
+
+            #[test]
+            fn calculate_share_rejects_product_overflow(user_stake in 2i128..=i128::MAX / 2) {
+                let payout_pool = i128::MAX / 2 + 1;
+                prop_assume!(user_stake.checked_mul(payout_pool).is_none());
+                prop_assert_eq!(
+                    SafeMath::calculate_share(user_stake, user_stake, payout_pool),
+                    Err(PrediFiError::InvalidAmount),
+                );
+            }
+
+            #[test]
+            fn multi_proportion_conserves_pool(
+                stakes in prop::collection::vec(0i128..=1_000_000i128, 1..8),
+                extra_total in 0i128..=1_000_000i128,
+                pool_balance in 0i128..=1_000_000i128,
+            ) {
+                let stake_total: i128 = stakes.iter().sum();
+                let total_stake = stake_total + extra_total;
+                prop_assume!(total_stake > 0);
+
+                let results = SafeMath::multi_proportion(
+                    &stakes,
+                    total_stake,
+                    pool_balance,
+                    RoundingMode::ProtocolFavor,
+                ).unwrap();
+
+                prop_assert_eq!(results.len(), stakes.len());
+                prop_assert_eq!(results.iter().sum::<i128>(), pool_balance);
+                prop_assert!(results.iter().all(|result| *result >= 0));
+            }
+        }
     }
 
     #[test]

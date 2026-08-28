@@ -73,7 +73,11 @@ impl PriceFeedAdapter {
         env.storage().persistent().get(&DataKey::OracleConfig)
     }
 
-    /// Update price feed data (called by oracle keeper).
+    /// Update price feed data (called by oracle keeper or by contract admin).
+    ///
+    /// Requires the caller to be either a whitelisted oracle or an admin.
+    /// Price updates that deviate too far from the previous price are rejected
+    /// to prevent flash loan manipulation.
     pub fn update_price_feed(
         env: &Env,
         oracle: &Address,
@@ -93,6 +97,33 @@ impl PriceFeedAdapter {
             return Err(PredifiError::InvalidPoolState);
         }
 
+        let feed_key = DataKey::PriceFeed(feed_pair.clone());
+
+        // Price deviation protection: prevent flash loan manipulation by rejecting
+        // price updates that deviate more than 5x from the previous price.
+        const MAX_DEVIATION_MULTIPLIER: i128 = 5;
+        if let Some(prev_feed) = env
+            .storage()
+            .persistent()
+            .get::<DataKey, SimplePriceFeed>(&feed_key)
+        {
+            if prev_feed.price > 0 && price > 0 {
+                let (lower, upper) = (
+                    prev_feed
+                        .price
+                        .checked_div(MAX_DEVIATION_MULTIPLIER)
+                        .unwrap_or(i128::MIN),
+                    prev_feed
+                        .price
+                        .checked_mul(MAX_DEVIATION_MULTIPLIER)
+                        .unwrap_or(i128::MAX),
+                );
+                if price < lower || price > upper {
+                    return Err(PredifiError::InvalidData);
+                }
+            }
+        }
+
         let feed = SimplePriceFeed {
             pair: feed_pair.clone(),
             price,
@@ -103,7 +134,7 @@ impl PriceFeedAdapter {
 
         env.storage()
             .persistent()
-            .set(&DataKey::PriceFeed(feed_pair.clone()), &feed);
+            .set(&feed_key, &feed);
 
         // Track this feed pair in the global list for cleanup
         let mut list: SorobanVec<Symbol> = env

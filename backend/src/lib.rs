@@ -10,6 +10,7 @@ pub mod constants;
 pub mod db;
 pub mod errors;
 pub mod jwt;
+pub mod jwt_security;
 pub mod metrics;
 pub mod migration_checks;
 pub mod notifications;

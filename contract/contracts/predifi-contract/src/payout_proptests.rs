@@ -87,4 +87,182 @@ proptest! {
         // The difference (dust) should be less than the number of winners
         prop_assert!(payout_pool - total_winnings < num_winners as i128);
     }
+
+    /// Invariant: the protocol fee is always non-negative and never exceeds the
+    /// total stake, regardless of fee rate.
+    ///
+    /// This is a separate, minimal property that gives the test runner maximum
+    /// freedom to find corner cases (e.g. fee_bps = 0 or fee_bps = 10_000).
+    #[test]
+    fn test_fee_always_within_stake_bounds(
+        total_stake in 1..100_000_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+    ) {
+        let fee_bps_i = fee_bps as i128;
+        let protocol_fee = SafeMath::percentage(total_stake, fee_bps_i, RoundingMode::ProtocolFavor).unwrap();
+
+        // Fee is non-negative — the protocol never owes money to participants
+        prop_assert!(protocol_fee >= 0, "fee must be >= 0");
+
+        // Fee never exceeds the stake pool — payouts would go negative otherwise
+        prop_assert!(
+            protocol_fee <= total_stake,
+            "fee ({}) must not exceed total_stake ({})",
+            protocol_fee,
+            total_stake
+        );
+
+        // Payout pool is non-negative after fee deduction
+        let payout_pool = total_stake - protocol_fee;
+        prop_assert!(payout_pool >= 0, "payout_pool must be >= 0");
+    }
+
+    #[test]
+    fn prop_total_payouts_never_exceed_pool_stake(
+        total_stake in 1..100_000_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+        winning_stake in 1..=100_000_000i128,
+        first_winner_stake in 0..=100_000_000i128,
+    ) {
+        let protocol_fee = SafeMath::percentage(
+            total_stake,
+            fee_bps as i128,
+            RoundingMode::ProtocolFavor,
+        ).unwrap();
+        let payout_pool = total_stake - protocol_fee;
+        let first_winner_stake = first_winner_stake.min(winning_stake);
+        let second_winner_stake = winning_stake - first_winner_stake;
+
+        let first_payout = SafeMath::calculate_share(
+            first_winner_stake,
+            winning_stake,
+            payout_pool,
+        ).unwrap();
+        let second_payout = SafeMath::calculate_share(
+            second_winner_stake,
+            winning_stake,
+            payout_pool,
+        ).unwrap();
+
+        prop_assert!(first_payout + second_payout <= total_stake);
+    }
+
+    #[test]
+    fn prop_fee_deduction_is_mathematically_consistent(
+        total_stake in 1..100_000_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+    ) {
+        let fee = SafeMath::percentage(
+            total_stake,
+            fee_bps as i128,
+            RoundingMode::ProtocolFavor,
+        ).unwrap();
+        let payout_pool = total_stake - fee;
+        let expected_fee = (total_stake * fee_bps as i128) / 10_000;
+
+        prop_assert_eq!(fee, expected_fee);
+        prop_assert_eq!(payout_pool + fee, total_stake);
+    }
+
+    #[test]
+    fn prop_no_user_receives_negative_payout(
+        user_stake in 0..=100_000_000i128,
+        winning_stake in 0..=100_000_000i128,
+        payout_pool in 0..=100_000_000_000_000i128,
+    ) {
+        let user_stake = user_stake.min(winning_stake);
+        let payout = SafeMath::calculate_share(user_stake, winning_stake, payout_pool).unwrap();
+
+        prop_assert!(payout >= 0);
+    }
+
+    #[test]
+    fn prop_all_claims_equal_pool_balance_minus_fees(
+        total_stake in 1..100_000_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+        first_winner_stake in 0..=100_000_000i128,
+    ) {
+        let fee = SafeMath::percentage(
+            total_stake,
+            fee_bps as i128,
+            RoundingMode::ProtocolFavor,
+        ).unwrap();
+        let payout_pool = total_stake - fee;
+        if payout_pool == 0 {
+            return Ok(());
+        }
+
+        let winning_stake = payout_pool;
+        let first_winner_stake = first_winner_stake.min(winning_stake);
+        let second_winner_stake = winning_stake - first_winner_stake;
+
+        let first_claim = SafeMath::calculate_share(
+            first_winner_stake,
+            winning_stake,
+            payout_pool,
+        ).unwrap();
+        let second_claim = SafeMath::calculate_share(
+            second_winner_stake,
+            winning_stake,
+            payout_pool,
+        ).unwrap();
+
+        prop_assert_eq!(first_claim + second_claim, payout_pool);
+    }
+}
+
+// ─── Issue #1461 — Property-based Tests: Safe math operations ────────────────
+//
+// The following proptests target the SafeMath primitives directly and are
+// independent of the pool lifecycle.  They validate arithmetic invariants
+// that must hold for all representable input values.
+
+#[cfg(test)]
+proptest! {
+    /// SafeMath::safe_add must be commutative: a + b == b + a.
+    #[test]
+    fn prop_safe_add_commutative(
+        a in 0..i128::MAX / 2,
+        b in 0..i128::MAX / 2,
+    ) {
+        let ab = SafeMath::safe_add(a, b).unwrap();
+        let ba = SafeMath::safe_add(b, a).unwrap();
+        prop_assert_eq!(ab, ba);
+    }
+
+    /// SafeMath::safe_add followed by SafeMath::safe_sub returns the original value.
+    #[test]
+    fn prop_safe_add_sub_roundtrip(
+        a in 0..=i128::MAX / 2,
+        b in 0..=i128::MAX / 2,
+    ) {
+        let sum = SafeMath::safe_add(a, b).unwrap();
+        let back = SafeMath::safe_sub(sum, b).unwrap();
+        prop_assert_eq!(back, a);
+    }
+
+    /// SafeMath::proportion output is always <= the `amount` argument for any valid inputs.
+    ///
+    /// A user's proportional share of a pool can never exceed the pool itself.
+    #[test]
+    fn prop_proportion_result_bounded_by_amount(
+        numerator in 1i128..=1_000_000_000_000i128,
+        denominator_extra in 0i128..=1_000_000_000_000i128,
+        amount in 1i128..=1_000_000_000_000i128,
+    ) {
+        let denominator = numerator + denominator_extra; // guarantees numerator <= denominator
+        let result = SafeMath::proportion(numerator, denominator, amount, RoundingMode::Neutral).unwrap();
+        prop_assert!(result <= amount, "proportion result ({}) exceeded amount ({})", result, amount);
+    }
+
+    /// SafeMath::safe_mul result equals manual multiplication for inputs that do not overflow.
+    #[test]
+    fn prop_safe_mul_matches_checked_mul(
+        a in 0i128..=1_000_000_000i128,
+        b in 0i128..=1_000_000_000i128,
+    ) {
+        let expected = a.checked_mul(b).unwrap();
+        let result = SafeMath::safe_mul(a, b).unwrap();
+        prop_assert_eq!(result, expected);
+    }
 }

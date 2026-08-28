@@ -1,18 +1,25 @@
 //! Redis caching layer for hot data
 //!
 //! Implements issue #714: Redis Caching for Hot Data
+//! Hardened for issue #1557: cache poisoning, namespace isolation, TTL, serde safety.
 //!
 //! This module provides a caching layer for frequently accessed API responses
 //! to reduce database load. Uses Redis with configurable TTL values.
 //!
 //! Features:
-//! - Automatic cache invalidation after TTL
+//! - Automatic cache invalidation after TTL (Redis TTL + application envelope)
+//! - Key namespace isolation (`predifi:` prefix) so other apps cannot collide
+//! - Key sanitization against injection / glob escapes
 //! - Graceful fallback when Redis is unavailable
 //! - JSON serialization for complex types
 //! - Connection pooling via redis ConnectionManager
+//!
+//! Cached values are **never** an authorization source. Callers must authenticate
+//! and authorize before reading or writing user-scoped keys.
 
 use redis::{aio::ConnectionManager, AsyncCommands, ErrorKind};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, warn};
 
 /// Default TTL for cached pool data (60 seconds)
@@ -32,6 +39,50 @@ pub const POOLS_CACHE_PATTERN: &str = "pools:*";
 
 /// Redis key pattern matching all cached stats queries.
 pub const STATS_CACHE_PATTERN: &str = "stats:*";
+
+/// Logical namespace prepended to every Redis key this process writes.
+/// Isolates PrediFi keys from other applications sharing the same Redis.
+pub const CACHE_NAMESPACE: &str = "predifi";
+
+/// Maximum length for a cache key component after sanitization.
+/// Prevents excessively long keys from being used as Redis keys.
+const MAX_KEY_COMPONENT_LENGTH: usize = 128;
+
+/// Hard cap on a fully namespaced Redis key.
+const MAX_KEY_LENGTH: usize = 512;
+
+/// Minimum TTL (seconds). TTL 0 would persist forever and is refused.
+const MIN_TTL_SECS: u64 = 1;
+
+/// Maximum TTL (seconds). Caps poisoning via absurdly long expiry.
+const MAX_TTL_SECS: u64 = 86_400 * 30;
+
+/// Maximum serialized payload size accepted into cache (512 KiB).
+const MAX_VALUE_BYTES: usize = 512 * 1024;
+
+/// Envelope stored in Redis so expiry is enforced even if Redis TTL is stripped.
+#[derive(Debug, Serialize, Deserialize)]
+struct CacheEnvelope {
+    data: serde_json::Value,
+    exp: u64,
+}
+
+/// Sanitize a user-supplied string for safe use as a Redis key component.
+///
+/// Strips characters that could be used for Redis key injection or namespace
+/// escape (newlines, carriage returns, null bytes, colons used as namespace
+/// separators, wildcards, and whitespace). Truncates to [`MAX_KEY_COMPONENT_LENGTH`].
+pub fn sanitize_key_component(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .filter(|&c| !matches!(c, '\n' | '\r' | '\0' | ':' | '*' | '?' | ' ' | '\t'))
+        .collect();
+    if sanitized.len() > MAX_KEY_COMPONENT_LENGTH {
+        sanitized[..MAX_KEY_COMPONENT_LENGTH].to_string()
+    } else {
+        sanitized
+    }
+}
 
 /// Thread-safe Redis cache client with graceful fail-open behaviour.
 ///
@@ -104,20 +155,23 @@ impl RedisCache {
     ///
     /// Returns None if:
     /// - Redis is unavailable
+    /// - Key is invalid / fails namespace checks
     /// - Key doesn't exist
+    /// - Envelope TTL has elapsed (application-level expiry)
     /// - Deserialization fails
     pub async fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
+        let namespaced = namespaced_key(key)?;
         let manager = self.manager.as_ref()?;
         let mut conn = manager.clone();
 
-        match conn.get::<_, Option<String>>(key).await {
-            Ok(Some(data)) => match serde_json::from_str::<T>(&data) {
-                Ok(value) => {
+        match conn.get::<_, Option<String>>(&namespaced).await {
+            Ok(Some(data)) => match decode_envelope(&data) {
+                Some(value) => {
                     debug!("Cache hit: {}", key);
                     Some(value)
                 }
-                Err(err) => {
-                    error!("Failed to deserialize cached value for {}: {}", key, err);
+                None => {
+                    debug!("Cache envelope expired or invalid: {}", key);
                     None
                 }
             },
@@ -138,31 +192,38 @@ impl RedisCache {
 
     /// Set a value in cache with TTL
     ///
-    /// Silently fails if Redis is unavailable (fail-open behavior)
+    /// Silently fails if Redis is unavailable (fail-open behavior).
+    /// Refuses TTL 0 (would never expire) and caps TTL at [`MAX_TTL_SECS`].
     pub async fn set<T: Serialize>(&self, key: &str, value: &T, ttl_secs: u64) {
+        if ttl_secs < MIN_TTL_SECS {
+            warn!("refusing to cache {} with TTL {} (must expire)", key, ttl_secs);
+            return;
+        }
+        let Some(namespaced) = namespaced_key(key) else {
+            warn!("refusing to cache invalid key");
+            return;
+        };
         let manager = match self.manager.as_ref() {
             Some(m) => m,
             None => return,
         };
 
         let mut conn = manager.clone();
+        let ttl = ttl_secs.min(MAX_TTL_SECS);
 
-        let data = match serde_json::to_string(value) {
-            Ok(d) => d,
-            Err(err) => {
-                error!("Failed to serialize value for {}: {}", key, err);
-                return;
-            }
+        let data = match encode_envelope(value, ttl) {
+            Some(d) => d,
+            None => return,
         };
 
-        if let Err(err) = conn.set_ex::<_, _, ()>(key, data, ttl_secs).await {
+        if let Err(err) = conn.set_ex::<_, _, ()>(&namespaced, data, ttl).await {
             if is_connection_error(err.kind()) {
                 warn!("Redis connection dropout on SET {}: {}", key, err);
             } else {
                 error!("Redis SET error for {}: {}", key, err);
             }
         } else {
-            debug!("Cached: {} (TTL: {}s)", key, ttl_secs);
+            debug!("Cached: {} (TTL: {}s)", key, ttl);
         }
     }
 
@@ -170,6 +231,9 @@ impl RedisCache {
     ///
     /// Used for cache invalidation when data changes
     pub async fn delete(&self, key: &str) {
+        let Some(namespaced) = namespaced_key(key) else {
+            return;
+        };
         let manager = match self.manager.as_ref() {
             Some(m) => m,
             None => return,
@@ -177,7 +241,7 @@ impl RedisCache {
 
         let mut conn = manager.clone();
 
-        if let Err(err) = conn.del::<_, ()>(key).await {
+        if let Err(err) = conn.del::<_, ()>(&namespaced).await {
             if is_connection_error(err.kind()) {
                 warn!("Redis connection dropout on DEL {}: {}", key, err);
             } else {
@@ -190,8 +254,12 @@ impl RedisCache {
 
     /// Delete multiple keys matching a pattern
     ///
-    /// Useful for invalidating related cache entries
+    /// Useful for invalidating related cache entries. The pattern is
+    /// namespaced so it cannot delete keys outside the PrediFi prefix.
     pub async fn delete_pattern(&self, pattern: &str) {
+        let Some(namespaced) = namespaced_pattern(pattern) else {
+            return;
+        };
         let manager = match self.manager.as_ref() {
             Some(m) => m,
             None => return,
@@ -199,8 +267,8 @@ impl RedisCache {
 
         let mut conn = manager.clone();
 
-        // Get all keys matching pattern
-        let keys: Vec<String> = match conn.keys(pattern).await {
+        // Get all keys matching pattern (already namespaced)
+        let keys: Vec<String> = match conn.keys(&namespaced).await {
             Ok(k) => k,
             Err(err) => {
                 if is_connection_error(err.kind()) {
@@ -216,8 +284,16 @@ impl RedisCache {
             return;
         }
 
-        // Delete all matching keys
-        if let Err(err) = conn.del::<_, ()>(&keys).await {
+        // Only delete keys that still sit inside our namespace.
+        let scoped: Vec<String> = keys
+            .into_iter()
+            .filter(|k| k.starts_with(&format!("{CACHE_NAMESPACE}:")))
+            .collect();
+        if scoped.is_empty() {
+            return;
+        }
+
+        if let Err(err) = conn.del::<_, ()>(&scoped).await {
             if is_connection_error(err.kind()) {
                 warn!(
                     "Redis connection dropout on DEL pattern {}: {}",
@@ -229,7 +305,7 @@ impl RedisCache {
         } else {
             debug!(
                 "Invalidated {} cache entries matching: {}",
-                keys.len(),
+                scoped.len(),
                 pattern
             );
         }
@@ -255,13 +331,16 @@ impl RedisCache {
     ///
     /// Useful for cache-aside pattern to determine if we need to populate the cache
     pub async fn exists(&self, key: &str) -> bool {
+        let Some(namespaced) = namespaced_key(key) else {
+            return false;
+        };
         let manager = match self.manager.as_ref() {
             Some(m) => m,
             None => return false,
         };
 
         let mut conn = manager.clone();
-        match conn.exists::<_, bool>(key).await {
+        match conn.exists::<_, bool>(&namespaced).await {
             Ok(exists) => exists,
             Err(err) => {
                 if is_connection_error(err.kind()) {
@@ -300,10 +379,80 @@ fn is_connection_error(kind: ErrorKind) -> bool {
     matches!(kind, ErrorKind::IoError | ErrorKind::BusyLoadingError)
 }
 
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Prefix `key` with the PrediFi namespace after rejecting injection/overflow.
+fn namespaced_key(key: &str) -> Option<String> {
+    if key.is_empty() || key.len() > MAX_KEY_LENGTH {
+        return None;
+    }
+    if key
+        .chars()
+        .any(|c| matches!(c, '\n' | '\r' | '\0' | ' ' | '\t'))
+    {
+        return None;
+    }
+    // Reject attempts to climb out of the namespace via an absolute prefix.
+    if key.starts_with(&format!("{CACHE_NAMESPACE}:")) {
+        return Some(key.to_string());
+    }
+    let namespaced = format!("{CACHE_NAMESPACE}:{key}");
+    if namespaced.len() > MAX_KEY_LENGTH {
+        return None;
+    }
+    Some(namespaced)
+}
+
+fn namespaced_pattern(pattern: &str) -> Option<String> {
+    namespaced_key(pattern)
+}
+
+fn encode_envelope<T: Serialize>(value: &T, ttl_secs: u64) -> Option<String> {
+    let data = match serde_json::to_value(value) {
+        Ok(d) => d,
+        Err(err) => {
+            error!("Failed to serialize cache value: {}", err);
+            return None;
+        }
+    };
+    let envelope = CacheEnvelope {
+        data,
+        exp: now_unix().saturating_add(ttl_secs),
+    };
+    match serde_json::to_string(&envelope) {
+        Ok(encoded) if encoded.len() <= MAX_VALUE_BYTES => Some(encoded),
+        Ok(_) => {
+            error!("refusing to cache payload larger than {MAX_VALUE_BYTES} bytes");
+            None
+        }
+        Err(err) => {
+            error!("Failed to serialize cache envelope: {}", err);
+            None
+        }
+    }
+}
+
+fn decode_envelope<T: DeserializeOwned>(raw: &str) -> Option<T> {
+    if raw.len() > MAX_VALUE_BYTES {
+        return None;
+    }
+    let envelope: CacheEnvelope = serde_json::from_str(raw).ok()?;
+    if envelope.exp <= now_unix() {
+        return None;
+    }
+    serde_json::from_value(envelope.data).ok()
+}
+
 /// Generate a cache key for a pools list query.
 ///
 /// The key encodes all query parameters so that different filter/sort/page
 /// combinations are stored independently in Redis.
+/// User-provided inputs (`category`) are sanitized to prevent key injection.
 pub fn pools_cache_key(
     sort_by: &str,
     category: Option<&str>,
@@ -312,8 +461,21 @@ pub fn pools_cache_key(
     offset: i64,
 ) -> String {
     match category {
-        Some(cat) => format!("pools:{}:{}:{}:{}:{}", sort_by, cat, status, limit, offset),
-        None => format!("pools:{}:all:{}:{}:{}", sort_by, status, limit, offset),
+        Some(cat) => format!(
+            "pools:{}:{}:{}:{}:{}",
+            sanitize_key_component(sort_by),
+            sanitize_key_component(cat),
+            sanitize_key_component(status),
+            limit,
+            offset
+        ),
+        None => format!(
+            "pools:{}:all:{}:{}:{}",
+            sanitize_key_component(sort_by),
+            sanitize_key_component(status),
+            limit,
+            offset
+        ),
     }
 }
 
@@ -323,18 +485,31 @@ pub fn pool_details_cache_key(pool_id: i64) -> String {
 }
 
 /// Generate a cache key for a user's paginated predictions list.
+///
+/// The `address` is sanitized to prevent cache key injection via malicious
+/// wallet addresses containing Redis special characters.
 pub fn user_predictions_cache_key(address: &str, limit: i64, offset: i64) -> String {
-    format!("user:{}:predictions:{}:{}", address, limit, offset)
+    format!(
+        "user:{}:predictions:{}:{}",
+        sanitize_key_component(address),
+        limit,
+        offset
+    )
 }
 
 /// Generate a cache key for the protocol stats endpoint.
 ///
 /// The key encodes the optional `category` and `status` filter parameters so
 /// that different filter combinations are cached independently.
+/// User-provided inputs are sanitized to prevent key injection.
 pub fn stats_cache_key(category: Option<&str>, status: Option<&str>) -> String {
     let cat = category.unwrap_or("all");
     let st = status.unwrap_or("all");
-    format!("stats:{}:{}", cat, st)
+    format!(
+        "stats:{}:{}",
+        sanitize_key_component(cat),
+        sanitize_key_component(st)
+    )
 }
 
 #[cfg(test)]
@@ -557,5 +732,115 @@ mod tests {
     #[test]
     fn test_stats_cache_ttl() {
         assert_eq!(STATS_CACHE_TTL, 30);
+    }
+
+    // ── Key sanitization tests ───────────────────────────────────────────────
+
+    #[test]
+    fn sanitize_removes_newlines_and_colons() {
+        let input = "user\naddr\ress:bad*?stuff";
+        let result = sanitize_key_component(input);
+        assert!(!result.contains('\n'));
+        assert!(!result.contains('\r'));
+        assert!(!result.contains(':'));
+        assert!(!result.contains('*'));
+        assert!(!result.contains('?'));
+    }
+
+    #[test]
+    fn sanitize_removes_wildcards_and_spaces() {
+        let input = "G*ABC?123 DEF";
+        let result = sanitize_key_component(input);
+        assert_eq!(result, "GABC123DEF");
+    }
+
+    #[test]
+    fn sanitize_truncates_long_input() {
+        let long = "a".repeat(MAX_KEY_COMPONENT_LENGTH + 100);
+        let result = sanitize_key_component(&long);
+        assert_eq!(result.len(), MAX_KEY_COMPONENT_LENGTH);
+    }
+
+    #[test]
+    fn sanitize_preserves_safe_characters() {
+        let input = "GABC123-_./@";
+        let result = sanitize_key_component(input);
+        assert_eq!(result, "GABC123-_./@");
+    }
+
+    #[test]
+    fn sanitized_cache_key_prevents_injection_attempts() {
+        let malicious_category = "sports\nSET keys *\nsports";
+        let key = pools_cache_key("new", Some(malicious_category), "active", 10, 0);
+        assert!(!key.contains('\n'));
+        assert!(!key.contains('*'));
+        assert!(key.contains("sports"));
+    }
+
+    #[test]
+    fn sanitized_user_key_prevents_injection_attempts() {
+        let malicious_address = "GABC123\nDEL user:*\n";
+        let key = user_predictions_cache_key(malicious_address, 10, 0);
+        assert!(!key.contains('\n'));
+        assert!(!key.contains('*'));
+    }
+
+    #[test]
+    fn namespaced_key_prefixes_and_rejects_control_chars() {
+        assert_eq!(
+            namespaced_key("pools:new:all:active:20:0").as_deref(),
+            Some("predifi:pools:new:all:active:20:0")
+        );
+        assert!(namespaced_key("pools:\nKEYS *").is_none());
+        assert!(namespaced_key("").is_none());
+        assert!(namespaced_key(&"a".repeat(MAX_KEY_LENGTH + 1)).is_none());
+    }
+
+    #[test]
+    fn namespaced_pattern_cannot_escape_prefix() {
+        let pattern = namespaced_pattern("pools:*").unwrap();
+        assert!(pattern.starts_with("predifi:"));
+        assert!(pattern.ends_with("pools:*"));
+    }
+
+    #[test]
+    fn envelope_roundtrip_and_expiry() {
+        let encoded = encode_envelope(&"hello".to_string(), 60).expect("encode");
+        let decoded: String = decode_envelope(&encoded).expect("decode");
+        assert_eq!(decoded, "hello");
+
+        let expired = CacheEnvelope {
+            data: serde_json::json!("stale"),
+            exp: 1,
+        };
+        let raw = serde_json::to_string(&expired).unwrap();
+        let missed: Option<String> = decode_envelope(&raw);
+        assert!(missed.is_none(), "expired envelope must be a miss");
+    }
+
+    #[test]
+    fn envelope_rejects_oversized_payload() {
+        let huge = "x".repeat(MAX_VALUE_BYTES + 8);
+        assert!(encode_envelope(&huge, 30).is_none());
+    }
+
+    #[test]
+    fn cache_key_namespaces_are_isolated() {
+        let pools = namespaced_key(&pools_cache_key("new", None, "active", 10, 0)).unwrap();
+        let stats = namespaced_key(&stats_cache_key(None, None)).unwrap();
+        let user = namespaced_key(&user_predictions_cache_key("GABC", 10, 0)).unwrap();
+        assert!(pools.starts_with("predifi:pools:"));
+        assert!(stats.starts_with("predifi:stats:"));
+        assert!(user.starts_with("predifi:user:"));
+        assert_ne!(pools, stats);
+    }
+
+    #[test]
+    fn ttl_zero_is_below_minimum() {
+        assert!(0 < MIN_TTL_SECS);
+        assert!(POOLS_CACHE_TTL >= MIN_TTL_SECS);
+        assert!(POOLS_CACHE_TTL <= MAX_TTL_SECS);
+        assert!(STATS_CACHE_TTL <= MAX_TTL_SECS);
+        assert!(USER_PREDICTIONS_CACHE_TTL <= MAX_TTL_SECS);
     }
 }

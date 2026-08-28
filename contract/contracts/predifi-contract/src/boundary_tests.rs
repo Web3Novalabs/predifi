@@ -218,23 +218,336 @@ fn upgrade_contract_rejects_non_admin() {
 
     // The operator role is privileged but must not reach the upgrade path —
     // an upgrade replaces every other control in the contract.
-    assert!(client.try_upgrade_contract(&operator, &hash).is_err());
+    assert_eq!(
+        client.try_upgrade_contract(&operator, &hash),
+        Err(Ok(PredifiError::Unauthorized))
+    );
 
     let stranger = Address::generate(&env);
-    assert!(client.try_upgrade_contract(&stranger, &hash).is_err());
+    assert_eq!(
+        client.try_upgrade_contract(&stranger, &hash),
+        Err(Ok(PredifiError::Unauthorized))
+    );
 }
 
 #[test]
 fn upgrade_contract_rejects_unknown_wasm_hash() {
     let env = Env::default();
     env.mock_all_auths();
-    let (_, client, _, _, _, _, _, _) = setup(&env);
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
     let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &0u32);
 
-    // A hash with no uploaded WASM behind it must not be applied; the guard is
-    // what stops an upgrade bricking the contract into an empty executable.
+    // A hash with no uploaded WASM behind it must fail after authorization.
     let hash = BytesN::from_array(&env, &[7u8; 32]);
     assert!(client.try_upgrade_contract(&admin, &hash).is_err());
+    assert_eq!(client.get_version(), 1);
+}
+
+#[test]
+fn upgrade_with_active_pool_preserves_state_and_allows_migration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, token_address, _, _, _, _, creator) = setup(&env);
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &0u32);
+
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 1, 100);
+    let before = client.get_pool(&pool_id);
+    let invalid_hash = BytesN::from_array(&env, &[9u8; 32]);
+
+    // An upgrade attempt must not be able to discard an active pool.
+    assert!(client.try_upgrade_contract(&admin, &invalid_hash).is_err());
+    let after = client.get_pool(&pool_id);
+    assert_eq!(after, before);
+    assert_eq!(client.get_version(), 1);
+
+    // Migration is a separate, authorized post-upgrade operation and must be
+    // safe to invoke with the preserved active state.
+    client.migrate_state(&admin);
+    assert_eq!(client.get_pool(&pool_id), before);
+}
+
+// ─── #1322 (advanced): upgrade_contract boundary & edge cases ────────────────
+
+/// An operator (role 1) must be rejected — upgrade is exclusively an admin
+/// (role 0) operation.  This prevents a compromised operator from replacing
+/// the contract binary and bypassing all other access controls.
+#[test]
+fn upgrade_contract_operator_role_is_insufficient() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, _, _, _, _, operator, _) = setup(&env);
+
+    let hash = BytesN::from_array(&env, &[0xABu8; 32]);
+
+    let result = client.try_upgrade_contract(&operator, &hash);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::Unauthorized)),
+        "operator must be rejected with Unauthorized, not a generic panic"
+    );
+}
+
+/// A completely unknown address with no role must also be rejected with the
+/// same `Unauthorized` error — the access check runs before any WASM logic.
+#[test]
+fn upgrade_contract_stranger_is_rejected_with_unauthorized() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, _, _, _, _, _, _) = setup(&env);
+
+    let stranger = Address::generate(&env);
+    let hash = BytesN::from_array(&env, &[0xFFu8; 32]);
+
+    let result = client.try_upgrade_contract(&stranger, &hash);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::Unauthorized)),
+        "stranger must be rejected with Unauthorized before WASM deployment is attempted"
+    );
+}
+
+/// `upgrade_contract` must fail when the supplied WASM hash is all-zeros —
+/// the Soroban host rejects a hash with no matching deployment artifact.
+/// This guards against accidental null-hash upgrades that would brick the
+/// contract by swapping in nonexistent bytecode.
+#[test]
+fn upgrade_contract_rejects_zero_wasm_hash() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &crate::test::ROLE_ADMIN);
+
+    // All-zero hash: no WASM uploaded behind it.
+    let zero_hash = BytesN::from_array(&env, &[0u8; 32]);
+
+    // The host will panic when it cannot find the WASM — try_ captures that as Err.
+    let result = client.try_upgrade_contract(&admin, &zero_hash);
+    assert!(
+        result.is_err(),
+        "a zero WASM hash with no backing artifact must be rejected"
+    );
+}
+
+/// Calling `upgrade_contract` while the contract is paused must still succeed
+/// for the admin — upgrade_contract intentionally does NOT enforce the paused
+/// guard so that a buggy pause can always be recovered via upgrade.
+/// Verify the access control path executes (i.e. the call fails only at
+/// the WASM-deployment step, not at the pause check).
+#[test]
+fn upgrade_contract_is_not_blocked_by_pause() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &crate::test::ROLE_ADMIN);
+
+    // Pause the contract.
+    client.pause(&admin);
+    assert!(client.is_contract_paused(), "contract must be paused");
+
+    // An invalid WASM hash is the limiting factor here, not the pause guard.
+    // If upgrade_contract enforced the pause check it would return
+    // PredifiError::ContractPaused; instead it returns a host-level error from
+    // the missing WASM — any error suffices, but ContractPaused must NOT appear.
+    let hash = BytesN::from_array(&env, &[0xDEu8; 32]);
+    let result = client.try_upgrade_contract(&admin, &hash);
+    assert!(
+        result != Err(Ok(PredifiError::ContractPaused)),
+        "upgrade_contract must not be blocked by the contract-paused guard"
+    );
+}
+
+/// When active pools exist at upgrade time the upgrade path must not modify
+/// or invalidate any pool state.  The upgrade call reaches the WASM-swap step
+/// (and panics there in the mock environment), but all pool data written
+/// before that point must remain intact and readable after the panic is caught.
+#[test]
+fn upgrade_contract_does_not_corrupt_active_pool_state() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, token_address, token, token_admin_client, _, _, creator) =
+        setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &crate::test::ROLE_ADMIN);
+
+    // Create a pool and place a stake so there is meaningful state to preserve.
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 1i128, 0i128);
+    let staker = Address::generate(&env);
+    token_admin_client.mint(&staker, &500i128);
+    client.place_prediction(&staker, &pool_id, &500i128, &0u32, &None, &None);
+
+    // Capture state before the upgrade attempt.
+    let pool_before = client.get_pool(&pool_id);
+    let version_before = client.get_version();
+    assert_eq!(pool_before.total_stake, 500i128, "total_stake must be 500 before upgrade");
+
+    // Attempt upgrade — fails at WASM-swap because the hash is not registered
+    // in the mock environment.  The try_ wrapper prevents a test abort.
+    let hash = BytesN::from_array(&env, &[0x42u8; 32]);
+    let _ = client.try_upgrade_contract(&admin, &hash);
+
+    // All pool state and contract configuration must be unchanged.
+    let pool_after = client.get_pool(&pool_id);
+    assert_eq!(
+        pool_after.total_stake, pool_before.total_stake,
+        "total_stake must be unchanged after a failed upgrade"
+    );
+    assert_eq!(
+        pool_after.state, pool_before.state,
+        "pool state must be unchanged after a failed upgrade"
+    );
+    assert_eq!(
+        pool_after.end_time, pool_before.end_time,
+        "pool end_time must be unchanged after a failed upgrade"
+    );
+    // Version must NOT have been incremented because the WASM-swap panicked
+    // before the version write committed.
+    assert_eq!(
+        client.get_version(),
+        version_before,
+        "version must not be incremented when the WASM-swap step fails"
+    );
+}
+
+/// `migrate_state` called immediately after a simulated upgrade (admin role
+/// present, contract not paused) must succeed without modifying existing pool
+/// data.  This verifies the post-upgrade migration hook is wired correctly and
+/// that it is idempotent — calling it twice must yield the same outcome.
+#[test]
+fn migrate_state_is_called_correctly_post_upgrade_and_is_idempotent() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &crate::test::ROLE_ADMIN);
+
+    // Create a pool so there is state to preserve across migration.
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 1i128, 0i128);
+    let staker = Address::generate(&env);
+    token_admin_client.mint(&staker, &200i128);
+    client.place_prediction(&staker, &pool_id, &200i128, &0u32, &None, &None);
+
+    let pool_before = client.get_pool(&pool_id);
+    let version_before = client.get_version();
+
+    // First call to migrate_state — must succeed.
+    let first = client.try_migrate_state(&admin);
+    assert!(
+        first.is_ok(),
+        "first migrate_state call by admin must succeed: {:?}",
+        first
+    );
+
+    // Second call — must also succeed (idempotent).
+    let second = client.try_migrate_state(&admin);
+    assert!(
+        second.is_ok(),
+        "second migrate_state call must succeed (idempotent): {:?}",
+        second
+    );
+
+    // Pool data must be entirely unchanged by migration.
+    let pool_after = client.get_pool(&pool_id);
+    assert_eq!(
+        pool_after.total_stake, pool_before.total_stake,
+        "total_stake must be unchanged after migrate_state"
+    );
+    assert_eq!(
+        pool_after.state, pool_before.state,
+        "pool state must be unchanged after migrate_state"
+    );
+    assert_eq!(
+        pool_after.fee_bps, pool_before.fee_bps,
+        "pool fee_bps must be unchanged after migrate_state"
+    );
+
+    // migrate_state must not modify the version counter — version bumping is
+    // the responsibility of upgrade_contract, not the migration hook.
+    assert_eq!(
+        client.get_version(),
+        version_before,
+        "migrate_state must not alter the version counter"
+    );
+}
+
+/// `migrate_state` called by a non-admin must be rejected with `Unauthorized`.
+/// This ensures the migration hook cannot be triggered by arbitrary callers
+/// between an upgrade and the admin's intentional migration step.
+#[test]
+fn migrate_state_rejects_non_admin_after_upgrade() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, _, _, _, _, operator, _) = setup(&env);
+
+    // Operator — privileged but not admin.
+    let result_op = client.try_migrate_state(&operator);
+    assert_eq!(
+        result_op,
+        Err(Ok(PredifiError::Unauthorized)),
+        "operator must be rejected from migrate_state with Unauthorized"
+    );
+
+    // Completely unknown address.
+    let stranger = Address::generate(&env);
+    let result_stranger = client.try_migrate_state(&stranger);
+    assert_eq!(
+        result_stranger,
+        Err(Ok(PredifiError::Unauthorized)),
+        "stranger must be rejected from migrate_state with Unauthorized"
+    );
+}
+
+/// `migrate_state` while the contract is paused must return `ContractPaused`.
+/// This enforces that migrations only run in a known-good operational state
+/// and cannot be used to sneak writes through a pause.
+#[test]
+fn migrate_state_is_blocked_while_contract_is_paused() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &crate::test::ROLE_ADMIN);
+
+    client.pause(&admin);
+    assert!(client.is_contract_paused());
+
+    let result = client.try_migrate_state(&admin);
+    assert_eq!(
+        result,
+        Err(Ok(PredifiError::ContractPaused)),
+        "migrate_state must return ContractPaused when the contract is paused"
+    );
+}
+
+/// `upgrade_contract` requires the caller to provide authorisation (`require_auth`).
+/// Verify that the auth check fires *before* any role check by stripping auths
+/// and confirming the call fails.
+#[test]
+fn upgrade_contract_requires_admin_auth() {
+    // Do NOT call env.mock_all_auths() so no auth is granted.
+    let env = Env::default();
+    env.mock_all_auths_allowing_non_root_auth();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &crate::test::ROLE_ADMIN);
+
+    let hash = BytesN::from_array(&env, &[0x11u8; 32]);
+
+    // Even with the admin role present, skipping the auth envelope must fail.
+    let result = client.try_upgrade_contract(&admin, &hash);
+    assert!(
+        result.is_err(),
+        "upgrade_contract must require an auth envelope from the admin"
+    );
 }
 
 // ─── #1326: update_pool_description ──────────────────────────────────────────

@@ -72,6 +72,7 @@ fn test_price_based_pool_mock_resolution() {
     let token_address = Address::generate(&env);
     client.add_token_to_whitelist(&admin, &token_address);
     client.add_oracle(&admin, &oracle);
+    client.init_oracle(&admin, &Address::generate(&env), &10_000u64, &100u32);
 
     // 2. Create a Prediction Pool
     let end_time = 4000u64; // > min_pool_duration (3600)
@@ -224,4 +225,90 @@ fn test_resolve_pool_rejects_stale_price_feed() {
         result.is_err(),
         "Expected error when resolving with stale price feed"
     );
+}
+
+/// Verifies that `resolve_pool_from_price` resolves to outcome 0 (the "No" / losing side)
+/// when the oracle price is strictly below the target, using `ComparisonOp::LessThan` (0).
+///
+/// This exercises the opposite price-direction branch from `test_price_based_pool_mock_resolution`
+/// and confirms that outcome assignment is direction-sensitive.
+#[test]
+fn test_price_based_pool_resolves_less_than_condition() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let oracle = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    let ac_id = env.register(dummy_access_control::DummyAccessControl, ());
+    let ac_client = dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &ROLE_OPERATOR);
+
+    let contract_id = env.register(PredifiContract, ());
+    let client = PredifiContractClient::new(&env, &contract_id);
+
+    client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
+
+    let token_address = Address::generate(&env);
+    client.add_token_to_whitelist(&admin, &token_address);
+    client.add_oracle(&admin, &oracle);
+    client.init_oracle(&admin, &Address::generate(&env), &10_000u64, &100u32);
+
+    // Pool: "Will BTC drop below $50k?" with end_time = 4000
+    let end_time = 4000u64;
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Will BTC drop below $50k?"),
+            metadata_url: String::from_str(&env, "ipfs://..."),
+            min_stake: 100,
+            max_stake: 0,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0,
+            required_resolutions: 1,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                &env,
+                String::from_str(&env, "No"),
+                String::from_str(&env, "Yes"),
+            ],
+        },
+    );
+
+    // Set price condition: BTC < $50_000 (ComparisonOp::LessThan = 0)
+    let asset = symbol_short!("BTC_USD");
+    let target_price = 50_000_0000000i128; // 7-decimal representation
+    client.set_price_condition(&operator, &pool_id, &asset, &target_price, &2u32, &100u32);
+
+    // Push a price feed showing BTC at $45_000 — below the $50_000 threshold
+    env.ledger().with_mut(|li| li.timestamp = 1000);
+    let mock_price = 45_000_0000000i128;
+    client.update_price_feed(
+        &oracle,
+        &asset,
+        &mock_price,
+        &100i128,
+        &999u64,   // strictly in the past
+        &10000u64, // expires well after end_time
+    );
+
+    // Fast-forward past end_time and resolution_delay
+    env.ledger().with_mut(|li| li.timestamp = 5000);
+    client.resolve_pool_from_price(&pool_id);
+
+    // "Yes" outcome (index 1) should win because 45_000 < 50_000
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 1, "Expected outcome 1 (Yes) for price below target");
 }

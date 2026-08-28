@@ -1,0 +1,212 @@
+# PrediFi local development environment.
+#
+#   docker compose up                          # postgres, redis, stellar, backend, frontend
+#   docker compose --profile logging up        # ... plus Loki, Promtail and Grafana
+#
+# Credentials below are development-only defaults. See docs/local-development.md.
+name: predifi
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: predifi-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: predifi
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d predifi"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: predifi-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Local Stellar network with Soroban RPC and Horizon. First start takes a few
+  # minutes while the image initialises its ledger.
+  stellar:
+    image: stellar/quickstart:testing
+    container_name: predifi-stellar
+    restart: unless-stopped
+    command: ["--local", "--enable", "rpc,horizon"]
+    ports:
+      - "8000:8000"
+      - "11626:11626"
+    volumes:
+      - stellar-data:/opt/stellar
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/ >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+
+  # Runs sqlx migrations and inserts deterministic sample data, then exits.
+  # The seeder is idempotent, so it is safe to re-run on every `up`.
+  db-seed:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    container_name: predifi-db-seed
+    restart: "no"
+    working_dir: /workspace/backend
+    command: ["cargo", "run", "--bin", "predifi-seed"]
+    environment:
+      PREDIFI_DATABASE_URL: postgres://postgres:postgres@postgres:5432/predifi
+      RUST_LOG: info
+    volumes:
+      - ./backend:/workspace/backend
+      - ./contract:/workspace/contract
+      - cargo-registry:/usr/local/cargo/registry
+      - backend-target:/workspace/backend/target
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    container_name: predifi-backend
+    restart: unless-stopped
+    working_dir: /workspace/backend
+    environment:
+      PREDIFI_APP_HOST: 0.0.0.0
+      PREDIFI_APP_PORT: "3000"
+      RUST_LOG: info
+      PREDIFI_DATABASE_URL: postgres://postgres:postgres@postgres:5432/predifi
+      PREDIFI_REDIS_URL: redis://redis:6379
+      PREDIFI_STELLAR_RPC_URL: http://stellar:8000/rpc
+      PREDIFI_SECRET_KEY: predifi-dev-secret-do-not-use-in-production-32
+      CORS_ALLOWED_ORIGINS: http://localhost:3001
+    ports:
+      - "3000:3000"
+    volumes:
+      # Source is bind-mounted so cargo-watch rebuilds on change. `contract` is
+      # mounted because Cargo.toml declares a path dependency on predifi-errors.
+      - ./backend:/workspace/backend
+      - ./contract:/workspace/contract
+      - cargo-registry:/usr/local/cargo/registry
+      - backend-target:/workspace/backend/target
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-seed:
+        condition: service_completed_successfully
+      stellar:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: predifi-frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:3000
+      NEXT_PUBLIC_STELLAR_NETWORK: TESTNET
+      # Bind-mounted sources do not emit inotify events on macOS/Windows.
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./frontend:/app
+      - frontend-node-modules:/app/node_modules
+      - frontend-next:/app/.next
+    depends_on:
+      backend:
+        condition: service_started
+
+  # ── Log aggregation (profile: logging) ──────────────────────────────────────
+
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: predifi-loki
+    profiles: ["logging"]
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./docker/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ./docker/loki/rules:/etc/loki/rules:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3100/ready >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: predifi-promtail
+    profiles: ["logging"]
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/promtail-config.yml"]
+    volumes:
+      - ./docker/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      # Docker service discovery — reads container log streams via the daemon.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - promtail-positions:/tmp
+    depends_on:
+      loki:
+        condition: service_started
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: predifi-grafana
+    profiles: ["logging"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      loki:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  redis-data:
+  stellar-data:
+  cargo-registry:
+  backend-target:
+  frontend-node-modules:
+  frontend-next:
+  loki-data:
+  promtail-positions:
+  grafana-data:

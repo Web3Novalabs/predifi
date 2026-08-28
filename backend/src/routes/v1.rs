@@ -400,7 +400,14 @@ pub async fn get_pools(
     // Cache-aside pattern: Step 1 — Check cache
     let mut cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
     if let Some(tags) = &tags {
-        cache_key = format!("{cache_key}:tags:{}", tags.join(","));
+        let sanitized: Vec<String> = tags
+            .iter()
+            .map(|t| crate::redis_cache::sanitize_key_component(t))
+            .filter(|t| !t.is_empty())
+            .collect();
+        if !sanitized.is_empty() {
+            cache_key = format!("{cache_key}:tags:{}", sanitized.join(","));
+        }
     }
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
@@ -1379,9 +1386,17 @@ pub fn router(
             .route("/health", get(health))
             .route("/fees", get(get_fees))
             .route("/prices", get(crate::price_cache::get_prices))
-            .route("/ws", get(crate::ws::ws_handler))
             .with_state(state.clone()),
         RateLimitTier::Light,
+    );
+
+    // Token tier — refresh rotation and WebSocket handshake (10 req / 60 s).
+    let token = with_rate_limit(
+        Router::new()
+            .route("/auth/refresh", post(refresh_tokens_handler))
+            .route("/ws", get(crate::ws::ws_handler))
+            .with_state(state.clone()),
+        RateLimitTier::Token,
     );
 
     // Read tier — public, database-backed read endpoints.
@@ -1472,12 +1487,84 @@ pub fn router(
         )
         .with_state(state)
         .merge(light)
+        .merge(token)
         .merge(read)
         .merge(user)
         .merge(write)
 }
 
-/// `GET /api/v1/fees` — reads fee config from the shared AppState.
+/// `POST /api/v1/auth/refresh` — rotate a refresh token and issue a new pair.
+///
+/// Rate-limited at the Token tier (10 req / 60 s per IP). Fails closed when
+/// Redis is unavailable so a stolen refresh token cannot be replayed after
+/// rotation without a durable revocation record.
+async fn refresh_tokens_handler(
+    State(state): State<AppState>,
+    Json(body): Json<RefreshTokenRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    if body.refresh_token.is_empty() {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            "refresh_token is required",
+        )
+        .into_response();
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    match crate::jwt_security::rotate_refresh_token(
+        &state.redis,
+        &state.config.secret_key,
+        &body.refresh_token,
+        state.config.jwt_key_version,
+        now,
+    )
+    .await
+    {
+        Ok(pair) => {
+            let response = RefreshTokenResponse {
+                access_token: pair.access_token,
+                refresh_token: pair.refresh_token,
+                token_type: "Bearer".to_string(),
+                expires_in: crate::jwt_security::access_token_expires_in(),
+            };
+            ApiResponse::success(response).into_response()
+        }
+        Err(crate::jwt::JwtVerifyError::TokenStoreUnavailable) => ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::INTERNAL_ERROR,
+            "token store unavailable",
+        )
+        .into_response(),
+        Err(error) => ApiResponse::<()>::error(
+            StatusCode::UNAUTHORIZED,
+            error_codes::UNAUTHORIZED,
+            error.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RefreshTokenRequest {
+    refresh_token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct RefreshTokenResponse {
+    access_token: String,
+    refresh_token: String,
+    token_type: String,
+    expires_in: u64,
+}
 async fn get_fees(State(state): State<AppState>) -> Json<FeeInfo> {
     Json(FeeInfo {
         treasury_fee_bps: state.config.treasury_fee_bps,

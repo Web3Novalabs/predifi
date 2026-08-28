@@ -1715,6 +1715,7 @@ fn test_resolve_pool_from_price_applies_tolerance_bounded_match() {
     let oracle = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
     client.add_oracle(&admin, &oracle);
+    client.init_oracle(&admin, &Address::generate(&env), &10_000u64, &100u32);
 
     let pool_id = client.create_pool(
         &creator,
@@ -3350,7 +3351,7 @@ fn test_batch_add_tokens_to_whitelist_unauthorized() {
 }
 
 #[test]
-fn test_batch_remove_tokens_from_whitelist_success() {
+fn test_batch_remove_tokens_whitelist_success() {
     let (env, client, admin, _treasury) = setup_whitelist_env();
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
@@ -3359,7 +3360,7 @@ fn test_batch_remove_tokens_from_whitelist_success() {
     let tokens = soroban_sdk::vec![&env, token_a.clone(), token_b.clone(), token_c.clone()];
     client.batch_add_tokens_to_whitelist(&admin, &tokens);
 
-    let removed = client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+    let removed = client.batch_remove_tokens_whitelist(&admin, &tokens);
 
     assert_eq!(removed, 3);
     assert!(!client.is_token_allowed(&token_a));
@@ -3368,7 +3369,7 @@ fn test_batch_remove_tokens_from_whitelist_success() {
 }
 
 #[test]
-fn test_batch_remove_tokens_from_whitelist_skips_non_whitelisted() {
+fn test_batch_remove_tokens_whitelist_skips_non_whitelisted() {
     let (env, client, admin, _treasury) = setup_whitelist_env();
     let token_a = Address::generate(&env);
     let token_b = Address::generate(&env);
@@ -3376,7 +3377,7 @@ fn test_batch_remove_tokens_from_whitelist_skips_non_whitelisted() {
     client.add_token_to_whitelist(&admin, &token_a);
 
     let tokens = soroban_sdk::vec![&env, token_a.clone(), token_b.clone()];
-    let removed = client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+    let removed = client.batch_remove_tokens_whitelist(&admin, &tokens);
 
     // Only token_a was actually whitelisted.
     assert_eq!(removed, 1);
@@ -3385,21 +3386,21 @@ fn test_batch_remove_tokens_from_whitelist_skips_non_whitelisted() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #90)")]
-fn test_batch_remove_tokens_from_whitelist_empty_vector() {
+fn test_batch_remove_tokens_whitelist_empty_vector() {
     let (env, client, admin, _treasury) = setup_whitelist_env();
     let tokens: soroban_sdk::Vec<Address> = soroban_sdk::vec![&env];
-    client.batch_remove_tokens_from_whitelist(&admin, &tokens);
+    client.batch_remove_tokens_whitelist(&admin, &tokens);
 }
 
 #[test]
 #[should_panic(expected = "Error(Contract, #10)")]
-fn test_batch_remove_tokens_from_whitelist_unauthorized() {
+fn test_batch_remove_tokens_whitelist_unauthorized() {
     let (env, client, admin, _treasury) = setup_whitelist_env();
     let non_admin = Address::generate(&env);
     let token = Address::generate(&env);
     let tokens = soroban_sdk::vec![&env, token.clone()];
     client.batch_add_tokens_to_whitelist(&admin, &tokens);
-    client.batch_remove_tokens_from_whitelist(&non_admin, &tokens);
+    client.batch_remove_tokens_whitelist(&non_admin, &tokens);
 }
 
 #[test]
@@ -4576,6 +4577,7 @@ fn test_mark_pool_ready() {
     env.ledger().with_mut(|li| li.timestamp = end_time + 10);
     let res = client.try_mark_pool_ready(&pool_id);
     assert!(res.is_err());
+    client.close_staking(&pool_id);
 
     // Test after delay
     env.ledger().with_mut(|li| li.timestamp = end_time + 3600);

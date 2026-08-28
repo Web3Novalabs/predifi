@@ -1,16 +1,24 @@
 "use client";
 
 /**
- * Placeholder for the connected wallet address.
+ * useCurrentUserAddress — returns the connected wallet address.
  *
- * The app doesn't have a wallet-connect integration wired up yet (no
- * Freighter / Stellar wallet hook exists in the codebase), so profile,
- * notification, and claim-status views need a single point to read the
- * "current user" from. Swap this implementation for a real wallet hook once
- * one lands — every consumer already goes through here.
+ * Migration (issue #1406):
+ *   Previously returned a hardcoded placeholder. Now reads the real address
+ *   from WalletContext so all consumers automatically receive `undefined` when
+ *   disconnected and the real address after the user connects — no callsite
+ *   changes required.
+ *
+ * Falls back gracefully to `undefined` (no throw) when WalletProvider is not
+ * mounted — e.g. marketing pages or isolated unit tests.
  */
-const PLACEHOLDER_ADDRESS = "GDRXJ7QVZK3F4P5N6M2H8L9C1B0A2E3D4F5G6H7J8K9L0M1N2P3Q4R5T7K4P";
+
+import { useContext } from "react";
+// Import the context object directly (not through the barrel) to avoid a
+// circular dependency: barrel → WalletContext → (re-exported) → barrel.
+import { WalletContext } from "@/lib/context/WalletContext";
 
 export function useCurrentUserAddress(): string | undefined {
-  return PLACEHOLDER_ADDRESS;
+  const ctx = useContext(WalletContext);
+  return ctx?.address ?? undefined;
 }
