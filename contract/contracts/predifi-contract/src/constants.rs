@@ -83,7 +83,9 @@ pub const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 ///   may limit the types of markets that can be created (e.g., rapid-response events).
 /// - Decreasing this value (e.g., to 10 minutes) allows more granular, short-term markets
 ///   but may increase spam and reduce participation per pool.
-/// - Can be overridden per-pool via configuration; this is only the default.
+/// - The global default is used only until an admin updates it via
+///   `Config::set_min_pool_duration`; the stored `Config::min_pool_duration`
+///   then takes precedence.
 ///
 /// **Used for:** Validating `end_time - start_time` during pool creation.
 pub const DEFAULT_MIN_POOL_DURATION: u64 = 3600;
@@ -130,21 +132,24 @@ pub const CANCELATION_DELAY: u64 = 604_800;
 /// **Used for:** Validating that `amount > 0` in `place_prediction` (via `InsufficientStake` error).
 pub const DEFAULT_GLOBAL_MIN_STAKE: i128 = 1;
 
-/// Default cooldown in seconds between consecutive place_prediction calls by the same user.
+/// Default cooldown in seconds between consecutive `place_prediction` calls by the same user.
 ///
 /// **Units:** Seconds
-/// **Value:** 30 seconds (enabled by default)
+/// **Value:** 0 (disabled by default)
 ///
 /// **Rationale:** Rate limiting prevents spam and front-running attacks by limiting how
-/// quickly a single user can place predictions. A 30-second cooldown slows down
-/// rapid-fire prediction strategies that could be used to exploit temporary price
-/// discrepancies or to front-run other users' predictions.
+/// quickly a single user can place predictions. Defaulting to 0 (disabled) keeps the
+/// protocol permissionless and lets existing deployments keep their current behavior,
+/// while operators can opt in via `Config::set_prediction_cooldown_seconds`. Enabling a
+/// cooldown of 15–60 seconds is recommended on mainnet to slow down rapid-fire prediction
+/// strategies that could be used to exploit temporary price discrepancies or to front-run
+/// other users (see `docs/security-front-running-analysis.md`).
 ///
 /// **Impact of changes:**
-/// - Increasing this value enforces a stricter cooldown by default, preventing rapid
-///   consecutive predictions but potentially frustrating legitimate users.
+/// - Increasing this value (e.g., to 30) enforces a stricter cooldown by default, preventing
+///   rapid consecutive predictions but potentially frustrating legitimate users.
 /// - Decreasing this value is not possible (cannot go below 0).
-/// - Setting to 0 via admin disables the cooldown mechanism entirely.
+/// - Setting the effective config value to 0 disables the cooldown mechanism entirely.
 /// - When enabled, the cooldown is enforced via `LastPredictionTime(user)` storage.
 /// - Can be overridden via `Config::prediction_cooldown_seconds` by admin.
 ///
