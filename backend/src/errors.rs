@@ -91,3 +91,70 @@ impl axum::response::IntoResponse for AppError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn display_not_found() {
+        let err = AppError::NotFound("pool 42".to_string());
+        assert_eq!(err.to_string(), "not found: pool 42");
+    }
+
+    #[test]
+    fn display_conflict() {
+        let err = AppError::Conflict("duplicate entry".to_string());
+        assert_eq!(err.to_string(), "conflict: duplicate entry");
+    }
+
+    #[test]
+    fn display_invalid_input() {
+        let err = AppError::InvalidInput("bad field".to_string());
+        assert_eq!(err.to_string(), "invalid input: bad field");
+    }
+
+    #[test]
+    fn display_service_unavailable() {
+        let err = AppError::ServiceUnavailable("db down".to_string());
+        assert_eq!(err.to_string(), "service unavailable: db down");
+    }
+
+    #[test]
+    fn display_internal() {
+        let err = AppError::Internal("unexpected".to_string());
+        assert_eq!(err.to_string(), "internal error: unexpected");
+    }
+
+    #[test]
+    fn not_found_maps_to_404() {
+        let resp = AppError::NotFound("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn conflict_maps_to_409() {
+        let resp = AppError::Conflict("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn invalid_input_maps_to_400() {
+        let resp = AppError::InvalidInput("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn service_unavailable_maps_to_503() {
+        let resp = AppError::ServiceUnavailable("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn internal_maps_to_500() {
+        let resp = AppError::Internal("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}
