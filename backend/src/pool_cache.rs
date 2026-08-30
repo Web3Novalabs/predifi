@@ -63,3 +63,62 @@ impl PoolCache {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{OutcomeOdds, PoolWithOdds};
+    use chrono::Utc;
+
+    fn sample_pool(pool_id: i64, name: &str) -> PoolWithOdds {
+        PoolWithOdds {
+            pool_id,
+            name: name.to_string(),
+            category: "Sports".to_string(),
+            total_stake: 1000,
+            end_time: Utc::now(),
+            created_at: Utc::now(),
+            state: "active".to_string(),
+            creator: "GABC".to_string(),
+            token: "XLM".to_string(),
+            result: None,
+            odds: vec![OutcomeOdds {
+                outcome: 1,
+                stake: 500,
+                odds: 1.5,
+            }],
+        }
+    }
+
+    #[test]
+    fn fresh_cache_is_empty() {
+        let cache = PoolCache::new();
+        assert!(cache.get(1).is_none());
+    }
+
+    #[test]
+    fn insert_then_get_returns_value() {
+        let cache = PoolCache::new();
+        let pool = sample_pool(42, "Test Pool");
+        cache.set(42, pool.clone());
+        let retrieved = cache.get(42).expect("cached value should be present");
+        assert_eq!(retrieved.pool_id, 42);
+        assert_eq!(retrieved.name, "Test Pool");
+    }
+
+    #[test]
+    fn get_missing_key_returns_none() {
+        let cache = PoolCache::new();
+        cache.set(1, sample_pool(1, "Pool One"));
+        assert!(cache.get(2).is_none());
+    }
+
+    #[test]
+    fn overwrite_replaces_value() {
+        let cache = PoolCache::new();
+        cache.set(1, sample_pool(1, "Original"));
+        cache.set(1, sample_pool(1, "Replaced"));
+        let retrieved = cache.get(1).expect("cached value should be present");
+        assert_eq!(retrieved.name, "Replaced");
+    }
+}

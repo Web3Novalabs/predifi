@@ -101,3 +101,40 @@ pub const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = 500;
 /// 30 s matches the default `terminationGracePeriodSeconds` for Kubernetes
 /// pods and gives long-tail requests (e.g. external RPCs) room to finish.
 pub const DEFAULT_SHUTDOWN_TIMEOUT_SECS: u64 = 30;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_burst_constant_is_greater_than_zero() {
+        assert!(RATE_LIMIT_BURST_SIZE > 0);
+        assert!(RATE_LIMIT_READ_BURST > 0);
+        assert!(RATE_LIMIT_WRITE_BURST > 0);
+        assert!(RATE_LIMIT_USER_BURST > 0);
+        assert!(RATE_LIMIT_LIGHT_BURST > 0);
+        assert!(RATE_LIMIT_TOKEN_BURST > 0);
+        assert!(RATE_LIMIT_WS_BURST > 0);
+    }
+
+    #[test]
+    fn every_period_secs_constant_is_greater_than_zero() {
+        assert!(RATE_LIMIT_PERIOD_SECS > 0);
+        assert!(RATE_LIMIT_READ_PERIOD_SECS > 0);
+        assert!(RATE_LIMIT_WRITE_PERIOD_SECS > 0);
+        assert!(RATE_LIMIT_USER_PERIOD_SECS > 0);
+        assert!(RATE_LIMIT_LIGHT_PERIOD_SECS > 0);
+        assert!(RATE_LIMIT_TOKEN_PERIOD_SECS > 0);
+        assert!(RATE_LIMIT_WS_PERIOD_SECS > 0);
+    }
+
+    #[test]
+    fn default_page_limit_does_not_exceed_max_page_limit() {
+        assert!(DEFAULT_PAGE_LIMIT <= MAX_PAGE_LIMIT);
+    }
+
+    #[test]
+    fn jwt_parts_count_is_three() {
+        assert_eq!(JWT_PARTS_COUNT, 3);
+    }
+}

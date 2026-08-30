@@ -20,15 +20,22 @@ impl PredifiContract {
     /// Create a new prediction pool with configurable parameters.
     ///
     /// This function creates a new prediction market pool where users can stake tokens on
-    /// specific outcomes. The pool is initialized in the `Active` state and immediately
-    /// accepts predictions once the `start_time` is reached (or immediately if `start_time` is 0).
+    /// specific outcomes. The pool is initialized in the `Active` state and accepts
+    /// predictions once `start_time` is reached (or immediately if `start_time` is 0).
+    ///
+    /// There is no separate `pool_type` argument. The `category` argument is the pool's
+    /// classification/type and must be one of the canonical category symbols accepted by
+    /// the contract, such as `CATEGORY_SPORTS`, `CATEGORY_CRYPTO`, or `CATEGORY_FINANCE`.
     ///
     /// # Parameters
     ///
     /// - `env` - The Soroban environment, providing access to storage, ledger, and auth
     /// - `creator` - The address creating the pool (must authenticate via `require_auth`)
-    /// - `end_time` - Unix timestamp after which no more predictions are accepted (must be > current_time)
-    /// - `token` - The Stellar token contract address used for staking (must be whitelisted)
+    /// - `end_time` - Unix timestamp after which no more predictions are accepted. It must be
+    ///   later than `start_time`, the current ledger timestamp, and the configured minimum
+    ///   pool duration, and no later than `MAX_POOL_DURATION` from the current ledger time.
+    /// - `token` - The Stellar token contract address used for staking. It must be whitelisted;
+    ///   the token contract itself is called only when a stake or initial liquidity is transferred.
     /// - `options_count` - Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT = 100)
     /// - `category` - Market category symbol (e.g., `CATEGORY_SPORTS`, `CATEGORY_FINANCE`)
     /// - `config` - Pool configuration parameters via `PoolConfig` struct:
@@ -37,18 +44,29 @@ impl PredifiContract {
     ///   - `metadata_url` - URL to extended metadata, e.g., IPFS link (max 512 bytes)
     ///   - `min_stake` - Minimum stake amount per prediction (must be > 0)
     ///   - `max_stake` - Maximum stake per prediction (0 = no limit, else must be >= min_stake)
-    ///   - `min_total_stake` - Minimum total stake required for resolution (must be > 0)
-    ///   - `max_total_stake` - Hard cap on total stake (0 = no limit)
-    ///   - `initial_liquidity` - Optional house money provided by creator (must be >= 0)
+    ///   - `min_total_stake` - Minimum total stake required for resolution (must be > 0).
+    ///   - `max_total_stake` - Hard cap on total stake (0 = no limit); when non-zero, any
+    ///     supplied initial liquidity must satisfy the configured safety margin.
+    ///   - `initial_liquidity` - Optional house money transferred from the creator to the
+    ///     contract (must be non-negative and no greater than `MAX_INITIAL_LIQUIDITY`).
     ///   - `required_resolutions` - Number of oracle/operator votes needed for resolution (must be >= 1)
     ///   - `private` - If true, only whitelisted addresses can participate
-    ///   - `whitelist_key` - Optional symbol for private pool access
-    ///   - `outcome_descriptions` - Human-readable labels for each outcome (length must equal options_count)
+    ///   - `whitelist_key` - Optional symbol for private pool access; when present it must
+    ///     pass referral-code validation.
+    ///   - `outcome_descriptions` - Human-readable labels for each outcome. The number of
+    ///     labels must equal `options_count`, and every label must be 1..=`MAX_OUTCOME_DESCRIPTION_LEN`
+    ///     bytes long.
     ///
-    /// # Return Value
+    /// # Returns
     ///
     /// Returns `Ok(pool_id)` - The unique identifier of the newly created pool.
-    /// The pool_id is auto-incremented and can be used to reference the pool in all subsequent operations.
+    /// The pool ID is auto-incremented and can be used to reference the pool in all subsequent
+    /// operations. The returned pool starts in `MarketState::Active` with
+    /// `UNRESOLVED_OUTCOME`; its total stake initially equals `config.initial_liquidity`.
+    ///
+    /// The `Err` result is used for `PredifiError::ContractPaused` and for invalid
+    /// `options_count`. Other validation failures are raised as Soroban contract errors or
+    /// assertion failures, as described below.
     ///
     /// # Emitted Events
     ///
@@ -65,7 +83,6 @@ impl PredifiContract {
     ///   - `category` - Market category
     ///   - `required_resolutions` - Resolution threshold
     ///   - `max_total_stake` - Total stake cap
-    ///   - `outcome_descriptions` - Labels for each outcome
     ///
     /// 2. **`InitialLiquidityProvidedEvent`** (conditional):
     ///   - Emitted only if `initial_liquidity > 0`
@@ -73,22 +90,28 @@ impl PredifiContract {
     ///   - `creator` - The address providing liquidity
     ///   - `amount` - The amount of liquidity transferred
     ///
-    /// # Error Conditions
+    /// # Errors and Validation Failures
     ///
-    /// The function can return the following errors:
+    /// The function returns or raises the following typed protocol errors:
     ///
     /// - `ContractPaused` - The contract is currently paused; all state-mutating operations are blocked
-    /// - `Unauthorized` - Caller is not authorized (creator authentication failed)
+    /// - `InvalidData` - `options_count` is less than 2 or greater than `MAX_OPTIONS_COUNT`.
     /// - `TokenNotWhitelisted` - The specified token is not on the allowed betting whitelist
     /// - `InvalidTimestamp` - `end_time` is not in the future, exceeds MAX_POOL_DURATION, or `end_time <= start_time`
     /// - `DeadlineInPast` - `end_time` or `start_time` is in the past (issue #1130)
-    /// - `InvalidData` - `options_count` < 2 or > MAX_OPTIONS_COUNT
     /// - `MetadataUrlInvalid` - `metadata_url` exceeds 512 bytes
-    /// - `InvalidTargetPrice` - Invalid target price (for price-based pools)
     /// - `InitialLiquidityBelowSafetyMargin` - Initial liquidity is insufficient relative to `max_total_stake` (issue #1131)
     /// - `RequiredResolutionsExceedOperators` - `required_resolutions` > number of active operators
     /// - `OutcomeDescriptionTooLong` - An outcome description exceeds MAX_OUTCOME_DESCRIPTION_LEN (128 bytes)
-    /// - `OutcomeDescriptionEmpty` - An outcome description is empty or below MIN_OUTCOME_DESCRIPTION_LEN (1 byte)
+    /// - `OutcomeDescriptionEmpty` / `OutcomeDescriptionTooLong` - An outcome label is
+    ///   outside the allowed length range.
+    ///
+    /// Authentication failure for `creator.require_auth()` is reported by the Soroban
+    /// authorization system, not as `PredifiError::Unauthorized`. Invalid description,
+    /// stake-limit, liquidity, resolution-count, and minimum-duration values use the
+    /// contract's assertion diagnostics. A failed initial-liquidity token transfer also
+    /// propagates the token contract's failure. These failures abort the transaction and
+    /// do not leave a partially initialized pool.
     ///
     /// # Validation Rules
     ///
@@ -679,12 +702,20 @@ impl PredifiContract {
 
     /// Finalises a prediction pool by recording an operator's vote for a winning outcome.
     ///
-    /// Resolution uses a **multi-vote / threshold model**: each address with Operator
-    /// role (role `1`) calls this function once to cast a vote.  The pool transitions
-    /// to [`MarketState::Resolved`] only when a single outcome accumulates at least
-    /// `pool.required_resolutions` votes.  If operators disagree on the outcome a
-    /// [`PredifiError::ResolutionConflict`] is returned and the pool stays active so
-    /// administrators can intervene.
+    /// This is the manual, operator-backed resolution entry point. Resolution uses a
+    /// **multi-vote / threshold model**: each address with Operator role (role `1`)
+    /// calls this function once to cast a vote. The pool transitions to
+    /// [`MarketState::Resolved`] only when one outcome accumulates at least
+    /// `pool.required_resolutions` votes. If operators disagree, the conflicting vote
+    /// is recorded and [`PredifiError::ResolutionConflict`] is returned; the pool stays
+    /// active so administrators can investigate and retry with the agreed outcome.
+    ///
+    /// This function does not read an oracle or price feed. For an automated price
+    /// condition, [`Self::resolve_pool_from_price`] validates the configured feed,
+    /// evaluates its target and tolerance, and persists the resulting outcome directly.
+    /// An external oracle can instead submit a signed outcome through `oracle_resolve`,
+    /// which participates in the same threshold and conflict model. These paths share
+    /// the resolution-delay guard and emit [`PoolResolvedEvent`] when finalisation occurs.
     ///
     /// # Parameters
     ///
@@ -704,8 +735,12 @@ impl PredifiContract {
     /// 2. **State guard** — the pool must be in `MarketState::Active`; Locked,
     ///    Resolved, and Cancelled pools are rejected with [`PredifiError::InvalidPoolState`].
     /// 3. **Resolution delay** — `current_ledger_time >= pool.end_time + config.resolution_delay`
-    ///    must hold.  This cooling-off period allows late price feeds to settle before
-    ///    any outcome is locked in.  Violations return [`PredifiError::ResolutionDelayNotMet`].
+    ///    must hold. This cooling-off period allows late price-feed updates and oracle
+    ///    observations to settle before any outcome is locked in. The comparison is
+    ///    inclusive: resolution is allowed at the exact eligibility timestamp.
+    ///    The addition is saturating, so timestamp overflow cannot make a pool resolvable
+    ///    earlier than intended. Violations return
+    ///    [`PredifiError::ResolutionDelayNotMet`].
     /// 4. **Outcome validation** — `outcome` must satisfy
     ///    `0 <= outcome < pool.options_count` and must not equal `UNRESOLVED_OUTCOME`
     ///    (the sentinel value reserved for pools that have not yet been decided).
@@ -728,18 +763,34 @@ impl PredifiContract {
     ///    - The pool is removed from the global active index.
     ///    - [`PoolResolvedEvent`] and [`PoolResolvedDiagEvent`] are published.
     ///
+    /// # Oracle and price-feed relationship
+    ///
+    /// The outcome passed to this function is already an operator determination; this
+    /// function intentionally does not interpret prices. The automated path performs
+    /// the following before persisting an outcome: load the pool's [`PriceCondition`],
+    /// load its configured feed, reject stale or expired data, compare the normalized
+    /// feed price with the target using the configured operator and tolerance, and map
+    /// the condition to outcome `1` (met) or `0` (not met). The oracle callback path
+    /// accepts an oracle-authenticated outcome and records it as a vote. Both paths
+    /// enforce the same active-state, valid-outcome, and resolution-delay invariants.
+    ///
     /// # Payout calculation (post-resolution)
     ///
-    /// This function does **not** distribute funds directly.  Winners call
-    /// `claim_winnings` (or a payout helper) after resolution.  The payout for a
-    /// winning stake `s` out of a total winning-side stake `W` and a total pool
-    /// stake `T` is:
+    /// This function does **not** distribute funds directly. Winners call
+    /// `claim_winnings` after resolution. The payout helper first calculates the
+    /// protocol fee from the entire pool, then distributes the remainder
+    /// proportionally. For a winning stake `s`, total winning-side stake `W`, total
+    /// pool stake `T`, and fee rate `f = pool.fee_bps / 10_000`, the stages are:
     ///
     /// ```text
-    /// gross_payout = s * T / W
-    /// fee          = gross_payout * pool.fee_bps / 10_000
-    /// net_payout   = gross_payout - fee
+    /// protocol_fee = T * f
+    /// payout_pool  = T - protocol_fee
+    /// winnings     = s * payout_pool / W
     /// ```
+    ///
+    /// Arithmetic is checked and uses protocol-favouring rounding. A zero winning
+    /// stake or zero user stake produces zero winnings, and the no-value-creation
+    /// invariant ensures a claimant cannot receive more than the pool total.
     ///
     /// # Emitted events
     ///
@@ -747,7 +798,7 @@ impl PredifiContract {
     /// |---|---|
     /// | [`ResolutionVoteCastEvent`] | Every successful vote, regardless of threshold |
     /// | [`ResolutionConflictEvent`] | When a vote conflicts with an earlier outcome |
-    /// | [`PoolResolvedEvent`] | When the threshold is reached and the pool is finalised |
+    /// | [`PoolResolvedEvent`] | When the threshold is reached and the pool is finalised; contains `pool_id`, the finalising operator, and the winning `outcome` |
     /// | [`PoolResolvedDiagEvent`] | Same trigger as `PoolResolvedEvent`; carries stake diagnostics |
     ///
     /// # Errors
