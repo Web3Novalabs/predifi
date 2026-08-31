@@ -370,6 +370,7 @@ impl core::fmt::Display for PrediFiError {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::PrediFiError;
 
     #[test]
