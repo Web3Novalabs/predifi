@@ -27,6 +27,10 @@ pub struct PoolListingRow {
 /// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"`.
 /// `status` accepts `"active"`, `"closed"`, or `"settled"`.
 /// `tags`, when non-empty, matches pools whose `tags` array overlaps it.
+/// Lists pools matching optional category, tag, and lifecycle filters.
+///
+/// Returns rows ordered by the requested supported sort mode, or an SQL error
+/// when the database query cannot be completed.
 pub async fn list_pools(
     pool: &PgPool,
     sort_by: &str,
@@ -73,6 +77,8 @@ pub async fn list_pools(
 }
 
 /// Count pools matching the same category/tag/status filters as [`list_pools`].
+/// Counts pools matching the supplied category, tag, and lifecycle filters.
+/// Returns the matching row count or the database error from the query.
 pub async fn count_pools(
     pool: &PgPool,
     category: Option<&str>,
@@ -104,6 +110,7 @@ pub async fn count_pools(
 
 /// Distinct tags in use across all pools, alphabetically — powers filter-UI
 /// dropdowns on the frontend.
+/// Returns all distinct pool tags in alphabetical order, or a database error.
 pub async fn list_distinct_tags(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as(
         r#"
@@ -121,6 +128,10 @@ pub async fn list_distinct_tags(pool: &PgPool) -> Result<Vec<String>, sqlx::Erro
 /// Replace the tag set for `pool_id`, scoped to `creator` so only the pool's
 /// creator can edit its tags. Returns `false` if no matching row was updated
 /// (pool not found, or `creator` doesn't own it).
+/// Replaces a pool's tags when `creator` owns the pool.
+///
+/// Returns `true` when a row was updated and `false` when the pool is missing
+/// or owned by another creator; database failures are returned unchanged.
 pub async fn update_pool_tags(
     pool: &PgPool,
     pool_id: i64,
