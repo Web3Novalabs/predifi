@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.svg binary
+*.png binary
+*.webp binary
+*.ico binary
+
+frontend/pnpm-lock.yaml linguist-generated
+contract/Cargo.lock linguist-generated
