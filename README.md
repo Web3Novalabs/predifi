@@ -1,5 +1,22 @@
 # PrediFi – Decentralized Outcome Prediction Protocol (Stellar / Soroban)
 
+[![Backend CI](https://github.com/Web3Novalabs/predifi/actions/workflows/backend.yml/badge.svg)](https://github.com/Web3Novalabs/predifi/actions/workflows/backend.yml)
+[![Contract CI](https://github.com/Web3Novalabs/predifi/actions/workflows/contract-ci.yml/badge.svg)](https://github.com/Web3Novalabs/predifi/actions/workflows/contract-ci.yml)
+[![Frontend CI](https://github.com/Web3Novalabs/predifi/actions/workflows/frontend-ci.yml/badge.svg)](https://github.com/Web3Novalabs/predifi/actions/workflows/frontend-ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+## Table of Contents
+
+- [Architecture Overview](#-architecture-overview)
+- [Project Structure](#-project-structure)
+- [Development](#-development)
+- [Backend CI](#-backend-ci)
+- [PriceFeed Integration](#-pricefeed-integration)
+- [Backend Error Handling](#-backend-error-handling)
+- [Testing](#-testing)
+- [Contributing](#-contributing)
+- [License](#-license)
+
 PrediFi is a decentralized prediction protocol built on the **Stellar network** using **Soroban smart contracts**. It enables users to create and participate in prediction markets in a **trustless, transparent, and verifiable** environment.
 
 All market logic, outcomes, and settlements are executed **on-chain**, ensuring immutability and eliminating reliance on centralized intermediaries.
