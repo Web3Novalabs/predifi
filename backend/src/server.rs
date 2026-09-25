@@ -271,7 +271,9 @@ pub fn build_router_with_rate_limit(
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
-        pool_cache: crate::pool_cache::PoolCache::new(),
+        pool_cache: crate::pool_cache::PoolCache::with_negative_ttl(Duration::from_secs(
+            config.pool_negative_cache_ttl_secs,
+        )),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
@@ -317,7 +319,9 @@ fn build_router_with_db(
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
-        pool_cache: crate::pool_cache::PoolCache::new(),
+        pool_cache: crate::pool_cache::PoolCache::with_negative_ttl(Duration::from_secs(
+            config.pool_negative_cache_ttl_secs,
+        )),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),
@@ -349,6 +353,38 @@ fn build_router_with_db(
         ))
         .layer(build_cors(&config))
         .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
+}
+
+/// Probe Redis once at startup and either fail fast or record a degraded
+/// state, depending on `config.redis_required`.
+///
+/// If Redis is configured but unreachable:
+/// - `config.redis_required == true`: logs a clear error and exits the
+///   process immediately, before the HTTP listener is bound, so an operator
+///   sees a startup failure rather than a silently degraded service.
+/// - `config.redis_required == false`: logs a single explicit warning and
+///   lets startup continue. The degraded state is then visible on every
+///   subsequent call to `/ready` and `/health`, which independently probe
+///   Redis per request via [`crate::redis_cache::RedisCache::ping`].
+async fn probe_redis_startup(config: &Config, redis: &crate::redis_cache::RedisCache) {
+    if redis.is_available() && redis.ping().await {
+        return;
+    }
+
+    if config.redis_required {
+        error!(
+            "Redis is configured (PREDIFI_REDIS_URL) but unreachable at startup, and \
+             PREDIFI_REDIS_REQUIRED=true; refusing to start. Set PREDIFI_REDIS_REQUIRED=false \
+             to start in a degraded mode instead."
+        );
+        std::process::exit(1);
+    }
+
+    warn!(
+        "Redis is configured (PREDIFI_REDIS_URL) but unreachable at startup; starting in a \
+         degraded mode (PREDIFI_REDIS_REQUIRED=false). Cache-backed reads will fall through to \
+         the database until Redis becomes reachable. This state is visible on /ready and /health."
+    );
 }
 
 // ── Server entry points ───────────────────────────────────────────────────────
@@ -391,7 +427,10 @@ where
         crate::price_cache::spawn_fetcher(cache.clone(), Some(prometheus_metrics.clone()));
 
     let event_bus = crate::ws::EventBus::new();
-    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
+    let redis = crate::redis_cache::RedisCache::new(&config.redis_url)
+        .await
+        .with_metrics(prometheus_metrics.clone());
+    probe_redis_startup(&config, &redis).await;
 
     // Clone before moving into the worker closure.
     let listener_rpc_url = config.stellar_rpc_url.clone();

@@ -20,6 +20,12 @@ const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
 const DEFAULT_REFERRAL_FEE_BPS: u32 = 5000;
 const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
+const DEFAULT_REDIS_REQUIRED: bool = false;
+/// Default TTL, in seconds, for negative (pool-not-found) entries in the
+/// in-memory pool cache. Deliberately lower than the pool cache's positive
+/// TTL (10s, see `crate::pool_cache::POOL_CACHE_TTL`) per
+/// `PoolCache::with_negative_ttl`'s contract.
+const DEFAULT_POOL_NEGATIVE_CACHE_TTL_SECS: u64 = 5;
 const DEFAULT_SECRET_KEY: &str = "predifi-dev-secret-do-not-use-in-production-32";
 const DEFAULT_APP_ENV: &str = "development";
 const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = crate::constants::DEFAULT_INDEXER_MAX_BATCH_SIZE;
@@ -90,6 +96,23 @@ pub struct Config {
     pub sentry_dsn: Option<String>,
     /// Redis connection URL (default `redis://localhost:6379`).
     pub redis_url: String,
+    /// Whether Redis is required for the service to be considered healthy
+    /// (default `false`).
+    ///
+    /// Read from `PREDIFI_REDIS_REQUIRED` (`"true"`/`"false"`, case-insensitive).
+    /// Controls startup behaviour when Redis is unreachable:
+    /// - `true`: startup fails fast with a clear error and the process exits.
+    /// - `false`: startup logs a single explicit warning and continues in a
+    ///   degraded state, which is reflected by the `/ready` endpoint.
+    pub redis_required: bool,
+    /// TTL in seconds for negative (pool-not-found) entries in the in-memory
+    /// pool cache (default `5`). Read from
+    /// `PREDIFI_POOL_NEGATIVE_CACHE_TTL_SECS`. Kept separate from — and
+    /// intended to be lower than — the pool cache's positive TTL, so a pool
+    /// ID that turns out not to exist is reflected as a fast cached 404
+    /// without hammering Postgres, while a pool created shortly after a
+    /// negative lookup becomes visible again quickly.
+    pub pool_negative_cache_ttl_secs: u64,
     /// Validated list of origins permitted by the CORS policy.
     ///
     /// Loaded from the `PREDIFI_CORS_ALLOWED_ORIGINS` environment variable as a
@@ -195,6 +218,12 @@ impl Config {
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
         let sentry_dsn = vars.get("PREDIFI_SENTRY_DSN").cloned();
         let redis_url = get_string(vars, "PREDIFI_REDIS_URL", DEFAULT_REDIS_URL);
+        let redis_required = get_bool(vars, "PREDIFI_REDIS_REQUIRED", DEFAULT_REDIS_REQUIRED)?;
+        let pool_negative_cache_ttl_secs = get_u64(
+            vars,
+            "PREDIFI_POOL_NEGATIVE_CACHE_TTL_SECS",
+            DEFAULT_POOL_NEGATIVE_CACHE_TTL_SECS,
+        )?;
 
         // Parse and strictly validate CORS origins.
         let cors_allowed_origins = parse_cors_origins(vars)?;
@@ -242,6 +271,8 @@ impl Config {
             stellar_rpc_url,
             sentry_dsn,
             redis_url,
+            redis_required,
+            pool_negative_cache_ttl_secs,
             cors_allowed_origins,
             secret_key,
             jwt_key_version,
@@ -473,6 +504,8 @@ impl Config {
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
+            redis_required: DEFAULT_REDIS_REQUIRED,
+            pool_negative_cache_ttl_secs: DEFAULT_POOL_NEGATIVE_CACHE_TTL_SECS,
             cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
             secret_key: String::from(DEFAULT_SECRET_KEY),
             jwt_key_version: 0,
@@ -757,6 +790,24 @@ fn get_u64(
         Some(value) => value
             .parse::<u64>()
             .map_err(|err| to_number_error(key, value, err)),
+        None => Ok(default),
+    }
+}
+
+fn get_bool(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+    default: bool,
+) -> Result<bool, ConfigError> {
+    match vars.get(key) {
+        Some(value) => match value.to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Ok(true),
+            "false" | "0" | "no" | "off" => Ok(false),
+            _ => Err(ConfigError::InvalidValue {
+                key,
+                reason: format!("must be a boolean (true/false), got '{value}'"),
+            }),
+        },
         None => Ok(default),
     }
 }

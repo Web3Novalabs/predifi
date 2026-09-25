@@ -38,6 +38,11 @@ pub struct Metrics {
     pub redis_operation_duration_seconds: HistogramVec,
     /// Total Redis operations by operation type and result.
     pub redis_operations_total: CounterVec,
+    /// Total Redis cache lookups by cache name and outcome
+    /// (`"hit"` / `"miss"` / `"error"`), from [`crate::redis_cache::RedisCache`].
+    /// A per-cache hit ratio can be computed as
+    /// `hit / (hit + miss)` grouped by `cache_name`.
+    pub redis_cache_lookups_total: CounterVec,
 
     // ── WebSocket ─────────────────────────────────────────────────────────────
     /// Current number of open WebSocket connections.
@@ -184,6 +189,15 @@ impl Metrics {
             &["operation", "result"],
         )?;
 
+        let redis_cache_lookups_total = CounterVec::new(
+            Opts::new(
+                "app_redis_cache_lookups_total",
+                "Total Redis cache lookups by cache name and outcome (hit/miss/error). \
+                 A hit ratio can be computed as hit / (hit + miss), grouped by cache_name.",
+            ),
+            &["cache_name", "outcome"],
+        )?;
+
         // ── WebSocket ─────────────────────────────────────────────────────────
         let ws_connections_active = Gauge::with_opts(Opts::new(
             "app_ws_connections_active",
@@ -248,6 +262,7 @@ impl Metrics {
         registry.register(Box::new(db_queries_total.clone()))?;
         registry.register(Box::new(redis_operation_duration_seconds.clone()))?;
         registry.register(Box::new(redis_operations_total.clone()))?;
+        registry.register(Box::new(redis_cache_lookups_total.clone()))?;
         registry.register(Box::new(ws_connections_active.clone()))?;
         registry.register(Box::new(ws_connections_total.clone()))?;
         registry.register(Box::new(ws_disconnections_total.clone()))?;
@@ -273,6 +288,7 @@ impl Metrics {
             db_queries_total,
             redis_operation_duration_seconds,
             redis_operations_total,
+            redis_cache_lookups_total,
             ws_connections_active,
             ws_connections_total,
             ws_disconnections_total,
@@ -319,6 +335,18 @@ impl Metrics {
             .observe(duration_secs);
         self.redis_operations_total
             .with_label_values(&[operation, result])
+            .inc();
+    }
+
+    /// Record a Redis cache lookup outcome for a named cache.
+    ///
+    /// `cache_name` should be a short stable label such as `"pools"`,
+    /// `"pool"`, `"user"`, or `"stats"` (see
+    /// [`crate::redis_cache::cache_name_from_key`]). `outcome` should be one
+    /// of `"hit"`, `"miss"`, or `"error"`.
+    pub fn record_cache_lookup(&self, cache_name: &str, outcome: &str) {
+        self.redis_cache_lookups_total
+            .with_label_values(&[cache_name, outcome])
             .inc();
     }
 
