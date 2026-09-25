@@ -17,6 +17,7 @@
 //! Cached values are **never** an authorization source. Callers must authenticate
 //! and authorize before reading or writing user-scoped keys.
 
+use crate::metrics::SharedMetrics;
 use redis::{aio::ConnectionManager, AsyncCommands, ErrorKind};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -94,6 +95,10 @@ pub struct RedisCache {
     manager: Option<ConnectionManager>,
     /// When set, health probes treat Redis as available without a live connection.
     simulate_available: bool,
+    /// Optional metrics sink for cache hit/miss/error counters (see
+    /// [`crate::metrics::Metrics::record_cache_lookup`]). `None` in contexts
+    /// that don't wire up metrics (e.g. most unit tests).
+    metrics: Option<SharedMetrics>,
 }
 
 impl RedisCache {
@@ -109,6 +114,7 @@ impl RedisCache {
                     Self {
                         manager: Some(manager),
                         simulate_available: false,
+                        metrics: None,
                     }
                 }
                 Err(err) => {
@@ -116,6 +122,7 @@ impl RedisCache {
                     Self {
                         manager: None,
                         simulate_available: false,
+                        metrics: None,
                     }
                 }
             },
@@ -124,6 +131,7 @@ impl RedisCache {
                 Self {
                     manager: None,
                     simulate_available: false,
+                    metrics: None,
                 }
             }
         }
@@ -134,6 +142,7 @@ impl RedisCache {
         Self {
             manager: None,
             simulate_available: false,
+            metrics: None,
         }
     }
 
@@ -143,7 +152,16 @@ impl RedisCache {
         Self {
             manager: None,
             simulate_available: true,
+            metrics: None,
         }
+    }
+
+    /// Attach a metrics sink so subsequent `get` calls record hit/miss/error
+    /// counters per cache name. Returns `self` for chaining after
+    /// [`RedisCache::new`].
+    pub fn with_metrics(mut self, metrics: SharedMetrics) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Check if Redis is available
@@ -160,23 +178,36 @@ impl RedisCache {
     /// - Envelope TTL has elapsed (application-level expiry)
     /// - Deserialization fails
     pub async fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
-        let namespaced = namespaced_key(key)?;
-        let manager = self.manager.as_ref()?;
+        let cache_name = cache_name_from_key(key);
+        let namespaced = match namespaced_key(key) {
+            Some(k) => k,
+            None => {
+                self.record_lookup(&cache_name, "error");
+                return None;
+            }
+        };
+        let manager = match self.manager.as_ref() {
+            Some(m) => m,
+            None => return None,
+        };
         let mut conn = manager.clone();
 
         match conn.get::<_, Option<String>>(&namespaced).await {
             Ok(Some(data)) => match decode_envelope(&data) {
                 Some(value) => {
                     debug!("Cache hit: {}", key);
+                    self.record_lookup(&cache_name, "hit");
                     Some(value)
                 }
                 None => {
                     debug!("Cache envelope expired or invalid: {}", key);
+                    self.record_lookup(&cache_name, "miss");
                     None
                 }
             },
             Ok(None) => {
                 debug!("Cache miss: {}", key);
+                self.record_lookup(&cache_name, "miss");
                 None
             }
             Err(err) => {
@@ -185,8 +216,16 @@ impl RedisCache {
                 } else {
                     error!("Redis GET error for {}: {}", key, err);
                 }
+                self.record_lookup(&cache_name, "error");
                 None
             }
+        }
+    }
+
+    /// Record a cache lookup outcome via the attached metrics sink, if any.
+    fn record_lookup(&self, cache_name: &str, outcome: &str) {
+        if let Some(metrics) = &self.metrics {
+            metrics.record_cache_lookup(cache_name, outcome);
         }
     }
 
@@ -446,6 +485,21 @@ fn decode_envelope<T: DeserializeOwned>(raw: &str) -> Option<T> {
         return None;
     }
     serde_json::from_value(envelope.data).ok()
+}
+
+/// Derive a short, stable cache-name label from a (non-namespaced) cache key,
+/// for use with [`crate::metrics::Metrics::record_cache_lookup`].
+///
+/// Every key generator in this module (`pools_cache_key`,
+/// `pool_details_cache_key`, `user_predictions_cache_key`, `stats_cache_key`)
+/// produces keys of the form `<name>:...`, so the label is just the segment
+/// before the first `:`. Keys with no `:` (or empty keys) fall back to
+/// `"other"` so metric cardinality stays bounded even for unexpected keys.
+pub fn cache_name_from_key(key: &str) -> String {
+    match key.split_once(':') {
+        Some((name, _)) if !name.is_empty() => name.to_string(),
+        _ => "other".to_string(),
+    }
 }
 
 /// Generate a cache key for a pools list query.

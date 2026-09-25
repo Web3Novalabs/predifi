@@ -242,7 +242,9 @@ pub fn build_router(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
-        pool_cache: crate::pool_cache::PoolCache::new(),
+        pool_cache: crate::pool_cache::PoolCache::with_negative_ttl(
+            std::time::Duration::from_secs(config.pool_negative_cache_ttl_secs),
+        ),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
@@ -286,7 +288,9 @@ pub fn build_router_with_db(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
-        pool_cache: crate::pool_cache::PoolCache::new(),
+        pool_cache: crate::pool_cache::PoolCache::with_negative_ttl(
+            std::time::Duration::from_secs(config.pool_negative_cache_ttl_secs),
+        ),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),

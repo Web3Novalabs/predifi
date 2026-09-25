@@ -251,8 +251,20 @@ pub async fn get_pool_by_id_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    if let Some(cached) = state.pool_cache.get(pool_id) {
-        return ApiResponse::success(cached).into_response();
+    use crate::pool_cache::CacheLookup;
+    match state.pool_cache.get(pool_id) {
+        CacheLookup::Found(cached) => return ApiResponse::success(cached).into_response(),
+        CacheLookup::NotFound => {
+            // Negative cache hit: a previous lookup already confirmed this
+            // pool doesn't exist, so serve 404 without touching the database.
+            return ApiResponse::<()>::error(
+                StatusCode::NOT_FOUND,
+                error_codes::NOT_FOUND,
+                "pool not found",
+            )
+            .into_response();
+        }
+        CacheLookup::Miss => {}
     }
 
     let Some(db) = &state.db else {
@@ -269,12 +281,15 @@ pub async fn get_pool_by_id_handler(
             state.pool_cache.set(pool_id, pool.clone());
             ApiResponse::success(pool).into_response()
         }
-        Ok(None) => ApiResponse::<()>::error(
-            StatusCode::NOT_FOUND,
-            error_codes::NOT_FOUND,
-            "pool not found",
-        )
-        .into_response(),
+        Ok(None) => {
+            state.pool_cache.set_missing(pool_id);
+            ApiResponse::<()>::error(
+                StatusCode::NOT_FOUND,
+                error_codes::NOT_FOUND,
+                "pool not found",
+            )
+            .into_response()
+        }
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
@@ -1369,10 +1384,14 @@ pub fn router(
 ) -> Router {
     use crate::rate_limit::{with_rate_limit, RateLimitTier};
 
+    let pool_cache = PoolCache::with_negative_ttl(std::time::Duration::from_secs(
+        config.pool_negative_cache_ttl_secs,
+    ));
+
     let state = AppState {
         config,
         cache,
-        pool_cache: PoolCache::new(),
+        pool_cache,
         redis,
         db: pool,
         metrics,
