@@ -712,6 +712,12 @@ fn track_referred_volume_safe(
 - **contract/contracts/predifi-contract/src/lib.rs**: Lines 3340, 3363 (referred volume)
 - **contract/contracts/predifi-contract/src/safe_math.rs**: No changes needed
 
+## Related Audit Documents
+
+- **[ARITHMETIC_AUDIT_START_HERE.md](./ARITHMETIC_AUDIT_START_HERE.md)** - Audit index and quick overview
+- **[ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md](./ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md)** - Detailed line-by-line arithmetic audit
+- **[ARITHMETIC_FIX_DETAILS.md](./ARITHMETIC_FIX_DETAILS.md)** - Technical details of the volume tracking fix
+
 ---
 
 **Audit Status**: ✅ Complete  

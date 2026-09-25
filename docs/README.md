@@ -51,6 +51,11 @@ This directory contains comprehensive documentation for the PrediFi prediction m
 ```
 docs/
 ├── README.md                          # This file
+├── audits/                            # Security & arithmetic audit reports
+│   ├── ARITHMETIC_AUDIT_START_HERE.md
+│   ├── ARITHMETIC_AUDIT_SUMMARY.md
+│   ├── ARITHMETIC_FIX_DETAILS.md
+│   └── ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md
 ├── API_REFERENCE.md                   # Complete API reference
 ├── OPENAPI_CLIENT_GENERATION.md       # SDK generation guide
 ├── SMART_CONTRACT_DEPLOYMENT_GUIDE.md # Contract deployment guide
