@@ -713,6 +713,14 @@ env.storage().persistent().set(&vol_key, &new_vol);
 
 ---
 
+## Related Audit Documents
+
+- **[ARITHMETIC_AUDIT_START_HERE.md](./ARITHMETIC_AUDIT_START_HERE.md)** - Entry point and quick overview
+- **[ARITHMETIC_AUDIT_SUMMARY.md](./ARITHMETIC_AUDIT_SUMMARY.md)** - Executive audit summary and findings
+- **[ARITHMETIC_FIX_DETAILS.md](./ARITHMETIC_FIX_DETAILS.md)** - Technical details of the volume tracking fix
+
+---
+
 ## Conclusion
 
 **Arithmetic Safety Assessment**: ✅ **VERY HIGH**

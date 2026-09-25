@@ -15,9 +15,10 @@ This directory contains comprehensive documentation for the PrediFi prediction m
 | **[architecture_overview.md](./ARCHITECTURE_OVERVIEW.md)** | System architecture and component overview |
 | **[error_handling_reference.md](./ERROR_HANDLING_REFERENCE.md)** | Comprehensive error codes and troubleshooting |
 | **[troubleshooting.md](./troubleshooting.md)** | Common issues and solutions |
-| **[prediction_lifecycle.md](./PREDICTION_LIFECYCLE.md)** | Prediction market lifecycle documentation |
-| **[oracles.md](./ORACLES.md)** | Oracle integration documentation |
-| **[whitelist_events.md](./WHITELIST_EVENTS.md)** | Token whitelist events documentation |
+| **[prediction-lifecycle.md](./prediction-lifecycle.md)** | Prediction market lifecycle documentation |
+| **[oracles.md](./oracles.md)** | Oracle integration documentation |
+| **[whitelist-events.md](./whitelist-events.md)** | Token whitelist events documentation |
+| **[audits/ARITHMETIC_AUDIT_START_HERE.md](./audits/ARITHMETIC_AUDIT_START_HERE.md)** | Arithmetic operations audit documentation and findings |
 
 ---
 
@@ -49,6 +50,11 @@ This directory contains comprehensive documentation for the PrediFi prediction m
 ```
 docs/
 ├── README.md                          # This file
+├── audits/                            # Security & arithmetic audit reports
+│   ├── ARITHMETIC_AUDIT_START_HERE.md
+│   ├── ARITHMETIC_AUDIT_SUMMARY.md
+│   ├── ARITHMETIC_FIX_DETAILS.md
+│   └── ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md
 ├── API_REFERENCE.md                   # Complete API reference
 ├── OPENAPI_CLIENT_GENERATION.md       # SDK generation guide
 ├── SMART_CONTRACT_DEPLOYMENT_GUIDE.md # Contract deployment guide
