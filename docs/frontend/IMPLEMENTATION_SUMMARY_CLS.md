@@ -8,7 +8,7 @@ This PR improves Cumulative Layout Shift (CLS) performance across the PrediFi fr
 
 ## Changes Made
 
-### 1. **HeroSection Component** ([app/(marketing)/components/HeroSection.tsx](<app/(marketing)/components/HeroSection.tsx>))
+### 1. **HeroSection Component** ([app/(marketing)/components/HeroSection.tsx](../../frontend/app/(marketing)/components/HeroSection.tsx))
 
 **Issue**: Background image loaded without a positioned container, potentially causing layout shift
 
@@ -24,7 +24,7 @@ This PR improves Cumulative Layout Shift (CLS) performance across the PrediFi fr
 
 ---
 
-### 2. **Features Component** ([app/(marketing)/components/Features.tsx](<app/(marketing)/components/Features.tsx>))
+### 2. **Features Component** ([app/(marketing)/components/Features.tsx](../../frontend/app/(marketing)/components/Features.tsx))
 
 **Issue**: Feature images without aspect ratio containers, causing layout shift as they load at different sizes
 
@@ -49,7 +49,7 @@ This PR improves Cumulative Layout Shift (CLS) performance across the PrediFi fr
 
 ---
 
-### 3. **NavBar Component** ([app/(marketing)/components/NavBar.tsx](<app/(marketing)/components/NavBar.tsx>))
+### 3. **NavBar Component** ([app/(marketing)/components/NavBar.tsx](../../frontend/app/(marketing)/components/NavBar.tsx))
 
 **Issue**: Mobile menu conditionally rendered with `{isOpen &&}`, causing layout shift when opened
 
@@ -75,7 +75,7 @@ This PR improves Cumulative Layout Shift (CLS) performance across the PrediFi fr
 
 ---
 
-### 4. **Waitlist Component** ([components/Waitlist.tsx](components/Waitlist.tsx))
+### 4. **Waitlist Component** ([components/Waitlist.tsx](../../frontend/components/Waitlist.tsx))
 
 **Issue**: Error messages conditionally rendered, causing form to jump when error appears
 
@@ -103,7 +103,7 @@ This PR improves Cumulative Layout Shift (CLS) performance across the PrediFi fr
 
 ---
 
-### 5. **CLS Utility Library** ([frontend/lib/cls-utils.ts](frontend/lib/cls-utils.ts))
+### 5. **CLS Utility Library** ([frontend/lib/cls-utils.tsx](../../frontend/lib/cls-utils.tsx))
 
 Created reusable utilities for future CLS-safe components:
 
@@ -144,7 +144,7 @@ Comprehensive guide covering:
 - Components status table
 - Future improvements
 
-#### Best Practices Examples ([frontend/EXAMPLES_CLS_BEST_PRACTICES.md](frontend/EXAMPLES_CLS_BEST_PRACTICES.md))
+#### Best Practices Examples ([frontend/EXAMPLES_CLS_BEST_PRACTICES.md](../../frontend/EXAMPLES_CLS_BEST_PRACTICES.md))
 
 7 working examples demonstrating:
 
@@ -156,7 +156,7 @@ Comprehensive guide covering:
 6. Custom hooks
 7. Multi-state forms
 
-#### Tests ([frontend/**tests**/cls.test.ts](frontend/__tests__/cls.test.ts))
+#### Tests ([frontend/__tests__/cls.test.tsx](../../frontend/__tests__/cls.test.tsx))
 
 - ReservedSpace functionality tests
 - AspectRatioContainer tests
@@ -312,7 +312,7 @@ Comprehensive guide covering:
 - [CLS Debugging Guide](https://web.dev/cls/)
 - [Next.js Image Optimization](https://nextjs.org/docs/basic-features/image-optimization)
 - [CSS for Performance](https://web.dev/animations-guide/)
-- [PrediFi Contributing Guidelines](CONTRIBUTING_BACKEND.md)
+- [PrediFi Contributing Guidelines](../../CONTRIBUTING_BACKEND.md)
 
 ---
 
@@ -321,8 +321,8 @@ Comprehensive guide covering:
 Refer to:
 
 1. [CLS_IMPROVEMENTS.md](CLS_IMPROVEMENTS.md) - Technical deep dive
-2. [frontend/EXAMPLES_CLS_BEST_PRACTICES.md](frontend/EXAMPLES_CLS_BEST_PRACTICES.md) - Code examples
-3. [frontend/lib/cls-utils.ts](frontend/lib/cls-utils.ts) - API reference
+2. [frontend/EXAMPLES_CLS_BEST_PRACTICES.md](../../frontend/EXAMPLES_CLS_BEST_PRACTICES.md) - Code examples
+3. [frontend/lib/cls-utils.tsx](../../frontend/lib/cls-utils.tsx) - API reference
 
 ---
 
