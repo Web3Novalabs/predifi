@@ -4,6 +4,8 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { useTheme } from "@/lib/hooks/useTheme";
 import { ThemeProvider } from "@/lib/context/ThemeContext";
 
+import { ThemeProvider } from "@/lib/context/ThemeContext";
+
 function TestThemeComponent() {
   const { theme, setTheme } = useTheme();
   return (

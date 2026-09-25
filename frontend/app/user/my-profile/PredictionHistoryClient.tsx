@@ -59,12 +59,11 @@ export function PredictionHistoryClient() {
   const { profile, isLoading, isError, refresh } = useProfile(address);
   const [activeTab, setActiveTab] = useState<Tab>("All");
 
-  const claims = profile?.claims ?? [];
-
   const filtered = useMemo(() => {
+    const claims = profile?.claims ?? [];
     if (activeTab === "All") return claims;
     return claims.filter((c) => predictionStatus(c) === activeTab);
-  }, [claims, activeTab]);
+  }, [profile?.claims, activeTab]);
 
   const stats = profile?.stats;
 
