@@ -1,0 +1,21 @@
+# Issue chooser configuration (Issue #1814).
+#
+# `blank_issues_enabled: false` forces every new issue through one of the
+# templates. That is the point of having them — a blank-issue escape hatch sits
+# at the top of the chooser and most reporters take it, which is how the repo
+# ends up with bug reports missing a version and reproduction steps.
+#
+# Security reports are deliberately routed off the issue tracker entirely: a
+# public issue describing an exploitable bug is a disclosure.
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Report a security vulnerability
+    url: https://github.com/Web3Novalabs/predifi/security/advisories/new
+    about: >-
+      Do not open a public issue for a security problem. Use a private security
+      advisory so it can be fixed before it is disclosed. See SECURITY.md.
+  - name: 💬 Ask a question
+    url: https://github.com/Web3Novalabs/predifi/discussions
+    about: >-
+      For usage questions and open-ended discussion. Issues are for tracked,
+      actionable work.
