@@ -212,6 +212,86 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
     }
 }
 
+// ── Admin: runtime log-level control ─────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SetLogLevelRequest {
+    /// New log level (e.g. "info", "debug", "warn").
+    pub level: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SetLogLevelResponse {
+    pub status: String,
+    pub level: String,
+}
+
+/// `PATCH /api/v1/admin/log-level` — change the active log level at runtime.
+///
+/// Restricted to callers that present a valid admin API key in the
+/// `x-admin-api-key` header.  The key must match the `PREDIFI_ADMIN_API_KEY`
+/// environment variable.  Returns 401 when the header is absent or does not
+/// match.
+///
+/// The new level is applied immediately and remains in effect until the next
+/// change or a process restart (which reverts to the configured default).
+pub async fn set_log_level(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<SetLogLevelRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let admin_key = std::env::var("PREDIFI_ADMIN_API_KEY").ok();
+
+    let provided = headers
+        .get("x-admin-api-key")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    let authenticated = match (&admin_key, provided) {
+        (Some(expected), Some(provided)) if expected == &provided => true,
+        _ => false,
+    };
+
+    if !authenticated {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "invalid or missing admin credentials" })),
+        )
+            .into_response();
+    }
+
+    let level = body.level.trim().to_string();
+    if level.is_empty() {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            "level must not be empty",
+        )
+        .into_response();
+    }
+
+    match crate::telemetry::try_reload_log_level(&level) {
+        Ok(()) => {
+            tracing::info!(log_level = %level, "log level updated via admin endpoint");
+            ApiResponse::success(SetLogLevelResponse {
+                status: "ok".to_string(),
+                level,
+            })
+            .into_response()
+        }
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            e,
+        )
+        .into_response(),
+    }
+}
+
 // ── Task 2: Active Pools API ──────────────────────────────────────────────────
 
 /// Query parameters for the `GET /api/v1/pools` endpoint.
@@ -1379,6 +1459,14 @@ pub fn router(
         event_bus,
     };
 
+    // Admin tier — authenticated administrative operations (no public rate limit).
+    let admin = Router::new()
+        .route(
+            "/admin/log-level",
+            patch(set_log_level),
+        )
+        .with_state(state.clone());
+
     // Light tier — cheap, stateless, polling-friendly endpoints.
     let light = with_rate_limit(
         Router::new()
@@ -1491,6 +1579,7 @@ pub fn router(
         .merge(read)
         .merge(user)
         .merge(write)
+        .merge(admin)
 }
 
 /// `POST /api/v1/auth/refresh` — rotate a refresh token and issue a new pair.
