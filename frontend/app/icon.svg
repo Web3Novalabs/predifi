@@ -1,0 +1,33 @@
+<svg width="32" height="32" viewBox="0 0 45 68" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Geometric mark extracted from public/logo.svg, cropped to the icon portion -->
+  <rect width="45" height="68" rx="8" fill="#001112"/>
+  <path d="M14.989.459V52.003L0 66.991V15.448L14.989.459Z" fill="#37B7C3"/>
+  <path d="M29.979 30.439v14.987H0L14.987 30.439h14.992Z" fill="url(#icon-c)"/>
+  <path d="M44.964 15.449V30.436L29.977 45.424V.457l14.987 14.992Z" fill="url(#icon-d)"/>
+  <path d="M29.979.457v14.992H0L14.987.457h14.992Z" fill="url(#icon-e)"/>
+  <path d="M0 18.737v-3.289h14.989L0 18.737Z" fill="url(#icon-f)"/>
+  <path d="M0 48.712v-3.289h14.989L0 48.712Z" fill="url(#icon-g)"/>
+  <path d="M29.976.454H14.989l-1.036 1.036h14.993L43.933 16.483v14.981l1.03-1.03V15.447L29.976.454ZM14.989 30.434V16.483h-1.036v14.987h14.993v-1.036H14.989Zm-1.036 16.023v6.579l1.036-1.036v-5.543h-1.036Z" fill="#fff"/>
+  <defs>
+    <linearGradient id="icon-c" x1="30.153" y1="37.932" x2=".099" y2="37.932" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A4E6F"/>
+      <stop offset=".3" stop-color="#088395"/>
+    </linearGradient>
+    <linearGradient id="icon-d" x1="37.47" y1=".719" x2="37.47" y2="68.633" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#088395"/>
+      <stop offset="1" stop-color="#1A4E6F"/>
+    </linearGradient>
+    <linearGradient id="icon-e" x1=".0002" y1="7.953" x2="29.979" y2="7.953" gradientUnits="userSpaceOnUse">
+      <stop offset=".7" stop-color="#37B7C3"/>
+      <stop offset="1" stop-color="#071952"/>
+    </linearGradient>
+    <linearGradient id="icon-f" x1="7.494" y1="15.44" x2="7.494" y2="18.716" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F1E21"/>
+      <stop offset="1" stop-color="#1F1E21" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="icon-g" x1="7.494" y1="45.567" x2="7.494" y2="48.844" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F1E21"/>
+      <stop offset="1" stop-color="#1F1E21" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+</svg>

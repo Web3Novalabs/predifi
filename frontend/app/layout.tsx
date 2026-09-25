@@ -60,29 +60,6 @@ export const metadata: Metadata = {
     images: ["https://predifi.app/logo.jpeg"],
     creator: "@nevoapp",
   },
-
-  icons: {
-    icon: [
-      { url: "/Group 1.svg" },
-      {
-        url: "/Group 1.svg",
-        sizes: "192x192",
-        type: "image/svg+xml",
-      },
-      {
-        url: "/Group 1.svg",
-        sizes: "512x512",
-        type: "image/svg+xml",
-      },
-    ],
-    apple: [
-      {
-        url: "/Group 1.svg",
-        sizes: "180x180",
-        type: "image/svg+xml",
-      },
-    ],
-  },
 };
 
 export default function RootLayout({
