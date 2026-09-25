@@ -14,13 +14,13 @@ Images without explicit dimensions can cause layout shift when they load.
 
 #### Solutions Applied
 
-**a) HeroSection Background Image** ([app/(marketing)/components/HeroSection.tsx](<app/(marketing)/components/HeroSection.tsx>))
+**a) HeroSection Background Image** ([app/(marketing)/components/HeroSection.tsx](../../frontend/app/(marketing)/components/HeroSection.tsx))
 
 - **Before**: Image with `fill` but in a non-positioned container
 - **After**: Wrapped in an `absolute` positioned container with explicit size management
 - **Impact**: Prevents layout shift as background image loads
 
-**b) Features Section Images** ([app/(marketing)/components/Features.tsx](<app/(marketing)/components/Features.tsx>))
+**b) Features Section Images** ([app/(marketing)/components/Features.tsx](../../frontend/app/(marketing)/components/Features.tsx))
 
 - **Before**: Used `width` and `height` props but responsive sizing caused shifts
 - **After**: Wrapped in aspect ratio container (`aspect-square`) with `fill` mode
@@ -49,7 +49,7 @@ Dynamic content (modals, accordions, error messages) appearing/disappearing caus
 
 #### Solutions Applied
 
-**a) Mobile Navigation Menu** ([app/(marketing)/components/NavBar.tsx](<app/(marketing)/components/NavBar.tsx>))
+**a) Mobile Navigation Menu** ([app/(marketing)/components/NavBar.tsx](../../frontend/app/(marketing)/components/NavBar.tsx))
 
 - **Before**: Conditional rendering with `{isOpen &&}` - menu appears/disappears causing shift
 - **After**: Always rendered but with `maxHeight` and `opacity` transitions
@@ -71,7 +71,7 @@ Dynamic content (modals, accordions, error messages) appearing/disappearing caus
   - Menu items prefetch even when hidden (performance)
   - Accessibility improved (items in DOM but hidden)
 
-**b) Error Messages in Forms** ([components/Waitlist.tsx](components/Waitlist.tsx))
+**b) Error Messages in Forms** ([components/Waitlist.tsx](../../frontend/components/Waitlist.tsx))
 
 - **Before**: Error message conditionally rendered, causes space to appear/disappear
 - **After**: Container with reserved minimum height
@@ -95,7 +95,7 @@ Dynamic content (modals, accordions, error messages) appearing/disappearing caus
   - Error appears with fade transition
   - No vertical shift when error appears
 
-**c) FAQ Accordion** ([app/(marketing)/components/FAQ.tsx](<app/(marketing)/components/FAQ.tsx>))
+**c) FAQ Accordion** ([app/(marketing)/components/FAQ.tsx](../../frontend/app/(marketing)/components/FAQ.tsx))
 
 - **Already Implemented**: Uses CSS Grid height transition technique
 - **How it works**: Grid rows animate from `[0fr]` to `[1fr]` instead of height change
@@ -148,7 +148,7 @@ All feature images now use aspect ratio containers:
 
 - Next.js `next/font` with `display: "swap"` is already configured
 - Prevents font-load induced CLS
-- See [app/layout.tsx](app/layout.tsx) line 3-10
+- See [app/layout.tsx](../../frontend/app/layout.tsx) line 3-10
 
 ## Testing & Validation
 
