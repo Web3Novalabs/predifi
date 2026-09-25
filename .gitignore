@@ -1,4 +1,6 @@
 # Local PR drafts — not part of the repository history
+COMMIT_MESSAGE*.txt
+PR_DESCRIPTION.md
 PULL_REQUEST.md
 **/PULL_REQUEST.md
 PULL_REQUEST_DB_REFACTOR.md
@@ -9,6 +11,7 @@ PULL_REQUEST_STATE_MANAGEMENT_1406.md
 **/VALIDATION_ENHANCEMENTS.md
 **/DEPENDENCY_AUDIT_LOCAL.md
 README_CLS_IMPLEMENTATION.md
+security-audit-report.md
 
 # Kiro IDE workspace metadata
 .kiro/

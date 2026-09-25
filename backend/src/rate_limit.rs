@@ -1,12 +1,39 @@
-//! Per-route rate limiting helpers.
+//! Per-route rate limiting helpers for the backend API.
 //!
-//! Each route group in `routes/v1.rs` wraps its sub-router with the
-//! appropriate tier from this module. In test builds the layer is a no-op so
-//! parallel tests do not cross-contaminate each other's token buckets.
+//! The server applies one of four tiers defined in [`crate::constants`] to each
+//! route group:
 //!
-//! Rate limiting uses client IP addresses as the key, with support for
-//! proxy headers (X-Forwarded-For, X-Real-IP) to identify clients behind
-//! reverse proxies.
+//! - `Light` — cheap, stateless endpoints such as `/fees`, `/prices`, and
+//!   `/health`; these are the most permissive and are intended for polling and
+//!   health checks.
+//! - `Read` — public read-only endpoints such as `/pools`, `/stats`, and
+//!   `/leaderboard`; these are cached and human-readable data views.
+//! - `User` — per-user history and prediction endpoints that are scoped to a
+//!   specific wallet (for example user prediction history and user profile
+//!   reads); these are limited more tightly than general reads.
+//! - `Write` — mutating or indexer-ingest routes under `/indexer/*`; these are
+//!   the strictest user-facing write paths and protect backend ingestion from
+//!   abusive bursts.
+//!
+//! Each route group in `routes/v1.rs` wraps its sub-router with the matching
+//! tier from [`RateLimitTier`]. In test builds the layer is disabled so parallel
+//! unit tests do not share token buckets or interfere with each other.
+//!
+//! Rate limiting is keyed by client IP address, with support for forwarded proxy
+//! headers (`X-Forwarded-For`, `X-Real-IP`) when the backend sits behind a load
+//! balancer or reverse proxy.
+//!
+//! When a client exceeds its configured burst window, the server replies with
+//! HTTP 429 and the standardized JSON body returned by [`crate::response`]:
+//!
+//! ```json
+//! {
+//!   "status": "error",
+//!   "error": "Too many requests"
+//! }
+//! ```
+//! 
+//! This body comes from [`crate::response::rate_limit_error_response`].
 
 use tower_governor::key_extractor::SmartIpKeyExtractor;
 

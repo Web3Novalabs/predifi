@@ -1,4 +1,54 @@
-//! Prediction domain: placing predictions and claiming winnings or refunds.
+//! # Prediction Management & Lifecycle Domain
+//!
+//! This module manages prediction placement, user stake tracking, and the claim / refund lifecycle.
+//!
+//! ## Prediction Record Data Model
+//!
+//! For each user participating in a prediction market pool, the contract persists data across several key entries:
+//!
+//! 1. **`DataKey::Pred(user: Address, pool_id: u64)` -> `Prediction`**:
+//!    - `amount: i128` — Total tokens staked by `user` on `pool_id` for their selected outcome.
+//!    - `outcome: u32` — 0-based outcome index chosen by `user` (`0 <= outcome < pool.options_count`).
+//! 2. **`DataKey::Referrer(user: Address, pool_id: u64)` -> `Address`**:
+//!    - Optional referrer address registered on the user's first prediction placement for this pool.
+//! 3. **`DataKey::ReferredVolume(referrer: Address, pool_id: u64)` -> `i128`**:
+//!    - Cumulative token volume staked by referred users under `referrer` for `pool_id`.
+//! 4. **`DataKey::Claimed(user: Address, pool_id: u64)` -> `bool`**:
+//!    - Persistent sentinel set to `true` when a user claims winnings or a refund for `pool_id` (enforces double-claim prevention `INV-3`).
+//! 5. **`DataKey::LastPredictionTime(user: Address)` -> `u64`**:
+//!    - Ledger timestamp of `user`'s last prediction placement across any pool (used for rate-limiting cooldown enforcement).
+//! 6. **`DataKey::UsrPrdCnt(user: Address)` -> `u32`**:
+//!    - Total count of distinct pools in which `user` holds active predictions.
+//! 7. **`DataKey::UsrPrdIdx(user: Address, index: u32)` -> `u64`**:
+//!    - Maps a 0-based index to `pool_id` for querying user prediction history.
+//!
+//! ## Valid State Transitions
+//!
+//! ### Prediction Placement Lifecycle
+//! ```text
+//! [Uninitialized]
+//!        │
+//!        │  place_prediction(user, pool_id, amount, outcome)
+//!        ▼
+//!   [Placed]  ──(place_prediction with same pool_id & outcome)──► [Stake Increased]
+//! ```
+//! - **Uninitialized -> Placed**: User places their first prediction on an active pool. Tokens are transferred to the contract, `Prediction` struct is created, `participants_count` increments, and any optional `referrer` is recorded.
+//! - **Placed -> Stake Increased**: User places an additional prediction on the *same pool and outcome*. The new stake is added to `prediction.amount` and `pool.total_stake`. (Attempting to select a different outcome index for an existing prediction is rejected).
+//!
+//! ### Settlement & Claim Lifecycle
+//! ```text
+//!                              ┌──► MarketState::Resolved ──► claim_winnings() ──► [Claimed (Winnings)]
+//!                              │
+//!   [Prediction Staked] ───────┼──► MarketState::Canceled ──► claim_refund()   ──► [Claimed (Refund)]
+//!                              │
+//!                              └──► MarketState::Disputed ──► (Awaiting Resolution)
+//! ```
+//! - **Active -> Resolved**: Market resolves with a winning outcome index (`pool.outcome`).
+//!   - If `prediction.outcome == pool.outcome`, caller receives proportional payout `(user_stake / winning_stake) * (total_pool - protocol_fee)`. `DataKey::Claimed(user, pool_id)` is set to `true`.
+//!   - If `prediction.outcome != pool.outcome`, payout is 0.
+//! - **Active / Resolved / Disputed -> Canceled**: Market is canceled due to emergency, invalid oracle output, or quorum failure.
+//!   - All participants receive 100% principal refund (`prediction.amount`). `DataKey::Claimed(user, pool_id)` is set to `true`.
+//! - **Unclaimed -> Claimed**: Transitioning `DataKey::Claimed` to `true` is terminal and irreversible. Re-claiming returns `PredifiError::AlreadyClaimed`.
 
 use soroban_sdk::{contractimpl, token, Address, Env, String, Symbol, Vec};
 

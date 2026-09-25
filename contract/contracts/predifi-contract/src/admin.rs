@@ -1,5 +1,106 @@
-//! Admin domain: initialisation, pause control, protocol parameters,
-//! fee configuration, token/address whitelists and contract upgrades.
+//! # Admin Operations & System Governance
+//!
+//! This module handles administrative operations, pause control, protocol fee structures,
+//! token whitelists, timelocked governance changes, private pool access control, and contract upgrades.
+//!
+//! ## Admin Roles and Access Control Summary
+//!
+//! The contract uses role-based access control (RBAC). Admin operations require authorization
+//! from either a caller holding the **Admin role (role index 0)** or, for pool-specific whitelist operations,
+//! authorization from the **Pool Creator**.
+//!
+//! ### Admin-Only Operations (Requires Admin Role 0)
+//! An unauthorized caller (lacking Admin role 0) attempting these functions receives `PredifiError::Unauthorized`
+//! or a panic (`"Unauthorized: missing required role"`).
+//!
+//! - **`pause(env, admin)`**: Emergency pause contract execution.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: Panic (`"Unauthorized: missing required role"`)
+//! - **`unpause(env, admin)`**: Resume contract execution.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: Panic (`"Unauthorized: missing required role"`)
+//! - **`set_fee_bps(env, admin, fee_bps)`**: Queue a fee change proposal subject to a 7-day timelock.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`apply_fee_bps(env, admin)`**: Apply a queued fee change once timelock expires.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`cancel_fee_proposal(env, admin)`**: Cancel a pending fee change proposal.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_max_predictions_per_user(env, admin, limit)`**: Set maximum predictions allowed per user.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_prediction_cooldown(env, admin, cooldown_seconds)`**: Set minimum cooldown between predictions.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_resolution_delay(env, admin, delay)`**: Set resolution delay cap in seconds.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_claim_window(env, admin, claim_window_seconds)`**: Set claim window duration.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_min_pool_duration(env, admin, duration)`**: Set minimum pool duration requirement.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_min_stake(env, admin, amount)`**: Set global minimum stake requirement.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`add_token_to_whitelist(env, admin, token)`**: Add token to allowed betting whitelist.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`remove_token_from_whitelist(env, admin, token)`**: Remove token from allowed betting whitelist.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`batch_add_tokens_to_whitelist(env, admin, tokens)`**: Batch add tokens to whitelist.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`batch_remove_tokens_whitelist(env, admin, tokens)`**: Batch remove tokens from whitelist.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`upgrade_contract(env, admin, new_wasm_hash)`**: Upgrade contract Wasm code.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`migrate_state(env, admin)`**: Execute post-upgrade state migration.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_fee_tiers(env, admin, tiers)`**: Set dynamic fee tier thresholds.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//!
+//! ### Pool-Creator Operations (Requires Pool Creator Authentication)
+//! An unauthorized caller (not matching `pool.creator`) attempting these functions receives `PredifiError::Unauthorized`.
+//!
+//! - **`add_to_whitelist(env, creator, pool_id, user)`**: Add a user to a private pool's whitelist.
+//!   - *Role Required*: Pool Creator
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`remove_from_whitelist(env, creator, pool_id, user)`**: Remove a user from a private pool's whitelist.
+//!   - *Role Required*: Pool Creator
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`batch_add_to_whitelist(env, creator, pool_id, users)`**: Batch add users to a private pool's whitelist.
+//!   - *Role Required*: Pool Creator
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`batch_remove_from_whitelist(env, creator, pool_id, users)`**: Batch remove users from a private pool's whitelist.
+//!   - *Role Required*: Pool Creator
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//!
+//! ### Permissionless / Public Queries & Utilities (No Authorization Required)
+//!
+//! - **`init(env, access_control, treasury, fee_bps, resolution_delay, min_pool_duration, max_predictions_per_user)`**: Initialize contract instance.
+//! - **`is_contract_paused(env)`**: Query contract pause state (`bool`).
+//! - **`get_version(env)`**: Query numeric version code (`u32`).
+//! - **`get_version_string(env)`**: Query semantic version string symbol (`Symbol`).
+//! - **`get_pending_fee_change(env)`**: Query timelocked fee proposal (`Option<PendingFeeChange>`).
+//! - **`get_supported_tokens(env)`**: Query list of whitelisted token addresses (`Vec<Address>`).
+//! - **`is_token_allowed(env, token)`**: Check if a token is whitelisted (`bool`).
+//! - **`get_fees(env)`**: Query fee info (`FeeInfo`).
+//! - **`get_prediction_cooldown(env)`**: Query prediction cooldown seconds (`u64`).
+//! - **`get_contract_info(env)`**: Query aggregated contract info (`ContractInfo`).
+//! - **`is_whitelisted(env, pool_id, user)`**: Query pool whitelist status (`bool`).
+//! - **`batch_check_whitelist(env, pool_id, users)`**: Query whitelist status for multiple users (`Result<Vec<bool>, PredifiError>`).
+//! - **`get_fee_tiers(env)`**: Query configured fee tiers (`Vec<FeeTier>`).
+//! - **`renew_storage_ttl(env, pool_id)`**: Permissionless storage TTL maintenance (`Result<(), PredifiError>`).
+//! - **`get_contract_metadata(env)`**: Query comprehensive contract metadata (`ContractMetadata`).
 
 use soroban_sdk::{contractimpl, Address, BytesN, Env, Symbol, Vec};
 

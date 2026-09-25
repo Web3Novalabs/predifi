@@ -1,0 +1,62 @@
+name: Bug report
+description: Create a report to help us improve PrediFi
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for taking the time to report a bug! Please fill out the details below.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Select the area of the codebase where the bug occurs.
+      options:
+        - frontend
+        - backend
+        - contract
+        - docs
+        - infra
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+      placeholder: Describe the problem clearly...
+    validations:
+      required: true
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Detailed steps to reproduce the behavior.
+      placeholder: |
+        1. Go to '...'
+        2. Click on '....'
+        3. Scroll down to '....'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected_vs_actual
+    attributes:
+      label: Expected vs Actual Behavior
+      description: Explain what you expected to happen and what actually happened.
+      placeholder: |
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Details about your environment (e.g. OS, Browser, Node version, Rust version, Network).
+      placeholder: |
+        - OS: [e.g. macOS, Ubuntu]
+        - Browser / Tool: [e.g. Chrome 120, rustc 1.80, soroban-cli 21.0]
+        - Network: [e.g. Mainnet, Testnet, Localhost]
+    validations:
+      required: false

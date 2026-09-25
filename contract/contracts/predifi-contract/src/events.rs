@@ -27,6 +27,54 @@
 //! - Event payloads use standard Soroban data structures (`Address`, `Symbol`, `String`, `Vec`).
 //! - Storage costs for event emission are borne by the transaction caller; event payloads are kept compact while remaining self-describing.
 //! - Indexers must process events sequentially according to ledger sequence and transaction order.
+//!
+//! ## Complete event catalog
+//!
+//! Each event uses the listed topic and serializes the named struct as its data payload.
+//! The topic is the stable discriminator an indexer should filter on.
+//!
+//! | Event | Topic | Emitted when |
+//! | --- | --- | --- |
+//! | [`InitEvent`] | `init` | `initialize` succeeds |
+//! | [`PauseEvent`] | `pause` | an administrator pauses the contract |
+//! | [`UnpauseEvent`] | `unpause` | an administrator resumes the contract |
+//! | [`FeeUpdateEvent`] | `fee_update` | the global fee changes |
+//! | [`FeeTiersUpdateEvent`] | `fee_tiers_update` | fee tiers change |
+//! | [`TreasuryUpdateEvent`] | `treasury_update` | the treasury changes |
+//! | [`ResolutionDelayUpdateEvent`] | `resolution_delay_update` | resolution delay changes |
+//! | [`ClaimWindowUpdateEvent`] | `claim_window_update` | claim window changes |
+//! | [`MinPoolDurationUpdateEvent`] | `min_pool_duration_update` | minimum pool duration changes |
+//! | [`MinStakeUpdateEvent`] | `min_stake_update` | minimum stake changes |
+//! | [`PoolReadyForResolutionEvent`] | `pool_ready` | a pool becomes resolvable |
+//! | [`PoolCreatedEvent`] | `pool_created` | a prediction pool is created |
+//! | [`InitialLiquidityProvidedEvent`] | `initial_liquidity_provided` | initial liquidity is deposited |
+//! | [`PoolResolvedEvent`] | `pool_resolved` | a pool is resolved |
+//! | [`OracleResolvedEvent`] | `oracle_resolved` | an oracle resolves a pool |
+//! | [`PoolCanceledEvent`] | `pool_canceled` | a pool is canceled |
+//! | [`StakeLimitsUpdatedEvent`] | `stake_limits_updated` | stake limits change |
+//! | [`PredictionPlacedEvent`] | `prediction_placed` | a prediction is placed |
+//! | [`WinningsClaimedEvent`] | `winnings_claimed` | winnings are claimed |
+//! | [`ReferralPaidEvent`] | `referral_paid` | referral rewards are paid |
+//! | [`UnauthorizedResolveAttemptEvent`] | `unauthorized_resolution` | an unauthorized resolution is attempted |
+//! | [`UnauthorizedAdminAttemptEvent`] | `unauthorized_admin_op` | an unauthorized admin operation is attempted |
+//! | [`SuspiciousDoubleClaimEvent`] | `double_claim_attempt` | a duplicate claim is attempted |
+//! | [`ContractPausedAlertEvent`] | `contract_paused_alert` | a paused contract operation is attempted |
+//! | [`HighValuePredictionEvent`] | `high_value_prediction` | a high-value prediction is placed |
+//! | [`PoolResolvedDiagEvent`] | `pool_resolved_diag` | resolution diagnostics are recorded |
+//! | [`OutcomeStakesUpdatedEvent`] | `outcome_stakes_updated` | outcome stake totals change |
+//! | [`TokenWhitelistAddedEvent`] | `token_whitelist_added` | a token is allowlisted |
+//! | [`TokenWhitelistRemovedEvent`] | `token_whitelist_removed` | a token is removed from the allowlist |
+//! | [`TreasuryWithdrawnEvent`] | `treasury_withdrawn` | treasury funds are withdrawn |
+//! | [`RefundClaimedEvent`] | `refund_claimed` | a refund is claimed |
+//! | [`UpgradeEvent`] | `upgrade` | an upgrade is requested |
+//! | [`ContractUpgradedEvent`] | `contract_upgraded` | an upgrade is completed |
+//! | [`OracleInitEvent`] | `oracle_init` | an oracle is configured |
+//! | [`PriceFeedUpdatedEvent`] | `price_feed_updated` | a price feed changes |
+//! | [`PriceConditionSetEvent`] | `price_condition_set` | a price condition is configured |
+//! | [`PriceResolvedEvent`] | `price_resolved` | a price condition resolves |
+//! | [`ResolutionConflictEvent`] | `resolution_conflict` | resolution sources disagree |
+//! | [`AddedToWhitelistEvent`] | `added_to_whitelist` | a participant is allowlisted |
+//! | [`RemovedFromWhitelistEvent`] | `removed_from_whitelist` | a participant is removed from the allowlist |
 
 use soroban_sdk::{contractevent, contracttype, Address, BytesN, String, Symbol, Vec};
 
