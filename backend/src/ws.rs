@@ -1,16 +1,18 @@
 //! WebSocket broadcast for live prediction events.
 //!
-//! Clients connect at `GET /api/v1/ws?address=<wallet>` with a valid JWT in the
-//! `Authorization: Bearer <token>` header (or `?token=<jwt>` query param) to
-//! receive only events where `user_address` matches the subscribed wallet.
+//! Clients connect at `GET /api/v1/ws?address=<wallet>` with a valid access JWT
+//! in the `Authorization: Bearer <token>` header. Query-parameter tokens are
+//! accepted only outside production (they leak into access logs). Subscribers
+//! receive events whose `user_address` matches the subscribed wallet.
 //! Omitting `address` delivers all events (useful for dashboards). The indexer
 //! calls [`EventBus::send`] whenever a new prediction is indexed.
 
+use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::{
     extract::{
@@ -27,7 +29,8 @@ use tracing::info_span;
 use tracing::Instrument;
 
 use crate::config::Config;
-use crate::jwt::{extract_bearer_token, verify_jwt_token};
+use crate::constants::{RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS};
+use crate::jwt::{extract_bearer_token, verify_jwt_token_strict};
 
 const CHANNEL_CAPACITY: usize = 256;
 
@@ -36,6 +39,10 @@ const MAX_MESSAGE_SIZE: usize = 1_048_576; // 1 MB
 
 /// Maximum active concurrent WebSocket connections allowed before returning 429.
 const MAX_ACTIVE_CONNECTIONS: usize = 10_000;
+
+/// Per-IP handshake attempts allowed inside [`CONNECT_WINDOW`].
+const MAX_CONNECT_ATTEMPTS_PER_IP: usize = 10;
+const CONNECT_WINDOW: Duration = Duration::from_secs(60);
 
 /// RAII guard to safely track and decrement active connections on drop or panic.
 pub struct ConnectionGuard(Arc<AtomicUsize>);
@@ -55,12 +62,42 @@ impl Drop for ConnectionGuard {
     }
 }
 
+/// Sliding-window limiter for WebSocket handshake attempts per client IP.
+struct ConnectRateLimiter {
+    attempts: Mutex<HashMap<String, Vec<Instant>>>,
+}
+
+impl ConnectRateLimiter {
+    fn new() -> Self {
+        Self {
+            attempts: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Returns `true` if this IP is allowed another handshake.
+    fn check(&self, ip: &str) -> bool {
+        let now = Instant::now();
+        let mut map = self.attempts.lock().unwrap_or_else(|e| e.into_inner());
+        if map.len() > 10_000 {
+            map.retain(|_, stamps| stamps.iter().any(|t| now.duration_since(*t) < CONNECT_WINDOW));
+        }
+        let entry = map.entry(ip.to_string()).or_default();
+        entry.retain(|t| now.duration_since(*t) < CONNECT_WINDOW);
+        if entry.len() >= MAX_CONNECT_ATTEMPTS_PER_IP {
+            return false;
+        }
+        entry.push(now);
+        true
+    }
+}
+
 /// Optional query parameters for the WebSocket endpoint.
 #[derive(Debug, Deserialize, Default)]
 pub struct WsConnectParams {
     /// When set, only events whose `user_address` equals this value are forwarded.
     pub address: Option<String>,
     /// Optional JWT passed as a query parameter when headers are unavailable.
+    /// Ignored in production — tokens in URLs leak into access logs and history.
     pub token: Option<String>,
     /// When set, only events whose `pool_id` equals this value are forwarded.
     pub pool_id: Option<u64>,
@@ -72,6 +109,7 @@ pub struct EventBus {
     tx: broadcast::Sender<String>,
     /// Number of currently connected WebSocket clients.
     active_connections: Arc<AtomicUsize>,
+    connect_limiter: Arc<ConnectRateLimiter>,
 }
 
 impl Default for EventBus {
@@ -90,6 +128,7 @@ impl EventBus {
         Self {
             tx,
             active_connections: Arc::new(AtomicUsize::new(0)),
+            connect_limiter: Arc::new(ConnectRateLimiter::new()),
         }
     }
 
@@ -114,6 +153,10 @@ impl EventBus {
     /// will receive a [`broadcast::error::RecvError::Lagged`] error.
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
         self.tx.subscribe()
+    }
+
+    fn allow_connect(&self, ip: &str) -> bool {
+        self.connect_limiter.check(ip)
     }
 }
 
@@ -144,24 +187,51 @@ pub fn should_deliver_event(
     true
 }
 
-fn extract_ws_token(headers: &HeaderMap, params: &WsConnectParams) -> Option<String> {
+fn client_ip(headers: &HeaderMap) -> String {
     headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn extract_ws_token(
+    headers: &HeaderMap,
+    params: &WsConnectParams,
+    production: bool,
+) -> Option<String> {
+    let header_token = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(extract_bearer_token)
-        .map(str::to_string)
-        .or_else(|| params.token.clone())
+        .map(str::to_string);
+
+    if production {
+        return header_token;
+    }
+
+    header_token.or_else(|| params.token.clone())
 }
 
 /// Validate the Origin header to prevent CSRF-like WebSocket hijacking.
 ///
-/// This checks that the Origin header matches the configured allowed origins.
-/// If no origins are configured, the check is skipped (allowing any origin).
-/// In production, this should be configured to restrict to trusted domains.
+/// In production the allow-list is mandatory (enforced at config load). A
+/// missing or disallowed Origin is rejected. Outside production an empty
+/// allow-list remains permissive for local tooling.
 fn validate_origin(headers: &HeaderMap, config: &Config) -> bool {
-    // If no allowed origins are configured, skip validation (permissive mode)
     if config.allowed_ws_origins.is_empty() {
-        return true;
+        return !config.is_production();
     }
 
     let origin = match headers.get("origin") {
@@ -178,8 +248,11 @@ fn validate_origin(headers: &HeaderMap, config: &Config) -> bool {
         }
     };
 
-    // Check if the origin is in the allowed list
-    config.allowed_ws_origins.contains(&origin.to_string())
+    if origin.eq_ignore_ascii_case("null") {
+        return false;
+    }
+
+    config.allowed_ws_origins.iter().any(|allowed| allowed == origin)
 }
 
 fn unauthorized_response(message: &str) -> Response {
@@ -211,6 +284,17 @@ pub async fn ws_handler(
             .into_response();
     }
 
+    let ip = client_ip(&headers);
+    if !bus.allow_connect(&ip) {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(serde_json::json!({
+                "error": "websocket connection rate limit exceeded",
+            })),
+        )
+            .into_response();
+    }
+
     // Enforce active connection cap to prevent resource exhaustion / DoS
     if bus.active_connections() >= MAX_ACTIVE_CONNECTIONS {
         return (
@@ -222,11 +306,16 @@ pub async fn ws_handler(
             .into_response();
     }
 
-    let Some(token) = extract_ws_token(&headers, &params) else {
+    let Some(token) = extract_ws_token(&headers, &params, config.is_production()) else {
         return unauthorized_response("missing or invalid authorization token");
     };
 
-    let claims = match verify_jwt_token(&token, &config.secret_key) {
+    let claims = match verify_jwt_token_strict(
+        &token,
+        &config.secret_key,
+        "access",
+        config.jwt_key_version,
+    ) {
         Ok(claims) => claims,
         Err(error) => return unauthorized_response(&error.to_string()),
     };
@@ -267,6 +356,8 @@ async fn handle_socket(
     let _guard = ConnectionGuard::new(bus.active_connections.clone());
 
     run_socket(&mut socket, &mut rx, wallet_filter.as_deref(), pool_filter).await;
+
+    let _ = socket.send(Message::Close(None)).await;
 }
 
 /// Per-connection message rate limiter using a sliding window.
@@ -288,7 +379,6 @@ impl WsRateLimiter {
     /// Returns `true` if the message is allowed, `false` if rate-limited.
     fn check(&mut self) -> bool {
         let now = Instant::now();
-        // Remove timestamps outside the window
         self.timestamps
             .retain(|t| now.duration_since(*t) < self.window_size);
         if self.timestamps.len() >= self.max_messages as usize {
@@ -305,7 +395,7 @@ async fn run_socket(
     wallet_filter: Option<&str>,
     pool_filter: Option<u64>,
 ) {
-    let mut rate_limiter = WsRateLimiter::new(10, 10);
+    let mut rate_limiter = WsRateLimiter::new(RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS);
 
     loop {
         tokio::select! {
@@ -381,7 +471,7 @@ async fn run_socket(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::jwt::{sign_jwt_for_test, verify_jwt_token};
+    use crate::jwt::{sign_jwt_for_test, sign_jwt_with_type, verify_jwt_token};
 
     #[test]
     fn delivers_all_events_when_no_wallet_filter() {
@@ -446,8 +536,18 @@ mod tests {
             ..Default::default()
         };
 
-        let token = extract_ws_token(&headers, &params);
+        let token = extract_ws_token(&headers, &params, false);
         assert_eq!(token, Some("header-jwt-token".to_string()));
+    }
+
+    #[test]
+    fn extract_ws_token_ignores_query_param_in_production() {
+        let headers = HeaderMap::new();
+        let params = WsConnectParams {
+            token: Some("query-param-token".to_string()),
+            ..Default::default()
+        };
+        assert!(extract_ws_token(&headers, &params, true).is_none());
     }
 
     #[test]
@@ -465,5 +565,45 @@ mod tests {
 
         let empty_headers = HeaderMap::new();
         assert!(!validate_origin(&empty_headers, &config));
+
+        let mut null_origin = HeaderMap::new();
+        null_origin.insert("origin", "null".parse().unwrap());
+        assert!(!validate_origin(&null_origin, &config));
+    }
+
+    #[test]
+    fn validate_origin_fails_closed_in_production_without_allow_list() {
+        let mut config = Config::default_for_test();
+        config.app_env = "production".to_string();
+        config.allowed_ws_origins = Vec::new();
+        let mut headers = HeaderMap::new();
+        headers.insert("origin", "https://app.predifi.com".parse().unwrap());
+        assert!(!validate_origin(&headers, &config));
+    }
+
+    #[test]
+    fn connect_rate_limiter_blocks_after_burst() {
+        let limiter = ConnectRateLimiter::new();
+        for _ in 0..MAX_CONNECT_ATTEMPTS_PER_IP {
+            assert!(limiter.check("1.2.3.4"));
+        }
+        assert!(!limiter.check("1.2.3.4"));
+        assert!(limiter.check("5.6.7.8"), "other IPs are independent");
+    }
+
+    #[test]
+    fn refresh_token_is_rejected_for_websocket_access() {
+        let secret = "predifi-dev-secret-do-not-use-in-production-32";
+        let token = sign_jwt_with_type("GABC123", secret, 1_800_000_000, "refresh", 0).unwrap();
+        let error = verify_jwt_token_strict(&token, secret, "access", 0).unwrap_err();
+        assert_eq!(error, crate::jwt::JwtVerifyError::WrongTokenType);
+    }
+
+    #[test]
+    fn client_ip_prefers_forwarded_for() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "10.0.0.1, 10.0.0.2".parse().unwrap());
+        headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
+        assert_eq!(client_ip(&headers), "10.0.0.1");
     }
 }

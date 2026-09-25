@@ -1,7 +1,12 @@
 # Agent Notes
 
 ## Project Structure
-- `backend/src/db.rs` - Database connection pool and query helpers
+- `backend/src/db/` - Database connection pool and query helpers
+  - `backend/src/db/mod.rs` - Pool creation with retry/backoff, error types, and re-exports
+  - `backend/src/db/pools.rs` - Pool CRUD, templates, and creator incentives
+  - `backend/src/db/predictions.rs` - Predictions, leaderboard, and protocol stats
+  - `backend/src/db/referrals.rs` - Referral inserts and earnings
+  - `backend/src/db/metrics.rs` - Connection pool Prometheus gauges
 - `backend/src/server.rs` - Server startup and HTTP handlers
 - `backend/src/config.rs` - Configuration with retry settings (`db_connect_max_attempts`, `db_connect_base_delay_ms`, `db_connect_max_delay_ms`)
 
@@ -12,11 +17,6 @@ cd backend && cargo clippy
 cd backend && cargo fmt --check
 cd backend && cargo test
 ```
-
-## Key Changes Made
-1. Fixed `create_pool` return type: `PoolStartupError` → `PoolCreationError` (line 38 in db.rs)
-2. The `retry_pool_connection` function now properly uses `PoolCreationError` for error handling
-3. `is_transient_error` correctly classifies `PoolClosed` as non-transient and `PoolTimedOut` as transient
 
 ## Configuration Defaults
 - `db_connect_max_attempts`: 5

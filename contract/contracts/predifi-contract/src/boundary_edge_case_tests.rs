@@ -403,7 +403,7 @@ fn test_1328_paused_blocks_batch_and_emergency_operations() {
     assert_eq!(add_result, Err(Ok(PredifiError::ContractPaused)));
     assert!(!ctx.client.is_token_allowed(&token_to_add));
 
-    let result = ctx
+    let remove_result = ctx
         .client
         .try_batch_remove_tokens_whitelist(&ctx.admin, &vec![&env, token_to_remove]);
     assert_eq!(remove_result, Err(Ok(PredifiError::ContractPaused)));

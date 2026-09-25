@@ -101,6 +101,9 @@ pub struct Config {
     pub cors_allowed_origins: Vec<String>,
     /// HMAC secret used to verify JWT bearer tokens (default: dev-only placeholder).
     pub secret_key: String,
+    /// Signing-key version embedded in issued JWTs. Bump to invalidate all
+    /// outstanding tokens after a secret rotation.
+    pub jwt_key_version: u64,
     /// Maximum number of Stellar events processed per indexer batch (default `500`).
     pub indexer_max_batch_size: usize,
     /// Deployment environment name (e.g. `"production"`, `"staging"`, `"development"`).
@@ -196,6 +199,7 @@ impl Config {
         // Parse and strictly validate CORS origins.
         let cors_allowed_origins = parse_cors_origins(vars)?;
         let secret_key = get_string(vars, "PREDIFI_SECRET_KEY", DEFAULT_SECRET_KEY);
+        let jwt_key_version = get_u64(vars, "PREDIFI_JWT_KEY_VERSION", 0)?;
         let indexer_max_batch_size = get_usize(
             vars,
             "PREDIFI_INDEXER_MAX_BATCH_SIZE",
@@ -240,6 +244,7 @@ impl Config {
             redis_url,
             cors_allowed_origins,
             secret_key,
+            jwt_key_version,
             indexer_max_batch_size,
             app_env,
             allowed_ws_origins,
@@ -397,14 +402,24 @@ impl Config {
             });
         }
         // Reject the compiled-in dev placeholder in production.
-        if self.app_env.eq_ignore_ascii_case(PRODUCTION_ENV_VALUE)
-            && self.secret_key == DEFAULT_SECRET_KEY
-        {
+        if self.is_production() && self.secret_key == DEFAULT_SECRET_KEY {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_SECRET_KEY",
                 reason: String::from(
                     "the default development secret must not be used in production; \
                      set PREDIFI_SECRET_KEY to a strong, randomly generated value",
+                ),
+            });
+        }
+
+        // ── WebSocket origins ────────────────────────────────────────────────
+        // Fail closed in production: an empty allow-list would accept any Origin
+        // and enable CSRF-style WebSocket hijacking.
+        if self.is_production() && self.allowed_ws_origins.is_empty() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_WS_ALLOWED_ORIGINS",
+                reason: String::from(
+                    "must contain at least one origin in production to prevent WebSocket hijacking",
                 ),
             });
         }
@@ -423,6 +438,11 @@ impl Config {
     /// Return the `host:port` string used to bind the TCP listener.
     pub fn bind_address(&self) -> String {
         format!("{}:{}", self.host, self.port)
+    }
+
+    /// `true` when `PREDIFI_APP_ENV` is `production` (case-insensitive).
+    pub fn is_production(&self) -> bool {
+        self.app_env.eq_ignore_ascii_case(PRODUCTION_ENV_VALUE)
     }
 
     /// Build a minimal [`Config`] suitable for unit tests.
@@ -455,6 +475,7 @@ impl Config {
             redis_url: String::from(DEFAULT_REDIS_URL),
             cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
             secret_key: String::from(DEFAULT_SECRET_KEY),
+            jwt_key_version: 0,
             indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
             app_env: String::from(DEFAULT_APP_ENV),
             allowed_ws_origins: Vec::new(), // Empty for permissive mode in tests
@@ -1860,11 +1881,29 @@ mod tests {
         let config = Config {
             app_env: String::from("production"),
             secret_key: String::from("a-very-strong-production-secret-key-at-least-32-bytes"),
+            allowed_ws_origins: vec!["https://app.predifi.com".to_string()],
             ..Config::default_for_test()
         };
         config
             .validate()
             .expect("strong secret should be valid in production");
+    }
+
+    #[test]
+    fn validate_rejects_empty_ws_origins_in_production() {
+        let config = Config {
+            app_env: String::from("production"),
+            secret_key: String::from("a-very-strong-production-secret-key-at-least-32-bytes"),
+            allowed_ws_origins: Vec::new(),
+            ..Config::default_for_test()
+        };
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_WS_ALLOWED_ORIGINS",
+                ..
+            })
+        ));
     }
 
     #[test]

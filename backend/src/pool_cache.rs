@@ -4,6 +4,47 @@
 //! best-effort cache that avoids re-running the two-query pool-detail lookup
 //! (`get_pool_by_id` + `get_pool_outcome_stakes`) for pools that are polled
 //! repeatedly by the frontend (e.g. an active pool's detail page).
+//!
+//! ## What is cached
+//!
+//! One [`crate::db::PoolWithOdds`] value per pool ID — the combined result of
+//! a pool's details and its computed outcome odds, as returned by the pool
+//! detail endpoint.
+//!
+//! ## Lifetime
+//!
+//! Each entry lives for `POOL_CACHE_TTL` (10 seconds) from the moment it is
+//! written via [`PoolCache::set`]. [`PoolCache::get`] treats an entry older
+//! than the TTL as a miss rather than returning stale data, so a pool that is
+//! not otherwise invalidated will naturally refresh from the database at
+//! least once every 10 seconds.
+//!
+//! ## Invalidation
+//!
+//! Entries are removed early, before the TTL elapses, whenever a request
+//! handler mutates a pool in a way that changes its detail response — for
+//! example after paying out a creator incentive or updating a pool's tags —
+//! by calling [`PoolCache::invalidate`] with that pool's ID. There is no
+//! background sweeper: expired entries are simply skipped on the next `get`
+//! and overwritten on the next `set`.
+//!
+//! ## Relationship to the Redis cache
+//!
+//! This is a separate, complementary layer from [`crate::redis_cache`]:
+//!
+//! - **Storage**: this cache lives in process memory (a `HashMap` behind an
+//!   `RwLock`); [`crate::redis_cache::RedisCache`] stores serialized JSON in
+//!   an external Redis instance.
+//! - **Scope**: this cache is per-process and lost on restart or when running
+//!   multiple backend instances (no shared invalidation across instances);
+//!   the Redis cache is shared across every backend instance and process
+//!   restart.
+//! - **What's cached**: this module caches only single pool-detail lookups;
+//!   `redis_cache` also covers pool list queries, protocol stats, and user
+//!   prediction lists, each with their own TTL.
+//! - **Failure mode**: this cache cannot fail independently of the process it
+//!   runs in; `redis_cache` is built to fail open (silently skip caching) if
+//!   the Redis connection is unavailable.
 
 use std::{
     collections::HashMap,
@@ -61,5 +102,64 @@ impl PoolCache {
         if let Ok(mut guard) = self.0.write() {
             guard.remove(&pool_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{OutcomeOdds, PoolWithOdds};
+    use chrono::Utc;
+
+    fn sample_pool(pool_id: i64, name: &str) -> PoolWithOdds {
+        PoolWithOdds {
+            pool_id,
+            name: name.to_string(),
+            category: "Sports".to_string(),
+            total_stake: 1000,
+            end_time: Utc::now(),
+            created_at: Utc::now(),
+            state: "active".to_string(),
+            creator: "GABC".to_string(),
+            token: "XLM".to_string(),
+            result: None,
+            odds: vec![OutcomeOdds {
+                outcome: 1,
+                stake: 500,
+                odds: 1.5,
+            }],
+        }
+    }
+
+    #[test]
+    fn fresh_cache_is_empty() {
+        let cache = PoolCache::new();
+        assert!(cache.get(1).is_none());
+    }
+
+    #[test]
+    fn insert_then_get_returns_value() {
+        let cache = PoolCache::new();
+        let pool = sample_pool(42, "Test Pool");
+        cache.set(42, pool.clone());
+        let retrieved = cache.get(42).expect("cached value should be present");
+        assert_eq!(retrieved.pool_id, 42);
+        assert_eq!(retrieved.name, "Test Pool");
+    }
+
+    #[test]
+    fn get_missing_key_returns_none() {
+        let cache = PoolCache::new();
+        cache.set(1, sample_pool(1, "Pool One"));
+        assert!(cache.get(2).is_none());
+    }
+
+    #[test]
+    fn overwrite_replaces_value() {
+        let cache = PoolCache::new();
+        cache.set(1, sample_pool(1, "Original"));
+        cache.set(1, sample_pool(1, "Replaced"));
+        let retrieved = cache.get(1).expect("cached value should be present");
+        assert_eq!(retrieved.name, "Replaced");
     }
 }
