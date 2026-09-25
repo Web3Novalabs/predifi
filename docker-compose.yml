@@ -24,6 +24,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Production counterpart: AWS RDS PostgreSQL (db.t4g.medium: 2 vCPU, 4.0 GiB RAM).
+    # Local container limits prevent unconstrained host resource consumption during development.
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
 
   redis:
     image: redis:7-alpine
@@ -39,6 +49,15 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # Production counterpart: AWS ElastiCache Redis (cache.t4g.small: 2 vCPU, 1.37 GiB RAM).
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
 
   # Local Stellar network with Soroban RPC and Horizon. First start takes a few
   # minutes while the image initialises its ledger.
@@ -58,6 +77,15 @@ services:
       timeout: 10s
       retries: 20
       start_period: 120s
+    # Production counterpart: Dedicated Stellar Core / Soroban RPC standalone node (2 vCPU, 4.0 GiB RAM).
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 2048M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
 
   # Runs sqlx migrations and inserts deterministic sample data, then exits.
   # The seeder is idempotent, so it is safe to re-run on every `up`.
@@ -80,6 +108,15 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Production counterpart: One-off database migration / seeding task (1 vCPU, 1.0 GiB RAM).
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
 
   backend:
     build:
@@ -121,6 +158,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 180s
+    # Production counterpart: AWS EC2 Auto Scaling Group instance (t3.medium: 2 vCPU, 4.0 GiB RAM).
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
 
   frontend:
     build:
@@ -142,6 +188,15 @@ services:
     depends_on:
       backend:
         condition: service_started
+    # Production counterpart: Next.js frontend hosting / container service (1 vCPU, 1.0 GiB RAM).
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1024M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
 
   # ── Log aggregation (profile: logging) ──────────────────────────────────────
 
@@ -163,6 +218,15 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    # Production counterpart: CloudWatch / AWS EC2 logging instance (t3.small: 2 vCPU, 2.0 GiB RAM).
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
 
   promtail:
     image: grafana/promtail:3.3.2
@@ -178,6 +242,15 @@ services:
     depends_on:
       loki:
         condition: service_started
+    # Production counterpart: Log collection agent / DaemonSet container (0.25 vCPU, 256 MiB RAM).
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -198,6 +271,15 @@ services:
     depends_on:
       loki:
         condition: service_started
+    # Production counterpart: Amazon Managed Grafana or EC2 monitoring instance (t3.small: 2 vCPU, 2.0 GiB RAM).
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
 
 volumes:
   postgres-data:

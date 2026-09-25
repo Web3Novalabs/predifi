@@ -10,9 +10,9 @@ use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::Config;
 use crate::db::PoolCreatedEvent;
-use crate::pool_cache::PoolCache;
 use crate::db::PredictionPlacedEvent;
 use crate::metrics::SharedMetrics;
+use crate::pool_cache::PoolCache;
 use crate::price_cache::PriceCache;
 use crate::redis_cache::RedisCache;
 use crate::response::{error_codes, ApiResponse};
@@ -398,7 +398,8 @@ pub async fn get_pools(
     };
 
     // Cache-aside pattern: Step 1 — Check cache
-    let mut cache_key = crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
+    let mut cache_key =
+        crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
     if let Some(tags) = &tags {
         let sanitized: Vec<String> = tags
             .iter()
@@ -417,7 +418,15 @@ pub async fn get_pools(
 
     // Cache miss — Step 2: Fetch from database
     match tokio::try_join!(
-        crate::tags::list_pools(db, sort_by, category, tags.as_deref(), status, limit, offset),
+        crate::tags::list_pools(
+            db,
+            sort_by,
+            category,
+            tags.as_deref(),
+            status,
+            limit,
+            offset
+        ),
         crate::tags::count_pools(db, category, tags.as_deref(), status)
     ) {
         Ok((pools, total)) => {
@@ -576,7 +585,11 @@ pub async fn get_leaderboard(
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
-    let rank_by = params.rank_by.as_ref().map(|s| s.as_str()).unwrap_or("volume");
+    let rank_by = params
+        .rank_by
+        .as_ref()
+        .map(|s| s.as_str())
+        .unwrap_or("volume");
     let period = params.period.as_ref().map(|s| s.as_str()).unwrap_or("all");
 
     let Some(db) = &state.db else {
@@ -698,7 +711,11 @@ pub async fn get_pool_leaderboard(
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
-    let rank_by = params.rank_by.as_ref().map(|s| s.as_str()).unwrap_or("volume");
+    let rank_by = params
+        .rank_by
+        .as_ref()
+        .map(|s| s.as_str())
+        .unwrap_or("volume");
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1345,10 +1362,8 @@ pub async fn set_user_interests_handler(
     };
 
     match crate::notifications::set_user_interests(db, address.as_str(), &body.interests).await {
-        Ok(()) => {
-            ApiResponse::success(json!({ "address": address, "interests": body.interests }))
-                .into_response()
-        }
+        Ok(()) => ApiResponse::success(json!({ "address": address, "interests": body.interests }))
+            .into_response(),
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
             error_codes::INTERNAL_ERROR,
@@ -1408,7 +1423,7 @@ pub fn router(
             .route("/stats", get(get_stats))
             .route("/leaderboard", get(get_leaderboard))
             .route("/tags", get(list_tags_handler))
-            .route("/referrals/{address}", get(referrals_handler))
+            .route("/referrals/:address", get(referrals_handler))
             .route(
                 "/referrals/:address/estimate",
                 get(referral_estimate_handler),
@@ -1421,23 +1436,20 @@ pub fn router(
     // User tier — per-user history and predictions.
     let user = with_rate_limit(
         Router::new()
-            .route("/users/{address}/history", get(get_user_history))
-            .route("/users/{address}/predictions", get(get_user_predictions))
-            .route("/users/{address}/profile", get(get_user_profile_handler))
+            .route("/users/:address/history", get(get_user_history))
+            .route("/users/:address/predictions", get(get_user_predictions))
+            .route("/users/:address/profile", get(get_user_profile_handler))
             .route(
                 "/users/:address/referrals",
                 get(user_referral_earnings_handler),
             )
             .route(
-                "/users/{address}/interests",
+                "/users/:address/interests",
                 get(get_user_interests_handler).put(set_user_interests_handler),
             )
+            .route("/notifications/:address", get(list_notifications_handler))
             .route(
-                "/notifications/{address}",
-                get(list_notifications_handler),
-            )
-            .route(
-                "/notifications/{address}/read",
+                "/notifications/:address/read",
                 post(mark_notifications_read_handler),
             )
             .with_state(state.clone()),
@@ -1456,27 +1468,11 @@ pub fn router(
     );
 
     // Routes without a rate-limit tier of their own. Anything already served by
-    // `light`/`read`/`user`/`write` above must NOT be repeated here: `merge`
+    // `light`/`read`/`user`/`write`/`token` above must NOT be repeated here: `merge`
     // panics on an overlapping method route, which would take down the whole
     // server at startup.
     Router::new()
-        .route("/", get(index))
-        .route("/health", get(health))
-        .route("/pools", get(get_pools))
-        .route("/pools/:id", get(get_pool_by_id_handler))
-        .route("/pools/:id/leaderboard", get(get_pool_leaderboard))
-        .route("/leaderboard", get(get_leaderboard))
-        .route("/fees", get(get_fees))
-        .route("/prices", get(crate::price_cache::get_prices))
-        .route("/referrals/{address}", get(referrals_handler))
-        .route(
-            "/users/{address}/referrals",
-            get(user_referral_earnings_handler),
-        )
-        .route("/users/{address}/history", get(get_user_history))
-        .route("/users/{address}/predictions", get(get_user_predictions))
-        .route("/indexer/pool-created", post(ingest_pool_created))
-        .route("/creators/{address}/stats", get(get_creator_stats_handler))
+        .route("/creators/:address/stats", get(get_creator_stats_handler))
         .route(
             "/pools/:id/pay-creator-incentive",
             post(pay_creator_incentive_handler),
@@ -1586,7 +1582,9 @@ async fn referrals_handler(
 
     match state.db {
         Some(pool) => {
-            match crate::referrals::get_referrals(axum::extract::Path(address_str), State(pool)).await {
+            match crate::referrals::get_referrals(axum::extract::Path(address_str), State(pool))
+                .await
+            {
                 Ok((status, body)) => (status, body).into_response(),
                 Err(e) => ApiResponse::<()>::error(
                     StatusCode::INTERNAL_SERVER_ERROR,
