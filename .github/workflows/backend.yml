@@ -186,6 +186,11 @@ jobs:
           cargo install cargo-audit --locked --quiet
           cargo audit
 
+      - name: Verify OpenAPI spec is up to date
+        run: |
+          cargo run --bin predifi-openapi -- --check openapi.json
+          git diff --exit-code openapi.json
+
       - name: Cargo check
         run: cargo check --workspace
 

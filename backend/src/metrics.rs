@@ -1,6 +1,5 @@
 use prometheus::{
-    CounterVec, Encoder, Gauge, Histogram, HistogramOpts, HistogramVec, Opts, Registry,
-    TextEncoder,
+    CounterVec, Encoder, Gauge, Histogram, HistogramOpts, HistogramVec, Opts, Registry, TextEncoder,
 };
 use std::sync::Arc;
 
@@ -62,6 +61,12 @@ pub struct Metrics {
     pub predictions_total: CounterVec,
     /// Counter of prediction amounts in stroops by `window`.
     pub prediction_volume_stroops_total: CounterVec,
+
+    // ── Worker queue ─────────────────────────────────────────────────────────
+    /// Current number of jobs waiting or retrying in the worker queue.
+    pub worker_queue_depth: Gauge,
+    /// Current number of jobs in the worker dead-letter queue (DLQ).
+    pub worker_dlq_depth: Gauge,
 }
 
 /// Type alias for a reference-counted [`Metrics`] instance shared across handlers.
@@ -124,8 +129,7 @@ impl Metrics {
         )?;
 
         // ── Application / runtime ─────────────────────────────────────────────
-        let app_up =
-            Gauge::with_opts(Opts::new("app_up", "Application availability status."))?;
+        let app_up = Gauge::with_opts(Opts::new("app_up", "Application availability status."))?;
         app_up.set(1.0);
 
         let app_info = Gauge::with_opts(
@@ -233,6 +237,17 @@ impl Metrics {
             &["window"],
         )?;
 
+        // ── Worker queue ──────────────────────────────────────────────────────
+        let worker_queue_depth = Gauge::with_opts(Opts::new(
+            "app_worker_queue_depth",
+            "Current number of pending or retrying jobs in the worker queue.",
+        ))?;
+
+        let worker_dlq_depth = Gauge::with_opts(Opts::new(
+            "app_worker_dlq_depth",
+            "Current number of jobs in the worker dead-letter queue (DLQ).",
+        ))?;
+
         // ── Register all metrics ──────────────────────────────────────────────
         registry.register(Box::new(http_requests_total.clone()))?;
         registry.register(Box::new(http_request_duration_seconds.clone()))?;
@@ -256,6 +271,8 @@ impl Metrics {
         registry.register(Box::new(cancelled_pools.clone()))?;
         registry.register(Box::new(predictions_total.clone()))?;
         registry.register(Box::new(prediction_volume_stroops_total.clone()))?;
+        registry.register(Box::new(worker_queue_depth.clone()))?;
+        registry.register(Box::new(worker_dlq_depth.clone()))?;
 
         Ok(Self {
             registry,
@@ -281,10 +298,18 @@ impl Metrics {
             cancelled_pools,
             predictions_total,
             prediction_volume_stroops_total,
+            worker_queue_depth,
+            worker_dlq_depth,
         })
     }
 
     // ── Domain helpers ────────────────────────────────────────────────────────
+
+    /// Record worker queue depth metrics.
+    pub fn record_worker_queue_depth(&self, queue_depth: usize, dlq_depth: usize) {
+        self.worker_queue_depth.set(queue_depth as f64);
+        self.worker_dlq_depth.set(dlq_depth as f64);
+    }
 
     /// Record the outcome of a price-cache refresh attempt.
     pub fn record_price_cache_fetch(&self, result: &str, assets: usize, duration_secs: f64) {
@@ -351,9 +376,7 @@ impl Metrics {
     /// `amount_stroops` is the stake amount in Stellar stroops.
     pub fn record_prediction(&self, amount_stroops: u64) {
         for window in &["1m", "5m", "1h", "24h"] {
-            self.predictions_total
-                .with_label_values(&[window])
-                .inc();
+            self.predictions_total.with_label_values(&[window]).inc();
             self.prediction_volume_stroops_total
                 .with_label_values(&[window])
                 .inc_by(amount_stroops as f64);
@@ -427,6 +450,14 @@ mod tests {
         assert!(
             names.contains(&"app_cancelled_pools"),
             "app_cancelled_pools must be registered"
+        );
+        assert!(
+            names.contains(&"app_worker_queue_depth"),
+            "app_worker_queue_depth must be registered"
+        );
+        assert!(
+            names.contains(&"app_worker_dlq_depth"),
+            "app_worker_dlq_depth must be registered"
         );
 
         // HistogramVec and CounterVec metrics only appear in gather() after
@@ -625,5 +656,17 @@ mod tests {
             text.contains("app_http_requests_total"),
             "original must see counter incremented via clone"
         );
+    }
+
+    /// `record_worker_queue_depth` updates queue depth and DLQ depth gauges.
+    #[test]
+    fn record_worker_queue_depth_updates_gauges() {
+        let metrics = Metrics::new().expect("Metrics::new() must succeed");
+        assert_eq!(metrics.worker_queue_depth.get(), 0.0);
+        assert_eq!(metrics.worker_dlq_depth.get(), 0.0);
+
+        metrics.record_worker_queue_depth(12, 3);
+        assert_eq!(metrics.worker_queue_depth.get(), 12.0);
+        assert_eq!(metrics.worker_dlq_depth.get(), 3.0);
     }
 }

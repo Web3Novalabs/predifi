@@ -1,0 +1,69 @@
+# EditorConfig — https://editorconfig.org
+# Processed top-to-bottom; the first matching section wins per property.
+
+root = true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Global defaults
+# ──────────────────────────────────────────────────────────────────────────────
+[*]
+charset                  = utf-8
+end_of_line              = lf
+insert_final_newline     = true
+trim_trailing_whitespace = true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Rust  (mirrors rustfmt.toml: hard_tabs=false, tab_spaces=4, newline_style=unix)
+# ──────────────────────────────────────────────────────────────────────────────
+[*.rs]
+indent_style = space
+indent_size  = 4
+max_line_length = 100
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TypeScript / TSX
+# ──────────────────────────────────────────────────────────────────────────────
+[*.{ts,tsx}]
+indent_style = space
+indent_size  = 2
+
+# ──────────────────────────────────────────────────────────────────────────────
+# JSON  (package.json, tsconfig, .sqlx query files, etc.)
+# ──────────────────────────────────────────────────────────────────────────────
+[*.json]
+indent_style = space
+indent_size  = 2
+
+# ──────────────────────────────────────────────────────────────────────────────
+# YAML  (GitHub Actions workflows, docker-compose, etc.)
+# ──────────────────────────────────────────────────────────────────────────────
+[*.{yml,yaml}]
+indent_style = space
+indent_size  = 2
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TOML  (Cargo.toml, rustfmt.toml, Scarb.toml, etc.)
+# ──────────────────────────────────────────────────────────────────────────────
+[*.toml]
+indent_style = space
+indent_size  = 4
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Markdown — preserve trailing spaces (two trailing spaces = <br>)
+# ──────────────────────────────────────────────────────────────────────────────
+[*.md]
+trim_trailing_whitespace = false
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cairo smart-contract source (contract/)
+# ──────────────────────────────────────────────────────────────────────────────
+[*.cairo]
+indent_style = space
+indent_size  = 4
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Shell scripts
+# ──────────────────────────────────────────────────────────────────────────────
+[*.sh]
+indent_style = space
+indent_size  = 2

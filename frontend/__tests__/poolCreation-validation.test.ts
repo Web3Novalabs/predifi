@@ -5,29 +5,37 @@ import {
 } from "@/lib/validations/poolCreation";
 
 describe("Pool Creation Validation Rules", () => {
-  const validValues: CreatePoolFormValues = {
+  const futureCloseTime = new Date(Date.now() + 3600 * 1000 * 48)
+    .toISOString()
+    .slice(0, 16);
+
+  const validFormValues: CreatePoolFormValues = {
     name: "Will Starknet TPS exceed 100 in 2026?",
     description: "Testing network throughput predictions on Starknet mainnet.",
     category: "Technology",
     outcomes: ["Yes", "No"],
     minStake: "10",
     maxStake: "1000",
-    closeTime: new Date(Date.now() + 3600 * 1000 * 48).toISOString().slice(0, 16),
+    closeTime: futureCloseTime,
     token: "XLM",
     termsAccepted: true,
   };
 
-  it("passes for valid input", () => {
-    const errors = validateCreatePool(validValues);
+  it("passes validation with valid input", () => {
+    const errors = validateCreatePool(validFormValues);
+    expect(errors).toEqual({});
     expect(Object.keys(errors)).toHaveLength(0);
   });
 
   it("fails when title/name is empty and returns correct error message", () => {
-    const emptyNameErrors = validateCreatePool({ ...validValues, name: "" });
+    const emptyNameErrors = validateCreatePool({
+      ...validFormValues,
+      name: "",
+    });
     expect(emptyNameErrors.name).toBe("Pool name is required.");
 
     const whitespaceNameErrors = validateCreatePool({
-      ...validValues,
+      ...validFormValues,
       name: "   ",
     });
     expect(whitespaceNameErrors.name).toBe("Pool name is required.");
@@ -38,7 +46,7 @@ describe("Pool Creation Validation Rules", () => {
       .toISOString()
       .slice(0, 16);
     const pastTimeErrors = validateCreatePool({
-      ...validValues,
+      ...validFormValues,
       closeTime: pastTime,
     });
     expect(pastTimeErrors.closeTime).toBe("Close time must be in the future.");
@@ -46,7 +54,7 @@ describe("Pool Creation Validation Rules", () => {
 
   it("fails when there are too few outcome options and returns correct error message", () => {
     const singleOutcomeErrors = validateCreatePool({
-      ...validValues,
+      ...validFormValues,
       outcomes: ["Single Outcome"],
     });
     expect(singleOutcomeErrors.outcomes).toBe(
@@ -54,7 +62,7 @@ describe("Pool Creation Validation Rules", () => {
     );
 
     const emptyOutcomesErrors = validateCreatePool({
-      ...validValues,
+      ...validFormValues,
       outcomes: [],
     });
     expect(emptyOutcomesErrors.outcomes).toBe(
@@ -64,7 +72,7 @@ describe("Pool Creation Validation Rules", () => {
 
   it("fails when stake is below minimum and returns correct error message", () => {
     const belowMinErrors = validateCreatePool({
-      ...validValues,
+      ...validFormValues,
       token: "XLM",
       minStake: "0.5",
     });
@@ -73,7 +81,7 @@ describe("Pool Creation Validation Rules", () => {
     );
 
     const belowMinStrkErrors = validateCreatePool({
-      ...validValues,
+      ...validFormValues,
       token: "STRK",
       minStake: "0.00001",
     });

@@ -2,7 +2,6 @@ import React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { useTheme } from "@/lib/hooks/useTheme";
-
 import { ThemeProvider } from "@/lib/context/ThemeContext";
 
 function TestThemeComponent() {
