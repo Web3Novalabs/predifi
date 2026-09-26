@@ -21,6 +21,9 @@ concurrency:
   group: contract-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   WASM_SIZE_THRESHOLD_KB: 200
