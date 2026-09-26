@@ -174,11 +174,13 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             backend/target
+          enableCrossOsArchive: true
           key: ${{ runner.os }}-cargo-${{ hashFiles('backend/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
       - name: Check formatting
+        # blocking step: formatting drift fails the job
         run: cargo fmt --all -- --check
 
       - name: Security audit
@@ -195,6 +197,7 @@ jobs:
         run: cargo check --workspace
 
       - name: Lint with clippy
+        # blocking step: clippy warnings are errors
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Build backend
