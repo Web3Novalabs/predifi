@@ -121,6 +121,37 @@ export class ApiError extends Error {
   }
 }
 
+/** Type guard to validate PoolsResponse shape. */
+function isPoolsResponse(obj: unknown): obj is PoolsResponse {
+  if (!obj || typeof obj !== "object") return false;
+  const response = obj as Record<string, unknown>;
+  return (
+    Array.isArray(response.pools) &&
+    response.pools.every((p: unknown) => {
+      if (!p || typeof p !== "object") return false;
+      const pool = p as Record<string, unknown>;
+      return (
+        typeof pool.pool_id === "number" &&
+        typeof pool.name === "string" &&
+        typeof pool.category === "string" &&
+        Array.isArray(pool.tags) &&
+        typeof pool.total_stake === "number" &&
+        typeof pool.end_time === "number" &&
+        typeof pool.created_at === "string" &&
+        typeof pool.state === "string" &&
+        typeof pool.creator === "string" &&
+        typeof pool.token === "string" &&
+        (pool.result === null || typeof pool.result === "string")
+      );
+    }) &&
+    typeof response.total === "number" &&
+    typeof response.limit === "number" &&
+    typeof response.offset === "number" &&
+    typeof response.status === "string" &&
+    typeof response.sort_by === "string"
+  );
+}
+
 /**
  * SWR fetcher for pool data.
  *
@@ -134,7 +165,46 @@ export async function fetchPools(url: string): Promise<PoolsResponse> {
     throw new ApiError(`Failed to load pools (HTTP ${res.status})`, res.status);
   }
 
-  return (await res.json()) as PoolsResponse;
+  const body = await res.json();
+
+  // Validate response shape at boundary
+  if (!isPoolsResponse(body)) {
+    throw new ApiError("Invalid pools response shape", 500);
+  }
+
+  return body;
+}
+
+/** Type guard to validate PoolDetail shape. */
+function isPoolDetail(obj: unknown): obj is PoolDetail & { end_time?: number | string } {
+  if (!obj || typeof obj !== "object") return false;
+  const pool = obj as Record<string, unknown>;
+  return (
+    typeof pool.pool_id === "number" &&
+    typeof pool.name === "string" &&
+    typeof pool.category === "string" &&
+    Array.isArray(pool.tags) &&
+    typeof pool.total_stake === "number" &&
+    (typeof pool.end_time === "number" || typeof pool.end_time === "string") &&
+    typeof pool.created_at === "string" &&
+    typeof pool.state === "string" &&
+    typeof pool.creator === "string" &&
+    typeof pool.token === "string" &&
+    (pool.result === null || typeof pool.result === "string") &&
+    (Array.isArray(pool.odds) || pool.odds === undefined)
+  );
+}
+
+/** Type guard to validate wrapped pool response. */
+function isWrappedPoolDetail(
+  obj: unknown,
+): obj is { data?: PoolDetail & { end_time?: number | string }; error?: string } {
+  if (!obj || typeof obj !== "object") return false;
+  const body = obj as Record<string, unknown>;
+  return (
+    ("data" in body && (body.data === undefined || isPoolDetail(body.data))) ||
+    ("error" in body && typeof body.error === "string")
+  );
 }
 
 /**
@@ -149,9 +219,12 @@ export async function fetchPoolDetail(url: string): Promise<PoolDetail> {
     throw new ApiError(`Failed to load pool (HTTP ${res.status})`, res.status);
   }
 
-  const body = (await res.json()) as
-    | (PoolDetail & { end_time?: number | string })
-    | { data?: PoolDetail & { end_time?: number | string }; error?: string };
+  const body = await res.json();
+
+  // Validate response shape at boundary
+  if (!isPoolDetail(body) && !isWrappedPoolDetail(body)) {
+    throw new ApiError("Invalid pool response shape", 500);
+  }
 
   if (body && typeof body === "object" && "error" in body && body.error) {
     throw new ApiError(String(body.error), 404);
@@ -161,6 +234,10 @@ export async function fetchPoolDetail(url: string): Promise<PoolDetail> {
     body && typeof body === "object" && "data" in body && body.data
       ? body.data
       : (body as PoolDetail & { end_time?: number | string });
+
+  if (!isPoolDetail(pool)) {
+    throw new ApiError("Invalid pool detail shape after extraction", 500);
+  }
 
   const rawEnd = pool.end_time;
   const endTime =
