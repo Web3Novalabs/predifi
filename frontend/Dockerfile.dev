@@ -3,7 +3,7 @@
 # Development-only image used by the repository-root docker-compose.yml.
 # The frontend source is bind-mounted at runtime so `next dev` hot-reloads.
 
-FROM node:20-bookworm-slim
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
 
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 
