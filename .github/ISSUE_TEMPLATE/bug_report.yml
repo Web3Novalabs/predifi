@@ -49,6 +49,18 @@ body:
         Actual: ...
     validations:
       required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: >-
+        The release tag, commit SHA, or deployed environment you hit this on.
+        Asked separately from Environment because it is the one field that
+        decides whether a bug is already fixed on main, and it gets lost in a
+        free-text box.
+      placeholder: "e.g. v0.4.2, commit a1b2c3d, or staging as of 2026-09-25"
+    validations:
+      required: true
   - type: textarea
     id: environment
     attributes:

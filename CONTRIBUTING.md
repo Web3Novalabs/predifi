@@ -57,6 +57,39 @@ We follow Conventional Commits standard practices. Scope your commit message app
    ```
 4. **Create Pull Request**: Open a PR against the `main` branch. Fill out the pull request template completely and link any relevant issues.
 
+The template includes a **Deployment Impact** section. Tick anything your change
+needs — a migration, a new environment variable, a Terraform apply, a contract
+redeploy — and say what has to happen and in what order. A reviewer cannot infer
+a deployment step from a diff, and finding out after merge is the expensive way.
+
+---
+
+## 👥 Code Review and Ownership
+
+Reviewers are assigned automatically from [`.github/CODEOWNERS`](.github/CODEOWNERS),
+which maps each top-level area to the people responsible for it:
+
+| Path | Reviewers |
+|---|---|
+| `/contract/` | Contract reviewers |
+| `/backend/` | Backend reviewers |
+| `/frontend/` | Frontend reviewers |
+| `/terraform/`, `/docker/` | Infrastructure reviewers |
+| `/.github/` | Maintainers |
+| everything else | Maintainers |
+
+A pull request touching more than one area requests a review from each owner,
+so a change spanning the contract and the backend needs both to sign off.
+
+Two things worth knowing if you are editing that file:
+
+- **The last matching rule wins**, not the most specific one. This is the
+  opposite of `.gitignore`, and it is why the catch-all `*` sits at the top.
+- **An owner without write access is silently skipped.** GitHub reports no
+  error, so a rule naming a team that does not exist assigns nobody while
+  making the repository look covered. That is the first thing to check if a
+  review is not being requested.
+
 ---
 
 ## 📚 Per-Area Contributing Guides
