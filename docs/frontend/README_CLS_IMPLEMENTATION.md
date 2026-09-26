@@ -4,9 +4,9 @@
 
 ### 📖 Start Here
 
-- **New to CLS?** → [CLS_GETTING_STARTED.md](frontend/CLS_GETTING_STARTED.md)
-- **Need quick answers?** → [CLS_QUICK_REFERENCE.md](frontend/CLS_QUICK_REFERENCE.md)
-- **Want code examples?** → [EXAMPLES_CLS_BEST_PRACTICES.md](frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
+- **New to CLS?** → [CLS_GETTING_STARTED.md](../../frontend/CLS_GETTING_STARTED.md)
+- **Need quick answers?** → [CLS_QUICK_REFERENCE.md](../../frontend/CLS_QUICK_REFERENCE.md)
+- **Want code examples?** → [EXAMPLES_CLS_BEST_PRACTICES.md](../../frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
 
 ### 🔍 For Review & Understanding
 
@@ -17,13 +17,13 @@
 
 ### 💻 Code & Tests
 
-- **Utility library** → [frontend/lib/cls-utils.ts](frontend/lib/cls-utils.ts)
-- **Test suite** → [frontend/**tests**/cls.test.ts](frontend/__tests__/cls.test.ts)
+- **Utility library** → [frontend/lib/cls-utils.tsx](../../frontend/lib/cls-utils.tsx)
+- **Test suite** → [frontend/__tests__/cls.test.tsx](../../frontend/__tests__/cls.test.tsx)
 - **Modified components**:
-  - [HeroSection.tsx](<frontend/app/(marketing)/components/HeroSection.tsx>)
-  - [NavBar.tsx](<frontend/app/(marketing)/components/NavBar.tsx>)
-  - [Features.tsx](<frontend/app/(marketing)/components/Features.tsx>)
-  - [Waitlist.tsx](frontend/components/Waitlist.tsx)
+  - [HeroSection.tsx](../../frontend/app/(marketing)/components/HeroSection.tsx)
+  - [NavBar.tsx](../../frontend/app/(marketing)/components/NavBar.tsx)
+  - [Features.tsx](../../frontend/app/(marketing)/components/Features.tsx)
+  - [Waitlist.tsx](../../frontend/components/Waitlist.tsx)
 
 ---
 
@@ -82,7 +82,7 @@
 
 ### Step 1: Understand the Problem (5 min)
 
-Read: [CLS_QUICK_REFERENCE.md](frontend/CLS_QUICK_REFERENCE.md)
+Read: [CLS_QUICK_REFERENCE.md](../../frontend/CLS_QUICK_REFERENCE.md)
 
 - What is CLS
 - What causes layout shift
@@ -90,7 +90,7 @@ Read: [CLS_QUICK_REFERENCE.md](frontend/CLS_QUICK_REFERENCE.md)
 
 ### Step 2: See Working Code (10 min)
 
-Read: [EXAMPLES_CLS_BEST_PRACTICES.md](frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
+Read: [EXAMPLES_CLS_BEST_PRACTICES.md](../../frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
 
 - 7 complete code examples
 - Copy-paste ready patterns
@@ -98,7 +98,7 @@ Read: [EXAMPLES_CLS_BEST_PRACTICES.md](frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
 
 ### Step 3: Use in Your Code (Ongoing)
 
-Reference: [cls-utils.ts](frontend/lib/cls-utils.ts)
+Reference: [cls-utils.tsx](../../frontend/lib/cls-utils.tsx)
 
 - Import components
 - Follow patterns
@@ -149,13 +149,13 @@ After reading this documentation, you'll understand:
 ### By Topic
 
 **CLS Basics**
-→ [CLS_QUICK_REFERENCE.md](frontend/CLS_QUICK_REFERENCE.md)
+→ [CLS_QUICK_REFERENCE.md](../../frontend/CLS_QUICK_REFERENCE.md)
 
 **How to implement**
-→ [EXAMPLES_CLS_BEST_PRACTICES.md](frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
+→ [EXAMPLES_CLS_BEST_PRACTICES.md](../../frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
 
 **API reference**
-→ [cls-utils.ts](frontend/lib/cls-utils.ts)
+→ [cls-utils.tsx](../../frontend/lib/cls-utils.tsx)
 
 **Technical details**
 → [CLS_IMPROVEMENTS.md](CLS_IMPROVEMENTS.md)
@@ -164,15 +164,15 @@ After reading this documentation, you'll understand:
 → [CHECKLIST_CLS_IMPLEMENTATION.md](CHECKLIST_CLS_IMPLEMENTATION.md)
 
 **Troubleshooting**
-→ [CLS_QUICK_REFERENCE.md#troubleshooting](frontend/CLS_QUICK_REFERENCE.md)
+→ [CLS_QUICK_REFERENCE.md#troubleshooting](../../frontend/CLS_QUICK_REFERENCE.md)
 
 ---
 
 ## 🔄 Workflow
 
 1. **Before Coding**
-   - Read: [EXAMPLES_CLS_BEST_PRACTICES.md](frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
-   - Reference: [CLS_QUICK_REFERENCE.md](frontend/CLS_QUICK_REFERENCE.md)
+   - Read: [EXAMPLES_CLS_BEST_PRACTICES.md](../../frontend/EXAMPLES_CLS_BEST_PRACTICES.md)
+   - Reference: [CLS_QUICK_REFERENCE.md](../../frontend/CLS_QUICK_REFERENCE.md)
 
 2. **While Coding**
    - Import from: `@/lib/cls-utils`
@@ -180,7 +180,7 @@ After reading this documentation, you'll understand:
 
 3. **Before PR**
    - Run Lighthouse audit
-   - Check: [CLS_QUICK_REFERENCE.md#checklist](frontend/CLS_QUICK_REFERENCE.md)
+   - Check: [CLS_QUICK_REFERENCE.md#checklist](../../frontend/CLS_QUICK_REFERENCE.md)
    - Pass: CLS < 0.25
 
 4. **In Code Review**
