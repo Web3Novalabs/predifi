@@ -39,10 +39,50 @@ interface LeaderboardResponse<T> {
   offset: number;
 }
 
-interface ApiEnvelope<T> {
-  status: "success" | "error";
-  data?: T;
-  error?: { code: string; message: string; request_id: string };
+/** Type guard to validate LeaderboardEntry shape. */
+function isLeaderboardEntry(obj: unknown): obj is LeaderboardEntry {
+  if (!obj || typeof obj !== "object") return false;
+  const entry = obj as Record<string, unknown>;
+  return (
+    typeof entry.user_address === "string" &&
+    typeof entry.total_volume === "number" &&
+    typeof entry.prediction_count === "number" &&
+    typeof entry.wins === "number" &&
+    typeof entry.settled_count === "number" &&
+    typeof entry.win_rate === "number" &&
+    typeof entry.current_streak === "number" &&
+    typeof entry.rank === "number"
+  );
+}
+
+/** Type guard to validate WinningsLeaderboardEntry shape. */
+function isWinningsLeaderboardEntry(obj: unknown): obj is WinningsLeaderboardEntry {
+  if (!obj || typeof obj !== "object") return false;
+  const entry = obj as Record<string, unknown>;
+  return (
+    typeof entry.user_address === "string" &&
+    typeof entry.total_winnings === "number" &&
+    typeof entry.winning_predictions === "number" &&
+    typeof entry.total_predictions === "number" &&
+    typeof entry.win_rate === "number" &&
+    typeof entry.rank === "number"
+  );
+}
+
+/** Type guard to validate generic LeaderboardResponse shape. */
+function isLeaderboardResponse<T>(
+  obj: unknown,
+  itemValidator: (item: unknown) => item is T,
+): obj is LeaderboardResponse<T> {
+  if (!obj || typeof obj !== "object") return false;
+  const response = obj as Record<string, unknown>;
+  return (
+    Array.isArray(response.leaderboard) &&
+    response.leaderboard.every(itemValidator) &&
+    typeof response.rank_by === "string" &&
+    typeof response.limit === "number" &&
+    typeof response.offset === "number"
+  );
 }
 
 export interface LeaderboardQuery {
@@ -52,14 +92,41 @@ export interface LeaderboardQuery {
   offset?: number;
 }
 
-async function unwrap<T>(res: Response): Promise<T> {
+async function unwrap<T>(
+  res: Response,
+  validator: (obj: unknown) => obj is T,
+): Promise<T> {
   if (!res.ok) {
     throw new Error(`Leaderboard request failed (HTTP ${res.status})`);
   }
-  const body = (await res.json()) as ApiEnvelope<T> & Partial<T>;
-  // `ApiResponse::success` wraps in { status, data }; some legacy handlers
-  // (get_leaderboard for "winnings"/"volume") return the same envelope.
-  return (body.data ?? (body as unknown as T)) as T;
+  const body = await res.json();
+
+  // Handle wrapped response (ApiEnvelope pattern)
+  const data =
+    body && typeof body === "object" && "data" in body && body.data ? body.data : body;
+
+  // Validate response shape at boundary
+  if (!validator(data)) {
+    throw new Error(`Invalid leaderboard response shape (HTTP ${res.status})`);
+  }
+
+  return data as T;
+}
+
+/** Type validator for global leaderboard responses. */
+function isGlobalLeaderboardResponse(
+  obj: unknown,
+): obj is LeaderboardResponse<LeaderboardEntry | WinningsLeaderboardEntry> {
+  return (
+    isLeaderboardResponse(obj, (item: unknown) => {
+      return isLeaderboardEntry(item) || isWinningsLeaderboardEntry(item);
+    })
+  );
+}
+
+/** Type validator for pool leaderboard responses. */
+function isPoolLeaderboardResponse(obj: unknown): obj is LeaderboardResponse<LeaderboardEntry> {
+  return isLeaderboardResponse(obj, isLeaderboardEntry);
 }
 
 /** Fetch the global leaderboard. */
@@ -75,7 +142,7 @@ export async function fetchLeaderboard(
   const res = await fetch(`${API_BASE_URL}/api/v1/leaderboard?${params}`, {
     headers: { Accept: "application/json" },
   });
-  return unwrap(res);
+  return unwrap(res, isGlobalLeaderboardResponse);
 }
 
 /** Fetch the leaderboard scoped to a single pool. */
@@ -92,5 +159,5 @@ export async function fetchPoolLeaderboard(
     `${API_BASE_URL}/api/v1/pools/${poolId}/leaderboard?${params}`,
     { headers: { Accept: "application/json" } },
   );
-  return unwrap(res);
+  return unwrap(res, isPoolLeaderboardResponse);
 }
