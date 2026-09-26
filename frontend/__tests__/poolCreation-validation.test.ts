@@ -1,12 +1,18 @@
-import { validateCreatePool, type CreatePoolFormValues } from "@/lib/validations/poolCreation";
+import {
+  validateCreatePool,
+  MIN_STAKE,
+  type CreatePoolFormValues,
+} from "@/lib/validations/poolCreation";
 
 describe("Pool Creation Validation Rules", () => {
-  const futureCloseTime = new Date(Date.now() + 3600 * 1000 * 24).toISOString().slice(0, 16);
+  const futureCloseTime = new Date(Date.now() + 3600 * 1000 * 48)
+    .toISOString()
+    .slice(0, 16);
 
   const validFormValues: CreatePoolFormValues = {
-    name: "Will Premier League final be won by Arsenal?",
-    description: "Prediction pool for Premier League championship.",
-    category: "Sports",
+    name: "Will Starknet TPS exceed 100 in 2026?",
+    description: "Testing network throughput predictions on Starknet mainnet.",
+    category: "Technology",
     outcomes: ["Yes", "No"],
     minStake: "10",
     maxStake: "1000",
@@ -21,37 +27,66 @@ describe("Pool Creation Validation Rules", () => {
     expect(Object.keys(errors)).toHaveLength(0);
   });
 
-  it("fails validation when title (name) is empty", () => {
-    const errors = validateCreatePool({
+  it("fails when title/name is empty and returns correct error message", () => {
+    const emptyNameErrors = validateCreatePool({
       ...validFormValues,
       name: "",
     });
-    expect(errors.name).toBe("Pool name is required.");
-  });
+    expect(emptyNameErrors.name).toBe("Pool name is required.");
 
-  it("fails validation when close time (end time) is in the past", () => {
-    const pastCloseTime = new Date(Date.now() - 3600 * 1000).toISOString().slice(0, 16);
-    const errors = validateCreatePool({
+    const whitespaceNameErrors = validateCreatePool({
       ...validFormValues,
-      closeTime: pastCloseTime,
+      name: "   ",
     });
-    expect(errors.closeTime).toBe("Close time must be in the future.");
+    expect(whitespaceNameErrors.name).toBe("Pool name is required.");
   });
 
-  it("fails validation when too few outcome options are provided", () => {
-    const errors = validateCreatePool({
+  it("fails when end time is in the past and returns correct error message", () => {
+    const pastTime = new Date(Date.now() - 3600 * 1000)
+      .toISOString()
+      .slice(0, 16);
+    const pastTimeErrors = validateCreatePool({
       ...validFormValues,
-      outcomes: ["Only One Outcome"],
+      closeTime: pastTime,
     });
-    expect(errors.outcomes).toBe("A pool needs at least 2 outcomes.");
+    expect(pastTimeErrors.closeTime).toBe("Close time must be in the future.");
   });
 
-  it("fails validation when minimum stake is below the minimum allowed limit", () => {
-    const errors = validateCreatePool({
+  it("fails when there are too few outcome options and returns correct error message", () => {
+    const singleOutcomeErrors = validateCreatePool({
+      ...validFormValues,
+      outcomes: ["Single Outcome"],
+    });
+    expect(singleOutcomeErrors.outcomes).toBe(
+      "A pool needs at least 2 outcomes.",
+    );
+
+    const emptyOutcomesErrors = validateCreatePool({
+      ...validFormValues,
+      outcomes: [],
+    });
+    expect(emptyOutcomesErrors.outcomes).toBe(
+      "A pool needs at least 2 outcomes.",
+    );
+  });
+
+  it("fails when stake is below minimum and returns correct error message", () => {
+    const belowMinErrors = validateCreatePool({
       ...validFormValues,
       token: "XLM",
       minStake: "0.5",
     });
-    expect(errors.minStake).toBe("Minimum stake must be at least 1 XLM.");
+    expect(belowMinErrors.minStake).toBe(
+      `Minimum stake must be at least ${MIN_STAKE["XLM"]} XLM.`,
+    );
+
+    const belowMinStrkErrors = validateCreatePool({
+      ...validFormValues,
+      token: "STRK",
+      minStake: "0.00001",
+    });
+    expect(belowMinStrkErrors.minStake).toBe(
+      `Minimum stake must be at least ${MIN_STAKE["STRK"]} STRK.`,
+    );
   });
 });
