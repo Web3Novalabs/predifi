@@ -1,0 +1,32 @@
+# Example values for staging — copy to terraform.tfvars (do not commit secrets).
+
+aws_region = "us-east-1"
+
+vpc_id = "vpc-xxxxxxxx"
+
+public_subnet_ids = [
+  "subnet-public-a",
+  "subnet-public-b",
+]
+
+private_subnet_ids = [
+  "subnet-private-a",
+  "subnet-private-b",
+]
+
+ami_id   = "ami-xxxxxxxx" # Amazon Linux 2023
+key_name = "predifi-staging"
+
+domain_name     = "staging-api.predifi.app"
+route53_zone_id = "ZXXXXXXXX"
+ssl_sans        = []
+
+# Cost-optimized staging sizing
+compute_instance_type    = "t3.small"
+compute_desired_capacity = 1
+db_instance_class        = "db.t4g.small"
+
+# Prefer VPN / bastion CIDRs only
+monitoring_allowed_cidrs = [
+  "10.0.0.0/16",
+]

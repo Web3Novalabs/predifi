@@ -76,20 +76,48 @@ groups:
           severity: warning
         annotations:
           summary: "API p99 latency is greater than 500ms"
-      - alert: DatabasePoolExhausted
+      - alert: WorkerQueueBacklog
+        expr: app_worker_queue_depth > 50
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker queue depth exceeded 50 jobs"
+      - alert: WorkerDLQBacklog
+        expr: app_worker_dlq_depth > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker dead-letter queue (DLQ) backlog exceeded 10 jobs"
+      - alert: DatabaseConnectionPoolSaturated
+        expr: db_pool_utilization_ratio > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool utilization exceeded 80%"
+      - alert: DatabaseConnectionPoolCritical
+        expr: db_pool_utilization_ratio > 0.95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool utilization exceeded 95%"
+      - alert: DatabaseQueryFailures
         expr: sum(rate(app_db_queries_total{result="error"}[5m])) > 5
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Database connection pool exhaustion or query error spike"
-      - alert: HighRedisMemoryUsage
+          summary: "Database query error spike detected"
+      - alert: HighRedisErrors
         expr: sum(rate(app_redis_operations_total{result="error"}[5m])) > 10
         for: 2m
         labels:
           severity: warning
         annotations:
-          summary: "High Redis operation error rate or high memory usage (>80%)"
+          summary: "High Redis operation error rate"
       - alert: ContractInteractionFailures
         expr: sum(rate(app_db_queries_total{query_type=~".*contract.*",result="error"}[5m])) > 0
         for: 1m
