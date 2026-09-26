@@ -397,22 +397,25 @@ pub async fn get_users_by_winnings(
         .collect())
 }
 
-/// Extended leaderboard with time-window and pool-scope filtering (#1363).
+/// Resolve the `period` filter (`"week"` / `"month"` / anything else = all-time)
+/// into the `created_at` cutoff timestamp used by [`leaderboard_sql`].
+fn leaderboard_cutoff(period: &str) -> Option<DateTime<Utc>> {
+    match period {
+        "week" => Some(Utc::now() - chrono::Duration::days(7)),
+        "month" => Some(Utc::now() - chrono::Duration::days(30)),
+        _ => None,
+    }
+}
+
+/// Build the leaderboard aggregation query for a given ranking key.
 ///
-/// * `rank_by` — `"volume"` (default) | `"win_rate"` | `"streak"`
-/// * `period`  — `"week"` | `"month"` | `"all"` (default)
-/// * `pool_id` — when `Some`, restricts ranking to a single pool
+/// Shared between [`get_leaderboard_extended`] (which runs it) and
+/// [`explain_leaderboard_plan`] (which asks Postgres to `EXPLAIN` it), so the
+/// query a test inspects can never drift from the query actually served.
 ///
-/// `current_streak` is the count of the user's most recent consecutive wins
-/// on settled predictions, ordered by pool `end_time`.
-pub async fn get_leaderboard_extended(
-    pool: &PgPool,
-    rank_by: &str,
-    period: &str,
-    pool_id: Option<i64>,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<LeaderboardEntry>, sqlx::Error> {
+/// Placeholders: `$1` = limit, `$2` = offset, `$3` = optional pool ID,
+/// `$4` = optional `created_at` cutoff — see [`leaderboard_cutoff`].
+fn leaderboard_sql(rank_by: &str) -> String {
     // SECURITY: order_by is chosen from a controlled match — no user input
     // reaches the interpolated string.
     let order_by = match rank_by {
@@ -423,13 +426,7 @@ pub async fn get_leaderboard_extended(
         _ => "ua.total_volume",
     };
 
-    let cutoff: Option<DateTime<Utc>> = match period {
-        "week"  => Some(Utc::now() - chrono::Duration::days(7)),
-        "month" => Some(Utc::now() - chrono::Duration::days(30)),
-        _       => None,
-    };
-
-    let sql = format!(
+    format!(
         r#"
         WITH scoped_predictions AS (
             SELECT p.user_address, p.pool_id, p.amount, p.outcome, p.created_at,
@@ -498,7 +495,27 @@ pub async fn get_leaderboard_extended(
         ORDER BY {order_by} DESC
         LIMIT $1 OFFSET $2
         "#
-    );
+    )
+}
+
+/// Extended leaderboard with time-window and pool-scope filtering (#1363).
+///
+/// * `rank_by` — `"volume"` (default) | `"win_rate"` | `"streak"`
+/// * `period`  — `"week"` | `"month"` | `"all"` (default)
+/// * `pool_id` — when `Some`, restricts ranking to a single pool
+///
+/// `current_streak` is the count of the user's most recent consecutive wins
+/// on settled predictions, ordered by pool `end_time`.
+pub async fn get_leaderboard_extended(
+    pool: &PgPool,
+    rank_by: &str,
+    period: &str,
+    pool_id: Option<i64>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<LeaderboardEntry>, sqlx::Error> {
+    let cutoff = leaderboard_cutoff(period);
+    let sql = leaderboard_sql(rank_by);
 
     let rows = sqlx::query_as::<_, LeaderboardRow>(&sql)
         .bind(limit)
@@ -529,6 +546,36 @@ pub async fn get_leaderboard_extended(
             }
         })
         .collect())
+}
+
+/// Run `EXPLAIN` on the leaderboard aggregation query used by
+/// [`get_leaderboard_extended`] and return the plan as a single string (one
+/// line per row Postgres returns).
+///
+/// Exists so a test can assert the plan uses an index rather than a
+/// sequential scan on `predictions` for a pool-scoped leaderboard (#1733),
+/// without duplicating (and risking drift from) the real query text — both
+/// functions build their SQL from [`leaderboard_sql`].
+pub async fn explain_leaderboard_plan(
+    pool: &PgPool,
+    rank_by: &str,
+    period: &str,
+    pool_id: Option<i64>,
+    limit: i64,
+    offset: i64,
+) -> Result<String, sqlx::Error> {
+    let cutoff = leaderboard_cutoff(period);
+    let sql = format!("EXPLAIN {}", leaderboard_sql(rank_by));
+
+    let lines: Vec<String> = sqlx::query_scalar(&sql)
+        .bind(limit)
+        .bind(offset)
+        .bind(pool_id)
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(lines.join("\n"))
 }
 
 /// Protocol-wide aggregate stats, optionally scoped by category and/or state.

@@ -136,6 +136,75 @@ mod tests {
         drop(container);
     }
 
+    /// The pool-scoped leaderboard query (`/pools/:id/leaderboard`) must use
+    /// an index on `predictions.pool_id`, not a sequential scan, once the
+    /// table holds enough rows to make the difference measurable (#1733).
+    ///
+    /// Seeds many pools with many predictions each so that filtering to one
+    /// `pool_id` is highly selective (~0.3%), which is well within the range
+    /// where Postgres' planner should prefer `idx_predictions_pool_id` (or
+    /// one of the other `pool_id`-prefixed indexes from later migrations)
+    /// over scanning the whole table. If that index is ever dropped, this
+    /// selectivity gap means the planner falls back to a sequential scan and
+    /// the assertion below fails.
+    #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
+    async fn leaderboard_query_uses_index_not_seq_scan_on_predictions() {
+        let (pool, container) = setup().await;
+
+        const POOL_COUNT: i64 = 300;
+        const PREDICTIONS_PER_POOL: i64 = 300;
+
+        sqlx::query(
+            r#"
+            INSERT INTO pools (pool_id, name, category, total_stake, end_time, state, creator, token)
+            SELECT g, 'Pool ' || g, 'Test', 0, NOW() + INTERVAL '1 day', 'active', 'GCREATOR', 'XLM'
+            FROM generate_series(1, $1) AS g
+            "#,
+        )
+        .bind(POOL_COUNT)
+        .execute(&pool)
+        .await
+        .expect("seed pools");
+
+        sqlx::query(
+            r#"
+            INSERT INTO predictions (pool_id, user_address, outcome, amount)
+            SELECT g, 'GUSER' || ((g * 100000) + s)::text, (s % 2), 100
+            FROM generate_series(1, $1) AS g, generate_series(1, $2) AS s
+            "#,
+        )
+        .bind(POOL_COUNT)
+        .bind(PREDICTIONS_PER_POOL)
+        .execute(&pool)
+        .await
+        .expect("seed predictions");
+
+        // Fresh statistics are essential: without them the planner may still
+        // guess a sequential scan for a table it thinks is tiny/default-sized.
+        sqlx::query("ANALYZE predictions")
+            .execute(&pool)
+            .await
+            .expect("analyze predictions");
+        sqlx::query("ANALYZE pools")
+            .execute(&pool)
+            .await
+            .expect("analyze pools");
+
+        let plan = crate::db::explain_leaderboard_plan(&pool, "volume", "all", Some(1), 20, 0)
+            .await
+            .expect("explain leaderboard query");
+
+        assert!(
+            !plan.to_lowercase().contains("seq scan on predictions"),
+            "leaderboard query for a single pool_id must use an index on predictions, \
+             not a sequential scan; got plan:\n{plan}"
+        );
+
+        pool.close().await;
+        drop(container);
+    }
+
     #[tokio::test]
     #[ignore = "Requires Docker container for Postgres"]
     async fn pool_status_defaults_to_open() {

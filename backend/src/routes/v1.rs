@@ -214,6 +214,13 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
 
 // ── Task 2: Active Pools API ──────────────────────────────────────────────────
 
+/// Default page size for `GET /api/v1/pools` when `limit` is omitted.
+const POOLS_DEFAULT_PAGE_SIZE: i64 = 20;
+/// Maximum page size for `GET /api/v1/pools`. A requested `limit` above this
+/// is clamped down to it rather than rejected with 400, so a client that
+/// over-requests still gets a bounded, servable page (see #1734).
+const POOLS_MAX_PAGE_SIZE: i64 = 100;
+
 /// Query parameters for the `GET /api/v1/pools` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct PoolsQuery {
@@ -226,10 +233,22 @@ pub struct PoolsQuery {
     /// Comma-separated tag filter, e.g. "btc,price-prediction". A pool
     /// matches if any of its tags overlap this list.
     pub tags: Option<String>,
-    /// Page size, clamped to [1, 100].
-    pub limit: Option<BoundedI64<1, 100>>,
+    /// Page size. Missing defaults to [`POOLS_DEFAULT_PAGE_SIZE`]; a value
+    /// outside `[1, POOLS_MAX_PAGE_SIZE]` is clamped into range in the
+    /// handler rather than rejected — unlike most other paginated endpoints
+    /// in this file, which use [`BoundedI64`] and reject out-of-range values.
+    pub limit: Option<i64>,
     /// Zero-based page offset, minimum 0.
     pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+}
+
+/// Resolve the effective page size for `GET /api/v1/pools`: missing defaults
+/// to [`POOLS_DEFAULT_PAGE_SIZE`], and anything outside `[1,
+/// POOLS_MAX_PAGE_SIZE]` is clamped into range (never rejected). See #1734.
+fn resolve_pools_page_size(limit: Option<i64>) -> i64 {
+    limit
+        .unwrap_or(POOLS_DEFAULT_PAGE_SIZE)
+        .clamp(1, POOLS_MAX_PAGE_SIZE)
 }
 
 #[derive(Debug, Serialize)]
@@ -375,7 +394,9 @@ pub async fn get_pools(
     let sort_by = params.sort_by.map(|s| s.as_str()).unwrap_or("new");
     let category = params.category.as_ref().map(|s| s.as_str());
     let status = params.status.map(|s| s.as_str()).unwrap_or("active");
-    let limit = params.limit.map(|b| b.get()).unwrap_or(20);
+    // Clamp rather than reject: a client asking for more than the max page
+    // size still gets a bounded, servable page instead of a 400 (#1734).
+    let limit = resolve_pools_page_size(params.limit);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
     let tags: Option<Vec<String>> = params
         .tags
@@ -966,18 +987,39 @@ pub async fn get_market_predictions(
 // ── Pool creator incentive system (#1366) ─────────────────────────────────────
 
 /// `GET /api/v1/creators/:address/stats` — reputation/quality metrics for a pool creator.
+///
+/// Returns the standard error envelope with 404 if the creator has no stats
+/// row (distinct from a genuine query failure, which is a 500).
 pub async fn get_creator_stats_handler(
     State(state): State<AppState>,
-    Path(address): Path<String>,
-) -> Json<serde_json::Value> {
+    Path(address): Path<StellarAddress>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
     };
 
-    match crate::db::get_creator_stats(db, &address).await {
-        Ok(Some(stats)) => Json(json!(stats)),
-        Ok(None) => Json(json!({ "error": "creator not found" })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+    match crate::db::get_creator_stats(db, address.as_str()).await {
+        Ok(Some(stats)) => ApiResponse::success(stats).into_response(),
+        Ok(None) => ApiResponse::<()>::error(
+            StatusCode::NOT_FOUND,
+            error_codes::NOT_FOUND,
+            "creator not found",
+        )
+        .into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
     }
 }
 
@@ -1847,5 +1889,40 @@ mod cache_aside_tests {
         let cache = RedisCache::disabled();
         // Should not panic
         cache.invalidate_stats_cache().await;
+    }
+}
+
+/// Tests for `GET /api/v1/pools` page-size resolution (#1734): missing
+/// `limit` uses the documented default, and an out-of-range `limit` is
+/// clamped into bounds rather than rejected with 400.
+#[cfg(test)]
+mod pools_pagination_tests {
+    use super::{resolve_pools_page_size, POOLS_DEFAULT_PAGE_SIZE, POOLS_MAX_PAGE_SIZE};
+
+    #[test]
+    fn missing_limit_uses_documented_default() {
+        assert_eq!(resolve_pools_page_size(None), POOLS_DEFAULT_PAGE_SIZE);
+    }
+
+    #[test]
+    fn limit_within_bounds_is_unchanged() {
+        assert_eq!(resolve_pools_page_size(Some(1)), 1);
+        assert_eq!(resolve_pools_page_size(Some(50)), 50);
+        assert_eq!(resolve_pools_page_size(Some(POOLS_MAX_PAGE_SIZE)), POOLS_MAX_PAGE_SIZE);
+    }
+
+    #[test]
+    fn limit_above_max_is_clamped_not_rejected() {
+        assert_eq!(
+            resolve_pools_page_size(Some(POOLS_MAX_PAGE_SIZE + 1)),
+            POOLS_MAX_PAGE_SIZE
+        );
+        assert_eq!(resolve_pools_page_size(Some(1_000_000)), POOLS_MAX_PAGE_SIZE);
+    }
+
+    #[test]
+    fn non_positive_limit_is_clamped_up_to_one() {
+        assert_eq!(resolve_pools_page_size(Some(0)), 1);
+        assert_eq!(resolve_pools_page_size(Some(-5)), 1);
     }
 }
