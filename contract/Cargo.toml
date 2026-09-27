@@ -8,7 +8,7 @@ members = [
 
 # ── Shared workspace dependencies ──────────────────────────────────────────────
 [workspace.dependencies]
-soroban-sdk     = "23"
+soroban-sdk     = "28"
 predifi-errors  = { path = "contracts/predifi-errors" }
 access-control  = { path = "contracts/access-control" }
 # Pyth Network dependencies for price feeds
