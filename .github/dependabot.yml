@@ -1,0 +1,41 @@
+version: 2
+updates:
+  # Rust dependencies for the axum backend
+  - package-ecosystem: "cargo"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"
+
+  # Rust dependencies for the Soroban contract
+  - package-ecosystem: "cargo"
+    directory: "/contract"
+    schedule:
+      interval: "weekly"
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"
+
+  # Node dependencies for the Next.js frontend (pnpm-lock.yaml)
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"
+
+  # Actions used by the CI/CD workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"
