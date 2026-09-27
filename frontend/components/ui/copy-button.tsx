@@ -69,6 +69,7 @@ export const CopyButton = React.forwardRef<HTMLButtonElement, CopyButtonProps>(
         aria-pressed={copied || error}
         className={cn(
           "inline-flex items-center justify-center rounded transition-colors",
+          "min-w-[44px] min-h-[44px]",
           "text-zinc-500 hover:text-white",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
           "disabled:pointer-events-none disabled:opacity-50",
