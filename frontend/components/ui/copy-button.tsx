@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Copy, CheckCircle2 } from "lucide-react";
+import { Copy, CheckCircle2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCopyToClipboard } from "@/lib/hooks/useCopyToClipboard";
 import type { CopyToClipboardOptions } from "@/lib/hooks/useCopyToClipboard";
@@ -47,7 +47,7 @@ const sizeClasses = {
  */
 export const CopyButton = React.forwardRef<HTMLButtonElement, CopyButtonProps>(
   ({ text, size = "sm", copyOptions, className, disabled, "aria-label": ariaLabel, ...props }, ref) => {
-    const { copy, copied, isPending } = useCopyToClipboard(copyOptions);
+    const { copy, copied, error, isPending } = useCopyToClipboard(copyOptions);
 
     const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
       e.stopPropagation();
@@ -55,7 +55,9 @@ export const CopyButton = React.forwardRef<HTMLButtonElement, CopyButtonProps>(
     };
 
     const iconClass = sizeClasses[size];
-    const label = ariaLabel ?? (copied ? "Copied" : "Copy to clipboard");
+    let label = ariaLabel ?? "Copy to clipboard";
+    if (copied) label = "Copied";
+    if (error) label = "Copy failed";
 
     return (
       <button
@@ -64,19 +66,22 @@ export const CopyButton = React.forwardRef<HTMLButtonElement, CopyButtonProps>(
         onClick={handleClick}
         disabled={disabled || isPending}
         aria-label={label}
-        aria-pressed={copied}
+        aria-pressed={copied || error}
         className={cn(
           "inline-flex items-center justify-center rounded transition-colors",
           "text-zinc-500 hover:text-white",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
           "disabled:pointer-events-none disabled:opacity-50",
           copied && "text-emerald-400 hover:text-emerald-300",
+          error && "text-red-400 hover:text-red-300",
           className,
         )}
         {...props}
       >
         {copied ? (
           <CheckCircle2 className={cn(iconClass, "transition-all duration-200")} aria-hidden="true" />
+        ) : error ? (
+          <AlertCircle className={cn(iconClass, "transition-all duration-200")} aria-hidden="true" />
         ) : (
           <Copy className={cn(iconClass, "transition-all duration-200")} aria-hidden="true" />
         )}

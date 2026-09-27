@@ -51,11 +51,13 @@ This directory contains comprehensive documentation for the PrediFi prediction m
 ```
 docs/
 ├── README.md                          # This file
+├── IMPLEMENTATION_SUMMARY.md          # Backend issues #699/#706/#714/#720 implementation notes
 ├── audits/                            # Security & arithmetic audit reports
 │   ├── ARITHMETIC_AUDIT_START_HERE.md
 │   ├── ARITHMETIC_AUDIT_SUMMARY.md
 │   ├── ARITHMETIC_FIX_DETAILS.md
-│   └── ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md
+│   ├── ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md
+│   └── SECURITY_FIX_CANCEL_POOL.md    # cancel_pool state validation security fix
 ├── API_REFERENCE.md                   # Complete API reference
 ├── OPENAPI_CLIENT_GENERATION.md       # SDK generation guide
 ├── SMART_CONTRACT_DEPLOYMENT_GUIDE.md # Contract deployment guide

@@ -104,6 +104,23 @@ is not a placeholder.
 No Alertmanager is included, so alerts are visible but not routed. Point the
 ruler at one by adding `alertmanager_url` to `docker/loki/loki-config.yml`.
 
+## Service health checks
+
+All long-running services declare Docker health checks.  Dependent services use
+`condition: service_healthy` so a cold `docker compose up` reaches a working
+stack without manual restarts:
+
+- **PostgreSQL** — `pg_isready`
+- **Redis** — `redis-cli ping`
+- **Stellar** — HTTP probe on port `8000`
+- **Backend** — HTTP probe on `/health`
+- **Loki** — HTTP probe on `/ready`
+- **Promtail** — waits for Loki, then HTTP probe on `/ready`
+- **Grafana** — waits for Loki, then HTTP probe on `/api/health`
+
+The `db-seed` service waits for PostgreSQL to report healthy before running
+migrations.
+
 ## Configuration files
 
 | Path                                                  | Purpose                          |

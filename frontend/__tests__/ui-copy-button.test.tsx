@@ -50,4 +50,48 @@ describe("CopyButton", () => {
       ).toBeInTheDocument();
     });
   });
+
+  it("shows error state when clipboard write fails", async () => {
+    const user = userEvent.setup();
+    const error = new Error("Clipboard access denied");
+    writeText.mockRejectedValueOnce(error);
+
+    renderCopyButton("test-value");
+
+    const button = screen.getByRole("button", { name: /copy to clipboard/i });
+    await user.click(button);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /copy failed/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("resets error state after resetDelay", async () => {
+    const user = userEvent.setup();
+    const error = new Error("Clipboard access denied");
+    writeText.mockRejectedValueOnce(error);
+
+    renderCopyButton("test-value");
+
+    const button = screen.getByRole("button", { name: /copy to clipboard/i });
+    await user.click(button);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /copy failed/i }),
+      ).toBeInTheDocument();
+    });
+
+    // Wait for error state to reset (default resetDelay is 2000ms)
+    await waitFor(
+      () => {
+        expect(
+          screen.getByRole("button", { name: /copy to clipboard/i }),
+        ).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+  });
 });

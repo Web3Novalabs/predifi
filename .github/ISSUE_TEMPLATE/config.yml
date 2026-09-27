@@ -9,6 +9,9 @@
 # public issue describing an exploitable bug is a disclosure.
 blank_issues_enabled: false
 contact_links:
+  - name: Telegram Community
+    url: https://t.me/predifi_onchain_build/1
+    about: Join our Telegram community for discussion and support.
   - name: 🔒 Report a security vulnerability
     url: https://github.com/Web3Novalabs/predifi/security/advisories/new
     about: >-
