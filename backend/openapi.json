@@ -1,0 +1,1412 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PrediFi API",
+    "description": "REST API for the PrediFi prediction-market platform built on Stellar/Soroban.",
+    "contact": {
+      "name": "PrediFi Team",
+      "url": "https://github.com/Web3Novalabs/predifi"
+    },
+    "license": {
+      "name": "MIT"
+    },
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/fees": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "api_get_fees",
+        "responses": {
+          "200": {
+            "description": "Current protocol fee configuration",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeeInfoDoc"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/indexer/pool-created": {
+      "post": {
+        "tags": [
+          "indexer"
+        ],
+        "operationId": "api_ingest_pool_created",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoolCreatedPayloadDoc"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pool indexed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexerOkResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/indexer/prediction-placed": {
+      "post": {
+        "tags": [
+          "indexer"
+        ],
+        "operationId": "api_ingest_prediction_placed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PredictionPlacedPayloadDoc"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Prediction indexed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexerOkResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/leaderboard": {
+      "get": {
+        "tags": [
+          "leaderboard"
+        ],
+        "operationId": "api_get_leaderboard",
+        "parameters": [
+          {
+            "name": "rank_by",
+            "in": "query",
+            "description": "volume (default) | winnings",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max results (default 20, max 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Pagination offset (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User leaderboard",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LeaderboardResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/markets/{market_id}/predictions": {
+      "get": {
+        "tags": [
+          "predictions"
+        ],
+        "operationId": "api_get_market_predictions",
+        "parameters": [
+          {
+            "name": "market_id",
+            "in": "path",
+            "description": "On-chain pool (market) identifier",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Cursor from previous page's `next_cursor` field",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size (1–100, default 20)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cursor-paginated predictions for the market",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketPredictionsResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Market not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pools": {
+      "get": {
+        "tags": [
+          "pools"
+        ],
+        "operationId": "api_get_pools",
+        "parameters": [
+          {
+            "name": "sort_by",
+            "in": "query",
+            "description": "popular | ending_soon | new (default)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Category filter e.g. Sports, Crypto",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "active | closed | settled (default: active)",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max results (default 20, max 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Pagination offset (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated pool list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolListResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/pools/{pool_id}": {
+      "get": {
+        "tags": [
+          "pools"
+        ],
+        "operationId": "api_get_pool_by_id",
+        "parameters": [
+          {
+            "name": "pool_id",
+            "in": "path",
+            "description": "On-chain pool identifier",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pool details with live odds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolWithOddsDoc"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Pool not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/prices": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "api_get_prices",
+        "responses": {
+          "200": {
+            "description": "Latest cached asset prices"
+          }
+        }
+      }
+    },
+    "/api/v1/referrals/{address}": {
+      "get": {
+        "tags": [
+          "referrals"
+        ],
+        "operationId": "api_get_referrals",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "description": "Stellar referrer address (G...)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Referral summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralEarningsResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "tags": [
+          "stats"
+        ],
+        "operationId": "api_get_stats",
+        "responses": {
+          "200": {
+            "description": "Protocol-wide aggregate statistics",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProtocolStatsDoc"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{address}/history": {
+      "get": {
+        "tags": [
+          "predictions"
+        ],
+        "operationId": "api_get_user_history",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "description": "Stellar account address (G...)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max results (default 20, max 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Pagination offset (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated prediction history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictionHistoryResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{address}/predictions": {
+      "get": {
+        "tags": [
+          "predictions"
+        ],
+        "operationId": "api_get_user_predictions",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "description": "Stellar account address (G...)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max results (default 20, max 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Pagination offset (default 0)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enhanced predictions with pool status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPredictionsResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Database error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/{address}/referrals": {
+      "get": {
+        "tags": [
+          "referrals"
+        ],
+        "operationId": "api_get_user_referral_earnings",
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "description": "Stellar referrer address (G...)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Per-pool referral earnings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReferralEarningsResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Database not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "health"
+        ],
+        "operationId": "api_health",
+        "responses": {
+          "200": {
+            "description": "All dependencies healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "One or more dependencies unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "DependencyStatus": {
+        "type": "object",
+        "description": "OpenAPI schema for the dependency status block inside a health response.",
+        "required": [
+          "db",
+          "rpc",
+          "redis",
+          "price_cache"
+        ],
+        "properties": {
+          "db": {
+            "type": "string"
+          },
+          "price_cache": {
+            "type": "string"
+          },
+          "redis": {
+            "type": "string"
+          },
+          "rpc": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for a generic error response body.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "FeeInfoDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for the fee configuration response.",
+        "required": [
+          "treasury_fee_bps",
+          "referral_fee_bps"
+        ],
+        "properties": {
+          "referral_fee_bps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Referral share of the protocol fee in basis points.",
+            "minimum": 0
+          },
+          "treasury_fee_bps": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Protocol (treasury) fee in basis points.",
+            "minimum": 0
+          }
+        }
+      },
+      "HealthErrors": {
+        "type": "object",
+        "description": "OpenAPI schema for the per-dependency error details block inside a health response.",
+        "properties": {
+          "db": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "price_cache": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "redis": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rpc": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for the full health check response body.",
+        "required": [
+          "status",
+          "service",
+          "version",
+          "dependencies",
+          "errors"
+        ],
+        "properties": {
+          "dependencies": {
+            "$ref": "#/components/schemas/DependencyStatus"
+          },
+          "errors": {
+            "$ref": "#/components/schemas/HealthErrors"
+          },
+          "service": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "IndexerOkResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for a successful indexer ingestion response.",
+        "required": [
+          "status",
+          "pool_id"
+        ],
+        "properties": {
+          "pool_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "LeaderboardEntryVolume": {
+        "type": "object",
+        "description": "OpenAPI schema for a leaderboard entry ranked by betting volume.",
+        "required": [
+          "user_address",
+          "total_volume",
+          "prediction_count",
+          "rank"
+        ],
+        "properties": {
+          "prediction_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rank": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_volume": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_address": {
+            "type": "string"
+          }
+        }
+      },
+      "LeaderboardEntryWinnings": {
+        "type": "object",
+        "description": "OpenAPI schema for a leaderboard entry ranked by winnings.",
+        "required": [
+          "user_address",
+          "total_winnings",
+          "winning_predictions",
+          "total_predictions",
+          "win_rate",
+          "rank"
+        ],
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_predictions": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_winnings": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_address": {
+            "type": "string"
+          },
+          "win_rate": {
+            "type": "number",
+            "format": "double"
+          },
+          "winning_predictions": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "LeaderboardResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for the leaderboard response.",
+        "required": [
+          "leaderboard",
+          "rank_by",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "leaderboard": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LeaderboardEntryVolume"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "rank_by": {
+            "type": "string"
+          }
+        }
+      },
+      "MarketPredictionDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for a single prediction in the market predictions list.",
+        "required": [
+          "id",
+          "pool_id",
+          "user_address",
+          "outcome",
+          "amount",
+          "created_at"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Stable row ID; also used as the pagination cursor value."
+          },
+          "outcome": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pool_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_address": {
+            "type": "string"
+          }
+        }
+      },
+      "MarketPredictionsResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for the cursor-paginated market predictions response.",
+        "required": [
+          "market_id",
+          "predictions",
+          "total",
+          "limit"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "market_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "next_cursor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Opaque cursor: pass as `?after=<value>` to retrieve the next page.\n`null` when the current page is the last."
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MarketPredictionDoc"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total number of predictions for this market (across all pages)."
+          }
+        }
+      },
+      "OutcomeOddsDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for outcome odds within a pool.",
+        "required": [
+          "outcome",
+          "stake",
+          "odds"
+        ],
+        "properties": {
+          "odds": {
+            "type": "number",
+            "format": "double"
+          },
+          "outcome": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "stake": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "PoolCreatedPayloadDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for the `pool_created` event ingestion request body.",
+        "required": [
+          "pool_id",
+          "creator",
+          "end_time",
+          "token",
+          "category",
+          "description"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "creator": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "end_time": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pool_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "token": {
+            "type": "string"
+          }
+        }
+      },
+      "PoolDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for a prediction market pool.",
+        "required": [
+          "pool_id",
+          "name",
+          "category",
+          "total_stake",
+          "end_time",
+          "created_at",
+          "state",
+          "creator",
+          "token"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "creator": {
+            "type": "string"
+          },
+          "end_time": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pool_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "total_stake": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "PoolListResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for the paginated pool list response.",
+        "required": [
+          "pools",
+          "limit",
+          "offset",
+          "status",
+          "sort_by"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PoolDoc"
+            }
+          },
+          "sort_by": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "PoolWithOddsDoc": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PoolDoc"
+          },
+          {
+            "type": "object",
+            "required": [
+              "odds"
+            ],
+            "properties": {
+              "odds": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/OutcomeOddsDoc"
+                }
+              }
+            }
+          }
+        ],
+        "description": "OpenAPI schema for a pool with real-time odds attached."
+      },
+      "PredictionDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for a single prediction record.",
+        "required": [
+          "pool_id",
+          "pool_name",
+          "outcome",
+          "amount",
+          "created_at"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pool_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pool_name": {
+            "type": "string"
+          },
+          "pool_result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "PredictionHistoryResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for the paginated prediction history response.",
+        "required": [
+          "address",
+          "predictions",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PredictionDoc"
+            }
+          }
+        }
+      },
+      "PredictionPlacedPayloadDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for the `prediction_placed` event ingestion request body.",
+        "required": [
+          "pool_id",
+          "user_address",
+          "outcome",
+          "amount"
+        ],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "outcome": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "pool_id": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "user_address": {
+            "type": "string"
+          }
+        }
+      },
+      "ProtocolStatsDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for protocol-wide aggregate statistics.",
+        "required": [
+          "total_value_locked",
+          "total_bets",
+          "total_pools"
+        ],
+        "properties": {
+          "total_bets": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_pools": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_value_locked": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total value locked across all pools (stroops)."
+          }
+        }
+      },
+      "ReferralEarningDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for a single referral earning row (per pool).",
+        "required": [
+          "pool_id",
+          "pool_name",
+          "total_earned",
+          "referral_count"
+        ],
+        "properties": {
+          "pool_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pool_name": {
+            "type": "string"
+          },
+          "referral_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_earned": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ReferralEarningsResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for the referral earnings response.",
+        "required": [
+          "referrer",
+          "total_earned",
+          "pools"
+        ],
+        "properties": {
+          "pools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReferralEarningDoc"
+            }
+          },
+          "referrer": {
+            "type": "string"
+          },
+          "total_earned": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "UserPredictionDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for an enhanced user prediction with current pool status.",
+        "required": [
+          "prediction_id",
+          "pool_id",
+          "pool_name",
+          "pool_category",
+          "pool_state",
+          "pool_total_stake",
+          "user_outcome",
+          "user_amount"
+        ],
+        "properties": {
+          "is_winning_outcome": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "pool_category": {
+            "type": "string"
+          },
+          "pool_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "pool_name": {
+            "type": "string"
+          },
+          "pool_result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pool_state": {
+            "type": "string"
+          },
+          "pool_total_stake": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "prediction_id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_amount": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "user_outcome": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "UserPredictionsResponse": {
+        "type": "object",
+        "description": "OpenAPI schema for the enhanced user predictions response.",
+        "required": [
+          "address",
+          "predictions",
+          "limit",
+          "offset",
+          "total_predictions"
+        ],
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UserPredictionDoc"
+            }
+          },
+          "total_predictions": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "health",
+      "description": "Service liveness and dependency checks"
+    },
+    {
+      "name": "pools",
+      "description": "Prediction market pools"
+    },
+    {
+      "name": "stats",
+      "description": "Protocol-wide statistics"
+    },
+    {
+      "name": "leaderboard",
+      "description": "User rankings"
+    },
+    {
+      "name": "predictions",
+      "description": "User prediction history"
+    },
+    {
+      "name": "referrals",
+      "description": "Referral earnings"
+    },
+    {
+      "name": "indexer",
+      "description": "Internal event ingestion endpoints"
+    }
+  ]
+}

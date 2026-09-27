@@ -87,21 +87,120 @@ impl<'de, const MIN: i64, const MAX: i64> Deserialize<'de> for BoundedI64<MIN, M
 
 // ── StellarAddress ────────────────────────────────────────────────────────────
 
-/// A Stellar account address (G… or C… prefix, 56 chars, base32 alphanumeric).
+/// RFC4648 base32 alphabet (no padding), as used by Stellar's strkey encoding.
+const BASE32_ALPHABET: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+/// Strkey version byte for an ED25519 account ID (`G…` address).
+///
+/// `pub(crate)` so other test modules (e.g. `tests.rs`) can build
+/// checksum-valid fixture addresses to exercise routes using
+/// `Path<StellarAddress>`, without duplicating the strkey encoding logic.
+pub(crate) const STRKEY_VERSION_ACCOUNT_ID: u8 = 6 << 3;
+/// Strkey version byte for a contract address (`C…` address).
+const STRKEY_VERSION_CONTRACT: u8 = 2 << 3;
+
+/// Decode an unpadded RFC4648 base32 string into raw bytes.
+///
+/// Returns `None` if any character falls outside [`BASE32_ALPHABET`], or if
+/// the leftover bits after the last full byte are non-zero (i.e. the input
+/// encodes a fractional, invalid byte at the end).
+fn base32_decode(input: &str) -> Option<Vec<u8>> {
+    let mut bits: u32 = 0;
+    let mut bit_count: u32 = 0;
+    let mut out = Vec::with_capacity(input.len() * 5 / 8);
+    for c in input.bytes() {
+        let value = BASE32_ALPHABET.iter().position(|&b| b == c)? as u32;
+        bits = (bits << 5) | value;
+        bit_count += 5;
+        if bit_count >= 8 {
+            bit_count -= 8;
+            out.push(((bits >> bit_count) & 0xFF) as u8);
+        }
+    }
+    if bit_count > 0 && (bits & ((1 << bit_count) - 1)) != 0 {
+        return None;
+    }
+    Some(out)
+}
+
+/// Encode raw bytes as an unpadded RFC4648 base32 string (used only by tests
+/// to build known-valid strkey fixtures — production code only decodes).
+#[cfg(test)]
+pub(crate) fn base32_encode(data: &[u8]) -> String {
+    let mut bits: u32 = 0;
+    let mut bit_count: u32 = 0;
+    let mut out = String::with_capacity((data.len() * 8 + 4) / 5);
+    for &byte in data {
+        bits = (bits << 8) | byte as u32;
+        bit_count += 8;
+        while bit_count >= 5 {
+            bit_count -= 5;
+            out.push(BASE32_ALPHABET[((bits >> bit_count) & 0x1F) as usize] as char);
+        }
+    }
+    if bit_count > 0 {
+        out.push(BASE32_ALPHABET[((bits << (5 - bit_count)) & 0x1F) as usize] as char);
+    }
+    out
+}
+
+/// CRC16/XMODEM checksum (poly `0x1021`, init `0x0000`), as used for the
+/// trailing 2-byte checksum in Stellar's strkey format.
+pub(crate) fn crc16_xmodem(data: &[u8]) -> u16 {
+    let mut crc: u16 = 0;
+    for &byte in data {
+        crc ^= (byte as u16) << 8;
+        for _ in 0..8 {
+            crc = if crc & 0x8000 != 0 {
+                (crc << 1) ^ 0x1021
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+/// Verify the strkey format of a decoded Stellar address: version byte,
+/// payload length, and trailing CRC16/XMODEM checksum. Catches typos and
+/// bit-flips (e.g. a single swapped character) that a prefix+length+
+/// alphanumeric check alone would let through.
+fn verify_strkey(s: &str) -> bool {
+    let Some(decoded) = base32_decode(s) else {
+        return false;
+    };
+    // version byte (1) + ED25519 public key or contract ID (32) + checksum (2).
+    if decoded.len() != 35 {
+        return false;
+    }
+    let version = decoded[0];
+    if version != STRKEY_VERSION_ACCOUNT_ID && version != STRKEY_VERSION_CONTRACT {
+        return false;
+    }
+    let payload = &decoded[..33];
+    let expected = crc16_xmodem(payload);
+    let actual = u16::from_le_bytes([decoded[33], decoded[34]]);
+    expected == actual
+}
+
+/// A Stellar account address (`G…`) or contract address (`C…`): 56 chars,
+/// valid strkey base32 encoding, correct version byte, and correct trailing
+/// CRC16/XMODEM checksum.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StellarAddress(String);
 
 impl StellarAddress {
     pub fn new(s: impl Into<String>) -> Result<Self, ValidationError> {
         let s = s.into();
-        let valid = (s.starts_with('G') || s.starts_with('C'))
+        let shape_valid = (s.starts_with('G') || s.starts_with('C'))
             && s.len() == 56
             && s.chars().all(|c| c.is_ascii_alphanumeric());
-        if valid {
+        if shape_valid && verify_strkey(&s) {
             Ok(Self(s))
         } else {
             Err(ValidationError(
-                "must be a valid Stellar address (G/C prefix, 56 chars)".to_string(),
+                "must be a valid Stellar address (G/C prefix, 56 chars, valid strkey checksum)"
+                    .to_string(),
             ))
         }
     }
@@ -243,6 +342,17 @@ mod tests {
         assert!(result.is_err());
     }
 
+    /// Build a syntactically- and checksum-valid strkey address for the given
+    /// version byte, so tests don't rely on a hand-typed address that would
+    /// only pass the old, weaker prefix+length check.
+    fn valid_strkey(version: u8, payload_byte: u8) -> String {
+        let mut bytes = vec![version];
+        bytes.extend(std::iter::repeat(payload_byte).take(32));
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        base32_encode(&bytes)
+    }
+
     #[test]
     fn stellar_address_rejects_invalid() {
         assert!(StellarAddress::new("").is_err());
@@ -251,15 +361,44 @@ mod tests {
     }
 
     #[test]
+    fn stellar_address_rejects_wrong_length() {
+        let mut addr = valid_strkey(STRKEY_VERSION_ACCOUNT_ID, 0xAB);
+        addr.push('A'); // now 57 chars
+        assert!(StellarAddress::new(addr).is_err());
+
+        let short: String = valid_strkey(STRKEY_VERSION_ACCOUNT_ID, 0xAB)
+            .chars()
+            .take(55)
+            .collect();
+        assert!(StellarAddress::new(short).is_err());
+    }
+
+    #[test]
+    fn stellar_address_rejects_bad_checksum() {
+        let mut addr = valid_strkey(STRKEY_VERSION_ACCOUNT_ID, 0xAB);
+        // Flip the last character: same length and prefix, invalid checksum.
+        let last = addr.pop().unwrap();
+        let flipped = if last == 'A' { 'B' } else { 'A' };
+        addr.push(flipped);
+        assert!(
+            StellarAddress::new(addr).is_err(),
+            "a single flipped trailing character must fail the checksum check"
+        );
+    }
+
+    #[test]
     fn stellar_address_accepts_valid_g_address() {
-        // 56-char G-prefixed base32 address
-        let addr = format!("G{}", "A".repeat(55));
+        let addr = valid_strkey(STRKEY_VERSION_ACCOUNT_ID, 0x01);
+        assert!(addr.starts_with('G'));
+        assert_eq!(addr.len(), 56);
         assert!(StellarAddress::new(addr).is_ok());
     }
 
     #[test]
     fn stellar_address_accepts_valid_c_address() {
-        let addr = format!("C{}", "A".repeat(55));
+        let addr = valid_strkey(STRKEY_VERSION_CONTRACT, 0x02);
+        assert!(addr.starts_with('C'));
+        assert_eq!(addr.len(), 56);
         assert!(StellarAddress::new(addr).is_ok());
     }
 

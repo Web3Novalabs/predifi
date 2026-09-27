@@ -59,8 +59,74 @@ jobs:
       - name: Format Check (Lint)
         run: pnpm run lint -- --max-warnings=0
 
-      - name: Run Unit & Component Tests
-        run: pnpm test
+      # Coverage replaces the plain test run rather than sitting alongside it
+      # (Issue #1812) — running the suite twice doubles the slowest step in this
+      # job for no extra signal. `--coverage` still fails the job on a failing
+      # test, so nothing is lost.
+      - name: Run Unit & Component Tests with coverage
+        run: pnpm run test:coverage
+
+      # Published to the job summary so the figure is visible from the Actions
+      # tab without downloading an artifact or scrolling the log. A coverage
+      # number nobody sees does not change behaviour, which is the whole point
+      # of the issue.
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          {
+            echo "## Frontend test coverage"
+            echo
+            if [ -f coverage/coverage-summary.json ]; then
+              node -e '
+                const total = require("./coverage/coverage-summary.json").total;
+                const row = (name, m) => `| ${name} | ${m.pct}% | ${m.covered}/${m.total} |`;
+                console.log("| Metric | Covered | Count |");
+                console.log("|---|---|---|");
+                console.log(row("Statements", total.statements));
+                console.log(row("Branches",   total.branches));
+                console.log(row("Functions",  total.functions));
+                console.log(row("Lines",      total.lines));
+              '
+            else
+              echo "_No coverage summary produced — the test step likely failed before coverage was written._"
+            fi
+            echo
+            echo "<details><summary>Per-directory breakdown</summary>"
+            echo
+            echo '```'
+            # The per-file table, folded to directories so a gap is locatable
+            # without reading 51 rows.
+            if [ -f coverage/lcov.info ]; then
+              awk -F: '
+                /^SF:/  { path = $2; sub(/\/[^\/]*$/, "", path); dir = path }
+                /^LF:/  { found[dir] += $2 }
+                /^LH:/  { hit[dir]   += $2 }
+                END {
+                  printf "%-45s %8s %10s\n", "DIRECTORY", "LINES", "COVERED"
+                  for (d in found) {
+                    pct = found[d] > 0 ? (hit[d] * 100 / found[d]) : 0
+                    printf "%-45s %8d %9.1f%%\n", d, found[d], pct
+                  }
+                }
+              ' coverage/lcov.info | sort
+            else
+              echo "no lcov.info"
+            fi
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Kept even on a failing run: when a test breaks, the HTML report is how
+      # you find out what else that file was the only cover for.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Build Check
         run: pnpm run build

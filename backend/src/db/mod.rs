@@ -64,6 +64,7 @@ pub use predictions::{
     UserWinnings,
     // Prediction queries
     count_market_predictions,
+    explain_leaderboard_plan,
     get_leaderboard_extended,
     get_market_predictions,
     get_protocol_stats,

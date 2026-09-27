@@ -145,31 +145,13 @@ Risk: NONE ✅
 
 ---
 
-## Documents
+## Documents Index
 
-### 1. **ARITHMETIC_AUDIT_SUMMARY.md** (This is the key one)
-**Best for**: Quick overview, all findings, fixes applied
-
-**Contains**:
-- Executive summary
-- Issues found (1 minor)
-- Fixes applied
-- Recommendations
-
-**Read time**: 10-15 minutes
-
----
-
-### 2. **ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md**
-**Best for**: Line-by-line code analysis, deep dive
-
-**Contains**:
-- Step-by-step analysis of each operation
-- Overflow scenario testing
-- SafeMath implementation review
-- Attack scenarios with proofs
-
-**Read time**: 30-45 minutes
+| Document | Description | Read Time |
+|----------|-------------|-----------|
+| **[ARITHMETIC_AUDIT_SUMMARY.md](./ARITHMETIC_AUDIT_SUMMARY.md)** | Executive summary, findings, fixes applied, recommendations | 10–15 min |
+| **[ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md](./ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md)** | Line-by-line code analysis, overflow scenario testing, attack proofs | 30–45 min |
+| **[ARITHMETIC_FIX_DETAILS.md](./ARITHMETIC_FIX_DETAILS.md)** | Deep dive into referred volume tracking fix & overflow analysis | 10–15 min |
 
 ---
 

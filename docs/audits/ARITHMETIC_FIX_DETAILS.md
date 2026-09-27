@@ -295,7 +295,7 @@ No errors
 
 ## Deployment Strategy
 
-1. **Include in audit submission**: Fix documented in ARITHMETIC_AUDIT_SUMMARY.md
+1. **Include in audit submission**: Fix documented in [ARITHMETIC_AUDIT_SUMMARY.md](./ARITHMETIC_AUDIT_SUMMARY.md)
 2. **Test thoroughly**: Add overflow test case to test suite
 3. **Document change**: Explain consistency improvement in commit
 4. **Deploy with confidence**: Low risk, high principle benefit
@@ -326,6 +326,14 @@ For code reviewers:
 | Stake accum | v1.0 | checked_add | ✅ Original |
 | Vol tracking | v1.0 | unchecked | ⚠️ Identified in audit |
 | Vol tracking | v2.0 | checked_add | ✅ Fixed in audit |
+
+---
+
+## Related Audit Documents
+
+- **[ARITHMETIC_AUDIT_START_HERE.md](./ARITHMETIC_AUDIT_START_HERE.md)** - Entry point and quick overview
+- **[ARITHMETIC_AUDIT_SUMMARY.md](./ARITHMETIC_AUDIT_SUMMARY.md)** - Executive audit summary and findings
+- **[ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md](./ARITHMETIC_OPERATIONS_DETAILED_AUDIT.md)** - Detailed line-by-line audit report
 
 ---
 

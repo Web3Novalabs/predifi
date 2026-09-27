@@ -173,9 +173,13 @@
 
 ```
 predifi/
-├── CLS_IMPROVEMENTS.md                    ✅ Technical guide
-├── IMPLEMENTATION_SUMMARY_CLS.md          ✅ PR description
-├── CHECKLIST_CLS_IMPLEMENTATION.md        ✅ Verification checklist
+├── docs/
+│   └── frontend/
+│       ├── CHECKLIST_CLS_IMPLEMENTATION.md        ✅ Verification checklist
+│       ├── CLS_IMPROVEMENTS.md                    ✅ Technical guide
+│       ├── FINAL_SUMMARY_CLS_IMPLEMENTATION.md    ✅ Final summary
+│       ├── IMPLEMENTATION_SUMMARY_CLS.md          ✅ PR description
+│       └── README_CLS_IMPLEMENTATION.md           ✅ Index reference
 │
 └── frontend/
     ├── CLS_GETTING_STARTED.md             ✅ New contributor guide
