@@ -20,7 +20,7 @@ name = "predifi-openapi"
 path = "src/bin/openapi_export.rs"
 
 [dependencies]
-axum = { version = "0.7.9", features = ["macros", "ws"] }
+axum = { version = "0.8.9", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tower = "0.4"
 http = "1"
