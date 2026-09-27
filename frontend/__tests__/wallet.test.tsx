@@ -103,5 +103,39 @@ describe("Wallet Components and Connection Flow", () => {
       fireEvent.click(dismissBtn);
       expect(mockOnDismiss).toHaveBeenCalledTimes(1);
     });
+
+    it("renders neutral notice (no alert role) when the user cancelled", () => {
+      const rejectionError: WalletError = {
+        code: "USER_REJECTED",
+        title: "Connection cancelled",
+        message: "You rejected the wallet request in your extension.",
+        recoveryAction: "Open your wallet and approve the connection when prompted.",
+      };
+
+      render(
+        <WalletErrorBanner
+          error={rejectionError}
+          onDismiss={mockOnDismiss}
+        />
+      );
+
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByTestId("wallet-rejection-notice")).toBeInTheDocument();
+      expect(screen.getByText(/Request cancelled/i)).toBeInTheDocument();
+    });
+
+    it("renders error alert role for genuine wallet failures", () => {
+      const failureError: WalletError = {
+        code: "TRANSACTION_TIMEOUT",
+        title: "Request timed out",
+        message: "The wallet did not respond in time.",
+        recoveryAction: "Unlock your wallet and retry.",
+      };
+
+      render(<WalletErrorBanner error={failureError} />);
+
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+      expect(screen.getByText("Request timed out")).toBeInTheDocument();
+    });
   });
 });
