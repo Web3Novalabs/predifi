@@ -19,6 +19,7 @@ on:
       - ".github/workflows/backend.yml"
   workflow_dispatch:
 
+# Cancel superseded runs on the same branch; different refs run independently.
 concurrency:
   group: backend-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
