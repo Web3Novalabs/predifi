@@ -2,6 +2,27 @@
 
 A collection of reusable, accessible React components for the Predifi application.
 
+## Accessibility Standards
+
+### Minimum Target Size (WCAG 2.5.5)
+
+All interactive components meet the **44×44 pixel minimum target size** required by WCAG 2.5.5 (Level AAA). This ensures comfortable interaction for users with motor impairments, touch screen users, and anyone using imprecise input methods.
+
+**Implementation approach:**
+- Interactive elements use **explicit dimensions** (`min-w-[44px] min-h-[44px]`, `h-11 w-11`) rather than relying solely on padding
+- Icon-only buttons (CopyButton, ShareButton network icons, theme toggle) are sized to meet or exceed 44×44px
+- The Button component's `icon` size variant renders at 44×44px (h-11 w-11)
+- Inline interactive controls (password visibility toggle, search clear button) have minimum dimensions applied
+
+### Focus Indicators
+
+Every interactive component provides a **visible focus indicator** for keyboard navigation:
+- Consistent `focus-visible:ring-2` treatment across all components
+- Focus rings use the theme's ring color with appropriate offset
+- No component suppresses the default outline without replacing it with an equivalent visual indicator
+
+Components with focus indicators include: Button, Input, StakeInput, SearchBar, Checkbox, CopyButton, ShareButton, ThemeToggle, SupportedTokensPicker, and all form controls.
+
 ## Components
 
 | Component | Purpose | Main Props |
