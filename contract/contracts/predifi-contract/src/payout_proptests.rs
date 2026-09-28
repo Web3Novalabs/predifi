@@ -1,6 +1,8 @@
 #[cfg(test)]
 extern crate std;
 #[cfg(test)]
+use crate::payouts::{calculate_claim_payout, calculate_payout_pool, PayoutInput};
+#[cfg(test)]
 use crate::safe_math::{RoundingMode, SafeMath};
 #[cfg(test)]
 use proptest::prelude::*;
@@ -208,6 +210,62 @@ proptest! {
         ).unwrap();
 
         prop_assert_eq!(first_claim + second_claim, payout_pool);
+    }
+
+    /// Issue #1753 — the sum of every winner's claim must never exceed what the
+    /// pool actually holds, for an arbitrary number of winners splitting the
+    /// winning side in an arbitrary way.
+    ///
+    /// This exercises `payouts::calculate_claim_payout` — the exact function
+    /// `claim_winnings` calls in `lib.rs` — rather than re-deriving the math
+    /// from `SafeMath` primitives directly, so a regression in how the
+    /// production code wires fee deduction and per-winner rounding together
+    /// (not just in the primitives themselves) would be caught here.
+    ///
+    /// Each winner's share is computed independently via truncating integer
+    /// division, so floor(share_i) <= share_i for every winner and the sum of
+    /// floors can never exceed the sum of the exact shares (which equals
+    /// `payout_pool` by construction, since the generated stakes always sum to
+    /// `winning_stake`). The bug this guards against is a change that makes an
+    /// individual winner's calculation round up, or that double-counts the fee
+    /// deduction — either of which would only surface with more than one or
+    /// two winners and an uneven stake split, which is why this is generated
+    /// rather than hard-coded.
+    #[test]
+    fn prop_sum_of_all_claims_never_exceeds_pool_via_production_payout_fn(
+        winner_stakes in prop::collection::vec(1i128..=1_000_000_000i128, 1..25),
+        losing_stake in 0i128..=1_000_000_000i128,
+        fee_bps in 0..=10_000u32,
+    ) {
+        let winning_stake: i128 = winner_stakes.iter().sum();
+        let total_stake = winning_stake + losing_stake;
+
+        let payout_pool = calculate_payout_pool(total_stake, fee_bps as i128).unwrap();
+
+        let mut total_claimed = 0i128;
+        for &user_stake in winner_stakes.iter() {
+            let breakdown = calculate_claim_payout(&PayoutInput {
+                pool_total_stake: total_stake,
+                fee_bps: fee_bps as i128,
+                user_stake,
+                winning_stake,
+            }).unwrap();
+            total_claimed += breakdown.winnings;
+        }
+
+        prop_assert!(
+            total_claimed <= payout_pool,
+            "sum of claims ({}) exceeded payout pool ({}) across {} winners",
+            total_claimed,
+            payout_pool,
+            winner_stakes.len()
+        );
+        prop_assert!(
+            total_claimed <= total_stake,
+            "sum of claims ({}) exceeded total pool stake ({})",
+            total_claimed,
+            total_stake
+        );
     }
 }
 
