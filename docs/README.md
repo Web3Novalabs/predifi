@@ -112,7 +112,8 @@ These documents are point-in-time reports and are maintained for historical refe
 
 1. **Smart Contract Deployment**: [Deployment Guide](./SMART_CONTRACT_DEPLOYMENT_GUIDE.md)
 2. **System Architecture**: [Architecture Overview](./ARCHITECTURE_OVERVIEW.md)
-3. **Error Handling**: [Error Reference](./ERROR_HANDLING_REFERENCE.md)
+3. **Treasury Withdrawals**: [Treasury Authority & Limits](./treasury.md)
+4. **Error Handling**: [Error Reference](./ERROR_HANDLING_REFERENCE.md)
 
 ### For Integrators
 

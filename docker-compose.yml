@@ -241,16 +241,13 @@ services:
       - promtail-positions:/tmp
     depends_on:
       loki:
-        condition: service_started
-    # Production counterpart: Log collection agent / DaemonSet container (0.25 vCPU, 256 MiB RAM).
-    deploy:
-      resources:
-        limits:
-          cpus: "0.25"
-          memory: 256M
-        reservations:
-          cpus: "0.05"
-          memory: 64M
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3100/ready >/dev/null 2>&1 || curl -fsS http://localhost:3100/ready >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
   grafana:
     image: grafana/grafana:11.4.0
@@ -270,16 +267,13 @@ services:
       - grafana-data:/var/lib/grafana
     depends_on:
       loki:
-        condition: service_started
-    # Production counterpart: Amazon Managed Grafana or EC2 monitoring instance (t3.small: 2 vCPU, 2.0 GiB RAM).
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 512M
-        reservations:
-          cpus: "0.1"
-          memory: 128M
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:3000/api/health >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
 
 volumes:
   postgres-data:

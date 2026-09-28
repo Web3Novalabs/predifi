@@ -38,10 +38,10 @@ export const metadata: Metadata = {
     "crypto payment",
   ],
   openGraph: {
-    title: "Predifi- Decentralized prediction protocol built on the Stellar",
+    title: "Predifi - Decentralized prediction protocol built on the Stellar",
     description: SITE_DESCRIPTION,
     url: "https://predifi.app",
-    siteName: "nevo",
+    siteName: "PrediFi",
     images: [
       {
         url: "https://predifi.app/logo.jpeg",
@@ -55,7 +55,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Predifi - Decentralized prediction protocol built on the Stellarr",
+    title: "Predifi - Decentralized prediction protocol built on the Stellar",
     description: SITE_DESCRIPTION,
     images: ["https://predifi.app/logo.jpeg"],
     creator: "@nevoapp",

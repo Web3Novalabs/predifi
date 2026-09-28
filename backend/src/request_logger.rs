@@ -99,6 +99,21 @@ fn extract_correlation_id(headers: &HeaderMap) -> String {
     Uuid::new_v4().to_string()
 }
 
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+const REDACTED_ADDRESS_SUFFIX: &str = "...";
+
+/// Redact a wallet address for log output, keeping only the first 8 characters
+/// so traces can still be correlated within a single request chain without
+/// exposing enough of the address to identify an account from logs alone.
+pub fn redact_address(address: &str) -> String {
+    if address.is_empty() {
+        return address.to_string();
+    }
+    let prefix: String = address.chars().take(8).collect();
+    format!("{prefix}{REDACTED_ADDRESS_SUFFIX}")
+}
+
 /// Extract the authenticated user's wallet address from the request headers.
 ///
 /// The JWT middleware is expected to have already validated the token and
@@ -198,7 +213,9 @@ where
         let method = req.method().to_string();
         let path = req.uri().path().to_string();
         let correlation_id = extract_correlation_id(req.headers());
-        let user_address = extract_user_address(req.headers());
+        let user_address = extract_user_address(req.headers())
+            .map(|a| redact_address(&a))
+            .unwrap_or_else(|| "anonymous".to_string());
         let pool_id = extract_pool_id(&path);
 
         let start = Instant::now();
@@ -212,7 +229,7 @@ where
             http.method = %method,
             http.route = %path,
             correlation_id = %correlation_id,
-            user_address = user_address.as_deref().unwrap_or("anonymous"),
+            user_address = %user_address,
             pool_id = pool_id.as_deref().unwrap_or(""),
         );
 

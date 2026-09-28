@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Wallet, XCircle, Clock, Coins } from "lucide-react";
+import { AlertTriangle, Wallet, XCircle, Clock, Coins, X } from "lucide-react";
 import { Button } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import type { WalletError, WalletErrorCode } from "@/lib/walletErrors";
@@ -23,6 +23,9 @@ interface WalletErrorBannerProps {
 
 /**
  * Clear user-facing wallet error with recovery CTA.
+ *
+ * USER_REJECTED is treated as a neutral dismissal — the user intentionally
+ * cancelled, so no error styling or `role="alert"` is used (#1771).
  */
 export function WalletErrorBanner({
   error,
@@ -30,6 +33,33 @@ export function WalletErrorBanner({
   onDismiss,
   className,
 }: WalletErrorBannerProps) {
+  // A deliberate cancellation is not an error — render neutral copy only.
+  if (error.code === "USER_REJECTED") {
+    return (
+      <div
+        className={cn(
+          "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-left",
+          className
+        )}
+        data-testid="wallet-rejection-notice"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-zinc-400">Request cancelled. Approve in your wallet to continue.</p>
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label="Dismiss"
+              className="shrink-0 rounded p-1 text-zinc-500 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+            >
+              <X className="h-4 w-4" aria-hidden />
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const Icon = ICONS[error.code];
 
   return (
