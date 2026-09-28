@@ -445,12 +445,11 @@ impl Config {
         self.app_env.eq_ignore_ascii_case(PRODUCTION_ENV_VALUE)
     }
 
-    /// Build a minimal [`Config`] suitable for unit tests.
+    /// Build a minimal [`Config`] suitable for unit and integration tests.
     ///
     /// Uses `127.0.0.1:0` (OS-assigned port), an in-memory-style Postgres URL,
     /// and the compiled-in fee defaults so tests do not depend on environment
     /// variables.
-    #[cfg(test)]
     pub fn default_for_test() -> Self {
         Self {
             host: String::from("127.0.0.1"),
@@ -1703,7 +1702,9 @@ mod tests {
             database_url: String::from("postgres://user:pass@db-host:5432/predifi"),
             ..Config::default_for_test()
         };
-        config.validate().expect("URL with userinfo should be valid");
+        config
+            .validate()
+            .expect("URL with userinfo should be valid");
     }
 
     // -- db_connect_timeout_secs --
@@ -1909,10 +1910,7 @@ mod tests {
     #[test]
     fn config_rejects_default_secret_in_production_via_env() {
         let vars = HashMap::from([
-            (
-                String::from("PREDIFI_APP_ENV"),
-                String::from("production"),
-            ),
+            (String::from("PREDIFI_APP_ENV"), String::from("production")),
             // Default secret key is not set, so from_map uses DEFAULT_SECRET_KEY.
         ]);
         assert!(matches!(
@@ -1928,10 +1926,7 @@ mod tests {
 
     #[test]
     fn config_reads_app_env_from_env() {
-        let vars = HashMap::from([(
-            String::from("PREDIFI_APP_ENV"),
-            String::from("staging"),
-        )]);
+        let vars = HashMap::from([(String::from("PREDIFI_APP_ENV"), String::from("staging"))]);
         let config = Config::from_map(&vars).unwrap();
         assert_eq!(config.app_env, "staging");
     }

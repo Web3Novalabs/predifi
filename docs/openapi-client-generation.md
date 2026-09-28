@@ -29,14 +29,22 @@ cargo test --manifest-path backend/Cargo.toml openapi
 A handler returning 500/503 without a database is fine — the tests assert the
 route *exists*, not that it succeeds.
 
-## 2. Exporting the spec
+## 2. Exporting and checking the spec
 
 ```bash
-cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --out openapi.json
+cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --out backend/openapi.json
 ```
 
 No server, database, or Redis required — the spec is compiled in. Omit `--out`
 to print to stdout.
+
+To verify that the committed `openapi.json` is up to date:
+
+```bash
+cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --check backend/openapi.json
+```
+
+This verification is run automatically in CI on pull requests and pushes affecting `backend/**`.
 
 ## 3. Generating TypeScript types
 
@@ -71,4 +79,5 @@ When you add or change an endpoint:
 1. Add the `#[utoipa::path(...)]` stub in `backend/src/openapi.rs`, and register
    any new schema in `components(schemas(...))`.
 2. Run the spec tests — they fail if the stub and the router disagree.
-3. Re-run `pnpm generate:api` and commit the regenerated types.
+3. Re-run `cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --out backend/openapi.json`.
+4. Re-run `pnpm generate:api` and commit the regenerated spec and types.

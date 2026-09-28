@@ -17,6 +17,7 @@ on:
       - ".github/workflows/contract-ci.yml"
   workflow_dispatch:
 
+# Cancel superseded runs on the same branch; different refs run independently.
 concurrency:
   group: contract-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -102,6 +103,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/cache@v4
         with:
+          enableCrossOsArchive: true
           path: |
             ~/.cargo/registry
             ~/.cargo/git

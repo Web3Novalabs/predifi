@@ -22,6 +22,7 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Toast, type ToastProps } from "./toast";
+import { useAnnounce } from "./live-region";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -133,11 +134,47 @@ function ToastList({
   removeToast: (id: string) => void;
   position: ToastPosition;
 }) {
+  const announce = useAnnounce();
+  const announcedToastIds = React.useRef(new Set<string>());
+
   // Use "assertive" if any visible toast is an error or warning
   const urgency =
     toasts.some((t) => t.variant === "error" || t.variant === "warning")
       ? "assertive"
       : "polite";
+
+  // Announce new toasts to the live region
+  React.useEffect(() => {
+    toasts.forEach((toast) => {
+      if (!announcedToastIds.current.has(toast.id)) {
+        announcedToastIds.current.add(toast.id);
+
+        // Determine politeness level based on variant
+        const politeness =
+          toast.variant === "error" || toast.variant === "warning"
+            ? "assertive"
+            : "polite";
+
+        // Build the announcement message from title and description
+        const parts = [];
+        if (toast.title) parts.push(toast.title);
+        if (toast.description) parts.push(toast.description);
+        const message = parts.join(". ");
+
+        if (message) {
+          announce(message, politeness);
+        }
+      }
+    });
+  }, [toasts, announce]);
+
+  // Cleanup: remove IDs of toasts that are no longer in the list
+  React.useEffect(() => {
+    const currentIds = new Set(toasts.map((t) => t.id));
+    announcedToastIds.current = new Set(
+      [...announcedToastIds.current].filter((id) => currentIds.has(id))
+    );
+  }, [toasts]);
 
   // Render newest on top for top-* positions, newest at bottom for bottom-*
   const ordered = position.startsWith("bottom") ? toasts : [...toasts].reverse();

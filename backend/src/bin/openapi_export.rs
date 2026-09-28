@@ -6,6 +6,7 @@
 //! ```text
 //! cargo run --bin predifi-openapi                       # stdout
 //! cargo run --bin predifi-openapi -- --out openapi.json # write to a file
+//! cargo run --bin predifi-openapi -- --check openapi.json # verify spec is up to date
 //! ```
 
 use std::process::ExitCode;
@@ -15,8 +16,9 @@ use utoipa::OpenApi;
 
 fn main() -> ExitCode {
     let mut out_path: Option<String> = None;
+    let mut check_path: Option<String> = None;
 
-    let mut args = std::env::args().skip(1);
+    let mut args = std::env::args().skip(1).peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "-h" | "--help" => {
@@ -30,6 +32,17 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             },
+            "-c" | "--check" => {
+                if let Some(next_arg) = args.peek() {
+                    if !next_arg.starts_with('-') {
+                        check_path = Some(args.next().unwrap());
+                    } else {
+                        check_path = Some("openapi.json".to_string());
+                    }
+                } else {
+                    check_path = Some("openapi.json".to_string());
+                }
+            }
             other => {
                 eprintln!("error: unknown argument {other:?} (see --help)");
                 return ExitCode::from(2);
@@ -44,6 +57,30 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    if let Some(path) = check_path {
+        let expected = format!("{spec}\n");
+        let existing = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!("error: could not read OpenAPI spec file at '{path}': {e}");
+                eprintln!("Run `cargo run --bin predifi-openapi -- --out {path}` to generate it.");
+                return ExitCode::FAILURE;
+            }
+        };
+
+        let normalized_existing = existing.replace("\r\n", "\n");
+        let normalized_expected = expected.replace("\r\n", "\n");
+
+        if normalized_existing != normalized_expected {
+            eprintln!("error: OpenAPI spec file at '{path}' is out of date.");
+            eprintln!("Run `cargo run --bin predifi-openapi -- --out {path}` to regenerate it.");
+            return ExitCode::FAILURE;
+        }
+
+        eprintln!("OpenAPI spec at '{path}' is up to date.");
+        return ExitCode::SUCCESS;
+    }
 
     match out_path {
         Some(path) => {
@@ -60,12 +97,13 @@ fn main() -> ExitCode {
 }
 
 fn print_help() {
-    println!("predifi-openapi — print the PrediFi OpenAPI 3.x specification as JSON");
+    println!("predifi-openapi — print or check the PrediFi OpenAPI 3.x specification as JSON");
     println!();
     println!("USAGE:");
     println!("    cargo run --bin predifi-openapi -- [OPTIONS]");
     println!();
     println!("OPTIONS:");
-    println!("    -o, --out PATH    Write the spec to PATH instead of stdout");
-    println!("    -h, --help        Print this help message and exit");
+    println!("    -o, --out PATH          Write the spec to PATH instead of stdout");
+    println!("    -c, --check [PATH]      Verify that PATH (default: openapi.json) matches the current spec");
+    println!("    -h, --help              Print this help message and exit");
 }

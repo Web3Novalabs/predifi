@@ -19,6 +19,7 @@ on:
       - ".github/workflows/backend.yml"
   workflow_dispatch:
 
+# Cancel superseded runs on the same branch; different refs run independently.
 concurrency:
   group: backend-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -174,11 +175,13 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             backend/target
+          enableCrossOsArchive: true
           key: ${{ runner.os }}-cargo-${{ hashFiles('backend/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
 
       - name: Check formatting
+        # blocking step: formatting drift fails the job
         run: cargo fmt --all -- --check
 
       - name: Security audit
@@ -186,10 +189,16 @@ jobs:
           cargo install cargo-audit --locked --quiet
           cargo audit
 
+      - name: Verify OpenAPI spec is up to date
+        run: |
+          cargo run --bin predifi-openapi -- --check openapi.json
+          git diff --exit-code openapi.json
+
       - name: Cargo check
         run: cargo check --workspace
 
       - name: Lint with clippy
+        # blocking step: clippy warnings are errors
         run: cargo clippy --all-targets -- -D warnings
 
       - name: Build backend

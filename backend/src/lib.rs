@@ -51,7 +51,6 @@ use tokio::time::sleep;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
 
 /// Build the CORS middleware layer from the validated origin list in `config`.
 pub fn build_cors(config: &Config) -> CorsLayer {
@@ -329,16 +328,12 @@ pub async fn run_server(config: Config) {
     let log_level = config.log_level.clone();
 
     if let Some(tracer) = otel_tracer {
-        // Full OTel stack: EnvFilter + OTel layer + fmt layer.
+        // Full OTel stack: reloadable EnvFilter + OTel layer + fmt layer.
         telemetry::init_tracing_subscriber(tracer, &log_level, true);
     } else {
-        // No OTel — plain fmt subscriber.
-        let filter = EnvFilter::new(&log_level);
-        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(fmt_layer.json())
-            .init();
+        // No OTel — reloadable plain subscriber so the admin endpoint can
+        // still change the log level without a restart.
+        telemetry::init_plain_subscriber(&log_level, true);
     }
 
     info!("starting predifi-backend server");
