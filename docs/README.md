@@ -18,6 +18,7 @@ This directory contains comprehensive documentation for the PrediFi prediction m
 | **[prediction_lifecycle.md](./prediction-lifecycle.md)** | Prediction market lifecycle documentation |
 | **[oracles.md](./oracles.md)** | Oracle integration documentation |
 | **[whitelist_events.md](./whitelist-events.md)** | Token whitelist events documentation |
+| **[treasury.md](./treasury.md)** | Treasury withdrawal authority, limits, and unavailable-authority behaviour |
 | **[frontend/](./frontend/README_CLS_IMPLEMENTATION.md)** | Frontend CLS performance & implementation documentation |
 
 ---
@@ -36,7 +37,8 @@ This directory contains comprehensive documentation for the PrediFi prediction m
 
 1. **Smart Contract Deployment**: [Deployment Guide](./SMART_CONTRACT_DEPLOYMENT_GUIDE.md)
 2. **System Architecture**: [Architecture Overview](./ARCHITECTURE_OVERVIEW.md)
-3. **Error Handling**: [Error Reference](./ERROR_HANDLING_REFERENCE.md)
+3. **Treasury Withdrawals**: [Treasury Authority & Limits](./treasury.md)
+4. **Error Handling**: [Error Reference](./ERROR_HANDLING_REFERENCE.md)
 
 ### For Integrators
 

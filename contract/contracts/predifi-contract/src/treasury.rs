@@ -27,23 +27,53 @@
 //!    Nothing is pushed to the treasury automatically; an admin must call
 //!    `withdraw_treasury` to sweep it.
 //!
-//! ## Who Is Authorised
+//! ## Withdrawal Authority
 //!
-//! Every function in this module requires the caller to hold the **Admin role
-//! (role 0)** in the access control contract, verified via
-//! [`PredifiContract::require_admin_role`], plus `admin.require_auth()`:
-//! - [`PredifiContract::set_treasury`] — repoints the treasury address.
-//! - [`PredifiContract::withdraw_treasury`] — withdraws accrued protocol fees
-//!   (or any unused liquidity) to a recipient; enforces
-//!   [`crate::MIN_WITHDRAWAL_AMOUNT`] and a sufficient contract balance.
-//! - [`PredifiContract::emergency_withdraw`] — an escape hatch for rescuing any
-//!   token balance held by the contract (e.g. after an oracle or protocol
-//!   failure), bypassing the pause check so funds can still be recovered while
-//!   the contract is paused.
+//! Every withdrawal function in this module is gated by the **Admin role (role 0)**
+//! in the companion access-control contract. The caller must both supply a valid
+//! Soroban authentication signature (`require_auth()`) and hold role 0
+//! (`require_admin_role`). The Admin is the sole authority permitted to:
+//! - [`PredifiContract::set_treasury`] — repoint the treasury address.
+//! - [`PredifiContract::withdraw_treasury`] — withdraw accrued protocol fees
+//!   (or any unused liquidity) to a recipient.
+//! - [`PredifiContract::emergency_withdraw`] — rescue any token balance held by
+//!   the contract (e.g. after an oracle or protocol failure), bypassing the pause
+//!   check so funds can still be recovered while the contract is paused.
 //!
-//! All three emit an audit event ([`crate::TreasuryUpdateEvent`],
+//! All three functions emit an audit event ([`crate::TreasuryUpdateEvent`],
 //! [`crate::TreasuryWithdrawnEvent`], [`crate::EmergencyWithdrawEvent`]) and are
 //! reentrancy-guarded around the token transfer.
+//!
+//! ## Withdrawal Limits
+//!
+//! | Limit type        | Value / behaviour                                                        |
+//! |-------------------|--------------------------------------------------------------------------|
+//! | **Per-call minimum** | [`crate::MIN_WITHDRAWAL_AMOUNT`] (= 1 in base token units / stroops).  |
+//! |                     | Withdrawals of zero or negative amount are rejected with `InvalidAmount`. |
+//! | **Per-call maximum** | The contract's current token balance — any request exceeding the       |
+//! |                     | available balance is rejected with `InsufficientBalance`.                |
+//! | **Per-period limit** | **None.** An admin may invoke `withdraw_treasury` any number of times   |
+//! |                     | within a ledger close; there is no cooldown, rate-limit, or cap on the  |
+//! |                     | number of withdrawals per epoch or day.                                  |
+//!
+//! ## Unavailable Authority
+//!
+//! The contract does **not** implement a multi-signature scheme, a timelock,
+//! or a recovery mechanism that bypasses the Admin role. If the Admin private
+//! key is lost or the Admin is otherwise unavailable:
+//!
+//! - Funds that have already been withdrawn to the treasury address remain
+//!   accessible to whoever controls that address.
+//! - Funds still sitting in the contract's token balance **cannot be recovered**
+//!   by anyone — `withdraw_treasury` and `emergency_withdraw` both require the
+//!   Admin role, and there is no fallback path.
+//! - The contract's paused state (set via `pause`) does not help here:
+//!   `emergency_withdraw` bypasses the pause check but still requires the Admin
+//!   role.
+//!
+//! Operators should secure the Admin key (e.g. multi-sig off-chain, hardware
+//! wallet, or a well-rehearsed key-recovery process) because the contract
+//! provides no on-chain mechanism to replace or recover the Admin.
 
 use soroban_sdk::{contractimpl, token, Address, Env};
 
