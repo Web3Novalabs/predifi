@@ -121,45 +121,60 @@ export class ApiError extends Error {
   }
 }
 
-/** Type guard to validate PoolsResponse shape. */
-function isPoolsResponse(obj: unknown): obj is PoolsResponse {
-  if (!obj || typeof obj !== "object") return false;
-  const response = obj as Record<string, unknown>;
-  return (
-    Array.isArray(response.pools) &&
-    response.pools.every((p: unknown) => {
-      if (!p || typeof p !== "object") return false;
-      const pool = p as Record<string, unknown>;
-      return (
-        typeof pool.pool_id === "number" &&
-        typeof pool.name === "string" &&
-        typeof pool.category === "string" &&
-        Array.isArray(pool.tags) &&
-        typeof pool.total_stake === "number" &&
-        typeof pool.end_time === "number" &&
-        typeof pool.created_at === "string" &&
-        typeof pool.state === "string" &&
-        typeof pool.creator === "string" &&
-        typeof pool.token === "string" &&
-        (pool.result === null || typeof pool.result === "string")
-      );
-    }) &&
-    typeof response.total === "number" &&
-    typeof response.limit === "number" &&
-    typeof response.offset === "number" &&
-    typeof response.status === "string" &&
-    typeof response.sort_by === "string"
-  );
+/** Error raised when a request exceeds the timeout. */
+export class TimeoutError extends Error {
+  constructor(message: string = "Request timeout") {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+/** Default timeout for API requests in milliseconds. */
+const DEFAULT_REQUEST_TIMEOUT = 30000; // 30 seconds
+
+/**
+ * Execute a fetch with an optional timeout.
+ *
+ * @param url - The URL to fetch.
+ * @param options - Fetch options and timeout configuration.
+ * @param timeout - Timeout in milliseconds. Defaults to DEFAULT_REQUEST_TIMEOUT.
+ * @throws {TimeoutError} When the request exceeds the timeout.
+ * @throws {ApiError} When the response status is not 2xx.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeout: number = DEFAULT_REQUEST_TIMEOUT,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return res;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new TimeoutError(`Request timeout after ${timeout}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**
  * SWR fetcher for pool data.
  *
  * @param url - A URL produced by {@link poolsUrl}.
+ * @param timeout - Optional timeout in milliseconds. Defaults to DEFAULT_REQUEST_TIMEOUT.
  * @throws {ApiError} When the response status is not 2xx.
+ * @throws {TimeoutError} When the request exceeds the timeout.
  */
-export async function fetchPools(url: string): Promise<PoolsResponse> {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+export async function fetchPools(url: string, timeout?: number): Promise<PoolsResponse> {
+  const res = await fetchWithTimeout(url, { headers: { Accept: "application/json" } }, timeout);
 
   if (!res.ok) {
     throw new ApiError(`Failed to load pools (HTTP ${res.status})`, res.status);
@@ -211,9 +226,14 @@ function isWrappedPoolDetail(
  * Fetch a single pool with live odds.
  *
  * Handles both raw `PoolWithOdds` JSON and wrapped `{ data: ... }` API responses.
+ *
+ * @param url - The pool detail URL.
+ * @param timeout - Optional timeout in milliseconds. Defaults to DEFAULT_REQUEST_TIMEOUT.
+ * @throws {ApiError} When the response status is not 2xx.
+ * @throws {TimeoutError} When the request exceeds the timeout.
  */
-export async function fetchPoolDetail(url: string): Promise<PoolDetail> {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+export async function fetchPoolDetail(url: string, timeout?: number): Promise<PoolDetail> {
+  const res = await fetchWithTimeout(url, { headers: { Accept: "application/json" } }, timeout);
 
   if (!res.ok) {
     throw new ApiError(`Failed to load pool (HTTP ${res.status})`, res.status);
@@ -252,9 +272,12 @@ export async function fetchPoolDetail(url: string): Promise<PoolDetail> {
   };
 }
 
-/** Helper function to fetch a pool detail by ID directly. */
-export async function fetchPoolById(id: string | number): Promise<PoolDetail> {
-  return fetchPoolDetail(poolDetailUrl(id));
+/** Helper function to fetch a pool detail by ID directly.
+ * @param id - The pool ID.
+ * @param timeout - Optional timeout in milliseconds.
+ */
+export async function fetchPoolById(id: string | number, timeout?: number): Promise<PoolDetail> {
+  return fetchPoolDetail(poolDetailUrl(id), timeout);
 }
 
 /** Live event pushed over `/api/v1/ws`. */

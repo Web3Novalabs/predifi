@@ -19,23 +19,31 @@ export const POOL_CATEGORIES = [
 
 export type PoolCategory = (typeof POOL_CATEGORIES)[number];
 
-/** Minimum stake denominations per token (display units, not stroops). */
+/** Minimum stake denominations per token (display units, not stroops).
+ * Frontend UX constraint. The contract enforces pool.min_stake > 0 in `constants.rs`.
+ */
 export const MIN_STAKE: Record<string, number> = {
   XLM: 1,
   STRK: 0.0001,
 };
 
-/** Maximum stake denominations per token (display units). */
+/** Maximum stake denominations per token (display units).
+ * Frontend UX constraint. No hard global maximum in contract; per-pool max_stake is 0 (unlimited) or >= min_stake.
+ */
 export const MAX_STAKE: Record<string, number> = {
   XLM: 1_000_000,
   STRK: 1_000_000,
 };
 
-/** Minimum number of outcomes a pool must define. */
+/** Minimum number of outcomes a pool must define.
+ * Source: contract `constants.rs` implicitly (binary markets minimum).
+ */
 export const MIN_OUTCOMES = 2;
 
-/** Maximum number of outcomes a pool may define (mirrors the on-chain MAX_OPTIONS_COUNT). */
-export const MAX_OUTCOMES = 10;
+/** Maximum number of outcomes a pool may define.
+ * Source: contract `constants.rs` MAX_OPTIONS_COUNT = 100.
+ */
+export const MAX_OUTCOMES = 100;
 
 /** Form field values for pool creation. */
 export interface CreatePoolFormValues {
@@ -73,8 +81,11 @@ export type CreatePoolFormErrors = Partial<
   outcomeErrors?: (string | undefined)[];
 };
 
-/** Minimum minutes a pool close time must be in the future. */
-const MIN_CLOSE_MINUTES = 30;
+/** Minimum seconds a pool close time must be in the future.
+ * Source: contract `constants.rs` DEFAULT_MIN_POOL_DURATION = 3600 (1 hour).
+ * Note: The contract allows this to be reconfigured, but the default is 1 hour.
+ */
+const MIN_CLOSE_SECONDS = 3600;
 
 /**
  * Validate pool creation form values.
@@ -117,7 +128,8 @@ export function validateCreatePool(
     (outcome) => {
       const trimmed = outcome.trim();
       if (!trimmed) return "Outcome label is required.";
-      if (trimmed.length > 50) return "Must be 50 characters or fewer.";
+      // Source: contract `constants.rs` MAX_OUTCOME_DESCRIPTION_LEN = 128.
+      if (trimmed.length > 128) return "Must be 128 characters or fewer.";
       return undefined;
     },
   );
@@ -179,14 +191,15 @@ export function validateCreatePool(
   } else {
     const closeMs = new Date(values.closeTime).getTime();
     const nowMs = Date.now();
-    const minFutureMs = nowMs + MIN_CLOSE_MINUTES * 60 * 1000;
+    const minFutureMs = nowMs + MIN_CLOSE_SECONDS * 1000;
 
     if (Number.isNaN(closeMs)) {
       errors.closeTime = "Enter a valid date and time.";
     } else if (closeMs <= nowMs) {
       errors.closeTime = "Close time must be in the future.";
     } else if (closeMs < minFutureMs) {
-      errors.closeTime = `Close time must be at least ${MIN_CLOSE_MINUTES} minutes from now.`;
+      const minutes = Math.ceil(MIN_CLOSE_SECONDS / 60);
+      errors.closeTime = `Close time must be at least ${minutes} minutes from now.`;
     }
   }
 
@@ -200,7 +213,7 @@ export function validateCreatePool(
 
 /** Returns the minimum ISO datetime string usable in <input type="datetime-local">. */
 export function minCloseTimeValue(): string {
-  const d = new Date(Date.now() + MIN_CLOSE_MINUTES * 60 * 1000);
+  const d = new Date(Date.now() + MIN_CLOSE_SECONDS * 1000);
   // datetime-local format: "YYYY-MM-DDTHH:MM"
   return d.toISOString().slice(0, 16);
 }
