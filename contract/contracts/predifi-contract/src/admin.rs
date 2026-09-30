@@ -107,7 +107,7 @@ use soroban_sdk::{contractimpl, Address, BytesN, Env, Symbol, Vec};
 use crate::{
     AddedToWhitelistEvent, ClaimWindowUpdateEvent, Config, ContractInfo, ContractMetadata,
     ContractPausedAlertEvent, ContractUpgradedEvent, DataKey, FeeChangeCancelEvent,
-    FeeChangeProposeEvent, FeeInfo, FeeTier, FeeTiersUpdateEvent, FeeUpdateEvent, InitEvent,
+    FeeChangeProposeEvent, FeeConfig, FeeInfo, FeeTier, FeeTiersUpdateEvent, FeeUpdateEvent, InitEvent,
     MaxPredictionsUpdateEvent, MinPoolDurationUpdateEvent, MinStakeUpdateEvent, PauseEvent,
     PendingFeeChange, Pool, PredictionCooldownUpdateEvent, PredifiContract, PredifiContractArgs,
     PredifiContractClient, PredifiError, RemovedFromWhitelistEvent, ResolutionDelayUpdateEvent,
@@ -827,6 +827,23 @@ impl PredifiContract {
         FeeInfo {
             treasury_fee_bps: Self::get_config(&env).fee_bps,
             referral_fee_bps: Self::read_referral_cut_bps(&env),
+        }
+    }
+
+    /// Returns the full fee configuration as a [`FeeConfig`]: base protocol fee,
+    /// referral cut, treasury, dynamic fee tiers, any pending fee change and the
+    /// fee-change timelock. Read-only; requires the contract to be initialised.
+    pub fn get_fee_config(env: Env) -> FeeConfig {
+        let config = Self::get_config(&env);
+        let pending = Self::get_pending_fee_change(env.clone());
+        FeeConfig {
+            fee_bps: config.fee_bps,
+            referral_cut_bps: Self::read_referral_cut_bps(&env),
+            treasury: config.treasury,
+            tiers: Self::get_fee_tiers(env.clone()),
+            pending_fee_bps: pending.clone().map(|p| p.new_fee_bps),
+            pending_fee_effective_at: pending.map(|p| p.effective_at),
+            fee_change_timelock_seconds: FEE_CHANGE_TIMELOCK_SECONDS,
         }
     }
 

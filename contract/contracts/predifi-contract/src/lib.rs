@@ -195,6 +195,8 @@ pub enum PredifiError {
     PriceFeedNotFound = 101,
     /// Price data expired or invalid.
     PriceDataInvalid = 102,
+    /// Price data is older than the configured `max_price_age`.
+    PriceStale = 113,
     /// Price condition not set for pool.
     PriceConditionNotSet = 103,
     /// Total pool stake cap reached or would be exceeded.
@@ -497,6 +499,32 @@ pub struct FeeInfo {
     /// Referral cut in basis points — the share of the protocol fee paid to referrers.
     /// Range: 0-10,000. Default: 5,000 (50%).
     pub referral_fee_bps: u32,
+}
+
+/// Complete fee configuration returned by [`PredifiContract::get_fee_config`].
+///
+/// Lets a frontend show the fee a user will pay before staking without
+/// hard-coding or inferring on-chain values.
+///
+/// - `fee_bps`: base protocol fee (bps) applied when no tier matches.
+/// - `referral_cut_bps`: share of the protocol fee paid to referrers (bps).
+/// - `treasury`: address receiving protocol fees.
+/// - `tiers`: dynamic fee tiers ordered by ascending `stake_threshold`; the
+///   highest tier whose threshold is <= a pool's total stake overrides `fee_bps`.
+///   Empty when no tiers are configured.
+/// - `pending_fee_bps` / `pending_fee_effective_at`: queued base-fee change and the
+///   timestamp it becomes appliable, or `None` when no proposal is queued.
+/// - `fee_change_timelock_seconds`: delay between proposing and applying a fee change.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfig {
+    pub fee_bps: u32,
+    pub referral_cut_bps: u32,
+    pub treasury: Address,
+    pub tiers: Vec<FeeTier>,
+    pub pending_fee_bps: Option<u32>,
+    pub pending_fee_effective_at: Option<u64>,
+    pub fee_change_timelock_seconds: u64,
 }
 
 /// Snapshot of a pending protocol fee change awaiting timelock expiry.
