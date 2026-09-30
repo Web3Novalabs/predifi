@@ -128,6 +128,13 @@ impl PredifiContract {
         Ok(())
     }
 
+    /// Return the maximum accepted age (seconds) of a price feed read, if the
+    /// oracle is initialised. Reads older than this are rejected with
+    /// `PriceStale` during price-based resolution.
+    pub fn get_max_price_age(env: Env) -> Option<u64> {
+        Self::get_oracle_config(env).map(|(_, max_price_age, _)| max_price_age)
+    }
+
     /// Return the current oracle configuration, if initialised.
     pub fn get_oracle_config(env: Env) -> Option<(Address, u64, u32)> {
         env.storage()
@@ -371,7 +378,7 @@ impl PredifiContract {
             Self::get_oracle_config(env.clone()).ok_or(PredifiError::OracleNotInitialized)?;
 
         if current_time > timestamp.saturating_add(max_price_age) {
-            return Err(PredifiError::PriceDataInvalid);
+            return Err(PredifiError::PriceStale);
         }
 
         Ok(())

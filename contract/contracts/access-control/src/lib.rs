@@ -78,6 +78,8 @@
 //    - `revoke_role`: Remove a specific role from a user
 //    - `transfer_role`: Move a role from one user to another
 //    - `revoke_all_roles`: Remove all roles from a user
+//    - The current (final) admin can never lose the Admin role via `revoke_role` /
+//      `revoke_all_roles` (they return `AdminError`); transfer admin first.
 //    - `propose_new_admin` + `accept_admin_role`: Two-step admin transfer (recommended)
 //    - `transfer_admin`: Legacy one-step admin transfer
 // 4. Any contract can check if a user has a role by calling `has_role(user, role)`.
@@ -338,6 +340,13 @@ impl AccessControl {
     /// # Errors
     /// Returns `Unauthorized` if the caller is not the current admin.
     /// Returns `InsufficientPermissions` if the user does not have the specified role.
+    /// Returns `AdminError` if the revocation would remove the `Admin` role from the
+    /// current admin (the final admin). This is rejected so the contract can never be
+    /// locked out of administration; hand over via `propose_new_admin` /
+    /// `accept_admin_role` (or `transfer_admin`) first.
+    ///
+    /// A non-admin cannot revoke its own role (`Unauthorized`): only the admin
+    /// removes roles. The admin may revoke its own non-`Admin` roles.
     pub fn revoke_role(
         env: &Env,
         admin_caller: Address,
@@ -349,6 +358,10 @@ impl AccessControl {
         let current_admin = Self::get_admin(env);
         if admin_caller != current_admin {
             return Err(PrediFiError::Unauthorized);
+        }
+
+        if matches!(role, Role::Admin) && user == current_admin {
+            return Err(PrediFiError::AdminError);
         }
 
         if !env
@@ -550,6 +563,8 @@ impl AccessControl {
     ///
     /// # Errors
     /// Returns `Unauthorized` if the caller is not the current admin.
+    /// Returns `AdminError` if `user` is the current admin (the final admin), since
+    /// that would strip its `Admin` role; transfer admin first.
     pub fn revoke_all_roles(
         env: &Env,
         admin_caller: Address,
@@ -560,6 +575,10 @@ impl AccessControl {
         let current_admin = Self::get_admin(env);
         if admin_caller != current_admin {
             return Err(PrediFiError::Unauthorized);
+        }
+
+        if user == current_admin {
+            return Err(PrediFiError::AdminError);
         }
 
         for role in &[
