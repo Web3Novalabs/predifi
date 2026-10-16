@@ -12,7 +12,7 @@ soroban-sdk     = "23"
 predifi-errors  = { path = "contracts/predifi-errors" }
 access-control  = { path = "contracts/access-control" }
 # Pyth Network dependencies for price feeds
-pyth-sdk = "0.3.0"
+pyth-sdk = "0.8.0"
 proptest = "1.6.0"
 
 # ── Release profile (optimised for WASM size) ──────────────────────────────────
