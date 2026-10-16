@@ -203,6 +203,13 @@ fn client_ip(headers: &HeaderMap) -> String {
                 .filter(|value| !value.is_empty())
                 .map(str::to_string)
         })
+        .and_then(|ip_str| {
+            if ip_str.parse::<std::net::IpAddr>().is_ok() {
+                Some(ip_str)
+            } else {
+                None
+            }
+        })
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -285,6 +292,15 @@ pub async fn ws_handler(
     }
 
     let ip = client_ip(&headers);
+    if ip == "unknown" {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(serde_json::json!({
+                "error": "unable to determine client IP",
+            })),
+        )
+            .into_response();
+    }
     if !bus.allow_connect(&ip) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
