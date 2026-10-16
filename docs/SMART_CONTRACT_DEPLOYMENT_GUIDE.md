@@ -1,1247 +1,592 @@
 # PrediFi Smart Contract Deployment Guide
 
-This guide provides step-by-step instructions for deploying the PrediFi smart contracts to Stellar testnet and mainnet, including wallet setup, contract compilation, deployment, initialization, token whitelisting, oracle registration, and post-deployment verification.
+**Version**: 1.0.0  
+**Target Environments**: Stellar Testnet & Stellar Mainnet  
+**Network Protocol**: Protocol 23 (Soroban SDK 23.5.3)  
+**Smart Contracts**: `access-control`, `predifi-contract`, `predifi-errors`
+
+---
 
 ## Table of Contents
 
-- [Prerequisites](#prerequisites)
-- [Wallet Setup](#wallet-setup)
-- [Network Configuration](#network-configuration)
-- [Contract Compilation](#contract-compilation)
-- [Deployment to Testnet](#deployment-to-testnet)
-- [Deployment to Mainnet](#deployment-to-mainnet)
-- [Initialization Parameters](#initialization-parameters)
-- [Token Whitelisting](#token-whitelisting)
-- [Oracle Registration](#oracle-registration)
-- [Role Assignment](#role-assignment)
-- [Post-Deployment Verification](#post-deployment-verification)
-- [Troubleshooting](#troubleshooting)
-- [Security Considerations](#security-considerations)
+1. [Overview & Deployment Lifecycle](#overview--deployment-lifecycle)
+2. [Prerequisites & System Toolchain](#prerequisites--system-toolchain)
+3. [Network Configuration](#network-configuration)
+4. [Wallet Setup & Key Management](#wallet-setup--key-management)
+5. [Contract Compilation & WASM Optimization](#contract-compilation--wasm-optimization)
+6. [Step-by-Step Deployment Commands](#step-by-step-deployment-commands)
+   - [Automated Deployment (`corrected_deploy.sh`)](#automated-deployment-corrected_deploysh)
+   - [Manual Step-by-Step CLI Deployment](#manual-step-by-step-cli-deployment)
+7. [Contract Initialization Parameters](#contract-initialization-parameters)
+8. [Token Whitelisting](#token-whitelisting)
+9. [Oracle Registration & Price Feeds](#oracle-registration--price-feeds)
+10. [Role Assignment & Access Control](#role-assignment--access-control)
+11. [Post-Deployment Verification](#post-deployment-verification)
+12. [State Maintenance & Storage TTL Extension](#state-maintenance--storage-ttl-extension)
+13. [Troubleshooting & Recovery](#troubleshooting--recovery)
 
 ---
 
-## Prerequisites
+## Overview & Deployment Lifecycle
 
-Before deploying the PrediFi contracts, ensure you have the following installed:
+The PrediFi platform operates on a two-contract modular architecture:
+1. **Access Control Contract (`access-control`)**: Acts as the system-wide role registry, granting and revoking roles (`Admin = 0`, `Operator = 1`, `Moderator = 2`, `Oracle = 3`).
+2. **PrediFi Contract (`predifi-contract`)**: Governs market pools, staking mechanics, payouts, treasury accruals, referral routing, and oracle resolutions. It queries `access-control` via cross-contract calls.
 
-### Required Tools
-
-1. **Rust Toolchain** (with WASM target)
-   ```bash
-   rustup target add wasm32-unknown-unknown
-   ```
-
-2. **Stellar CLI** (preferred) or Soroban CLI
-   ```bash
-   cargo install stellar-cli
-   # or
-   cargo install soroban-cli
-   ```
-
-3. **Binaryen** (for WASM optimization)
-   ```bash
-   # macOS (Homebrew)
-   brew install binaryen
-   
-   # Ubuntu/Debian
-   sudo apt-get install -y binaryen
-   
-   # From Cargo
-   cargo install wasm-opt
-   ```
-
-4. **Git** (for cloning the repository)
-
-### System Requirements
-
-- **RAM**: 8GB minimum (16GB recommended)
-- **Disk Space**: 5GB free space
-- **Network**: Stable internet connection for RPC calls
+```mermaid
+flowchart TD
+    A[Step 1: Setup Wallet & Fund Account] --> B[Step 2: Build & Optimize WASM Artifacts]
+    B --> C[Step 3: Deploy & Initialize access-control]
+    C --> D[Step 4: Deploy & Initialize predifi-contract]
+    D --> E[Step 5: Whitelist Betting Tokens XLM / USDC]
+    E --> F[Step 6: Register & Whitelist Pyth Oracle]
+    F --> G[Step 7: Assign Operator & Oracle Roles]
+    G --> H[Step 8: Post-Deployment Verification]
+```
 
 ---
 
-## Wallet Setup
+## Prerequisites & System Toolchain
 
-### 1. Generate or Import Wallet
+Ensure the following tools are installed on your deployment workstation:
 
-#### Generate New Wallet
-
+### 1. Rust Toolchain (with WASM Target)
 ```bash
-# Generate a new key pair for testnet
-stellar keys generate --network testnet deployer
+# Verify Rust installation (Rust 1.84+ recommended)
+rustc --version
+cargo --version
 
-# Generate a new key pair for mainnet
-stellar keys generate --network mainnet deployer
+# Install the WebAssembly compilation target
+rustup target add wasm32-unknown-unknown
 ```
 
-#### Import Existing Wallet
-
+### 2. Stellar CLI
+The `stellar-cli` (v22 or later) is the official toolchain for interacting with Soroban smart contracts:
 ```bash
-# Import from secret key
-stellar keys add --network testnet deployer --secret-key S...
+# Install via Cargo
+cargo install --locked stellar-cli --features opt
 
-# Import from private key file
-stellar keys add --network mainnet deployer --file /path/to/private_key.txt
+# Verify installation
+stellar --version
 ```
+*(Alternatively, `soroban-cli` can be used; `stellar-cli` is the modernized successor).*
 
-### 2. Fund Your Wallet
-
-#### Testnet Funding
-
+### 3. Binaryen (`wasm-opt`)
+`wasm-opt` applies code transformations that drastically reduce bytecode size and ensure compatibility with Soroban gas and storage limits:
 ```bash
-# Request testnet XLM from friendbot
-stellar account fund deployer --network testnet
+# macOS (Homebrew)
+brew install binaryen
+
+# Ubuntu / Debian
+sudo apt-get install -y binaryen
+
+# Cargo fallback
+cargo install wasm-opt
 ```
-
-Or use the [Stellar Testnet Faucet](https://friendbot.stellar.org/) with your public key.
-
-#### Mainnet Funding
-
-For mainnet, you'll need to acquire XLM from an exchange and transfer it to your wallet address:
-
-```bash
-# Check your wallet address
-stellar keys address deployer --network mainnet
-
-# Check balance
-stellar account balance deployer --network mainnet
-```
-
-**Recommended minimum balance**: 100 XLM for deployment (covers transaction fees and rent).
-
-### 3. Backup Your Keys
-
-**CRITICAL**: Always backup your secret key securely.
-
-```bash
-# Export secret key (store this securely!)
-stellar keys show deployer --network testnet --secret
-```
-
-Store your secret key in:
-- A password manager (e.g., 1Password, Bitwarden)
-- A hardware wallet (if supported)
-- An encrypted file with strong passphrase
-
-**NEVER**:
-- Commit secret keys to version control
-- Share secret keys via email/chat
-- Store secret keys in plain text
 
 ---
 
 ## Network Configuration
 
-### Configure Stellar Networks
+Configure the official Stellar RPC endpoints and network passphrases in the CLI:
 
-#### Testnet
-
+### Testnet Configuration
 ```bash
 stellar network add testnet \
-  --rpc-url https://soroban-testnet.stellar.org:443 \
+  --rpc-url "https://soroban-testnet.stellar.org:443" \
   --network-passphrase "Test SDF Network ; September 2015"
 ```
 
-#### Mainnet
-
+### Mainnet Configuration
 ```bash
 stellar network add mainnet \
-  --rpc-url https://soroban.stellar.org:443 \
+  --rpc-url "https://soroban.stellar.org:443" \
   --network-passphrase "Public Global Stellar Network ; September 2015"
 ```
 
-### Verify Network Configuration
-
+Verify your configured networks:
 ```bash
-# List configured networks
 stellar network list
-
-# Set active network
-stellar network use testnet
-# or
-stellar network use mainnet
 ```
 
 ---
 
-## Contract Compilation
+## Wallet Setup & Key Management
 
-### 1. Clone the Repository
+### 1. Generate Deployment Keypair
 
 ```bash
-git clone <repository-url>
-cd predifi/contract
+# Generate keypair for Testnet
+stellar keys generate --network testnet deployer
+
+# Generate keypair for Mainnet
+stellar keys generate --network mainnet deployer-mainnet
 ```
 
-### 2. Build Contracts
-
-#### Using Build Script (Recommended)
-
+### 2. View Public Address
 ```bash
-# From the contract directory
-./build.sh
+stellar keys address deployer
+# Example output: GBZXN7PIRZGNMHGA728JAGEL2OC4AHFAXE2XZ2VY5UZWFEXU272K5635
 ```
 
-This script:
-- Compiles contracts to WASM with Cargo for the `wasm32-unknown-unknown` target
-- Optimizes WASM files with `wasm-opt`
-- Runs Stellar CLI contract optimization
-- Outputs optimized files to `target/wasm32-unknown-unknown/release/`
+### 3. Fund Deployment Accounts
 
-#### Manual Build
-
+#### Testnet (Friendbot Faucet)
 ```bash
-# Build WASM
+stellar account fund deployer --network testnet
+```
+
+#### Mainnet
+For mainnet, transfer native Lumens (XLM) to your public address.
+- **Recommended Balance**: Minimum **150 XLM** to comfortably cover bytecode installation, contract instantiation fees, and initial rent reserve TTLs.
+- Check balance:
+```bash
+stellar account balance deployer-mainnet --network mainnet
+```
+
+### 4. Key Security Best Practices
+- Never commit unencrypted secret keys or `.env` files to git.
+- For mainnet operations, consider deploying using a hardware signer or exporting the seed phrase directly into a secure HSM or KMS provider.
+
+---
+
+## Contract Compilation & WASM Optimization
+
+Soroban contracts must be compiled to the `wasm32-unknown-unknown` target in release mode and subsequently optimized.
+
+### 1. Build Workspace Contracts
+
+From the repository root or `contract/` directory:
+```bash
+cd contract
 cargo build --target wasm32-unknown-unknown --release
+```
 
-# Optimize with wasm-opt
+Compiled WASM artifacts will be generated in:
+`target/wasm32-unknown-unknown/release/`
+
+### 2. WASM Bytecode Optimization
+
+Run `wasm-opt` to strip dead code and enable bulk memory operations:
+```bash
+# 1. Optimize access-control contract
 wasm-opt -Oz --enable-bulk-memory \
   target/wasm32-unknown-unknown/release/access_control.wasm \
   -o target/wasm32-unknown-unknown/release/access_control_optimized.wasm
 
+# 2. Optimize predifi-contract
 wasm-opt -Oz --enable-bulk-memory \
   target/wasm32-unknown-unknown/release/predifi_contract.wasm \
   -o target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm
 ```
 
-### 3. Verify Build Output
-
+### 3. Stellar Contract Size Optimization (Optional but Recommended)
 ```bash
-# Check file sizes
-ls -lh target/wasm32-unknown-unknown/release/*_optimized.wasm
-```
-
-Expected output:
-- `predifi_contract_optimized.wasm`: ~200-400 KB
-- `access_control_optimized.wasm`: ~50-100 KB
-
-### 4. Additional Optimization (Optional)
-
-For even smaller deployment footprints:
-
-```bash
-# Run Stellar CLI optimization (combines well with wasm-opt -Oz)
-stellar contract optimize \
-  --wasm target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm
-
 stellar contract optimize \
   --wasm target/wasm32-unknown-unknown/release/access_control_optimized.wasm
+
+stellar contract optimize \
+  --wasm target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm
 ```
+
+Ensure file sizes remain under the 400 KB limit for Soroban deployments.
 
 ---
 
-## Deployment to Testnet
+## Step-by-Step Deployment Commands
 
-### Automated Deployment (Recommended)
+### Automated Deployment (`corrected_deploy.sh`)
 
-The deployment script handles the entire process: build → optimize → deploy → initialize.
+The repository includes a turnkey script that compiles, optimizes, deploys, and initializes both contracts with all 6 required parameters:
 
 ```bash
-cd contract/scripts
+cd contract
+chmod +x corrected_deploy.sh
 
-# Deploy to testnet
-./deploy.sh testnet deployer
+# Deploy to Testnet using account 'deployer'
+./corrected_deploy.sh testnet deployer
+
+# Deploy to Mainnet with customized parameters
+TREASURY_ADDRESS="GB..." \
+FEE_BPS=100 \
+RESOLUTION_DELAY=3600 \
+MIN_POOL_DURATION=3600 \
+MAX_PREDICTIONS_PER_USER=10 \
+./corrected_deploy.sh mainnet deployer-mainnet
 ```
 
-### Custom Parameters
+The script outputs a JSON summary file named `deployed_contracts_<network>_corrected.json`.
 
-Set environment variables to customize initialization:
+---
 
+### Manual Step-by-Step CLI Deployment
+
+If you prefer executing each step manually via the CLI:
+
+#### Step 1: Deploy Access Control Contract
 ```bash
-# Custom treasury address and fee
-TREASURY_ADDRESS=GB... FEE_BPS=250 ./deploy.sh testnet deployer
-
-# Custom fee only (treasury defaults to deployer)
-FEE_BPS=150 ./deploy.sh testnet deployer
-```
-
-### Manual Deployment
-
-If you prefer manual control over each step:
-
-#### Step 1: Deploy AccessControl Contract
-
-```bash
-stellar contract deploy \
+ACCESS_CONTROL_ID=$(stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/access_control_optimized.wasm \
   --source deployer \
-  --network testnet
+  --network testnet)
+
+echo "Access Control Contract ID: $ACCESS_CONTROL_ID"
 ```
 
-Save the returned contract ID as `ACCESS_CONTROL_ID`.
-
-#### Step 2: Initialize AccessControl
-
+#### Step 2: Initialize Access Control
+The `access-control` contract requires the initial administrator address:
 ```bash
+ADMIN_ADDR=$(stellar keys address deployer)
+
 stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
+  --id "$ACCESS_CONTROL_ID" \
   --source deployer \
   --network testnet \
   -- \
   init \
-  --admin $(stellar keys address deployer --network testnet)
+  --admin "$ADMIN_ADDR"
 ```
 
 #### Step 3: Deploy PrediFi Contract
-
 ```bash
-stellar contract deploy \
+PREDIFI_ID=$(stellar contract deploy \
   --wasm target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm \
   --source deployer \
-  --network testnet
+  --network testnet)
+
+echo "PrediFi Contract ID: $PREDIFI_ID"
 ```
 
-Save the returned contract ID as `PREDIFI_CONTRACT_ID`.
-
-#### Step 4: Initialize PrediFi Contract
-
+#### Step 4: Initialize PrediFi Contract (All 6 Required Parameters)
+The `predifi-contract` `init` function requires exactly 6 parameters:
 ```bash
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --source deployer \
   --network testnet \
   -- \
   init \
-  --access_control <ACCESS_CONTROL_ID> \
-  --treasury $(stellar keys address deployer --network testnet) \
+  --access_control "$ACCESS_CONTROL_ID" \
+  --treasury "$ADMIN_ADDR" \
   --fee_bps 100 \
   --resolution_delay 3600 \
-  --referral_cut_bps 0
-```
-
-### Save Deployment Information
-
-The deployment script automatically saves deployment details to `deployed_contracts_testnet.json`:
-
-```json
-{
-  "network": "testnet",
-  "timestamp": "2026-07-28T14:00:00Z",
-  "cli_used": "stellar",
-  "source_account": "deployer",
-  "contracts": {
-    "access_control": {
-      "id": "CD...",
-      "admin": "GC..."
-    },
-    "predifi_contract": {
-      "id": "CB...",
-      "treasury": "GC...",
-      "fee_bps": 100
-    }
-  }
-}
+  --min_pool_duration 3600 \
+  --max_predictions_per_user 10
 ```
 
 ---
 
-## Deployment to Mainnet
+## Contract Initialization Parameters
 
-### Pre-Deployment Checklist
+### `access-control` Parameters
 
-Before deploying to mainnet:
-
-- [ ] Review all contract code thoroughly
-- [ ] Test extensively on testnet
-- [ ] Ensure wallet has sufficient XLM (100+ XLM recommended)
-- [ ] Prepare treasury address (can be same as deployer)
-- [ ] Decide on protocol parameters (fee, resolution delay, etc.)
-- [ ] Have operator addresses ready for role assignment
-- [ ] Prepare oracle addresses if using price feeds
-- [ ] Test the deployment script on testnet first
-
-### Automated Deployment
-
-```bash
-cd contract/scripts
-
-# Deploy to mainnet
-./deploy.sh mainnet deployer
-```
-
-### Custom Parameters for Mainnet
-
-```bash
-# Example: 2% fee, custom treasury
-TREASURY_ADDRESS=GB... FEE_BPS=200 ./deploy.sh mainnet deployer
-
-# Example: 1.5% fee, 1 hour resolution delay
-TREASURY_ADDRESS=GB... FEE_BPS=150 RESOLUTION_DELAY=3600 ./deploy.sh mainnet deployer
-```
-
-### Manual Deployment (Mainnet)
-
-The steps are identical to testnet, but use `--network mainnet`:
-
-#### Step 1: Deploy AccessControl
-
-```bash
-stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/access_control_optimized.wasm \
-  --source deployer \
-  --network mainnet
-```
-
-#### Step 2: Initialize AccessControl
-
-```bash
-stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
-  --source deployer \
-  --network mainnet \
-  -- \
-  init \
-  --admin $(stellar keys address deployer --network mainnet)
-```
-
-#### Step 3: Deploy PrediFi Contract
-
-```bash
-stellar contract deploy \
-  --wasm target/wasm32-unknown-unknown/release/predifi_contract_optimized.wasm \
-  --source deployer \
-  --network mainnet
-```
-
-#### Step 4: Initialize PrediFi Contract
-
-```bash
-stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
-  --source deployer \
-  --network mainnet \
-  -- \
-  init \
-  --access_control <ACCESS_CONTROL_ID> \
-  --treasury <TREASURY_ADDRESS> \
-  --fee_bps 100 \
-  --resolution_delay 3600 \
-  --referral_cut_bps 0
-```
-
-### Save Deployment Information
-
-The script saves to `deployed_contracts_mainnet.json`. **Backup this file securely** as it contains critical contract addresses.
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `admin` | `Address` | Yes | Initial super-administrator address with authority to assign roles and pause the registry. |
 
 ---
 
-## Initialization Parameters
+### `predifi-contract` Parameters
 
-### AccessControl Initialization
-
-The `access-control` contract requires only one parameter:
-
-| Parameter | Type | Description | Example |
-|-----------|------|-------------|---------|
-| `admin` | Address | The initial administrator address | `GD...` |
-
-**Example**:
-```bash
-stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  init \
-  --admin GD...
-```
-
-### PrediFi Contract Initialization
-
-The `predifi-contract` requires the following parameters:
-
-| Parameter | Type | Description | Default | Recommended Range |
-|-----------|------|-------------|---------|-------------------|
-| `access_control` | Address | Access control contract address | Required | - |
-| `treasury` | Address | Address that receives protocol fees | Deployer address | Secure wallet |
-| `fee_bps` | u32 | Protocol fee in basis points (100 = 1%) | 100 | 0-500 (0-5%) |
-| `resolution_delay` | u64 | Delay after pool end before resolution (seconds) | 3600 | 300-86400 (5min-24hr) |
-| `referral_cut_bps` | u32 | Referral fee share in basis points | 0 | 0-5000 (0-50%) |
-
-**Parameter Details**:
-
-#### `fee_bps` (Protocol Fee)
-
-- **100 bps** = 1% fee on winning payouts
-- **200 bps** = 2% fee
-- **0 bps** = No protocol fee (for testing or subsidized operations)
-
-#### `resolution_delay`
-
-- **300** = 5 minutes (fast resolution, higher dispute risk)
-- **3600** = 1 hour (balanced)
-- **86400** = 24 hours (maximum safety, slower payouts)
-
-#### `referral_cut_bps`
-
-- **0** = No referral program
-- **1000** = 10% of protocol fee goes to referrer
-- **5000** = 50% of protocol fee goes to referrer (maximum)
-
-**Example Initialization**:
-
-```bash
-stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  init \
-  --access_control CD... \
-  --treasury GD... \
-  --fee_bps 200 \
-  --resolution_delay 1800 \
-  --referral_cut_bps 1000
-```
+| Parameter | Type | Required | Default | Recommended Value | Description |
+|-----------|------|----------|---------|-------------------|-------------|
+| `access_control` | `Address` | Yes | - | Deployed `access-control` ID | Address of the role management contract for RBAC cross-calls. |
+| `treasury` | `Address` | Yes | - | Secure multi-sig or cold wallet | Address designated to receive protocol fees collected upon winner payout claims. |
+| `fee_bps` | `u32` | Yes | 100 | 100 (1%) | Protocol fee in basis points ($100 = 1.00\%$, $250 = 2.50\%$). Maximum is $10,000$ ($100\%$). |
+| `resolution_delay` | `u64` | Yes | 3600 | 3600 (1 hour) | Mandatory cooldown period in seconds between `pool.end_time` and the earliest allowed resolution. Maximum is $2,592,000$ (30 days). |
+| `min_pool_duration` | `u64` | Yes | 3600 | 3600 (1 hour) | Minimum allowed duration in seconds between pool creation and `pool.end_time`. |
+| `max_predictions_per_user`| `u32` | Yes | 10 | 10 | Maximum number of active prediction records a single wallet can place per pool ($0 = \text{unlimited}$). |
 
 ---
 
 ## Token Whitelisting
 
-Before users can place predictions, you must whitelist the tokens they can use for betting.
+Predictions can only be staked using approved tokens. Any attempt to place a bet with an unapproved asset fails with error `TokenNotWhitelisted = 91`.
 
-### Add Token to Whitelist
+### 1. Whitelist Native XLM
+On Soroban, native Stellar Lumens (XLM) are interacted with through the Stellar Asset Contract (SAC).
 
-Only users with the **Admin role (0)** can whitelist tokens.
+- **Testnet Native XLM SAC**: `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`
+- **Mainnet Native XLM SAC**: `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EZH3WOIECU`
 
+Whitelist native XLM:
 ```bash
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --source deployer \
   --network testnet \
   -- \
   add_token_to_whitelist \
-  --admin $(stellar keys address deployer --network testnet) \
-  --token <TOKEN_CONTRACT_ADDRESS>
+  --admin "$ADMIN_ADDR" \
+  --token "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 ```
 
-### Common Tokens to Whitelist
-
-#### Stellar Native Asset (XLM)
-
-XLM is typically always available, but you may want to explicitly allow it:
-
+### 2. Whitelist Stablecoins (e.g. USDC)
 ```bash
-# XLM is represented by the native asset identifier
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --source deployer \
   --network testnet \
   -- \
   add_token_to_whitelist \
-  --admin $(stellar keys address deployer --network testnet) \
-  --token CD...  # Use the native asset address
+  --admin "$ADMIN_ADDR" \
+  --token "<USDC_SAC_CONTRACT_ADDRESS>"
 ```
 
-#### Custom Tokens
-
-For custom tokens (e.g., USDC, stablecoins):
-
+### 3. Batch Whitelist Tokens
+To whitelist multiple assets in a single atomic transaction:
 ```bash
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --source deployer \
   --network testnet \
   -- \
-  add_token_to_whitelist \
-  --admin $(stellar keys address deployer --network testnet) \
-  --token GB...  # Token contract address
+  batch_add_tokens_to_whitelist \
+  --admin "$ADMIN_ADDR" \
+  --tokens '["CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", "CB..."]'
 ```
 
-### Remove Token from Whitelist
-
-```bash
-stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  remove_token_from_whitelist \
-  --admin $(stellar keys address deployer --network testnet) \
-  --token <TOKEN_CONTRACT_ADDRESS>
-```
-
-### Check Whitelist Status
-
+### 4. Verify Whitelist Status
 ```bash
 stellar contract read \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --network testnet \
   -- \
-  is_token_whitelisted \
-  --token <TOKEN_CONTRACT_ADDRESS>
+  is_token_allowed \
+  --token "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+# Returns: true
 ```
 
 ---
 
-## Oracle Registration
+## Oracle Registration & Price Feeds
 
-Oracle registration enables automated price-based pool resolution using external price feeds (e.g., Pyth Network).
+Automated resolution allows pools to resolve based on price feeds (e.g., Pyth Network).
 
-### Initialize Oracle Configuration
-
-Configure the oracle with Pyth contract address and validation parameters:
-
+### 1. Initialize Pyth Oracle Adapter
+Configure the price staleness window and confidence bounds:
 ```bash
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --source deployer \
   --network testnet \
   -- \
   init_oracle \
-  --admin $(stellar keys address deployer --network testnet) \
-  --pyth_contract <PYTH_CONTRACT_ADDRESS> \
+  --admin "$ADMIN_ADDR" \
+  --pyth_contract "<PYTH_CONTRACT_ADDRESS>" \
   --max_price_age 60 \
   --min_confidence_ratio 9500
 ```
+- `max_price_age: 60`: Prices older than 60 seconds are rejected with error `PriceStale = 113`.
+- `min_confidence_ratio: 9500`: Price confidence interval must be within 95% ($9500\text{ bps}$).
 
-**Parameters**:
-
-| Parameter | Type | Description | Recommended |
-|-----------|------|-------------|-------------|
-| `pyth_contract` | Address | Pyth Network contract address | Network-specific |
-| `max_price_age` | u64 | Maximum age of price data (seconds) | 60 (1 minute) |
-| `min_confidence_ratio` | u32 | Minimum confidence ratio (basis points) | 9500 (95%) |
-
-**Pyth Contract Addresses**:
-
-- **Testnet**: `CC...` (check Pyth documentation for current address)
-- **Mainnet**: `CD...` (check Pyth documentation for current address)
-
-### Add Oracle to Whitelist
-
-Whitelist oracle addresses that can update price feeds:
-
+### 2. Whitelist Authorized Oracle Signer
+Register the oracle feeder address allowed to call `update_price_feed`:
 ```bash
+ORACLE_ADDR="G..."
+
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --source deployer \
   --network testnet \
   -- \
   add_oracle \
-  --admin $(stellar keys address deployer --network testnet) \
-  --oracle_address <ORACLE_ADDRESS>
+  --admin "$ADMIN_ADDR" \
+  --oracle_address "$ORACLE_ADDR"
 ```
 
-### Update Price Feed
-
-Authorized oracles can update price data:
-
+### 3. Publish Price Feed Update
+Oracles push real-time asset prices:
 ```bash
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
-  --source oracle \
+  --id "$PREDIFI_ID" \
+  --source "$ORACLE_ADDR" \
   --network testnet \
   -- \
   update_price_feed \
-  --feed_pair ETHUSD \
-  --price 3000000000 \
-  --conf 100000 \
-  --timestamp <UNIX_TIMESTAMP> \
-  --publish_time <UNIX_TIMESTAMP>
-```
-
-**Parameters**:
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `feed_pair` | Symbol | Asset pair (e.g., `ETHUSD`, `BTCUSD`) |
-| `price` | i128 | Price in scaled units (check Pyth scaling) |
-| `conf` | i128 | Confidence interval |
-| `timestamp` | u64 | When the price was observed |
-| `publish_time` | u64 | When the price was published |
-
-### Set Price Condition for Pool
-
-Link a pool to a price feed for automated resolution:
-
-```bash
-stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
-  --source operator \
-  --network testnet \
-  -- \
-  set_price_condition \
-  --operator <OPERATOR_ADDRESS> \
-  --pool_id <POOL_ID> \
-  --feed_pair ETHUSD \
-  --target_price 3500000000 \
-  --operator_type 1 \
-  --tolerance_bps 100
-```
-
-**Parameters**:
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `pool_id` | u64 | Pool identifier |
-| `feed_pair` | Symbol | Asset pair to monitor |
-| `target_price` | i128 | Target price for resolution |
-| `operator_type` | u32 | Comparison: 0=Equal, 1=GreaterThan, 2=LessThan |
-| `tolerance_bps` | u32 | Tolerance in basis points (100 = 1%) |
-
-### Resolve Pool from Price
-
-Once the pool end time + resolution delay has passed, anyone can trigger automated resolution:
-
-```bash
-stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
-  --source any_user \
-  --network testnet \
-  -- \
-  resolve_pool_from_price \
-  --pool_id <POOL_ID>
+  --feed_pair "XLMUSD" \
+  --price 42500000 \
+  --conf 50000 \
+  --timestamp $(date +%s) \
+  --publish_time $(date +%s)
 ```
 
 ---
 
-## Role Assignment
+## Role Assignment & Access Control
 
-After deployment, assign roles to trusted addresses for protocol operations.
+Role management is delegated to the `access-control` contract:
+- **`Admin = 0`**: Protocol owner (pausing, fees, whitelisting, contract upgrades).
+- **`Operator = 1`**: Backend workers and pool managers (resolving pools, closing staking, cancelling broken markets).
+- **`Moderator = 2`**: Dispute handling.
+- **`Oracle = 3`**: Automated data feeds.
 
-### Role Hierarchy
-
-| Role | Value | Permissions |
-|------|-------|-------------|
-| **Admin** | 0 | Full control: pause, fees, treasury, whitelisting, upgrades |
-| **Operator** | 1 | Pool operations: resolve pools, cancel pools, set stake limits |
-| **Moderator** | 2 | Dispute resolution (reserved for future use) |
-| **Oracle** | 3 | Price feed updates and oracle resolution |
-| **User** | 4 | Basic participant (no special permissions) |
-
-### Assign Operator Role
-
+### 1. Assign Operator Role
 ```bash
+OPERATOR_ADDR="G..."
+
 stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
+  --id "$ACCESS_CONTROL_ID" \
   --source deployer \
   --network testnet \
   -- \
   assign_role \
-  --admin_caller $(stellar keys address deployer --network testnet) \
-  --user <OPERATOR_ADDRESS> \
-  --role Operator
+  --admin_caller "$ADMIN_ADDR" \
+  --user "$OPERATOR_ADDR" \
+  --role "Operator"
 ```
 
-### Assign Oracle Role
-
+### 2. Assign Oracle Role
 ```bash
 stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
+  --id "$ACCESS_CONTROL_ID" \
   --source deployer \
   --network testnet \
   -- \
   assign_role \
-  --admin_caller $(stellar keys address deployer --network testnet) \
-  --user <ORACLE_ADDRESS> \
-  --role Oracle
+  --admin_caller "$ADMIN_ADDR" \
+  --user "$ORACLE_ADDR" \
+  --role "Oracle"
 ```
 
-### Assign Multiple Roles
-
-An address can have multiple roles:
-
-```bash
-# Assign both Operator and Oracle to same address
-stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  assign_role \
-  --admin_caller $(stellar keys address deployer --network testnet) \
-  --user <MULTI_ROLE_ADDRESS> \
-  --role Operator
-
-stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  assign_role \
-  --admin_caller $(stellar keys address deployer --network testnet) \
-  --user <MULTI_ROLE_ADDRESS> \
-  --role Oracle
-```
-
-### Revoke Role
-
-```bash
-stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  revoke_role \
-  --admin_caller $(stellar keys address deployer --network testnet) \
-  --user <USER_ADDRESS> \
-  --role Operator
-```
-
-### Check User Roles
-
+### 3. Verify Assigned Role
 ```bash
 stellar contract read \
-  --id <ACCESS_CONTROL_ID> \
+  --id "$ACCESS_CONTROL_ID" \
   --network testnet \
   -- \
   has_role \
-  --user <USER_ADDRESS> \
-  --role Operator
+  --user "$OPERATOR_ADDR" \
+  --role "Operator"
+# Returns: true
 ```
 
-### Transfer Admin Role (Two-Step Process)
-
-For security, use the two-step admin transfer:
-
+### 4. Two-Step Safe Admin Transfer
+To transfer root contract administration without risk of accidental lock-out:
 ```bash
-# Step 1: Current admin proposes new admin
+NEW_ADMIN_ADDR="G..."
+
+# Step 1: Current admin proposes successor
 stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
+  --id "$ACCESS_CONTROL_ID" \
   --source deployer \
   --network testnet \
   -- \
   propose_new_admin \
-  --admin_caller $(stellar keys address deployer --network testnet) \
-  --proposed_admin <NEW_ADMIN_ADDRESS>
+  --admin_caller "$ADMIN_ADDR" \
+  --proposed_admin "$NEW_ADMIN_ADDR"
 
-# Step 2: New admin accepts the role
+# Step 2: Proposed admin accepts ownership
 stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
-  --source new_admin \
+  --id "$ACCESS_CONTROL_ID" \
+  --source "$NEW_ADMIN_ADDR" \
   --network testnet \
   -- \
   accept_admin_role \
-  --new_admin <NEW_ADMIN_ADDRESS>
+  --new_admin "$NEW_ADMIN_ADDR"
 ```
 
 ---
 
 ## Post-Deployment Verification
 
-After deployment, verify that everything is configured correctly.
-
-### 1. Verify Contract Deployment
-
+### 1. Run Automated Verification Script
+The repository provides an automated verification script:
 ```bash
-# Check AccessControl contract
-stellar contract read \
-  --id <ACCESS_CONTROL_ID> \
-  --network testnet \
-  -- \
-  is_admin \
-  --address $(stellar keys address deployer --network testnet)
-
-# Check PrediFi contract
-stellar contract read \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet \
-  -- \
-  get_treasury
+./contract/scripts/verify_deployment.sh \
+  testnet \
+  "$PREDIFI_ID" \
+  "$ACCESS_CONTROL_ID" \
+  "$ADMIN_ADDR"
 ```
 
-### 2. Verify Initialization Parameters
+Output:
+```text
+🔍 Verifying PrediFi deployment on testnet
+PrediFi Contract: CB...
+Access Control: CD...
+Admin: GB...
 
-```bash
-# Check fee configuration
-stellar contract read \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet \
-  -- \
-  get_fee_bps
-
-# Check resolution delay
-stellar contract read \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet \
-  -- \
-  get_resolution_delay
-
-# Check referral cut
-stellar contract read \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet \
-  -- \
-  get_referral_cut_bps
+1. Checking contract existence...
+   ✅ PrediFi contract exists
+   ✅ AccessControl contract exists
+2. Checking treasury address...
+   ✅ Treasury address: GB...
+3. Checking fee configuration...
+   ✅ Fee BPS: 100
+4. Checking resolution delay...
+   ✅ Resolution delay: 3600 seconds
+5. Checking admin role...
+   ✅ Admin role confirmed in AccessControl
 ```
 
-### 3. Verify Token Whitelist
-
+### 2. Create a Test Prediction Pool
+Confirm write access and pool creation mechanics:
 ```bash
-# Check if a token is whitelisted
-stellar contract read \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet \
-  -- \
-  is_token_whitelisted \
-  --token <TOKEN_ADDRESS>
-```
+END_TIME=$(( $(date +%s) + 7200 ))
 
-### 4. Verify Oracle Configuration
-
-```bash
-# Check oracle config
-stellar contract read \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet \
-  -- \
-  get_oracle_config
-
-# Check if oracle is whitelisted
-stellar contract read \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet \
-  -- \
-  is_oracle_whitelisted \
-  --oracle <ORACLE_ADDRESS>
-```
-
-### 5. Verify Role Assignments
-
-```bash
-# Check operator count
-stellar contract read \
-  --id <ACCESS_CONTROL_ID> \
-  --network testnet \
-  -- \
-  get_operator_count
-
-# Check specific user role
-stellar contract read \
-  --id <ACCESS_CONTROL_ID> \
-  --network testnet \
-  -- \
-  has_role \
-  --user <USER_ADDRESS> \
-  --role Operator
-```
-
-### 6. Test Pool Creation
-
-Create a test pool to verify the contract is operational:
-
-```bash
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --source deployer \
   --network testnet \
   -- \
   create_pool \
-  --creator $(stellar keys address deployer --network testnet) \
-  --end_time $(($(date +%s) + 3600)) \
-  --category Sports \
-  --title "Test Pool" \
-  --description "A test pool for deployment verification" \
-  --metadata_url "ipfs://test" \
+  --creator "$ADMIN_ADDR" \
+  --end_time "$END_TIME" \
+  --category "Crypto" \
+  --title "Testnet Health Verification Pool" \
+  --description "Verification market to validate contract deployment" \
+  --metadata_url "https://api.predifi.com/meta/1" \
   --options 2 \
-  --config '{"min_stake": 1, "max_stake": 1000, "max_total_stake": 10000}'
+  --token "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC" \
+  --min_stake 10000000 \
+  --max_stake 1000000000 \
+  --max_total_stake 10000000000
 ```
-
-### 7. Monitor Contract Events
-
-Set up event monitoring to track contract activity:
-
-```bash
-# Monitor all events (requires a subscription service)
-stellar contract events \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet \
-  --from <LEDGER_SEQUENCE>
-```
-
-### 8. Verify Contract Code
-
-```bash
-# Get contract code hash
-stellar contract inspect \
-  --id <PREDIFI_CONTRACT_ID> \
-  --network testnet
-```
-
-Compare the hash with your local build to ensure the deployed code matches.
 
 ---
 
-## Troubleshooting
+## State Maintenance & Storage TTL Extension
 
-### Common Issues
+Soroban uses state archival to reclaim storage fees. Instance and persistent storage entries must have their TTLs periodically extended to avoid archival:
 
-#### 1. Insufficient Balance
-
-**Error**: `Error(Contract, #44)` - Insufficient balance
-
-**Solution**: Ensure your wallet has enough XLM for transaction fees:
 ```bash
-stellar account balance deployer --network testnet
-stellar account fund deployer --network testnet
-```
-
-#### 2. Unauthorized Access
-
-**Error**: `Error(Contract, #10)` - Unauthorized
-
-**Solution**: Verify the caller has the required role:
-```bash
-stellar contract read \
-  --id <ACCESS_CONTROL_ID> \
+# Extend contract instance and code TTL by 535,680 ledgers (~30 days)
+stellar contract extend \
+  --id "$PREDIFI_ID" \
+  --source deployer \
   --network testnet \
-  -- \
-  has_role \
-  --user <YOUR_ADDRESS> \
-  --role Admin
+  --durability persistent \
+  --ledgers-to-extend 535680
 ```
 
-#### 3. Contract Not Initialized
-
-**Error**: `Error(Contract, #1)` - NotInitialized
-
-**Solution**: Ensure you called `init` on both contracts before other operations.
-
-#### 4. Token Not Whitelisted
-
-**Error**: `Error(Contract, #150)` - TokenError
-
-**Solution**: Whitelist the token before using it for predictions:
+Anyone can also trigger permissionless pool TTL renewal directly via the contract:
 ```bash
 stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
+  --id "$PREDIFI_ID" \
   --source deployer \
   --network testnet \
   -- \
-  add_token_to_whitelist \
-  --admin <ADMIN_ADDRESS> \
-  --token <TOKEN_ADDRESS>
+  renew_storage_ttl \
+  --pool_id 1
 ```
-
-#### 5. wasm-opt Not Found
-
-**Error**: `wasm-opt: command not found`
-
-**Solution**: Install Binaryen:
-```bash
-# macOS
-brew install binaryen
-
-# Ubuntu/Debian
-sudo apt-get install -y binaryen
-
-# Cargo
-cargo install wasm-opt
-```
-
-#### 6. Network Connection Issues
-
-**Error**: RPC connection failed
-
-**Solution**: 
-- Check your internet connection
-- Verify RPC URL is correct for the network
-- Try a different RPC endpoint if available
-
-#### 7. Transaction Timeout
-
-**Error**: Transaction timeout
-
-**Solution**:
-- Increase timeout in CLI configuration
-- Check network congestion
-- Retry during off-peak hours
-
-### Debug Mode
-
-For debugging, you can build contracts with debug symbols:
-
-```bash
-# Build with debug profile
-cargo build --profile release-with-logs --target wasm32-unknown-unknown
-```
-
-This provides more detailed error messages but increases WASM size.
-
-### Get Help
-
-- **Stellar Discord**: https://discord.gg/stellar
-- **Soroban Documentation**: https://developers.stellar.org/docs/soroban
-- **PrediFi Issues**: Check the project's issue tracker
 
 ---
 
-## Security Considerations
+## Troubleshooting & Recovery
 
-### Pre-Deployment Security
-
-1. **Code Review**
-   - Thoroughly review all contract code
-   - Run security audits if handling significant value
-   - Test all edge cases and error conditions
-
-2. **Access Control**
-   - Use hardware wallets for admin accounts
-   - Implement multi-sig for critical operations
-   - Limit admin permissions to necessary addresses
-
-3. **Parameter Validation**
-   - Test initialization parameters on testnet first
-   - Ensure fee rates are reasonable
-   - Set appropriate resolution delays
-
-### Post-Deployment Security
-
-1. **Monitor Activity**
-   - Set up alerts for unusual activity
-   - Monitor large transactions
-   - Track error rates (see ERROR_HANDLING_REFERENCE.md)
-
-2. **Role Management**
-   - Regularly review role assignments
-   - Revoke roles from inactive addresses
-   - Use two-step admin transfer
-
-3. **Emergency Procedures**
-   - Have a pause mechanism ready
-   - Prepare emergency upgrade procedures
-   - Document incident response steps
-
-4. **Key Security**
-   - Never commit secret keys to version control
-   - Use secure key storage (hardware wallet, password manager)
-   - Rotate keys periodically if possible
-
-### Mainnet-Specific Considerations
-
-1. **Gradual Rollout**
-   - Start with low limits and increase gradually
-   - Monitor for unexpected behavior
-   - Have rollback plan ready
-
-2. **Insurance**
-   - Consider protocol insurance if handling large amounts
-   - Set aside emergency funds
-   - Implement circuit breakers
-
-3. **Compliance**
-   - Ensure compliance with local regulations
-   - Implement KYC/AML if required
-   - Consult legal counsel
-
-### Best Practices
-
-1. **Testing**
-   - Deploy to testnet first
-   - Run comprehensive integration tests
-   - Test with real users on testnet
-
-2. **Monitoring**
-   - Set up comprehensive logging
-   - Monitor contract events
-   - Track key metrics (TVL, volume, errors)
-
-3. **Documentation**
-   - Document all deployment steps
-   - Maintain runbooks for common operations
-   - Keep contact information for team members
-
-4. **Upgrades**
-   - Plan upgrade path before deployment
-   - Test upgrade procedures on testnet
-   - Communicate upgrades to users in advance
+| Issue / Error Code | Root Cause | Solution |
+|--------------------|------------|----------|
+| `Error(Contract, #1)` | Contract called prior to initialization. | Call `init` on `access-control` and `predifi-contract`. |
+| `Error(Contract, #2)` | Contract already initialized. | Do not re-run `init`. Check `deployed_contracts.json`. |
+| `Error(Contract, #10)` | Caller lacks required admin/operator role. | Ensure transaction is signed by authorized account. |
+| `Error(Contract, #91)` | Token is not whitelisted for betting. | Call `add_token_to_whitelist` with the token SAC address. |
+| `Error(Contract, #93)` | Fee BPS exceeds 10,000. | Set `fee_bps` $\le 10,000$ (e.g. 100 for 1%). |
+| `Error(Contract, #113)` | Oracle price data is stale. | Call `update_price_feed` with current timestamp before resolving. |
+| `wasm-opt: command not found` | Binaryen toolchain missing. | Install binaryen via `brew install binaryen` or `apt-get`. |
+| `Transaction expired / timeout` | RPC node lagging or congestion. | Retry transaction or specify higher base fee `--fee 500000`. |
 
 ---
 
-## Appendix: Quick Reference
-
-### Deployment Commands Summary
-
-**Testnet**:
-```bash
-cd contract/scripts
-./deploy.sh testnet deployer
-```
-
-**Mainnet**:
-```bash
-cd contract/scripts
-./deploy.sh mainnet deployer
-```
-
-**Custom Parameters**:
-```bash
-TREASURY_ADDRESS=GB... FEE_BPS=200 ./deploy.sh testnet deployer
-```
-
-### Common Post-Deployment Commands
-
-**Whitelist Token**:
-```bash
-stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  add_token_to_whitelist \
-  --admin <ADMIN_ADDRESS> \
-  --token <TOKEN_ADDRESS>
-```
-
-**Assign Operator Role**:
-```bash
-stellar contract invoke \
-  --id <ACCESS_CONTROL_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  assign_role \
-  --admin_caller <ADMIN_ADDRESS> \
-  --user <OPERATOR_ADDRESS> \
-  --role Operator
-```
-
-**Initialize Oracle**:
-```bash
-stellar contract invoke \
-  --id <PREDIFI_CONTRACT_ID> \
-  --source deployer \
-  --network testnet \
-  -- \
-  init_oracle \
-  --admin <ADMIN_ADDRESS> \
-  --pyth_contract <PYTH_ADDRESS> \
-  --max_price_age 60 \
-  --min_confidence_ratio 9500
-```
-
-### Network RPC URLs
-
-- **Testnet**: `https://soroban-testnet.stellar.org:443`
-- **Mainnet**: `https://soroban.stellar.org:443`
-
-### Network Passphrases
-
-- **Testnet**: `Test SDF Network ; September 2015`
-- **Mainnet**: `Public Global Stellar Network ; September 2015`
-
----
-
-## Related Documentation
-
-- [Error Handling Reference](ERROR_HANDLING_REFERENCE.md) - Comprehensive error codes and troubleshooting
-- [Contract README](../contract/README.md) - Contract architecture and features
-- [Access Control Documentation](../contract/contracts/access-control/README.md) - Role-based access control details
-- [PrediFi Errors Reference](../contract/contracts/predifi-errors/README.md) - Contract error codes
-
----
-
-## Support
-
-For deployment issues or questions:
-
-1. Check the [troubleshooting section](#troubleshooting)
-2. Review the [error handling reference](ERROR_HANDLING_REFERENCE.md)
-3. Open an issue on the project repository
-4. Contact the development team through official channels
-
----
-
-**Last Updated**: 2026-07-28
-**Version**: 1.0.0
+**Document Maintained By**: Web3Novalabs Core Engineering  
+**Source Code References**: [corrected_deploy.sh](file:///Users/victor/Desktop/Pvsaint/predifi/contract/corrected_deploy.sh), [admin.rs](file:///Users/victor/Desktop/Pvsaint/predifi/contract/contracts/predifi-contract/src/admin.rs), [access-control](file:///Users/victor/Desktop/Pvsaint/predifi/contract/contracts/access-control/src/lib.rs)
