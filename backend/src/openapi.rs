@@ -36,6 +36,9 @@ pub struct PoolWithOddsDoc {
     #[serde(flatten)]
     pub pool: PoolDoc,
     pub odds: Vec<OutcomeOddsDoc>,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]` or `["Team A", "Team B", "Draw"]`.
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// OpenAPI schema for the paginated pool list response.
@@ -225,6 +228,10 @@ pub struct PoolCreatedPayloadDoc {
     pub token: String,
     pub category: String,
     pub description: String,
+    /// Number of distinct outcome options (#1932). Defaults to `2` when omitted.
+    pub options_count: u32,
+    /// Human-readable label for each outcome index (#1932).
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// OpenAPI schema for the `prediction_placed` event ingestion request body.

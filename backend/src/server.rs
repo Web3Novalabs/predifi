@@ -466,6 +466,22 @@ where
                 .await;
         });
 
+    // Periodically checks recurring pool templates (#1935) for ones whose
+    // `next_run_at` has passed, notifies the creator so they can confirm and
+    // submit the on-chain creation themselves (the backend holds no
+    // custodial signing key and `create_pool` requires the creator's own
+    // auth — see `worker::template_scheduler` for why), and advances the
+    // schedule so the same cycle isn't re-notified.
+    let template_scheduler_pool = pool.clone();
+    let template_scheduler_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("pool_template_scheduler", async move {
+            crate::worker::template_scheduler::run_template_sweep_loop(
+                template_scheduler_pool,
+                Duration::from_secs(300),
+            )
+            .await;
+        });
+
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
@@ -518,6 +534,7 @@ where
     fetcher_handle.abort();
     listener_handle.abort();
     notifications_handle.abort();
+    template_scheduler_handle.abort();
 
     // Close the pool after aborting workers.
     shutdown::with_shutdown_timeout(drain_timeout, "database pool close", pool.close()).await;
