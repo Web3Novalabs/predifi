@@ -50,6 +50,7 @@
 //!   - All participants receive 100% principal refund (`prediction.amount`). `DataKey::Claimed(user, pool_id)` is set to `true`.
 //! - **Unclaimed -> Claimed**: Transitioning `DataKey::Claimed` to `true` is terminal and irreversible. Re-claiming returns `PredifiError::AlreadyClaimed`.
 
+use crate::safe_math::SafeMath;
 use soroban_sdk::{contractimpl, token, Address, Env, String, Symbol, Vec};
 
 use crate::{
@@ -404,7 +405,8 @@ impl PredifiContract {
                 existing_pred.outcome == outcome,
                 "Cannot change prediction outcome"
             );
-            existing_pred.amount = existing_pred.amount.checked_add(amount).expect("overflow");
+            existing_pred.amount = SafeMath::safe_add(existing_pred.amount, amount)
+                .map_err(|_| PredifiError::ArithmeticError)?;
             env.storage().persistent().set(&pred_key, &existing_pred);
             Self::extend_persistent(&env, &pred_key);
 
@@ -415,7 +417,9 @@ impl PredifiContract {
                 Self::extend_persistent(&env, &referrer_key);
                 let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
                 let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
-                env.storage().persistent().set(&vol_key, &(vol + amount));
+                let new_vol =
+                    SafeMath::safe_add(vol, amount).map_err(|_| PredifiError::ArithmeticError)?;
+                env.storage().persistent().set(&vol_key, &new_vol);
                 Self::extend_persistent(&env, &vol_key);
             }
         } else {
@@ -439,7 +443,9 @@ impl PredifiContract {
             if let Some(referrer_addr) = active_referrer {
                 let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
                 let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
-                env.storage().persistent().set(&vol_key, &(vol + amount));
+                let new_vol =
+                    SafeMath::safe_add(vol, amount).map_err(|_| PredifiError::ArithmeticError)?;
+                env.storage().persistent().set(&vol_key, &new_vol);
                 Self::extend_persistent(&env, &vol_key);
             }
 
@@ -458,7 +464,8 @@ impl PredifiContract {
         }
 
         // Update total stake (INV-1)
-        pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
+        pool.total_stake = SafeMath::safe_add(pool.total_stake, amount)
+            .map_err(|_| PredifiError::ArithmeticError)?;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
 

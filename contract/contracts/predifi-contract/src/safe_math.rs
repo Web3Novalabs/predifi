@@ -20,6 +20,28 @@
 //!    - `UserFavor`: Performs ceiling division (rounding up), giving fractional remainders to the beneficiary.
 //! 4. **Range & Bound Validation**: Percentage calculations strictly require basis points `bps` to lie in `[0, 10_000]` (where 10,000 bps = 100%). Out-of-bound fee rates return `PrediFiError::InvalidFeeBps`.
 //!
+//! ## Overflow Audit (#1917)
+//!
+//! Every arithmetic step on token amounts in the payout and staking paths, and
+//! how it is guarded:
+//!
+//! | Site | Operation | Guard |
+//! |------|-----------|-------|
+//! | `payouts::calculate_protocol_fee` | `stake * bps / 10_000` | `SafeMath::percentage` |
+//! | `payouts::calculate_payout_pool` / `calculate_claim_payout` | `stake - fee` | `checked_sub` → `ArithmeticError` |
+//! | `payouts::calculate_winnings` | `user * pool / winning` | `SafeMath::calculate_share` |
+//! | `payouts::calculate_referral_amount` | fee share × referral bps | `SafeMath::proportion` + `percentage` |
+//! | `claim_winnings_internal` claim window | `resolved_at + window` | `checked_add` |
+//! | `place_prediction` top-up of an existing prediction | `amount + amount` | `SafeMath::safe_add` (was `.expect`) |
+//! | `place_prediction` referred volume (both branches) | `volume + amount` | `SafeMath::safe_add` (was unchecked `+`) |
+//! | `place_prediction` pool total stake (INV-1) | `total + amount` | `SafeMath::safe_add` (was `.expect`) |
+//! | `gas_opt::apply_stake_delta` outcome stake | `stake + amount` | `SafeMath::safe_add` (was unchecked `+`) |
+//!
+//! The release profile sets `overflow-checks = true`, so the previously
+//! unguarded sites could not wrap; they aborted with an untyped panic instead
+//! of `PredifiError::ArithmeticError` (110). All sites now return or raise the
+//! typed error.
+//!
 //! ## Common Usage Patterns
 //!
 //! ```rust,ignore
