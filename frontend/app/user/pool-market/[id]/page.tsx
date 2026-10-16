@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { fetchPoolById } from "@/lib/api/pools";
 import { ShareButton, CopyButton } from "@/components/ui";
+import { PoolLeaderboard } from "@/components/pool/PoolLeaderboard";
 
 const SITE_URL = "https://predifi.app";
 
@@ -120,6 +121,8 @@ export default async function PoolDetailPage({ params }: PageProps) {
             ))}
           </div>
         </div>
+
+        <PoolLeaderboard poolId={pool.pool_id} />
       </div>
     </div>
   );
