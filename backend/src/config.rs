@@ -142,6 +142,20 @@ pub struct Config {
     /// In production, this should be configured to restrict WebSocket connections to trusted domains.
     /// Uses the same validation logic as CORS origins.
     pub allowed_ws_origins: Vec<String>,
+
+    // ── Email delivery (#1929) ────────────────────────────────────────────
+    /// SMTP server hostname for outbound email delivery.  `None` disables
+    /// email notifications.  Read from `PREDIFI_SMTP_HOST`.
+    pub smtp_host: Option<String>,
+    /// SMTP server port (default `587` for STARTTLS).
+    pub smtp_port: u16,
+    /// SMTP username.  Read from `PREDIFI_SMTP_USERNAME`.
+    pub smtp_username: Option<String>,
+    /// SMTP password.  Read from `PREDIFI_SMTP_PASSWORD`.
+    pub smtp_password: Option<String>,
+    /// "From" address used in outbound notification emails.
+    /// Read from `PREDIFI_SMTP_FROM`, defaults to `"noreply@predifi.app"`.
+    pub smtp_from: String,
 }
 
 impl Config {
@@ -240,6 +254,13 @@ impl Config {
 
         let app_env = get_string(vars, "PREDIFI_APP_ENV", DEFAULT_APP_ENV);
 
+        // ── Email (#1929) ─────────────────────────────────────────────────────
+        let smtp_host = vars.get("PREDIFI_SMTP_HOST").cloned().filter(|s| !s.is_empty());
+        let smtp_port = get_u16(vars, "PREDIFI_SMTP_PORT", 587)?;
+        let smtp_username = vars.get("PREDIFI_SMTP_USERNAME").cloned().filter(|s| !s.is_empty());
+        let smtp_password = vars.get("PREDIFI_SMTP_PASSWORD").cloned().filter(|s| !s.is_empty());
+        let smtp_from = get_string(vars, "PREDIFI_SMTP_FROM", "noreply@predifi.app");
+
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_MIN_CONNECTIONS",
@@ -279,6 +300,11 @@ impl Config {
             indexer_max_batch_size,
             app_env,
             allowed_ws_origins,
+            smtp_host,
+            smtp_port,
+            smtp_username,
+            smtp_password,
+            smtp_from,
         };
 
         config.validate()?;
@@ -511,6 +537,11 @@ impl Config {
             indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
             app_env: String::from(DEFAULT_APP_ENV),
             allowed_ws_origins: Vec::new(), // Empty for permissive mode in tests
+            smtp_host: None,
+            smtp_port: 587,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_from: String::from("noreply@predifi.app"),
         }
     }
 }

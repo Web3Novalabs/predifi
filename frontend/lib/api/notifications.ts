@@ -161,3 +161,48 @@ export async function setInterests(address: string, interests: string[]): Promis
     throw new ApiError(`Failed to save interests (HTTP ${res.status})`, res.status);
   }
 }
+
+// ── User email registration (#1929) ──────────────────────────────────────────
+
+export interface UserEmailPrefs {
+  address: string;
+  email: string;
+  email_enabled: boolean;
+}
+
+function isUserEmailPrefs(obj: unknown): obj is UserEmailPrefs {
+  if (!obj || typeof obj !== "object") return false;
+  const d = obj as Record<string, unknown>;
+  return (
+    typeof d.address === "string" &&
+    typeof d.email === "string" &&
+    typeof d.email_enabled === "boolean"
+  );
+}
+
+export function userEmailUrl(address: string): string {
+  return `${API_BASE_URL}/api/v1/users/${encodeURIComponent(address)}/email`;
+}
+
+export async function fetchUserEmail(url: string): Promise<UserEmailPrefs | null> {
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new ApiError(`Failed to load email prefs (HTTP ${res.status})`, res.status);
+  const body = await res.json();
+  const data = body && typeof body === "object" && "data" in body ? body.data : body;
+  if (!isUserEmailPrefs(data)) throw new ApiError("Invalid email prefs response", 500);
+  return data;
+}
+
+export async function upsertUserEmail(
+  address: string,
+  email: string,
+  emailEnabled: boolean,
+): Promise<void> {
+  const res = await fetch(userEmailUrl(address), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, email_enabled: emailEnabled }),
+  });
+  if (!res.ok) throw new ApiError(`Failed to save email (HTTP ${res.status})`, res.status);
+}

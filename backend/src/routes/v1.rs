@@ -313,6 +313,9 @@ pub struct PoolsQuery {
     /// Comma-separated tag filter, e.g. "btc,price-prediction". A pool
     /// matches if any of its tags overlap this list.
     pub tags: Option<String>,
+    /// Full-text search query across pool name, category, and tags.
+    /// Uses PostgreSQL `plainto_tsquery` + ILIKE fallback.
+    pub q: Option<String>,
     /// Page size. Missing defaults to [`POOLS_DEFAULT_PAGE_SIZE`]; a value
     /// outside `[1, POOLS_MAX_PAGE_SIZE]` is clamped into range in the
     /// handler rather than rejected — unlike most other paginated endpoints
@@ -340,6 +343,8 @@ pub struct PoolsResponse {
     pub status: String,
     pub category: Option<String>,
     pub sort_by: String,
+    /// Echoed full-text search query, when present.
+    pub q: Option<String>,
 }
 
 /// `GET /api/v1/pools/:id` — get detailed pool information with real-time odds.
@@ -503,6 +508,12 @@ pub async fn get_pools(
                 .collect::<Vec<_>>()
         })
         .filter(|v| !v.is_empty());
+    // Full-text search query — trim and convert empty to None.
+    let q: Option<String> = params
+        .q
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -526,6 +537,9 @@ pub async fn get_pools(
             cache_key = format!("{cache_key}:tags:{}", sanitized.join(","));
         }
     }
+    if let Some(q_val) = &q {
+        cache_key = format!("{cache_key}:q:{}", crate::redis_cache::sanitize_key_component(q_val));
+    }
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
         // Cache hit — return cached data
@@ -540,10 +554,11 @@ pub async fn get_pools(
             category,
             tags.as_deref(),
             status,
+            q.as_deref(),
             limit,
             offset
         ),
-        crate::tags::count_pools(db, category, tags.as_deref(), status)
+        crate::tags::count_pools(db, category, tags.as_deref(), status, q.as_deref())
     ) {
         Ok((pools, total)) => {
             if status == "active" {
@@ -558,6 +573,7 @@ pub async fn get_pools(
                 status: status.to_string(),
                 category: category.map(|s| s.to_string()),
                 sort_by: sort_by.to_string(),
+                q: q.clone(),
             };
 
             let json_response = json!(&response);
@@ -1596,6 +1612,10 @@ pub fn router(
                 "/users/:address/interests",
                 get(get_user_interests_handler).put(set_user_interests_handler),
             )
+            .route(
+                "/users/:address/email",
+                get(get_user_email_handler).put(upsert_user_email_handler),
+            )
             .route("/notifications/:address", get(list_notifications_handler))
             .route(
                 "/notifications/:address/read",
@@ -2032,5 +2052,95 @@ mod pools_pagination_tests {
     fn non_positive_limit_is_clamped_up_to_one() {
         assert_eq!(resolve_pools_page_size(Some(0)), 1);
         assert_eq!(resolve_pools_page_size(Some(-5)), 1);
+    }
+}
+
+// ── User email registration (#1929) ──────────────────────────────────────────
+
+/// `GET /api/v1/users/:address/email` — retrieve the registered email and
+/// opt-in state for a user.
+pub async fn get_user_email_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::notifications::get_user_email(db, address.as_str()).await {
+        Ok(Some((email, enabled))) => ApiResponse::success(json!({
+            "address": address,
+            "email": email,
+            "email_enabled": enabled,
+        }))
+        .into_response(),
+        Ok(None) => ApiResponse::<()>::error(
+            StatusCode::NOT_FOUND,
+            error_codes::NOT_FOUND,
+            "no email registered for this address",
+        )
+        .into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+/// `PUT /api/v1/users/:address/email` — register or update a user's email address.
+///
+/// Body: `{ "email": "user@example.com", "email_enabled": true }`
+pub async fn upsert_user_email_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<crate::notifications::RegisterEmailRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    let email = body.email.trim();
+    if email.is_empty() || !email.contains('@') {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            "a valid email address is required",
+        )
+        .into_response();
+    }
+
+    let enabled = body.email_enabled.unwrap_or(true);
+
+    match crate::notifications::upsert_user_email(db, address.as_str(), email, enabled).await {
+        Ok(()) => ApiResponse::success(json!({
+            "address": address,
+            "email": email,
+            "email_enabled": enabled,
+        }))
+        .into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
     }
 }

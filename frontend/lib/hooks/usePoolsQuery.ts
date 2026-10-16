@@ -21,7 +21,7 @@ export type PoolStatus = NonNullable<PoolsQuery["status"]>;
 export interface PoolsQueryState {
   /** Raw (un-debounced) search string entered by the user. */
   search: string;
-  /** Debounced search string — safe to pass to {@link usePools}. */
+  /** Debounced search string — safe to pass to the backend `?q=` param. */
   debouncedSearch: string;
   /** Current sort order. */
   sortBy: SortBy;
@@ -29,6 +29,8 @@ export interface PoolsQueryState {
   status: PoolStatus;
   /** Current category filter (empty string = all categories). */
   category: string;
+  /** Active tag filters. */
+  tags: string[];
   /** Current page index (0-based). */
   page: number;
   /** Number of items per page. */
@@ -41,6 +43,10 @@ export interface PoolsQueryActions {
   setSortBy: (value: SortBy) => void;
   setStatus: (value: PoolStatus) => void;
   setCategory: (value: string) => void;
+  /** Toggle a single tag in the active tag filter set. */
+  toggleTag: (tag: string) => void;
+  /** Replace the entire tag filter set. */
+  setTags: (tags: string[]) => void;
   /** Navigate to a specific page (0-based). */
   setPage: (page: number) => void;
   setPageSize: (size: number) => void;
@@ -48,7 +54,7 @@ export interface PoolsQueryActions {
   reset: () => void;
   /**
    * The {@link PoolsQuery} object ready to be passed to {@link usePools}.
-   * Uses the debounced search to avoid a request on every keystroke.
+   * Uses the debounced search as `q` to avoid a request on every keystroke.
    */
   poolsQuery: PoolsQuery;
 }
@@ -77,6 +83,9 @@ const DEFAULT_PAGE_SIZE = 20;
  * Returns both the raw state and the derived {@link PoolsQuery} object ready
  * to hand to {@link usePools}.
  *
+ * The debounced search value is forwarded to the backend as `?q=` for
+ * server-side full-text search across pool name, category, and tags.
+ *
  * @example
  * const { poolsQuery, search, setSearch, setSortBy, setPage } = usePoolsQuery();
  * const { pools, total, isLoading } = usePools(poolsQuery);
@@ -102,6 +111,10 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
   const sortBy = (syncUrl ? (searchParams.get("sort") as SortBy | null) : null) ?? defaultSortBy;
   const status = (syncUrl ? (searchParams.get("status") as PoolStatus | null) : null) ?? defaultStatus;
   const category = syncUrl ? (searchParams.get("category") ?? defaultCategory) : defaultCategory;
+  const tagsParam = syncUrl ? (searchParams.get("tags") ?? "") : "";
+  const tags: string[] = tagsParam
+    ? tagsParam.split(",").map((t) => t.trim()).filter(Boolean)
+    : [];
   const page = syncUrl ? Number(searchParams.get("page") ?? 0) : 0;
   const pageSize = syncUrl ? Number(searchParams.get("limit") ?? defaultPageSize) : defaultPageSize;
 
@@ -159,6 +172,20 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
     [navigate],
   );
 
+  const setTags = useCallback(
+    (newTags: string[]) =>
+      navigate({ tags: newTags.length > 0 ? newTags.join(",") : null, page: null }),
+    [navigate],
+  );
+
+  const toggleTag = useCallback(
+    (tag: string) => {
+      const next = tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag];
+      setTags(next);
+    },
+    [tags, setTags],
+  );
+
   const setPage = useCallback(
     (p: number) => navigate({ page: p > 0 ? p : null }),
     [navigate],
@@ -176,7 +203,7 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
   }, [syncUrl, router, pathname]);
 
   // ---------------------------------------------------------------------------
-  // Derived PoolsQuery — uses the *debounced* search to prevent request spam
+  // Derived PoolsQuery — uses the *debounced* search as `?q=` for server-side FTS
   // ---------------------------------------------------------------------------
   const poolsQuery = useMemo<PoolsQuery>(() => {
     const q: PoolsQuery = {
@@ -186,11 +213,10 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
       offset: page * pageSize,
     };
     if (category) q.category = category;
-    // NOTE: The backend `/api/v1/pools` endpoint does not yet support a `q`
-    // (text search) filter. We keep `debouncedSearch` in state so callers can
-    // use it for client-side filtering until the backend adds full-text search.
+    if (tags.length > 0) q.tags = tags;
+    if (debouncedSearch.trim()) q.q = debouncedSearch.trim();
     return q;
-  }, [sortBy, status, category, page, pageSize]);
+  }, [sortBy, status, category, tags, debouncedSearch, page, pageSize]);
 
   return {
     // State
@@ -199,6 +225,7 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
     sortBy,
     status,
     category,
+    tags,
     page,
     pageSize,
     // Actions
@@ -206,6 +233,8 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
     setSortBy,
     setStatus,
     setCategory,
+    setTags,
+    toggleTag,
     setPage,
     setPageSize,
     reset,
