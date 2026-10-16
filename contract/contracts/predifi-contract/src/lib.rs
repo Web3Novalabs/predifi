@@ -47,6 +47,7 @@ mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
 mod treasury;
+mod creator_incentive;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
@@ -265,6 +266,13 @@ pub enum PredifiError {
     FeeChangePending = 95,
     NoFeeChangePending = 96,
     TimelockNotExpired = 97,
+    /// Issue #1933: pool's `participants_count` is below the configured
+    /// `get_creator_min_participants()` threshold, so the creator incentive
+    /// cannot be claimed yet.
+    MinParticipantsNotMet = 210,
+    /// Issue #1933: `claim_creator_incentive` has already been paid out for
+    /// this pool — it can only be claimed once per pool.
+    CreatorIncentiveAlreadyPaid = 211,
 }
 
 /// Represents the current state of a prediction market.
@@ -499,6 +507,25 @@ pub struct FeeInfo {
     /// Referral cut in basis points — the share of the protocol fee paid to referrers.
     /// Range: 0-10,000. Default: 5,000 (50%).
     pub referral_fee_bps: u32,
+}
+
+/// On-chain reputation / reward summary for a pool creator (issue #1933).
+///
+/// Returned by [`PredifiContract::get_creator_stats`]. Only reflects pools for
+/// which `claim_creator_incentive` has actually been called and succeeded —
+/// it is not a count of all pools the address has ever created.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatorStats {
+    /// Number of pools for which this creator has successfully claimed the
+    /// creator incentive.
+    pub pools_rewarded: u32,
+    /// Cumulative incentive amount (in base token units) earned across all
+    /// claimed pools. Note this sums amounts from potentially different
+    /// token denominations if pools used different `token` addresses — callers
+    /// that mix tokens should track per-pool amounts via `CreatorIncentivePaidEvent`
+    /// instead of relying solely on this aggregate.
+    pub total_incentive_earned: i128,
 }
 
 /// Complete fee configuration returned by [`PredifiContract::get_fee_config`].
@@ -774,6 +801,25 @@ pub enum DataKey {
     /// Sentinel that records a pool has been marked ready for resolution.
     /// `PoolReady(pool_id)` -> `bool`.
     PoolReady(u64),
+
+    // ── Issue #1933: Pool creator incentive system ──────────────────────────
+    /// Creator incentive rate in basis points (share of a pool's protocol fee
+    /// paid to its creator once the participation threshold is met):
+    /// `CreatorIncentiveBps` -> `u32`. Default 0 (disabled) when unset.
+    CreatorIncentiveBps,
+    /// Minimum `Pool.participants_count` required before a pool's creator is
+    /// eligible to claim the incentive: `CreatorMinParticipants` -> `u32`.
+    /// Falls back to `DEFAULT_CREATOR_MIN_PARTICIPANTS` when unset.
+    CreatorMinParticipants,
+    /// Idempotency sentinel — set once `claim_creator_incentive` has paid out
+    /// for a given pool: `CreatorIncentivePaid(pool_id)` -> `bool`.
+    CreatorIncentivePaid(u64),
+    /// Reputation counter: number of pools for which a creator has
+    /// successfully claimed the incentive: `CreatorRewardedPools(creator)` -> `u32`.
+    CreatorRewardedPools(Address),
+    /// Reputation counter: cumulative incentive amount a creator has earned
+    /// across all pools: `CreatorTotalIncentive(creator)` -> `i128`.
+    CreatorTotalIncentive(Address),
 }
 
 /// Represents a user's individual stake in a prediction market.
@@ -1056,6 +1102,32 @@ pub struct ReferralPaidEvent {
     pub referrer: Address,
     pub referred_user: Address,
     pub amount: i128,
+}
+
+// ── Issue #1933: Pool creator incentive events ───────────────────────────────
+
+/// Emitted when an admin updates the creator-incentive rate or minimum
+/// participation threshold via `set_creator_incentive_bps` /
+/// `set_creator_min_participants`.
+#[contractevent(topics = ["creator_incentive_config_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatorIncentiveConfigUpdatedEvent {
+    pub admin: Address,
+    pub incentive_bps: u32,
+    pub min_participants: u32,
+}
+
+/// Emitted when a pool creator successfully claims their incentive share of
+/// the pool's protocol fee via `claim_creator_incentive`.
+#[contractevent(topics = ["creator_incentive_paid"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatorIncentivePaidEvent {
+    pub pool_id: u64,
+    pub creator: Address,
+    pub amount: i128,
+    pub participants_count: u32,
 }
 
 // ── Monitoring & Alert Events ─────────────────────────────────────────────────
