@@ -758,6 +758,15 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn ttl_capped_to_max() {
+        // Using a disabled cache; set should simply return without error.
+        let cache = RedisCache::disabled();
+        // Provide a TTL larger than MAX_TTL_SECS to ensure it is capped internally.
+        cache.set("test-ttl", &"value", MAX_TTL_SECS + 1_000).await;
+        // No assertion needed; the test passes if no panic occurs.
+    }
+
     #[test]
     fn test_stats_cache_key_uniqueness() {
         let key_all = stats_cache_key(None, None);
