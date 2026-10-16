@@ -529,6 +529,58 @@ mod tests {
     use super::*;
     use std::vec;
 
+    // -- #1917: boundaries of the helpers the staking path now relies on --
+
+    #[test]
+    fn test_safe_add_boundaries() {
+        assert_eq!(SafeMath::safe_add(i128::MAX - 1, 1), Ok(i128::MAX));
+        assert_eq!(
+            SafeMath::safe_add(i128::MAX, 1),
+            Err(PrediFiError::ArithmeticError)
+        );
+        assert_eq!(
+            SafeMath::safe_add(i128::MIN, -1),
+            Err(PrediFiError::ArithmeticError)
+        );
+        assert_eq!(SafeMath::safe_add(0, 0), Ok(0));
+    }
+
+    #[test]
+    fn test_safe_sub_boundaries() {
+        assert_eq!(SafeMath::safe_sub(i128::MIN + 1, 1), Ok(i128::MIN));
+        assert_eq!(
+            SafeMath::safe_sub(i128::MIN, 1),
+            Err(PrediFiError::ArithmeticError)
+        );
+        assert_eq!(
+            SafeMath::safe_sub(i128::MAX, -1),
+            Err(PrediFiError::ArithmeticError)
+        );
+    }
+
+    #[test]
+    fn test_safe_mul_boundaries() {
+        assert_eq!(SafeMath::safe_mul(i128::MAX, 1), Ok(i128::MAX));
+        assert_eq!(
+            SafeMath::safe_mul(i128::MAX, 2),
+            Err(PrediFiError::InvalidAmount)
+        );
+    }
+
+    #[test]
+    fn test_accumulating_stakes_stops_at_overflow() {
+        // Mirrors place_prediction: repeated top-ups of one stake.
+        let step = i128::MAX / 3;
+        let mut total = 0i128;
+        for _ in 0..3 {
+            total = SafeMath::safe_add(total, step).unwrap();
+        }
+        assert_eq!(
+            SafeMath::safe_add(total, step),
+            Err(PrediFiError::ArithmeticError)
+        );
+    }
+
     #[test]
     fn test_percentage_basic() {
         // 10% of 1000 = 100
