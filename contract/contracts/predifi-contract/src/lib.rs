@@ -1747,7 +1747,9 @@ impl PredifiContract {
         }
 
         let mut stakes = Self::get_outcome_stakes(env, pool_id, options_count);
-        gas_opt::apply_stake_delta(&mut stakes, outcome, amount);
+        if gas_opt::apply_stake_delta(&mut stakes, outcome, amount).is_err() {
+            soroban_sdk::panic_with_error!(&env, PredifiError::ArithmeticError);
+        }
 
         // Single batch persist — no dual-write of individual OutStake keys
         let key = DataKey::OutStakes(pool_id);
