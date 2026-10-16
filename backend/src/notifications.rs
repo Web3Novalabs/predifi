@@ -388,6 +388,74 @@ pub async fn run_sweep_loop(pool: PgPool, interval: std::time::Duration) {
     }
 }
 
+/// Run [`run_notification_sweep`] on a fixed interval and, when an SMTP host
+/// is configured, also deliver undelivered notifications via email.
+///
+/// This variant is used by the server when email credentials are available.
+pub async fn run_sweep_loop_with_email(
+    pool: PgPool,
+    interval: std::time::Duration,
+    smtp_config: crate::email::SmtpConfig,
+) {
+    let mut ticker = tokio::time::interval(interval);
+    loop {
+        ticker.tick().await;
+        if let Err(error) = run_notification_sweep(&pool).await {
+            warn!(error = %error, "notification sweep failed");
+            continue;
+        }
+        if let Err(error) = crate::email::deliver_pending_emails(&pool, &smtp_config).await {
+            warn!(error = %error, "email delivery sweep failed");
+        }
+    }
+}
+
+// ── User email registration endpoints ────────────────────────────────────────
+
+/// User email registration / update request body.
+#[derive(Debug, Deserialize)]
+pub struct RegisterEmailRequest {
+    pub email: String,
+    pub email_enabled: Option<bool>,
+}
+
+/// Upsert a user's email address and opt-in preference.
+pub async fn upsert_user_email(
+    pool: &PgPool,
+    address: &str,
+    email: &str,
+    email_enabled: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO user_emails (user_address, email, email_enabled, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (user_address)
+        DO UPDATE SET email = $2, email_enabled = $3, updated_at = NOW()
+        "#,
+    )
+    .bind(address)
+    .bind(email)
+    .bind(email_enabled)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get the email and opt-in state for a user address.
+pub async fn get_user_email(
+    pool: &PgPool,
+    address: &str,
+) -> Result<Option<(String, bool)>, sqlx::Error> {
+    let row: Option<(String, bool)> = sqlx::query_as(
+        "SELECT email, email_enabled FROM user_emails WHERE user_address = $1",
+    )
+    .bind(address)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

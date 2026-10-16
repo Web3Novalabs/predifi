@@ -70,6 +70,7 @@ export interface PoolsResponse {
   status: string;
   category?: string | null;
   sort_by: string;
+  q?: string | null;
 }
 
 /** Filters accepted by `GET /api/v1/pools`. */
@@ -80,6 +81,8 @@ export interface PoolsQuery {
   category?: string;
   /** Tag filter — a pool matches if any of its tags overlap this list. */
   tags?: string[];
+  /** Full-text search query across pool name, category, and tags. */
+  q?: string;
   /** Lifecycle filter. Defaults to `"active"` on the backend. */
   status?: "active" | "closed" | "settled";
   limit?: number;
@@ -97,6 +100,7 @@ export function poolsUrl(query: PoolsQuery = {}): string {
   if (query.sort_by) params.set("sort_by", query.sort_by);
   if (query.category) params.set("category", query.category);
   if (query.tags && query.tags.length > 0) params.set("tags", query.tags.join(","));
+  if (query.q && query.q.trim()) params.set("q", query.q.trim());
   if (query.status) params.set("status", query.status);
   if (query.limit != null) params.set("limit", String(query.limit));
   if (query.offset != null) params.set("offset", String(query.offset));
@@ -188,6 +192,20 @@ export async function fetchPools(url: string, timeout?: number): Promise<PoolsRe
   }
 
   return body;
+}
+
+/** Type guard to validate PoolsResponse shape. */
+function isPoolsResponse(obj: unknown): obj is PoolsResponse {
+  if (!obj || typeof obj !== "object") return false;
+  const r = obj as Record<string, unknown>;
+  return (
+    Array.isArray(r.pools) &&
+    typeof r.total === "number" &&
+    typeof r.limit === "number" &&
+    typeof r.offset === "number" &&
+    typeof r.status === "string" &&
+    typeof r.sort_by === "string"
+  );
 }
 
 /** Type guard to validate PoolDetail shape. */

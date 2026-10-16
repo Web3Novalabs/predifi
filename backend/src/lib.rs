@@ -8,6 +8,7 @@
 pub mod config;
 pub mod constants;
 pub mod db;
+pub mod email;
 pub mod errors;
 pub mod jwt;
 pub mod jwt_security;
