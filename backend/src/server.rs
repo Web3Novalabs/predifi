@@ -403,9 +403,14 @@ pub async fn run(config: Config) {
 /// # Shutdown order
 /// 1. `signal` resolves → Axum stops accepting new connections.
 /// 2. In-flight requests drain (bounded by `config.shutdown_timeout_secs`).
-/// 3. Background workers (price-cache fetcher, Stellar listener) are aborted.
-/// 4. PostgreSQL pool is closed.
-/// 5. OTel batch exporter is flushed via [`crate::telemetry::shutdown_tracer_provider`].
+/// 3. Open WebSocket connections are sent a Close frame and given the same
+///    budget to disconnect cleanly (see [`shutdown::drain_websockets`]).
+/// 4. Background workers (price-cache fetcher, Stellar listener,
+///    notification sweep, pool cache warmer) are given the same budget to
+///    finish their current unit of work before being aborted (see
+///    [`shutdown::drain_workers`]).
+/// 5. PostgreSQL pool is closed.
+/// 6. OTel batch exporter is flushed via [`crate::telemetry::shutdown_tracer_provider`].
 pub async fn run_with_signal<F>(config: Config, signal: F)
 where
     F: Future<Output = ()> + Send + 'static,
@@ -427,6 +432,9 @@ where
         crate::price_cache::spawn_fetcher(cache.clone(), Some(prometheus_metrics.clone()));
 
     let event_bus = crate::ws::EventBus::new();
+    // Cloned before `event_bus` is moved into the router below; used only to
+    // drive the WebSocket drain during shutdown.
+    let shutdown_event_bus = event_bus.clone();
     let redis = crate::redis_cache::RedisCache::new(&config.redis_url)
         .await
         .with_metrics(prometheus_metrics.clone());
@@ -464,6 +472,19 @@ where
         crate::tracing_context::spawn_worker("notification_sweep", async move {
             crate::notifications::run_sweep_loop(notifications_pool, Duration::from_secs(300))
                 .await;
+        });
+
+    // Proactively refreshes the Redis cache for the default, first-page
+    // pool-list queries (see `cache_warmer` module docs for why only those).
+    // Ticks every half the pools TTL so an entry is refreshed well before it
+    // would otherwise expire and force a visitor to pay the cold-cache
+    // database round trip.
+    let warmer_pool = pool.clone();
+    let warmer_redis = redis.clone();
+    let warm_interval = Duration::from_secs((crate::redis_cache::POOLS_CACHE_TTL / 2).max(1));
+    let cache_warmer_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("pool_cache_warmer", async move {
+            crate::cache_warmer::run_warm_loop(warmer_pool, warmer_redis, warm_interval).await;
         });
 
     if redis.is_available() {
@@ -514,12 +535,26 @@ where
         ),
     }
 
-    // Abort workers before closing the pool so they cannot race it.
-    fetcher_handle.abort();
-    listener_handle.abort();
-    notifications_handle.abort();
+    // Signal every open WebSocket connection to close and give them the same
+    // drain budget as the HTTP server before moving on. This must happen
+    // before workers are stopped, since the Stellar listener and
+    // notification sweep both publish onto the event bus that WebSocket
+    // handlers read from.
+    shutdown::drain_websockets(&shutdown_event_bus.ws_shutdown_token(), drain_timeout).await;
 
-    // Close the pool after aborting workers.
+    // Give workers a chance to finish their current unit of work before
+    // forcibly aborting them, instead of killing them immediately. Each is
+    // bounded by the same drain timeout; a worker still running past it is
+    // aborted (see `shutdown::drain_workers`).
+    let workers = vec![
+        ("price_fetcher", fetcher_handle),
+        ("stellar_listener", listener_handle),
+        ("notification_sweep", notifications_handle),
+        ("pool_cache_warmer", cache_warmer_handle),
+    ];
+    shutdown::drain_workers(workers, drain_timeout).await;
+
+    // Close the pool after draining workers so they cannot race it.
     shutdown::with_shutdown_timeout(drain_timeout, "database pool close", pool.close()).await;
 
     // Flush the OTel batch exporter — must happen after all spans are done.

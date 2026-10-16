@@ -286,6 +286,13 @@ pub async fn drain_websockets(token: &WsShutdownToken, timeout: Duration) {
 /// ```
 pub async fn drain_workers(workers: Vec<(&'static str, JoinHandle<()>)>, timeout: Duration) {
     for (name, handle) in workers {
+        // Captured before `handle` is moved into the timeout future below, so
+        // that the timed-out branch can still actually abort the task.
+        // Previously the handle was simply dropped on timeout, which only
+        // *detaches* a tokio task rather than aborting it — the worker would
+        // keep running in the background indefinitely after we logged that
+        // it had been aborted.
+        let abort_handle = handle.abort_handle();
         match tokio::time::timeout(timeout, handle).await {
             Ok(Ok(())) => {
                 info!(worker = name, "background worker finished cleanly");
@@ -307,6 +314,7 @@ pub async fn drain_workers(workers: Vec<(&'static str, JoinHandle<()>)>, timeout
                     timeout_secs = timeout.as_secs(),
                     "background worker did not finish within shutdown timeout; aborting"
                 );
+                abort_handle.abort();
             }
         }
     }
