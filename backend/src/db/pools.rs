@@ -31,6 +31,10 @@ pub struct PoolDetails {
     pub creator: String,
     pub token: String,
     pub result: Option<String>,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]` or `["Team A", "Team B", "Draw"]`. Empty when the
+    /// pool was indexed before labels were captured (pre-#1932 rows).
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// Per-outcome stake and implied odds.
@@ -55,6 +59,9 @@ pub struct PoolWithOdds {
     pub token: String,
     pub result: Option<String>,
     pub odds: Vec<OutcomeOdds>,
+    /// Human-readable label for each outcome index (#1932). See
+    /// [`PoolDetails::outcome_descriptions`].
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// Aggregate creator reputation / reward-eligibility metrics.
@@ -90,6 +97,15 @@ pub struct PoolCreatedEvent {
     pub token: String,
     pub category: String,
     pub description: String,
+    /// Number of distinct outcome options (#1932). The on-chain event has
+    /// carried this since multi-outcome pools were added
+    /// (`events.rs::PoolCreatedEvent::options_count`); the indexer
+    /// previously discarded it. Defaults to `2` (binary) for callers that
+    /// predate this field.
+    pub options_count: i32,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]`. Mirrors `events.rs::PoolCreatedEvent::outcome_descriptions`.
+    pub outcome_descriptions: Vec<String>,
 }
 
 // ── Internal row types (not exported) ────────────────────────────────────────
@@ -206,7 +222,7 @@ pub async fn get_pool_by_id(
     sqlx::query_as::<_, PoolDetails>(
         r#"
         SELECT pool_id, name, category, total_stake, end_time, created_at,
-               state, creator, token, result
+               state, creator, token, result, outcome_descriptions
         FROM pools
         WHERE pool_id = $1
         "#,
@@ -266,6 +282,7 @@ pub async fn get_pool_with_odds(
         token: details.token,
         result: details.result,
         odds,
+        outcome_descriptions: details.outcome_descriptions,
     }))
 }
 
@@ -284,8 +301,9 @@ pub async fn insert_pool_from_event(
     sqlx::query(
         r#"
         INSERT INTO pools
-            (pool_id, name, category, total_stake, end_time, state, creator, token, created_at)
-        VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW())
+            (pool_id, name, category, total_stake, end_time, state, creator, token, created_at,
+             options_count, outcome_descriptions)
+        VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW(), $7, $8)
         ON CONFLICT (pool_id) DO NOTHING
         "#,
     )
@@ -295,6 +313,8 @@ pub async fn insert_pool_from_event(
     .bind(event.end_time as f64)
     .bind(&event.creator)
     .bind(&event.token)
+    .bind(event.options_count)
+    .bind(&event.outcome_descriptions)
     .execute(pool)
     .await?;
 

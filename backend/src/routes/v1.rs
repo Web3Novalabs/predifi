@@ -937,6 +937,18 @@ pub struct PoolCreatedPayload {
     pub category: NonEmptyString,
     /// Pool description / name decoded from the event data.
     pub description: NonEmptyString,
+    /// Number of distinct outcome options (#1932). Defaults to `2` (binary)
+    /// so older callers that predate multi-outcome pools still deserialize.
+    #[serde(default = "default_options_count")]
+    pub options_count: u32,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]`. Defaults to empty for the same backward-compat reason.
+    #[serde(default)]
+    pub outcome_descriptions: Vec<String>,
+}
+
+fn default_options_count() -> u32 {
+    2
 }
 
 /// `POST /api/v1/indexer/pool-created` — ingest a decoded `PoolCreated` event
@@ -964,6 +976,8 @@ pub async fn ingest_pool_created(
         token: payload.token.into(),
         category: payload.category.into(),
         description: payload.description.into(),
+        options_count: payload.options_count as i32,
+        outcome_descriptions: payload.outcome_descriptions,
     };
 
     match crate::db::insert_pool_from_event(db, &event).await {
@@ -1205,7 +1219,7 @@ pub async fn pay_creator_incentive_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct CreatePoolTemplateRequest {
-    pub creator: String,
+    pub creator: StellarAddress,
     pub name: String,
     pub category: String,
     pub description: String,
@@ -1225,7 +1239,7 @@ pub async fn create_pool_template_handler(
 
     match crate::db::create_pool_template(
         db,
-        &body.creator,
+        body.creator.as_str(),
         &body.name,
         &body.category,
         &body.description,
@@ -1242,7 +1256,7 @@ pub async fn create_pool_template_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct ListPoolTemplatesQuery {
-    pub creator: String,
+    pub creator: StellarAddress,
 }
 
 /// `GET /api/v1/pool-templates?creator=...` — list a creator's saved templates.
@@ -1254,7 +1268,7 @@ pub async fn list_pool_templates_handler(
         return Json(json!({ "error": "database not available" }));
     };
 
-    match crate::db::list_pool_templates(db, &params.creator).await {
+    match crate::db::list_pool_templates(db, params.creator.as_str()).await {
         Ok(templates) => Json(json!({ "creator": params.creator, "templates": templates })),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }

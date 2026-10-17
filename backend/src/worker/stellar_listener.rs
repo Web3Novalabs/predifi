@@ -409,6 +409,11 @@ async fn handle_pool_created_event(
     let description = extract_string(data, "description")
         .or_else(|| extract_string(data, "metadata_url"))
         .unwrap_or_default();
+    // #1932: the contract's `PoolCreatedEvent` has carried these since
+    // multi-outcome pools were added; default to a binary pool shape when
+    // an older/partial event payload omits them rather than failing ingest.
+    let options_count = extract_u32(data, "options_count").unwrap_or(2);
+    let outcome_descriptions = extract_string_vec(data, "outcome_descriptions").unwrap_or_default();
 
     let pool_event = crate::db::PoolCreatedEvent {
         pool_id,
@@ -417,6 +422,8 @@ async fn handle_pool_created_event(
         token,
         category,
         description,
+        options_count: options_count as i32,
+        outcome_descriptions,
     };
 
     crate::db::insert_pool_from_event(db, &pool_event)
@@ -574,6 +581,30 @@ fn extract_i32(data: &Value, key: &str) -> Option<i32> {
 
 fn extract_u64(data: &Value, key: &str) -> Option<u64> {
     extract_i128(data.get(key)?).and_then(|v| u64::try_from(v).ok())
+}
+
+/// Extract a `u32` field (e.g. `options_count`, #1932).
+fn extract_u32(data: &Value, key: &str) -> Option<u32> {
+    extract_i128(data.get(key)?).and_then(|v| u32::try_from(v).ok())
+}
+
+/// Extract a `Vec<String>` field (e.g. `outcome_descriptions`, #1932).
+///
+/// Handles the same "single-key wrapper object" shape `extract_string_value`
+/// unwraps for scalars (some RPC encodings wrap a Soroban `Vec` the same way
+/// they wrap other typed values), as well as a plain JSON array.
+fn extract_string_vec(data: &Value, key: &str) -> Option<Vec<String>> {
+    extract_string_vec_value(data.get(key)?)
+}
+
+fn extract_string_vec_value(value: &Value) -> Option<Vec<String>> {
+    match value {
+        Value::Array(items) => items.iter().map(extract_string_value).collect(),
+        Value::Object(map) if map.len() == 1 => {
+            map.values().next().and_then(extract_string_vec_value)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

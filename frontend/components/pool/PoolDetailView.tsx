@@ -185,7 +185,9 @@ export function PoolDetailView({ poolId, wsToken }: PoolDetailViewProps) {
               return (
                 <li key={o.outcome} className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs">
-                    <span className="text-zinc-300">Outcome {o.outcome}</span>
+                    <span className="text-zinc-300">
+                      {pool.outcome_descriptions?.[o.outcome] || `Outcome ${o.outcome}`}
+                    </span>
                     <span className="flex items-center gap-3 text-zinc-400">
                       <span>
                         stake{" "}

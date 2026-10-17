@@ -216,6 +216,7 @@ mod tests {
                 stake: 500,
                 odds: 1.5,
             }],
+            outcome_descriptions: Vec::new(),
         }
     }
 
