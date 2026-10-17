@@ -383,10 +383,17 @@ impl PredifiContract {
             }
         }
 
-        if config.max_predictions_per_user > 0 {
-            let pred_key = DataKey::Pred(user.clone(), pool_id);
-            let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
+        // Gas optimization (#1940): read `Pred(user, pool_id)` from persistent
+        // storage exactly once per call. This key was previously read twice —
+        // once (conditionally) to check the max-predictions-per-user limit,
+        // then unconditionally again a few lines down to decide whether this
+        // is a new prediction or a stake increase — doubling a persistent
+        // storage IO on every `place_prediction` call that had the limit
+        // configured.
+        let pred_key = DataKey::Pred(user.clone(), pool_id);
+        let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
 
+        if config.max_predictions_per_user > 0 {
             // If user already has a prediction on this pool, allow increasing stake (same prediction)
             // If this is a new prediction for this pool, check if user has reached the limit
             if existing_pred.is_none() {
@@ -407,8 +414,6 @@ impl PredifiContract {
             // as it's the same prediction, not a new pool participation
         }
 
-        let pred_key = DataKey::Pred(user.clone(), pool_id);
-        let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
         if let Some(mut existing_pred) = existing_pred {
             assert!(
                 existing_pred.outcome == outcome,

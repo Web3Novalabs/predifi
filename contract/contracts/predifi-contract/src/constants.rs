@@ -427,6 +427,13 @@ pub const CONTRACT_VERSION: u32 = 1;
 /// **Used for:** Calculating `PendingFeeChange.effective_at` when queuing fee changes.
 pub const FEE_CHANGE_TIMELOCK_SECONDS: u64 = 86_400;
 
+/// Default minimum number of unique participants a pool must reach before its
+/// creator is eligible for the creator-incentive payout (issue #1933).
+///
+/// Admins can override this via `set_creator_min_participants`. This default
+/// only applies when no override has been stored yet.
+pub const DEFAULT_CREATOR_MIN_PARTICIPANTS: u32 = 5;
+
 #[cfg(test)]
 #[allow(clippy::assertions_on_constants)]
 mod tests {

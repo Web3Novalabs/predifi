@@ -47,6 +47,7 @@ mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
 mod treasury;
+mod creator_incentive;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
@@ -342,6 +343,13 @@ pub enum PredifiError {
     FeeChangePending = 95,
     NoFeeChangePending = 96,
     TimelockNotExpired = 97,
+    /// Issue #1933: pool's `participants_count` is below the configured
+    /// `get_creator_min_participants()` threshold, so the creator incentive
+    /// cannot be claimed yet.
+    MinParticipantsNotMet = 210,
+    /// Issue #1933: `claim_creator_incentive` has already been paid out for
+    /// this pool — it can only be claimed once per pool.
+    CreatorIncentiveAlreadyPaid = 211,
 }
 
 /// Internal storage keys for contract data.
@@ -496,6 +504,25 @@ pub enum DataKey {
     /// Sentinel that records a pool has been marked ready for resolution.
     /// `PoolReady(pool_id)` -> `bool`.
     PoolReady(u64),
+
+    // ── Issue #1933: Pool creator incentive system ──────────────────────────
+    /// Creator incentive rate in basis points (share of a pool's protocol fee
+    /// paid to its creator once the participation threshold is met):
+    /// `CreatorIncentiveBps` -> `u32`. Default 0 (disabled) when unset.
+    CreatorIncentiveBps,
+    /// Minimum `Pool.participants_count` required before a pool's creator is
+    /// eligible to claim the incentive: `CreatorMinParticipants` -> `u32`.
+    /// Falls back to `DEFAULT_CREATOR_MIN_PARTICIPANTS` when unset.
+    CreatorMinParticipants,
+    /// Idempotency sentinel — set once `claim_creator_incentive` has paid out
+    /// for a given pool: `CreatorIncentivePaid(pool_id)` -> `bool`.
+    CreatorIncentivePaid(u64),
+    /// Reputation counter: number of pools for which a creator has
+    /// successfully claimed the incentive: `CreatorRewardedPools(creator)` -> `u32`.
+    CreatorRewardedPools(Address),
+    /// Reputation counter: cumulative incentive amount a creator has earned
+    /// across all pools: `CreatorTotalIncentive(creator)` -> `i128`.
+    CreatorTotalIncentive(Address),
 }
 
 // ── Events ───────────────────────────────────────────────────────────────────
