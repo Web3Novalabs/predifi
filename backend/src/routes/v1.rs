@@ -455,7 +455,16 @@ pub async fn get_stats(
                     crate::redis_cache::STATS_CACHE_TTL,
                 )
                 .await;
-            ApiResponse::success(stats).into_response()
+            // Pre-existing bug fixed in passing (found while wiring up the
+            // same cache-aside pattern for #1938): this used to return
+            // `ApiResponse::success(stats)` here — `{"status":"success",
+            // "data": <stats>}` — while the cache-hit branch above returns
+            // the un-enveloped `stats` object directly. A client polling
+            // this endpoint would see its response shape silently change
+            // depending on whether the TTL had expired. Returning the same
+            // raw shape that's cached (matching `get_pools`'s cache-aside
+            // path) makes a hit and a miss identical on the wire.
+            (StatusCode::OK, Json(json_response)).into_response()
         }
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -652,6 +661,21 @@ pub async fn get_user_history(
 }
 
 /// `GET /api/v1/users/:address/predictions` — enhanced user predictions with current pool status.
+///
+/// This is one of the most frequently polled endpoints (every user dashboard
+/// load) and was previously hitting the database on every request despite
+/// `user_predictions_cache_key`/`USER_PREDICTIONS_CACHE_TTL` already existing
+/// in `redis_cache.rs` for exactly this purpose (see #1938). Implements the
+/// same cache-aside pattern as `get_pools`/`get_stats`:
+/// 1. Check Redis for a cached page keyed by address, limit, and offset.
+/// 2. On cache hit: return the cached value.
+/// 3. On cache miss: fetch from the database and cache for
+///    [`USER_PREDICTIONS_CACHE_TTL`](crate::redis_cache::USER_PREDICTIONS_CACHE_TTL) seconds.
+///
+/// A new prediction for this address invalidates only this user's cached
+/// pages (see `RedisCache::invalidate_user_predictions_cache`), so the TTL
+/// mainly protects against repeated polling rather than being the sole
+/// source of freshness.
 pub async fn get_user_predictions(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
@@ -662,6 +686,12 @@ pub async fn get_user_predictions(
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
+
+    let cache_key =
+        crate::redis_cache::user_predictions_cache_key(address.as_str(), limit, offset);
+    if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+        return (StatusCode::OK, Json(cached)).into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -681,7 +711,19 @@ pub async fn get_user_predictions(
                 "offset": offset,
                 "total_predictions": predictions.len(),
             });
-            ApiResponse::success(response).into_response()
+            state
+                .redis
+                .set(
+                    &cache_key,
+                    &response,
+                    crate::redis_cache::USER_PREDICTIONS_CACHE_TTL,
+                )
+                .await;
+            // Return the same un-enveloped shape cached above, so a cache
+            // hit and a cache miss are byte-for-byte identical on the wire
+            // (matches the `get_pools` cache-aside path; see the note in
+            // `get_stats` above for why this matters).
+            (StatusCode::OK, Json(response)).into_response()
         }
         Err(e) => ApiResponse::<()>::error(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -895,6 +937,18 @@ pub struct PoolCreatedPayload {
     pub category: NonEmptyString,
     /// Pool description / name decoded from the event data.
     pub description: NonEmptyString,
+    /// Number of distinct outcome options (#1932). Defaults to `2` (binary)
+    /// so older callers that predate multi-outcome pools still deserialize.
+    #[serde(default = "default_options_count")]
+    pub options_count: u32,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]`. Defaults to empty for the same backward-compat reason.
+    #[serde(default)]
+    pub outcome_descriptions: Vec<String>,
+}
+
+fn default_options_count() -> u32 {
+    2
 }
 
 /// `POST /api/v1/indexer/pool-created` — ingest a decoded `PoolCreated` event
@@ -922,6 +976,8 @@ pub async fn ingest_pool_created(
         token: payload.token.into(),
         category: payload.category.into(),
         description: payload.description.into(),
+        options_count: payload.options_count as i32,
+        outcome_descriptions: payload.outcome_descriptions,
     };
 
     match crate::db::insert_pool_from_event(db, &event).await {
@@ -983,6 +1039,10 @@ pub async fn ingest_prediction_placed(
                 "amount": event.amount,
             }));
             state.redis.invalidate_stats_cache().await;
+            state
+                .redis
+                .invalidate_user_predictions_cache(&event.user_address)
+                .await;
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
             ApiResponse::success(response).into_response()
         }
@@ -1159,7 +1219,7 @@ pub async fn pay_creator_incentive_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct CreatePoolTemplateRequest {
-    pub creator: String,
+    pub creator: StellarAddress,
     pub name: String,
     pub category: String,
     pub description: String,
@@ -1179,7 +1239,7 @@ pub async fn create_pool_template_handler(
 
     match crate::db::create_pool_template(
         db,
-        &body.creator,
+        body.creator.as_str(),
         &body.name,
         &body.category,
         &body.description,
@@ -1196,7 +1256,7 @@ pub async fn create_pool_template_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct ListPoolTemplatesQuery {
-    pub creator: String,
+    pub creator: StellarAddress,
 }
 
 /// `GET /api/v1/pool-templates?creator=...` — list a creator's saved templates.
@@ -1208,7 +1268,7 @@ pub async fn list_pool_templates_handler(
         return Json(json!({ "error": "database not available" }));
     };
 
-    match crate::db::list_pool_templates(db, &params.creator).await {
+    match crate::db::list_pool_templates(db, params.creator.as_str()).await {
         Ok(templates) => Json(json!({ "creator": params.creator, "templates": templates })),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
@@ -2017,6 +2077,53 @@ mod cache_aside_tests {
         let cache = RedisCache::disabled();
         // Should not panic
         cache.invalidate_stats_cache().await;
+    }
+
+    /// Test the `get_user_predictions` cache-aside pattern added for #1938:
+    /// miss, populate, and invalidation all behave the same way as the
+    /// `stats`/`pools` cache-aside patterns above.
+    #[tokio::test]
+    async fn test_user_predictions_cache_aside_pattern() {
+        use crate::redis_cache::{user_predictions_cache_key, RedisCache, USER_PREDICTIONS_CACHE_TTL};
+
+        let cache = RedisCache::disabled();
+        let key = user_predictions_cache_key("GABC123", 20, 0);
+
+        // Cache miss
+        let cached: Option<serde_json::Value> = cache.get(&key).await;
+        assert!(cached.is_none());
+
+        // Populate (no-ops on disabled cache, same as the other endpoints)
+        let data = serde_json::json!({
+            "address": "GABC123",
+            "predictions": [],
+            "limit": 20,
+            "offset": 0,
+            "total_predictions": 0
+        });
+        cache.set(&key, &data, USER_PREDICTIONS_CACHE_TTL).await;
+
+        let cached: Option<serde_json::Value> = cache.get(&key).await;
+        assert!(cached.is_none());
+
+        // Invalidation must not panic either.
+        cache.invalidate_user_predictions_cache("GABC123").await;
+    }
+
+    /// Different (address, limit, offset) triples must produce distinct
+    /// cache keys so one user's cached page can't be served to another.
+    #[test]
+    fn test_user_predictions_cache_key_uniqueness() {
+        use crate::redis_cache::user_predictions_cache_key;
+
+        let k1 = user_predictions_cache_key("GABC123", 20, 0);
+        let k2 = user_predictions_cache_key("GXYZ789", 20, 0);
+        let k3 = user_predictions_cache_key("GABC123", 10, 0);
+        let k4 = user_predictions_cache_key("GABC123", 20, 20);
+
+        assert_ne!(k1, k2);
+        assert_ne!(k1, k3);
+        assert_ne!(k1, k4);
     }
 }
 

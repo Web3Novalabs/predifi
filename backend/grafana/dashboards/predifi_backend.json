@@ -361,6 +361,43 @@
       "targets": [
         { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "histogram_quantile(0.95, sum(rate(app_price_cache_fetch_duration_seconds_bucket[5m])) by (le))", "legendFormat": "p95", "refId": "A" }
       ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 61 },
+      "id": 107,
+      "title": "🎯 Redis Cache Hit Ratio",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "percentunit", "min": 0, "max": 1, "custom": { "lineWidth": 1, "fillOpacity": 8 } }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 62 },
+      "id": 70,
+      "options": { "legend": { "calcs": ["mean", "min"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Redis Cache Hit Ratio by Cache",
+      "description": "hit / (hit + miss) per cache_name from app_redis_cache_lookups_total. A sustained low ratio flags a TTL that's too short, or hot data that bypasses the cache entirely.",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum(rate(app_redis_cache_lookups_total{outcome=\"hit\"}[5m])) by (cache_name) / clamp_min(sum(rate(app_redis_cache_lookups_total{outcome=~\"hit|miss\"}[5m])) by (cache_name), 1e-9)", "legendFormat": "{{cache_name}}", "refId": "A" }
+      ]
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "palette-classic" }, "unit": "ops" }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 62 },
+      "id": 71,
+      "options": { "legend": { "calcs": ["mean"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "title": "Redis Cache Lookups by Outcome",
+      "description": "hit / miss / error rate per cache_name from app_redis_cache_lookups_total.",
+      "type": "timeseries",
+      "targets": [
+        { "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "expr": "sum(rate(app_redis_cache_lookups_total[1m])) by (cache_name, outcome)", "legendFormat": "{{cache_name}} / {{outcome}}", "refId": "A" }
+      ]
     }
   ],
   "refresh": "30s",
@@ -391,6 +428,6 @@
   "timezone": "browser",
   "title": "PrediFi Backend — Production Observability",
   "uid": "predifi-backend-prod",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

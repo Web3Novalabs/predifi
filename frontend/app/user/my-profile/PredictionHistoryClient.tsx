@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
 import { formatChartValue } from "@/lib/stakeFilters";
@@ -10,6 +11,29 @@ import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { PerformanceCharts } from "@/components/profile/PerformanceCharts";
 import { ShareButton, CopyButton, Skeleton } from "@/components/ui";
 import type { ClaimStatus } from "@/lib/api/profile";
+import type { PerformanceChartsProps } from "@/components/profile/PerformanceCharts";
+
+/**
+ * Dynamically import the recharts-based performance charts so the recharts
+ * library (and its d3 dependencies) is code-split into its own chunk instead
+ * of inflating the initial `/user/my-profile` bundle (#1939). Mirrors the
+ * same pattern already used for `StakedChart` on the dashboard.
+ */
+const PerformanceCharts = dynamic<PerformanceChartsProps>(
+  () =>
+    import("@/components/profile/PerformanceCharts").then(
+      (mod) => mod.PerformanceCharts,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Skeleton className="h-[280px] lg:col-span-2 rounded-xl" />
+        <Skeleton className="h-[280px] rounded-xl" />
+      </div>
+    ),
+  },
+);
 
 /**
  * Issue #1931: social sharing for individual predictions. Mirrors the

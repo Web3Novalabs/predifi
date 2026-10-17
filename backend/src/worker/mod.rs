@@ -11,6 +11,8 @@ pub mod queue;
 pub mod stellar_listener;
 /// Full contract-DB state synchronisation task (#562).
 pub mod sync;
+/// Recurring pool template auto-creation scheduler (#1935).
+pub mod template_scheduler;
 
 #[cfg(test)]
 mod tests {
