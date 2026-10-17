@@ -308,6 +308,14 @@ impl Config {
         };
 
         config.validate()?;
+        // Fail fast on required variables that have no safe compiled-in
+        // fallback: production must be handed an explicit database DSN.
+        if config.is_production() && !vars.contains_key("PREDIFI_DATABASE_URL") {
+            return Err(ConfigError::MissingRequired {
+                key: "PREDIFI_DATABASE_URL",
+                description: "PostgreSQL connection string used by the backend",
+            });
+        }
         Ok(config)
     }
 
@@ -486,6 +494,48 @@ impl Config {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_INDEXER_MAX_BATCH_SIZE",
                 reason: String::from("must be greater than zero"),
+            });
+        }
+
+        // ── Log level ───────────────────────────────────────────────────────
+        if let Err(reason) = validate_log_level(&self.log_level) {
+            return Err(ConfigError::InvalidValue {
+                key: "RUST_LOG",
+                reason,
+            });
+        }
+
+        // ── Email / SMTP (#1929) ────────────────────────────────────────────
+        if self.smtp_port == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SMTP_PORT",
+                reason: String::from("must be a non-zero TCP port (1-65535)"),
+            });
+        }
+        // A host without credentials (or credentials without a host) is an
+        // incompatible combination: it would fail only at first send time.
+        if self.smtp_host.is_some() && self.smtp_username.is_some() && self.smtp_password.is_none() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SMTP_PASSWORD",
+                reason: String::from(
+                    "must be set when PREDIFI_SMTP_USERNAME is set (SMTP auth requires both)",
+                ),
+            });
+        }
+        if self.smtp_host.is_some() && self.smtp_username.is_none() && self.smtp_password.is_some() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SMTP_USERNAME",
+                reason: String::from(
+                    "must be set when PREDIFI_SMTP_PASSWORD is set (SMTP auth requires both)",
+                ),
+            });
+        }
+        if self.smtp_host.is_some() && self.smtp_from.trim().is_empty() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SMTP_FROM",
+                reason: String::from(
+                    "must be a non-empty address when SMTP delivery is enabled",
+                ),
             });
         }
 
@@ -928,8 +978,68 @@ fn validate_url_has_host(url: &str, key: &'static str) -> Result<(), ConfigError
     Ok(())
 }
 
-/// Return the value of `key` from `vars`, or `Err(ConfigError::MissingRequired)` if absent.
+/// Validate an `EnvFilter`-style log directive list at startup.
 ///
+/// Accepts comma-separated directives such as `info`,
+/// `predifi_backend=debug,warn`. When a directive carries `target=level`, the
+/// level must be a known tracing level; a bare directive must be a known level
+/// or a target name. Invalid values would otherwise surface only when the
+/// tracing subscriber is built.
+fn validate_log_level(value: &str) -> Result<(), String> {
+    const LEVELS: [&str; 6] = ["error", "warn", "info", "debug", "trace", "off"];
+
+    for directive in value.split(',') {
+        let directive = directive.trim();
+        if directive.is_empty() {
+            return Err(String::from(
+                "must be a comma-separated list of log directives with no empty entries \
+                 (e.g. 'info' or 'predifi_backend=debug,warn')",
+            ));
+        }
+
+        let level = match directive.rsplit_once('=') {
+            Some((target, level)) => {
+                if target.trim().is_empty() {
+                    return Err(format!(
+                        "directive '{}' is missing a target before '='",
+                        directive
+                    ));
+                }
+                level.trim()
+            }
+            // A bare directive is either a level or a target name.
+            None => {
+                if LEVELS.iter().any(|l| l.eq_ignore_ascii_case(directive)) {
+                    continue;
+                }
+                if directive.contains(':')
+                    && directive
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':'))
+                {
+                    continue;
+                }
+                return Err(format!(
+                    "'{}' is not a valid log level or directive; expected one of {}",
+                    directive,
+                    LEVELS.join(", ")
+                ));
+            }
+        };
+
+        if !LEVELS.iter().any(|l| l.eq_ignore_ascii_case(level)) {
+            return Err(format!(
+                "'{}' is not a valid log level; expected one of {}",
+                level,
+                LEVELS.join(", ")
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Return the value of `key` from `vars`, or `Err(ConfigError::MissingRequired)` if absent.///
 /// Use this for environment variables that **must** be explicitly set in
 /// production deployments (i.e. variables with no safe compiled-in default).
 #[allow(dead_code)]
@@ -2018,5 +2128,116 @@ mod tests {
         let vars = HashMap::new();
         let config = Config::from_map(&vars).unwrap();
         assert_eq!(config.app_env, DEFAULT_APP_ENV);
+    }
+
+    // -- startup validation of log level, SMTP, and required vars (#1974) --
+
+    #[test]
+    fn config_rejects_invalid_log_level() {
+        let vars = HashMap::from([(String::from("RUST_LOG"), String::from("verbose"))]);
+        let error = Config::from_map(&vars).expect_err("unknown log level must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "RUST_LOG",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn config_accepts_target_log_directives() {
+        let vars = HashMap::from([(
+            String::from("RUST_LOG"),
+            String::from("predifi_backend=debug,sqlx=info,warn"),
+        )]);
+        Config::from_map(&vars).expect("target=level directives are valid EnvFilter syntax");
+    }
+
+    #[test]
+    fn config_rejects_invalid_level_after_target() {
+        let vars = HashMap::from([(
+            String::from("RUST_LOG"),
+            String::from("predifi_backend=verbose"),
+        )]);
+        let error = Config::from_map(&vars).expect_err("bad level must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "RUST_LOG",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn config_rejects_smtp_username_without_password() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_SMTP_HOST"), String::from("smtp.example.com")),
+            (String::from("PREDIFI_SMTP_USERNAME"), String::from("bot")),
+        ]);
+        let error = Config::from_map(&vars).expect_err("half-configured SMTP auth must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_SMTP_PASSWORD",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn config_rejects_zero_smtp_port() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_SMTP_HOST"), String::from("smtp.example.com")),
+            (String::from("PREDIFI_SMTP_PORT"), String::from("0")),
+        ]);
+        let error = Config::from_map(&vars).expect_err("port 0 must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_SMTP_PORT",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn config_requires_database_url_in_production() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_APP_ENV"), String::from("production")),
+            (
+                String::from("PREDIFI_SECRET_KEY"),
+                String::from("a-very-strong-production-secret-key-at-least-32-bytes"),
+            ),
+            (
+                String::from("PREDIFI_WS_ALLOWED_ORIGINS"),
+                String::from("https://app.predifi.com"),
+            ),
+        ]);
+        let error =
+            Config::from_map(&vars).expect_err("production without PREDIFI_DATABASE_URL must fail");
+        assert!(
+            matches!(
+                error,
+                ConfigError::MissingRequired {
+                    key: "PREDIFI_DATABASE_URL",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
     }
 }
