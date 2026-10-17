@@ -318,7 +318,7 @@ async fn process_event_batch(
                     }
                 }
             } else if topic_matches("prediction_placed") {
-                match handle_prediction_placed_event(db, event, event_bus).await {
+                match handle_prediction_placed_event(db, redis, event, event_bus).await {
                     Ok(()) => queue.record_success(&job),
                     Err(e) => {
                         error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process prediction_placed event");
@@ -436,6 +436,7 @@ async fn handle_pool_created_event(
 
 async fn handle_prediction_placed_event(
     db: &PgPool,
+    redis: &RedisCache,
     event: &StellarEvent,
     event_bus: &crate::ws::EventBus,
 ) -> Result<(), String> {
@@ -472,6 +473,16 @@ async fn handle_prediction_placed_event(
         "outcome": ev.outcome,
         "amount": ev.amount,
     }));
+
+    // Protocol-wide stats and this user's cached prediction history both
+    // just went stale. Without this, `/api/v1/users/:address/predictions`
+    // (now cached, see #1938) would keep serving a pre-prediction snapshot
+    // for up to USER_PREDICTIONS_CACHE_TTL after a confirmed on-chain
+    // prediction — this is the primary ingestion path (events indexed off
+    // the Stellar RPC), unlike `ingest_prediction_placed` in routes/v1.rs
+    // which only invalidated the stats cache.
+    redis.invalidate_stats_cache().await;
+    redis.invalidate_user_predictions_cache(&ev.user_address).await;
 
     Ok(())
 }

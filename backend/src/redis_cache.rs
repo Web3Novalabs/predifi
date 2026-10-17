@@ -366,6 +366,19 @@ impl RedisCache {
         self.delete_pattern(STATS_CACHE_PATTERN).await;
     }
 
+    /// Invalidate every cached prediction-history page for one user.
+    ///
+    /// Call after a new prediction is recorded for `address` so their next
+    /// `GET /api/v1/users/:address/predictions` request reflects it
+    /// immediately instead of waiting out [`USER_PREDICTIONS_CACHE_TTL`].
+    /// Scoped to a single user's keys rather than the whole `user:*`
+    /// namespace, so one user placing a prediction does not evict every
+    /// other user's cached page.
+    pub async fn invalidate_user_predictions_cache(&self, address: &str) {
+        let pattern = format!("user:{}:predictions:*", sanitize_key_component(address));
+        self.delete_pattern(&pattern).await;
+    }
+
     /// Check if a cache entry exists without deserializing it
     ///
     /// Useful for cache-aside pattern to determine if we need to populate the cache
@@ -790,6 +803,18 @@ mod tests {
         let cache = RedisCache::disabled();
         // Should not panic; no-ops on a disabled cache
         cache.invalidate_stats_cache().await;
+    }
+
+    /// `invalidate_user_predictions_cache` must not panic on a disabled
+    /// cache, and must build a pattern scoped to the sanitized address
+    /// rather than the whole `user:*` namespace.
+    #[tokio::test]
+    async fn test_user_predictions_cache_invalidation() {
+        let cache = RedisCache::disabled();
+        cache.invalidate_user_predictions_cache("GABC123").await;
+        cache
+            .invalidate_user_predictions_cache("GABC\n*injected*")
+            .await;
     }
 
     #[test]

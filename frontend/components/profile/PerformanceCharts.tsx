@@ -65,7 +65,7 @@ function toCumulative(points: PerformancePoint[]) {
   });
 }
 
-interface PerformanceChartsProps {
+export interface PerformanceChartsProps {
   stats: ProfileStats;
   performance: PerformancePoint[];
 }

@@ -8,10 +8,7 @@
 //! calls [`EventBus::send`] whenever a new prediction is indexed.
 
 use std::collections::HashMap;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Arc, Mutex,
-};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::{
@@ -31,6 +28,7 @@ use tracing::Instrument;
 use crate::config::Config;
 use crate::constants::{RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS};
 use crate::jwt::{extract_bearer_token, verify_jwt_token_strict};
+use crate::shutdown::WsShutdownToken;
 
 const CHANNEL_CAPACITY: usize = 256;
 
@@ -45,20 +43,35 @@ const MAX_CONNECT_ATTEMPTS_PER_IP: usize = 10;
 const CONNECT_WINDOW: Duration = Duration::from_secs(60);
 
 /// RAII guard to safely track and decrement active connections on drop or panic.
-pub struct ConnectionGuard(Arc<AtomicUsize>);
+///
+/// Backed by [`WsShutdownToken`] so that the same active-connection count
+/// used for the `MAX_ACTIVE_CONNECTIONS` cap also drives graceful shutdown:
+/// [`crate::server::run_with_signal`] broadcasts the shutdown signal through
+/// this token and waits for the count it tracks to reach zero.
+pub struct ConnectionGuard(WsShutdownToken);
 
 impl ConnectionGuard {
-    pub fn new(active_connections: Arc<AtomicUsize>) -> Self {
-        let count = active_connections.fetch_add(1, Ordering::Relaxed) + 1;
-        tracing::info!(active_connections = count, "websocket client connected");
-        Self(active_connections)
+    /// Subscribes to `token` (incrementing its active-connection count) and
+    /// returns both the RAII guard (which decrements the count on drop) and
+    /// the broadcast receiver the connection should select on to learn when
+    /// the server is shutting down.
+    pub fn subscribe(token: WsShutdownToken) -> (Self, broadcast::Receiver<()>) {
+        let shutdown_rx = token.subscribe();
+        tracing::info!(
+            active_connections = token.active_count(),
+            "websocket client connected"
+        );
+        (Self(token), shutdown_rx)
     }
 }
 
 impl Drop for ConnectionGuard {
     fn drop(&mut self) {
-        let count = self.0.fetch_sub(1, Ordering::Relaxed) - 1;
-        tracing::info!(active_connections = count, "websocket client disconnected");
+        self.0.connection_closed();
+        tracing::info!(
+            active_connections = self.0.active_count(),
+            "websocket client disconnected"
+        );
     }
 }
 
@@ -107,8 +120,10 @@ pub struct WsConnectParams {
 #[derive(Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<String>,
-    /// Number of currently connected WebSocket clients.
-    active_connections: Arc<AtomicUsize>,
+    /// Tracks currently connected WebSocket clients and carries the
+    /// graceful-shutdown broadcast signal to each of them (see
+    /// [`EventBus::ws_shutdown_token`]).
+    ws_shutdown: WsShutdownToken,
     connect_limiter: Arc<ConnectRateLimiter>,
 }
 
@@ -127,14 +142,21 @@ impl EventBus {
         let (tx, _) = broadcast::channel(CHANNEL_CAPACITY);
         Self {
             tx,
-            active_connections: Arc::new(AtomicUsize::new(0)),
+            ws_shutdown: WsShutdownToken::new(1),
             connect_limiter: Arc::new(ConnectRateLimiter::new()),
         }
     }
 
     /// Number of WebSocket clients currently connected.
     pub fn active_connections(&self) -> usize {
-        self.active_connections.load(Ordering::Relaxed)
+        self.ws_shutdown.active_count()
+    }
+
+    /// Clone of the shutdown token used to notify every connected WebSocket
+    /// client that the server is shutting down, and to track how many of
+    /// them are still draining. Used by [`crate::server::run_with_signal`].
+    pub fn ws_shutdown_token(&self) -> WsShutdownToken {
+        self.ws_shutdown.clone()
     }
 
     /// Publish a serialisable event to all connected WebSocket clients.
@@ -369,9 +391,16 @@ async fn handle_socket(
     pool_filter: Option<u64>,
 ) {
     let mut rx = bus.subscribe();
-    let _guard = ConnectionGuard::new(bus.active_connections.clone());
+    let (_guard, mut shutdown_rx) = ConnectionGuard::subscribe(bus.ws_shutdown_token());
 
-    run_socket(&mut socket, &mut rx, wallet_filter.as_deref(), pool_filter).await;
+    run_socket(
+        &mut socket,
+        &mut rx,
+        &mut shutdown_rx,
+        wallet_filter.as_deref(),
+        pool_filter,
+    )
+    .await;
 
     let _ = socket.send(Message::Close(None)).await;
 }
@@ -408,6 +437,7 @@ impl WsRateLimiter {
 async fn run_socket(
     socket: &mut WebSocket,
     rx: &mut broadcast::Receiver<String>,
+    shutdown_rx: &mut broadcast::Receiver<()>,
     wallet_filter: Option<&str>,
     pool_filter: Option<u64>,
 ) {
@@ -415,6 +445,14 @@ async fn run_socket(
 
     loop {
         tokio::select! {
+            // Server-initiated graceful shutdown: send a Close frame so the
+            // client sees a clean disconnect instead of the TCP connection
+            // simply dropping once the listener stops accepting traffic.
+            _ = shutdown_rx.recv() => {
+                tracing::info!("server is shutting down; closing websocket connection");
+                let _ = socket.send(Message::Close(None)).await;
+                break;
+            }
             result = rx.recv() => {
                 match result {
                     Ok(msg) => {
@@ -528,15 +566,28 @@ mod tests {
 
     #[test]
     fn connection_guard_tracks_and_decrements_atomic_counter() {
-        let counter = Arc::new(AtomicUsize::new(0));
-        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        let token = WsShutdownToken::new(1);
+        assert_eq!(token.active_count(), 0);
 
         {
-            let _guard = ConnectionGuard::new(counter.clone());
-            assert_eq!(counter.load(Ordering::Relaxed), 1);
+            let (_guard, _shutdown_rx) = ConnectionGuard::subscribe(token.clone());
+            assert_eq!(token.active_count(), 1);
         }
 
-        assert_eq!(counter.load(Ordering::Relaxed), 0);
+        assert_eq!(token.active_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn connection_guard_shutdown_signal_reaches_subscriber() {
+        let token = WsShutdownToken::new(1);
+        let (_guard, mut shutdown_rx) = ConnectionGuard::subscribe(token.clone());
+
+        let notified = token.broadcast_shutdown();
+        assert_eq!(notified, 1, "the connection's receiver should be notified");
+        assert!(
+            shutdown_rx.try_recv().is_ok(),
+            "connection should observe the shutdown signal"
+        );
     }
 
     #[test]
