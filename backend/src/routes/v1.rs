@@ -895,6 +895,18 @@ pub struct PoolCreatedPayload {
     pub category: NonEmptyString,
     /// Pool description / name decoded from the event data.
     pub description: NonEmptyString,
+    /// Number of distinct outcome options (#1932). Defaults to `2` (binary)
+    /// so older callers that predate multi-outcome pools still deserialize.
+    #[serde(default = "default_options_count")]
+    pub options_count: u32,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]`. Defaults to empty for the same backward-compat reason.
+    #[serde(default)]
+    pub outcome_descriptions: Vec<String>,
+}
+
+fn default_options_count() -> u32 {
+    2
 }
 
 /// `POST /api/v1/indexer/pool-created` — ingest a decoded `PoolCreated` event
@@ -922,6 +934,8 @@ pub async fn ingest_pool_created(
         token: payload.token.into(),
         category: payload.category.into(),
         description: payload.description.into(),
+        options_count: payload.options_count as i32,
+        outcome_descriptions: payload.outcome_descriptions,
     };
 
     match crate::db::insert_pool_from_event(db, &event).await {
