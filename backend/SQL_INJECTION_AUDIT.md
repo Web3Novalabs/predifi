@@ -680,3 +680,34 @@ sqlx::query(&format!("SELECT * FROM users ORDER BY {}", order_by))
 **Database Driver:** sqlx 0.8 (PostgreSQL)  
 **Rust Version:** 1.70+  
 **Last Updated:** July 2026
+
+---
+
+## Addendum — Re-audit for #1923 (October 2026)
+
+Re-ran this audit's scope against the current `backend/src` tree, including the
+code added since the original pass (the leaderboard query builder in
+`db/predictions.rs`, pool templates in `db/pools.rs`, and the tag-filtered
+listing query in `tags.rs`).
+
+**Result: still zero SQL injection vulnerabilities.** Every `format!()` that
+builds a SQL string interpolates only compile-time constants or values chosen
+from a hardcoded `match` (sort columns, time-window literals, column lists) —
+never request data. All request-derived values continue to flow through
+`.bind()`.
+
+One **validated-types consistency gap** was found and fixed, matching the
+issue's explicit scope ("all validated types in `validated_types.rs` are used
+consistently at API boundaries"):
+
+- `CreatePoolTemplateRequest.creator` and `ListPoolTemplatesQuery.creator` (in
+  `backend/src/routes/v1.rs`) declared `creator` as a bare `String` instead of
+  `StellarAddress`, unlike every other creator/address field in the same file
+  (e.g. `TagUpdateRequest.creator`, `PoolRequest.creator`). This was never an
+  injection vector — the value is still passed through `.bind()` in
+  `db::create_pool_template` / `db::list_pool_templates` — but it meant those
+  two endpoints accepted arbitrary strings as a "creator" where every sibling
+  endpoint enforces Stellar strkey shape + checksum via `StellarAddress`.
+  Fixed by switching both fields to `StellarAddress`, so malformed addresses
+  are now rejected at the API boundary (400) instead of being persisted as a
+  creator value that can never match a real on-chain pool.

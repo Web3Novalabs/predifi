@@ -1159,7 +1159,7 @@ pub async fn pay_creator_incentive_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct CreatePoolTemplateRequest {
-    pub creator: String,
+    pub creator: StellarAddress,
     pub name: String,
     pub category: String,
     pub description: String,
@@ -1179,7 +1179,7 @@ pub async fn create_pool_template_handler(
 
     match crate::db::create_pool_template(
         db,
-        &body.creator,
+        body.creator.as_str(),
         &body.name,
         &body.category,
         &body.description,
@@ -1196,7 +1196,7 @@ pub async fn create_pool_template_handler(
 
 #[derive(Debug, Deserialize)]
 pub struct ListPoolTemplatesQuery {
-    pub creator: String,
+    pub creator: StellarAddress,
 }
 
 /// `GET /api/v1/pool-templates?creator=...` — list a creator's saved templates.
@@ -1208,7 +1208,7 @@ pub async fn list_pool_templates_handler(
         return Json(json!({ "error": "database not available" }));
     };
 
-    match crate::db::list_pool_templates(db, &params.creator).await {
+    match crate::db::list_pool_templates(db, params.creator.as_str()).await {
         Ok(templates) => Json(json!({ "creator": params.creator, "templates": templates })),
         Err(e) => Json(json!({ "error": e.to_string() })),
     }
