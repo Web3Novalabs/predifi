@@ -19,7 +19,18 @@ PATCH /api/v1/admin/log-level
 
 | Field | Description |
 | :--- | :--- |
-| `level` | New minimum log level.  Accepted values: `error`, `warn`, `info`, `debug`, `trace` |
+| `level` | New log filter. Either a level (`error`, `warn`, `info`, `debug`, `trace`, `off`) or `RUST_LOG`-style per-module directives, e.g. `info,predifi_backend::ws=debug,sqlx=warn`. |
+
+Per-module directives let you turn one noisy area up in production without
+flooding the logs from everything else:
+
+```json
+{ "level": "info,predifi_backend::worker::stellar_listener=debug" }
+```
+
+Directives are validated: a bare word that is not a level (e.g. `verbose`) or
+a `module=level` pair with an unknown level is rejected with `400` instead of
+being silently treated as a module name.
 
 ### Response — success (200)
 
@@ -81,4 +92,5 @@ curl -X PATCH http://localhost:3000/api/v1/admin/log-level \
 | Variable | Required | Description |
 | :--- | :--- | :--- |
 | `PREDIFI_ADMIN_API_KEY` | Yes | Shared secret for the admin endpoint.  Must be set in production. |
-| `RUST_LOG` | No | Default log level at startup (default: `info`). |
+| `RUST_LOG` | No | Log filter at startup, same syntax as `level` above (default: `info`). Invalid values fall back to `info`. |
+| `PREDIFI_LOG_FORMAT` | No | `json` (default) or `pretty` for compact human-readable output in local development. |
