@@ -21,13 +21,21 @@
 //!                   └── CPU-heavy work → logs contain correlation_id = "abc-123"
 //! ```
 //!
+//! The ID of the request being served is held in a Tokio task-local (set by
+//! [`crate::request_logger::LoggingLayer`]) so code with no access to the
+//! request — repository functions, outbound HTTP clients — can read it with
+//! [`current_correlation_id`] and forward it with [`propagate_correlation_id`].
+//! Every `spawn*` helper below carries it into the new task or thread.
+//!
 //! # Per-module log levels
 //!
-//! Log levels are controlled at runtime via `RUST_LOG`.  The recommended
+//! Log levels are controlled via `RUST_LOG` at startup and the
+//! `PATCH /api/v1/admin/log-level` endpoint at runtime, both of which accept
+//! per-module directives (see [`crate::telemetry`]). The recommended
 //! production setting is:
 //!
 //! ```text
-//! RUST_LOG=predifi_backend=info,predifi_backend::request_logger=warn,predifi_backend::worker=debug
+//! RUST_LOG=info,predifi_backend::request_logger=warn,predifi_backend::worker=debug
 //! ```
 //!
 //! All workers started with [`spawn_worker`] inherit a named root span that
@@ -41,6 +49,37 @@ use tracing::{field, info_span, Instrument, Span};
 use uuid::Uuid;
 
 // ── Correlation ID ────────────────────────────────────────────────────────────
+
+/// Header used to receive and return the correlation ID.
+pub const CORRELATION_ID_HEADER: &str = "x-correlation-id";
+
+/// Request extension carrying the correlation ID, for handlers that prefer
+/// `Extension<CorrelationId>` over the task-local.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorrelationId(pub String);
+
+tokio::task_local! {
+    static CORRELATION_ID: String;
+}
+
+/// The correlation ID of the request or job running on this task, if any.
+pub fn current_correlation_id() -> Option<String> {
+    CORRELATION_ID.try_with(|id| id.clone()).ok()
+}
+
+/// Run `future` with `correlation_id` as the task's current correlation ID.
+pub async fn with_correlation_id<F: Future>(correlation_id: String, future: F) -> F::Output {
+    CORRELATION_ID.scope(correlation_id, future).await
+}
+
+/// Attach the current correlation ID (if any) to an outbound HTTP request so
+/// downstream services can join their logs to ours.
+pub fn propagate_correlation_id(request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    match current_correlation_id() {
+        Some(id) => request.header(CORRELATION_ID_HEADER, id),
+        None => request,
+    }
+}
 
 /// Generate a new correlation ID (UUID v4).
 ///
@@ -86,6 +125,7 @@ pub fn request_span(method: &str, path: &str) -> Span {
         "http.request",
         http.method = %method,
         http.route = %path,
+        http.target = field::Empty,
         correlation_id = field::Empty,
         user_address = field::Empty,
         pool_id = field::Empty,
@@ -97,10 +137,14 @@ pub fn request_span(method: &str, path: &str) -> Span {
 /// Use this for long-lived background workers so that every log line they
 /// produce includes the worker name in the `span` field.
 pub fn worker_span(worker: &str) -> Span {
+    worker_span_with_id(worker, &new_correlation_id())
+}
+
+fn worker_span_with_id(worker: &str, correlation_id: &str) -> Span {
     info_span!(
         "worker",
         worker = %worker,
-        correlation_id = %new_correlation_id(),
+        correlation_id = %correlation_id,
     )
 }
 
@@ -116,7 +160,10 @@ where
     F::Output: Send + 'static,
 {
     let span = tracing::Span::current();
-    tokio::spawn(future.instrument(span))
+    match current_correlation_id() {
+        Some(id) => tokio::spawn(with_correlation_id(id, future).instrument(span)),
+        None => tokio::spawn(future.instrument(span)),
+    }
 }
 
 /// Spawn a long-lived background worker with a dedicated root span.
@@ -129,8 +176,9 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    let span = worker_span(worker);
-    tokio::spawn(future.instrument(span))
+    let correlation_id = new_correlation_id();
+    let span = worker_span_with_id(worker, &correlation_id);
+    tokio::spawn(with_correlation_id(correlation_id, future).instrument(span))
 }
 
 /// Run blocking work on Tokio's blocking thread pool with the caller's span.
@@ -143,9 +191,10 @@ where
     R: Send + 'static,
 {
     let span = tracing::Span::current();
+    let correlation_id = current_correlation_id();
     tokio::task::spawn_blocking(move || {
         let _guard = span.enter();
-        f()
+        run_with_optional_id(correlation_id, f)
     })
 }
 
@@ -159,10 +208,18 @@ where
     R: Send + 'static,
 {
     let span = tracing::Span::current();
+    let correlation_id = current_correlation_id();
     std::thread::spawn(move || {
         let _guard = span.enter();
-        f()
+        run_with_optional_id(correlation_id, f)
     })
+}
+
+fn run_with_optional_id<F: FnOnce() -> R, R>(correlation_id: Option<String>, f: F) -> R {
+    match correlation_id {
+        Some(id) => CORRELATION_ID.sync_scope(id, f),
+        None => f(),
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -254,6 +311,61 @@ mod tests {
             .expect("thread should complete");
 
         assert_eq!(child_id, parent_id);
+    }
+
+    #[tokio::test]
+    async fn correlation_id_is_absent_outside_a_scope() {
+        assert_eq!(current_correlation_id(), None);
+    }
+
+    #[tokio::test]
+    async fn spawn_carries_correlation_id_into_child_task() {
+        let child = with_correlation_id("corr-1".into(), async {
+            spawn(async { current_correlation_id() }).await.unwrap()
+        })
+        .await;
+        assert_eq!(child.as_deref(), Some("corr-1"));
+    }
+
+    #[tokio::test]
+    async fn spawn_blocking_and_thread_carry_correlation_id() {
+        let (blocking, thread) = with_correlation_id("corr-2".into(), async {
+            let blocking = spawn_blocking(current_correlation_id).await.unwrap();
+            let thread = spawn_thread(current_correlation_id).join().unwrap();
+            (blocking, thread)
+        })
+        .await;
+        assert_eq!(blocking.as_deref(), Some("corr-2"));
+        assert_eq!(thread.as_deref(), Some("corr-2"));
+    }
+
+    #[tokio::test]
+    async fn spawn_worker_gets_its_own_correlation_id() {
+        let id = with_correlation_id("request-id".into(), async {
+            spawn_worker("w", async { current_correlation_id() })
+                .await
+                .unwrap()
+        })
+        .await
+        .expect("worker has an id");
+        assert_ne!(id, "request-id", "workers must not inherit a request's id");
+        assert_eq!(id.len(), 36);
+    }
+
+    #[test]
+    fn propagate_correlation_id_sets_header_inside_scope() {
+        let client = reqwest::Client::new();
+        let without = propagate_correlation_id(client.get("http://localhost/"))
+            .build()
+            .unwrap();
+        assert!(without.headers().get(CORRELATION_ID_HEADER).is_none());
+
+        let with = CORRELATION_ID.sync_scope("corr-3".into(), || {
+            propagate_correlation_id(client.get("http://localhost/"))
+                .build()
+                .unwrap()
+        });
+        assert_eq!(with.headers().get(CORRELATION_ID_HEADER).unwrap(), "corr-3");
     }
 
     #[test]
