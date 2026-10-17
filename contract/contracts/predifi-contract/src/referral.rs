@@ -29,11 +29,14 @@
 //!   ```
 //! - **Example**: If a winning payout generates a 100 token protocol fee, and `referral_bps` is set to `5000` (50%), the referrer receives 50 tokens and the protocol treasury receives 50 tokens.
 
-use soroban_sdk::{contractimpl, Address, Env};
+use soroban_sdk::{Address, contractevent, contractimpl, contracttype, Env, String};
 
 use crate::{
-    DataKey, PredifiContract, PredifiContractArgs, PredifiContractClient, PredifiError,
-    ReferralThresholdUpdatedEvent, ReferrerUpdatedEvent,
+    DataKey,
+    PredifiContract,
+    PredifiContractArgs,
+    PredifiContractClient,
+    PredifiError,
 };
 
 #[contractimpl]
@@ -197,3 +200,53 @@ impl PredifiContract {
             .unwrap_or(0i128)
     }
 }
+
+// ── Domain types & events (moved from lib.rs, issue #1970) ─────────────────
+
+#[contractevent(topics = ["referral_paid"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralPaidEvent {
+    pub pool_id: u64,
+    pub referrer: Address,
+    pub referred_user: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["reward_claimed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RewardClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub claim_type: String,
+}
+
+/// Emitted when `update_referrer` successfully changes or removes a referrer
+/// for a (user, pool) pair. Allows off-chain indexers to keep referrer maps
+/// in sync without having to re-scan the full ledger state.
+#[contractevent(topics = ["referrer_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferrerUpdatedEvent {
+    /// The user whose referrer mapping changed.
+    pub user: Address,
+    /// The pool for which the referrer was updated.
+    pub pool_id: u64,
+    /// New referrer address, or `None` if the referrer was removed.
+    pub new_referrer: Option<Address>,
+}
+
+/// Emitted when `set_referral_volume_threshold` changes the minimum referred
+/// volume required for a referrer to qualify for a reward.
+#[contractevent(topics = ["referral_threshold_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralThresholdUpdatedEvent {
+    /// The admin that updated the threshold.
+    pub admin: Address,
+    /// The new minimum referred volume (in base token units).
+    pub min_volume: i128,
+}
+

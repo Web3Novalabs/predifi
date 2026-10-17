@@ -75,11 +75,16 @@
 //! wallet, or a well-rehearsed key-recovery process) because the contract
 //! provides no on-chain mechanism to replace or recover the Admin.
 
-use soroban_sdk::{contractimpl, token, Address, Env};
+use soroban_sdk::{Address, contractevent, contractimpl, contracttype, Env, token};
 
 use crate::{
-    DataKey, EmergencyWithdrawEvent, PredifiContract, PredifiContractArgs, PredifiContractClient,
-    PredifiError, TreasuryUpdateEvent, TreasuryWithdrawnEvent, MIN_WITHDRAWAL_AMOUNT,
+    DataKey,
+    PredifiContract,
+    PredifiContractArgs,
+    PredifiContractClient,
+    PredifiError,
+    TreasuryUpdateEvent,
+    MIN_WITHDRAWAL_AMOUNT,
 };
 
 #[contractimpl]
@@ -216,3 +221,28 @@ impl PredifiContract {
         Ok(())
     }
 }
+
+// ── Domain types & events (moved from lib.rs, issue #1970) ─────────────────
+
+#[contractevent(topics = ["treasury_withdrawn"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryWithdrawnEvent {
+    pub admin: Address,
+    pub token: Address,
+    pub amount: i128,
+    pub recipient: Address,
+    pub remaining_balance: i128,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["emergency_withdraw"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EmergencyWithdrawEvent {
+    pub admin: Address,
+    pub token: Address,
+    pub destination: Address,
+    pub amount: i128,
+}
+
