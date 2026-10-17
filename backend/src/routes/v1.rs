@@ -18,6 +18,16 @@ use crate::redis_cache::RedisCache;
 use crate::response::{error_codes, ApiResponse};
 use crate::validated_types::{BoundedI64, NonEmptyString, PoolSortBy, PoolStatus, StellarAddress};
 
+/// Standardized HTTP 500 response.
+///
+/// Logs the underlying cause server-side (via `AppError::Internal`) and
+/// returns the generic `ApiResponse` error envelope so internal error
+/// details (DB messages, low-level errors) never leak to clients.
+fn internal_error_response(err: impl std::fmt::Display) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    crate::errors::AppError::Internal(err.to_string()).into_response()
+}
+
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FeeInfo {
@@ -257,11 +267,12 @@ pub async fn set_log_level(
     };
 
     if !authenticated {
-        return (
+        return ApiResponse::<()>::error(
             StatusCode::UNAUTHORIZED,
-            Json(json!({ "error": "invalid or missing admin credentials" })),
+            error_codes::UNAUTHORIZED,
+            "invalid or missing admin credentials",
         )
-            .into_response();
+        .into_response();
     }
 
     let level = body.level.trim().to_string();
@@ -394,12 +405,7 @@ pub async fn get_pool_by_id_handler(
             )
             .into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -457,12 +463,7 @@ pub async fn get_stats(
                 .await;
             ApiResponse::success(stats).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
@@ -591,12 +592,7 @@ pub async fn get_pools(
             // Return the response
             (StatusCode::OK, Json(json_response)).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -642,12 +638,7 @@ pub async fn get_user_history(
             });
             ApiResponse::success(response).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -683,12 +674,7 @@ pub async fn get_user_predictions(
             });
             ApiResponse::success(response).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -745,12 +731,7 @@ pub async fn get_leaderboard(
                 });
                 ApiResponse::success(response).into_response()
             }
-            Err(e) => ApiResponse::<()>::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error_codes::INTERNAL_ERROR,
-                e.to_string(),
-            )
-            .into_response(),
+            Err(e) => internal_error_response(e),
         },
         "win_rate" | "streak" => {
             match crate::db::get_leaderboard_extended(db, rank_by, period, None, limit, offset)
@@ -766,12 +747,7 @@ pub async fn get_leaderboard(
                     });
                     ApiResponse::success(response).into_response()
                 }
-                Err(e) => ApiResponse::<()>::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error_codes::INTERNAL_ERROR,
-                    e.to_string(),
-                )
-                .into_response(),
+                Err(e) => internal_error_response(e),
             }
         }
         _ if period != "all" => {
@@ -789,12 +765,7 @@ pub async fn get_leaderboard(
                     });
                     ApiResponse::success(response).into_response()
                 }
-                Err(e) => ApiResponse::<()>::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error_codes::INTERNAL_ERROR,
-                    e.to_string(),
-                )
-                .into_response(),
+                Err(e) => internal_error_response(e),
             }
         }
         _ => {
@@ -810,12 +781,7 @@ pub async fn get_leaderboard(
                     });
                     ApiResponse::success(response).into_response()
                 }
-                Err(e) => ApiResponse::<()>::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error_codes::INTERNAL_ERROR,
-                    e.to_string(),
-                )
-                .into_response(),
+                Err(e) => internal_error_response(e),
             }
         }
     }
@@ -871,12 +837,7 @@ pub async fn get_pool_leaderboard(
             });
             ApiResponse::success(response).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -931,12 +892,7 @@ pub async fn ingest_pool_created(
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
             ApiResponse::success(response).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -986,12 +942,7 @@ pub async fn ingest_prediction_placed(
             let response = json!({ "status": "ok", "pool_id": event.pool_id });
             ApiResponse::success(response).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1050,12 +1001,7 @@ pub async fn get_market_predictions(
             .into_response();
         }
         Err(e) => {
-            return ApiResponse::<()>::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error_codes::INTERNAL_ERROR,
-                e.to_string(),
-            )
-            .into_response();
+            return internal_error_response(e);
         }
         Ok(Some(_)) => {}
     }
@@ -1086,12 +1032,7 @@ pub async fn get_market_predictions(
             });
             ApiResponse::success(response).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1125,12 +1066,7 @@ pub async fn get_creator_stats_handler(
             "creator not found",
         )
         .into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1140,18 +1076,34 @@ pub async fn get_creator_stats_handler(
 pub async fn pay_creator_incentive_handler(
     State(state): State<AppState>,
     Path(pool_id): Path<i64>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
     };
 
     match crate::db::pay_creator_incentive(db, pool_id, state.config.treasury_fee_bps).await {
         Ok(Some(amount)) => {
             state.pool_cache.invalidate(pool_id);
-            Json(json!({ "status": "paid", "pool_id": pool_id, "amount": amount }))
+            (
+                StatusCode::OK,
+                Json(json!({ "status": "paid", "pool_id": pool_id, "amount": amount })),
+            )
+                .into_response()
         }
-        Ok(None) => Json(json!({ "status": "not_eligible", "pool_id": pool_id })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Ok(None) => (
+            StatusCode::OK,
+            Json(json!({ "status": "not_eligible", "pool_id": pool_id })),
+        )
+            .into_response(),
+        Err(e) => crate::errors::AppError::from(e).into_response(),
     }
 }
 
@@ -1172,9 +1124,17 @@ pub struct CreatePoolTemplateRequest {
 pub async fn create_pool_template_handler(
     State(state): State<AppState>,
     Json(body): Json<CreatePoolTemplateRequest>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
     };
 
     match crate::db::create_pool_template(
@@ -1189,8 +1149,8 @@ pub async fn create_pool_template_handler(
     )
     .await
     {
-        Ok(template) => Json(json!(template)),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Ok(template) => (StatusCode::OK, Json(json!(template))).into_response(),
+        Err(e) => crate::errors::AppError::from(e).into_response(),
     }
 }
 
@@ -1203,14 +1163,26 @@ pub struct ListPoolTemplatesQuery {
 pub async fn list_pool_templates_handler(
     State(state): State<AppState>,
     Query(params): Query<ListPoolTemplatesQuery>,
-) -> Json<serde_json::Value> {
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
     let Some(db) = &state.db else {
-        return Json(json!({ "error": "database not available" }));
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
     };
 
     match crate::db::list_pool_templates(db, &params.creator).await {
-        Ok(templates) => Json(json!({ "creator": params.creator, "templates": templates })),
-        Err(e) => Json(json!({ "error": e.to_string() })),
+        Ok(templates) => (
+            StatusCode::OK,
+            Json(json!({ "creator": params.creator, "templates": templates })),
+        )
+            .into_response(),
+        Err(e) => crate::errors::AppError::from(e).into_response(),
     }
 }
 
@@ -1236,12 +1208,7 @@ pub async fn get_user_profile_handler(
 
     match crate::profile::get_full_profile(db, address.as_str()).await {
         Ok(profile) => ApiResponse::success(profile).into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1263,12 +1230,7 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
 
     match crate::tags::list_distinct_tags(db).await {
         Ok(tags) => ApiResponse::success(json!({ "tags": tags })).into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1310,12 +1272,7 @@ pub async fn update_pool_tags_handler(
             "pool not found, or caller is not the creator",
         )
         .into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1359,12 +1316,7 @@ pub async fn ingest_claim_handler(
         Ok(rows) => {
             ApiResponse::success(json!({ "status": "ok", "rows_updated": rows })).into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1412,12 +1364,7 @@ pub async fn list_notifications_handler(
             "offset": offset,
         }))
         .into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1455,12 +1402,7 @@ pub async fn mark_notifications_read_handler(
 
     match crate::notifications::mark_read(db, address.as_str(), ids).await {
         Ok(updated) => ApiResponse::success(json!({ "updated": updated })).into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1487,12 +1429,7 @@ pub async fn get_user_interests_handler(
             ApiResponse::success(json!({ "address": address, "interests": interests }))
                 .into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1517,12 +1454,7 @@ pub async fn set_user_interests_handler(
     match crate::notifications::set_user_interests(db, address.as_str(), &body.interests).await {
         Ok(()) => ApiResponse::success(json!({ "address": address, "interests": body.interests }))
             .into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -1706,7 +1638,7 @@ async fn refresh_tokens_handler(
         }
         Err(crate::jwt::JwtVerifyError::TokenStoreUnavailable) => ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
-            error_codes::INTERNAL_ERROR,
+            error_codes::SERVICE_UNAVAILABLE,
             "token store unavailable",
         )
         .into_response(),
@@ -1756,12 +1688,7 @@ async fn referrals_handler(
                 .await
             {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => ApiResponse::<()>::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error_codes::INTERNAL_ERROR,
-                    e.to_string(),
-                )
-                .into_response(),
+                Err(e) => internal_error_response(e),
             }
         }
         None => ApiResponse::<()>::error(
@@ -1796,12 +1723,7 @@ async fn referral_estimate_handler(
             .await
             {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => ApiResponse::<()>::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error_codes::INTERNAL_ERROR,
-                    e.to_string(),
-                )
-                .into_response(),
+                Err(e) => internal_error_response(e),
             }
         }
         None => ApiResponse::<()>::error(
@@ -1832,12 +1754,7 @@ async fn user_referral_earnings_handler(
             .await
             {
                 Ok((status, body)) => (status, body).into_response(),
-                Err(e) => ApiResponse::<()>::error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error_codes::INTERNAL_ERROR,
-                    e.to_string(),
-                )
-                .into_response(),
+                Err(e) => internal_error_response(e),
             }
         }
         None => ApiResponse::<()>::error(
@@ -2088,12 +2005,7 @@ pub async fn get_user_email_handler(
             "no email registered for this address",
         )
         .into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -2136,11 +2048,6 @@ pub async fn upsert_user_email_handler(
             "email_enabled": enabled,
         }))
         .into_response(),
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error_codes::INTERNAL_ERROR,
-            e.to_string(),
-        )
-        .into_response(),
+        Err(e) => internal_error_response(e),
     }
 }

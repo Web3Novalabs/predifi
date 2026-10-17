@@ -82,12 +82,18 @@ impl axum::response::IntoResponse for AppError {
                 msg,
             )
             .into_response(),
-            AppError::Internal(msg) => ApiResponse::<()>::error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error_codes::INTERNAL_ERROR,
-                msg,
-            )
-            .into_response(),
+            AppError::Internal(msg) => {
+                // Never expose internal error details (DB messages, low-level
+                // errors) to clients: log them server-side and return a
+                // generic, stable message instead.
+                tracing::error!(error = %msg, "internal server error");
+                ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    "internal server error",
+                )
+                .into_response()
+            }
         }
     }
 }
