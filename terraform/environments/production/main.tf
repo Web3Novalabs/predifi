@@ -135,3 +135,11 @@ output "redis_primary_endpoint" {
   value     = module.predifi.redis_primary_endpoint
   sensitive = true
 }
+
+output "grafana_url_hint" {
+  value = module.predifi.grafana_url_hint
+}
+
+output "prometheus_url_hint" {
+  value = module.predifi.prometheus_url_hint
+}
