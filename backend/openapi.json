@@ -622,7 +622,7 @@
         "operationId": "api_health",
         "responses": {
           "200": {
-            "description": "All dependencies healthy",
+            "description": "All components healthy, or some degraded but serving",
             "content": {
               "application/json": {
                 "schema": {
@@ -632,7 +632,7 @@
             }
           },
           "503": {
-            "description": "One or more dependencies unreachable",
+            "description": "At least one component unhealthy",
             "content": {
               "application/json": {
                 "schema": {
@@ -647,6 +647,47 @@
   },
   "components": {
     "schemas": {
+      "ComponentHealthDoc": {
+        "type": "object",
+        "description": "OpenAPI schema for one component in a health response (#1946).",
+        "required": [
+          "status",
+          "critical"
+        ],
+        "properties": {
+          "critical": {
+            "type": "boolean",
+            "description": "Whether this component failing makes the whole service unusable."
+          },
+          "details": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Component-specific details (pool usage, ledger, free space, ...)."
+          },
+          "latency_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Probe latency in milliseconds, when the component was probed.",
+            "minimum": 0
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the component is not healthy (or why it was not probed)."
+          },
+          "status": {
+            "type": "string",
+            "description": "`healthy`, `degraded`, or `unhealthy`."
+          }
+        }
+      },
       "DependencyStatus": {
         "type": "object",
         "description": "OpenAPI schema for the dependency status block inside a health response.",
@@ -654,11 +695,16 @@
           "db",
           "rpc",
           "redis",
-          "price_cache"
+          "price_cache",
+          "disk"
         ],
         "properties": {
           "db": {
             "type": "string"
+          },
+          "disk": {
+            "type": "string",
+            "description": "`ok`, `low`, `critical`, or `unknown`."
           },
           "price_cache": {
             "type": "string"
@@ -705,11 +751,45 @@
           }
         }
       },
+      "HealthComponents": {
+        "type": "object",
+        "description": "OpenAPI schema for the per-component block inside a health response.",
+        "required": [
+          "database",
+          "redis",
+          "stellar_rpc",
+          "disk",
+          "price_cache"
+        ],
+        "properties": {
+          "database": {
+            "$ref": "#/components/schemas/ComponentHealthDoc"
+          },
+          "disk": {
+            "$ref": "#/components/schemas/ComponentHealthDoc"
+          },
+          "price_cache": {
+            "$ref": "#/components/schemas/ComponentHealthDoc"
+          },
+          "redis": {
+            "$ref": "#/components/schemas/ComponentHealthDoc"
+          },
+          "stellar_rpc": {
+            "$ref": "#/components/schemas/ComponentHealthDoc"
+          }
+        }
+      },
       "HealthErrors": {
         "type": "object",
         "description": "OpenAPI schema for the per-dependency error details block inside a health response.",
         "properties": {
           "db": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disk": {
             "type": [
               "string",
               "null"
@@ -740,23 +820,45 @@
         "description": "OpenAPI schema for the full health check response body.",
         "required": [
           "status",
+          "health",
           "service",
           "version",
+          "checked_at",
+          "duration_ms",
+          "components",
           "dependencies",
           "errors"
         ],
         "properties": {
+          "checked_at": {
+            "type": "string",
+            "description": "RFC 3339 timestamp of the check."
+          },
+          "components": {
+            "$ref": "#/components/schemas/HealthComponents"
+          },
           "dependencies": {
             "$ref": "#/components/schemas/DependencyStatus"
           },
+          "duration_ms": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total time spent running the checks.",
+            "minimum": 0
+          },
           "errors": {
             "$ref": "#/components/schemas/HealthErrors"
+          },
+          "health": {
+            "type": "string",
+            "description": "Worst component status: `healthy`, `degraded`, or `unhealthy`."
           },
           "service": {
             "type": "string"
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "description": "Legacy summary: `ok`, `degraded`, or `error`."
           },
           "version": {
             "type": "string"
@@ -982,7 +1084,9 @@
           "end_time",
           "token",
           "category",
-          "description"
+          "description",
+          "options_count",
+          "outcome_descriptions"
         ],
         "properties": {
           "category": {
@@ -998,6 +1102,19 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "options_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Number of distinct outcome options (#1932). Defaults to `2` when omitted.",
+            "minimum": 0
+          },
+          "outcome_descriptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Human-readable label for each outcome index (#1932)."
           },
           "pool_id": {
             "type": "integer",
@@ -1103,7 +1220,8 @@
           {
             "type": "object",
             "required": [
-              "odds"
+              "odds",
+              "outcome_descriptions"
             ],
             "properties": {
               "odds": {
@@ -1111,6 +1229,13 @@
                 "items": {
                   "$ref": "#/components/schemas/OutcomeOddsDoc"
                 }
+              },
+              "outcome_descriptions": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Human-readable label for each outcome index (#1932), e.g.\n`[\"Yes\", \"No\"]` or `[\"Team A\", \"Team B\", \"Draw\"]`."
               }
             }
           }

@@ -6,7 +6,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
-use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::config::Config;
 use crate::db::PoolCreatedEvent;
@@ -37,132 +36,11 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
-/// `GET /api/v1/health` health-check endpoint.
+/// `GET /api/v1/health` component-level health check (see [`crate::health`]).
 pub async fn health(State(state): State<AppState>) -> axum::response::Response {
-    use axum::http::StatusCode;
-    use axum::response::IntoResponse;
-    use std::time::Duration;
-
-    let mut all_healthy = true;
-    let mut db_status = "ok";
-    let mut db_error = String::new();
-
-    if let Some(db) = &state.db {
-        if let Err(e) = sqlx::query("SELECT 1").execute(db).await {
-            db_status = "unreachable";
-            db_error = e.to_string();
-            all_healthy = false;
-        }
-    } else {
-        db_status = "not_configured";
-    }
-
-    let mut rpc_status = "ok";
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(state.config.rpc_health_timeout_secs))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-
-    // Try RPC health check with retry logic
-    let mut rpc_attempts = 0;
-    let max_attempts = state.config.rpc_health_retry_count as usize;
-    let mut last_error = String::new();
-
-    while rpc_attempts < max_attempts {
-        rpc_attempts += 1;
-
-        let rpc_req = client
-            .post(&state.config.stellar_rpc_url)
-            .json(&serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getHealth"
-            }))
-            .send()
-            .await;
-
-        match rpc_req {
-            Ok(res) if res.status().is_success() => {
-                // Success - break out of retry loop
-                break;
-            }
-            Ok(res) => {
-                last_error = format!("HTTP {} response", res.status());
-            }
-            Err(e) => {
-                last_error = e.to_string();
-            }
-        }
-
-        // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
-        if rpc_attempts < max_attempts {
-            let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
-            sleep(TokioDuration::from_secs(backoff_duration)).await;
-        }
-    }
-
-    if rpc_attempts >= max_attempts {
-        rpc_status = "unreachable";
-        all_healthy = false;
-    }
-
-    let mut redis_status = "ok";
-    let mut redis_error = String::new();
-    if !state.redis.is_available() {
-        redis_status = "not_configured";
-        all_healthy = false;
-    } else if !state.redis.ping().await {
-        redis_status = "unreachable";
-        redis_error = String::from("Redis ping failed");
-        all_healthy = false;
-    }
-
-    let mut price_cache_status = "ok";
-    if state.cache.snapshot().is_empty() {
-        price_cache_status = "not_ready";
-        all_healthy = false;
-    }
-
-    let mut disk_status = "ok";
-    let mut disk_error = String::new();
-    let disks = sysinfo::Disks::new_with_refreshed_list();
-    if let Some(disk) = disks.first() {
-        let available = disk.available_space();
-        let total = disk.total_space();
-        if total > 0 && (available as f64 / total as f64) < 0.05 {
-            disk_status = "degraded";
-            disk_error = format!("Low disk space: {}/{} bytes available", available, total);
-            all_healthy = false;
-        }
-    } else {
-        disk_status = "unknown";
-        disk_error = String::from("Could not determine disk space");
-    }
-
-    let body = serde_json::json!({
-        "status": if all_healthy { "ok" } else { "error" },
-        "version": "v1",
-        "dependencies": {
-            "db": db_status,
-            "rpc": rpc_status,
-            "redis": redis_status,
-            "price_cache": price_cache_status,
-            "disk": disk_status
-        },
-        "errors": {
-            "db": if db_status == "unreachable" { Some(db_error.clone()) } else { None },
-            "rpc": if rpc_status == "unreachable" { Some(last_error.clone()) } else { None },
-            "redis": if redis_status == "unreachable" { Some(redis_error.clone()) } else { None },
-            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None },
-            "disk": if disk_status != "ok" { Some(disk_error) } else { None }
-        }
-    });
-
-    if all_healthy {
-        (StatusCode::OK, Json(body)).into_response()
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
-    }
+    crate::health::check_all(&state.config, state.db.as_ref(), &state.redis, &state.cache)
+        .await
+        .into_response_with_version("v1")
 }
 
 /// `GET /api/v1` version discovery endpoint.
@@ -226,7 +104,8 @@ impl axum::extract::FromRef<AppState> for crate::ws::EventBus {
 
 #[derive(Debug, Deserialize)]
 pub struct SetLogLevelRequest {
-    /// New log level (e.g. "info", "debug", "warn").
+    /// New log filter: a level (`"debug"`) or `RUST_LOG`-style per-module
+    /// directives (`"info,predifi_backend::ws=debug,sqlx=warn"`).
     pub level: String,
 }
 
@@ -236,7 +115,10 @@ pub struct SetLogLevelResponse {
     pub level: String,
 }
 
-/// `PATCH /api/v1/admin/log-level` — change the active log level at runtime.
+/// `PATCH /api/v1/admin/log-level` — change the active log filter at runtime.
+///
+/// Accepts per-module directives, so one noisy module can be turned up in
+/// production without flooding the logs from everything else.
 ///
 /// Restricted to callers that present a valid admin API key in the
 /// `x-admin-api-key` header.  The key must match the `PREDIFI_ADMIN_API_KEY`
@@ -294,12 +176,8 @@ pub async fn set_log_level(
             })
             .into_response()
         }
-        Err(e) => ApiResponse::<()>::error(
-            StatusCode::BAD_REQUEST,
-            error_codes::INVALID_INPUT,
-            e,
-        )
-        .into_response(),
+        Err(e) => ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, e)
+            .into_response(),
     }
 }
 
@@ -548,7 +426,10 @@ pub async fn get_pools(
         }
     }
     if let Some(q_val) = &q {
-        cache_key = format!("{cache_key}:q:{}", crate::redis_cache::sanitize_key_component(q_val));
+        cache_key = format!(
+            "{cache_key}:q:{}",
+            crate::redis_cache::sanitize_key_component(q_val)
+        );
     }
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
@@ -678,8 +559,7 @@ pub async fn get_user_predictions(
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
 
-    let cache_key =
-        crate::redis_cache::user_predictions_cache_key(address.as_str(), limit, offset);
+    let cache_key = crate::redis_cache::user_predictions_cache_key(address.as_str(), limit, offset);
     if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
         return (StatusCode::OK, Json(cached)).into_response();
     }
@@ -1236,7 +1116,7 @@ pub async fn list_pool_templates_handler(
         .into_response();
     };
 
-    match crate::db::list_pool_templates(db, &params.creator).await {
+    match crate::db::list_pool_templates(db, params.creator.as_str()).await {
         Ok(templates) => (
             StatusCode::OK,
             Json(json!({ "creator": params.creator, "templates": templates })),
@@ -1545,10 +1425,7 @@ pub fn router(
 
     // Admin tier — authenticated administrative operations (no public rate limit).
     let admin = Router::new()
-        .route(
-            "/admin/log-level",
-            patch(set_log_level),
-        )
+        .route("/admin/log-level", patch(set_log_level))
         .with_state(state.clone());
 
     // Light tier — cheap, stateless, polling-friendly endpoints.
@@ -2001,7 +1878,9 @@ mod cache_aside_tests {
     /// `stats`/`pools` cache-aside patterns above.
     #[tokio::test]
     async fn test_user_predictions_cache_aside_pattern() {
-        use crate::redis_cache::{user_predictions_cache_key, RedisCache, USER_PREDICTIONS_CACHE_TTL};
+        use crate::redis_cache::{
+            user_predictions_cache_key, RedisCache, USER_PREDICTIONS_CACHE_TTL,
+        };
 
         let cache = RedisCache::disabled();
         let key = user_predictions_cache_key("GABC123", 20, 0);
@@ -2060,7 +1939,10 @@ mod pools_pagination_tests {
     fn limit_within_bounds_is_unchanged() {
         assert_eq!(resolve_pools_page_size(Some(1)), 1);
         assert_eq!(resolve_pools_page_size(Some(50)), 50);
-        assert_eq!(resolve_pools_page_size(Some(POOLS_MAX_PAGE_SIZE)), POOLS_MAX_PAGE_SIZE);
+        assert_eq!(
+            resolve_pools_page_size(Some(POOLS_MAX_PAGE_SIZE)),
+            POOLS_MAX_PAGE_SIZE
+        );
     }
 
     #[test]
@@ -2069,7 +1951,10 @@ mod pools_pagination_tests {
             resolve_pools_page_size(Some(POOLS_MAX_PAGE_SIZE + 1)),
             POOLS_MAX_PAGE_SIZE
         );
-        assert_eq!(resolve_pools_page_size(Some(1_000_000)), POOLS_MAX_PAGE_SIZE);
+        assert_eq!(
+            resolve_pools_page_size(Some(1_000_000)),
+            POOLS_MAX_PAGE_SIZE
+        );
     }
 
     #[test]

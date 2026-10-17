@@ -1,4 +1,4 @@
-use predifi_backend::{config::Config, server::run};
+use predifi_backend::{config::Config, run_server};
 
 #[tokio::main]
 async fn main() {
@@ -9,5 +9,7 @@ async fn main() {
         std::process::exit(1);
     });
 
-    run(config).await;
+    // `run_server` installs the JSON tracing subscriber (per-module
+    // `RUST_LOG` filter, optional OTel export) before starting the server.
+    run_server(config).await;
 }
