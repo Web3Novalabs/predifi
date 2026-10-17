@@ -368,11 +368,12 @@ export function CreatePoolForm() {
     field: K,
     value: CreatePoolFormValues[K],
   ) {
-    setValues((prev) => ({ ...prev, [field]: value }));
-    // Clear error on change
-    if (errors[field]) {
-      setErrors((prev) => ({ ...prev, [field]: undefined }));
-    }
+    const next = { ...values, [field]: value };
+    setValues(next);
+    // Real-time validation: re-validate the edited field as the user types so
+    // feedback appears immediately and clears once the value becomes valid.
+    const nextErrors = validateCreatePool(next);
+    setErrors((prev) => ({ ...prev, [field]: nextErrors[field] }));
     setSubmitError(null);
   }
 
