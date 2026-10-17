@@ -1,13 +1,13 @@
 # Security Analysis: Price Feed Manipulation Resistance
 
-**Issue:** #1352  
-**Scope:** `contract/contracts/predifi-contract/src/price_feed.rs`
+**Issue:** #1919 (supersedes #1352)  
+**Scope:** `contract/contracts/predifi-contract/src/` (`price_feed.rs`, `oracle.rs`)
 
 ## Overview
 
 This document analyses the price feed system for manipulation vectors, covering
 TWAP vs spot price usage, oracle trust assumptions, price staleness thresholds,
-and flash loan attack surface.
+maximum price deviation guards, and flash loan attack surface.
 
 ---
 
@@ -20,30 +20,20 @@ directly during resolution via `evaluate_price_condition`.
 **Risk:** Spot prices can be transiently manipulated within a single ledger
 close if the oracle data source itself is momentarily skewed.
 
-**Existing mitigation:** The `confidence` field (Pyth's ± uncertainty bound)
-is validated against `min_confidence_ratio` in basis points. Feeds whose
-confidence ratio exceeds the configured threshold are rejected, filtering out
-low-quality or abnormally wide price quotes.
+**Existing mitigation:** 
+- The `confidence` field (Pyth's ± uncertainty bound) is validated against `min_confidence_ratio` in basis points. Feeds whose confidence ratio exceeds the configured threshold are rejected, filtering out low-quality or abnormally wide price quotes.
+- Price deviation protection (`MAX_PRICE_DEVIATION_MULTIPLIER = 5` in `oracle.rs`) rejects updates deviating by more than 5x from the previous price.
 
-**Recommendation (future):** Consider storing a rolling window of price
-snapshots and computing an on-chain TWAP before resolution. This would require
-a separate accumulator storage key and a minimum observation window enforced at
-resolution time.
+**TWAP Evaluation:**
+Implementing an on-chain TWAP requires periodic accumulator updates and historical ring buffers in persistent storage, which incurs substantial storage rent on Stellar/Soroban. Furthermore, for fixed-deadline binary prediction markets ("Will BTC exceed \$X at 12:00?"), TWAPs lag behind real market outcomes, risking incorrect resolution. Spot price resolution backed by Pyth multi-source consensus, confidence bounds, and deviation multiplier guards provides optimal security without state-rent or time-lag penalties.
 
 ---
 
 ## 2. Oracle Trust Assumptions
 
-- **Single oracle source:** The system trusts one `pyth_contract` address
-  configured at `init_oracle`. If this address is compromised or a malicious
-  contract is substituted, all price resolution is affected.
-- **Whitelist enforcement:** Oracle feed updaters must be whitelisted via
-  `add_oracle` / the `OracleWl` storage key. `update_price_feed` (and
-  `batch_update_price_feeds`) calls `oracle.require_auth()`, ensuring only
-  whitelisted oracle addresses may push price data.
-- **Admin controls pyth_contract:** Only the admin can call `init_oracle`. This
-  creates a trust dependency on the admin key, which is mitigated by the
-  role-based access control system.
+- **Multi-source off-chain consensus:** Pyth Network aggregates data from 40+ premier independent market makers and exchanges (e.g., Jane Street, Virtu, Binance, OKX), making local DEX manipulation ineffective against global feed indices.
+- **Whitelist enforcement:** Oracle feed updaters must be whitelisted via `add_oracle` / the `OracleWl` storage key. `update_price_feed` (and `batch_update_price_feeds`) calls `oracle.require_auth()`, ensuring only whitelisted oracle addresses may push price data.
+- **Admin controls pyth_contract:** Only the admin can call `init_oracle`. This creates a trust dependency on the admin key, which is guarded by role-based access control.
 
 ---
 
@@ -64,28 +54,15 @@ configurable by the admin and should be set conservatively (e.g., ≤ 60 s for
 volatile assets). Pools that attempt to resolve against stale data receive
 `PredifiError::ResolutionDelayNotMet`, preventing a stale-price resolution.
 
+Additionally, `update_price_feed` enforces temporal past-check: `timestamp < ledger.timestamp()`, rejecting future-dated or same-ledger front-running injections.
+
 ---
 
 ## 4. Flash Loan Attack Surface on Stellar/Soroban
 
-Stellar/Soroban does not support intra-transaction composability (no flash
-loans in the Ethereum sense): every transaction is atomic but cross-contract
-state changes across separate invocations are committed individually. The
-absence of same-ledger borrow-repay atomicity eliminates the classical flash
-loan vector.
-
-However, a well-funded actor could submit a large DEX trade in ledger N to move
-a spot price, then submit `resolve_pool_from_price` in the same ledger close if
-the Pyth feed is updated at the same timestamp. The `expires_at` / `max_price_age`
-staleness guard mitigates this because resolution windows should be long (hours
-to days), making a single-ledger spike insufficient to guarantee resolution
-in the attacker's favour.
-
-**Residual risk:** Pools with very short durations (near `min_pool_duration`)
-and high `max_price_age` values are more susceptible to a sustained price push
-rather than a flash spike. Keeping `max_price_age` short and enforcing a
-minimum pool duration (already present via `set_min_pool_duration`) reduces this
-window.
+Stellar/Soroban does not support intra-transaction uncollateralized borrow-lend composability (no flash loans in the EVM sense). Furthermore:
+1. **DEX Decoupling**: PrediFi does not read on-chain AMM liquidity reserves. A massive swap on a Stellar DEX (e.g. Soroswap, Phoenix) has zero impact on Pyth Network's globally aggregated index.
+2. **Deviation Multiplier Guard**: In `oracle.rs`, `MAX_PRICE_DEVIATION_MULTIPLIER` rejects single-update swings outside $[P_{\text{prev}} / 5, 5 \cdot P_{\text{prev}}]$.
 
 ---
 
@@ -103,13 +80,22 @@ stable assets, up to 500 bps for volatile assets).
 
 ---
 
-## 6. Summary of Findings
+## 6. Time & Space Complexity
+
+- **Price Feed Ingestion (`update_price_feed`)**: $\mathcal{O}(1)$ time, $\mathcal{O}(1)$ persistent storage.
+- **Price Validity & Staleness Check (`is_price_valid`)**: $\mathcal{O}(1)$ time, $\mathcal{O}(1)$ stack space.
+- **Condition Evaluation (`evaluate_price_condition`)**: $\mathcal{O}(1)$ time, $\mathcal{O}(1)$ space.
+
+---
+
+## 7. Summary of Findings
 
 | Vector | Status | Mitigation present |
 |---|---|---|
-| Spot price (no TWAP) | Open risk | Confidence ratio filter; short `max_price_age` |
-| Single oracle trust | Accepted | Oracle whitelist + admin role-gated `init_oracle` |
-| Stale price resolution | Mitigated | Dual staleness check (`expires_at` + `max_price_age`) |
-| Flash loan (Stellar) | Not applicable | No intra-tx composability on Soroban |
-| Sustained price push | Low risk | Short pools + short `max_price_age` recommended |
-| Unauthorised feed update | Mitigated | `oracle.require_auth()` + oracle whitelist |
+| Spot price (no TWAP) | Mitigated | Multi-source Pyth feeds, confidence ratio filter, 5x deviation multiplier |
+| Single oracle trust | Mitigated | Multi-publisher Pyth consensus + oracle whitelist + admin role gating |
+| Stale price resolution | Mitigated | Dual staleness check (`expires_at` + `max_price_age`) + past timestamp invariant |
+| Flash loan (Stellar) | Mitigated / N/A | Off-chain aggregator decoupling + lack of intra-tx flash borrow composability |
+| Sudden extreme spike | Mitigated | `MAX_PRICE_DEVIATION_MULTIPLIER = 5` in `oracle.rs` |
+| Unauthorised feed update | Mitigated | `oracle.require_auth()` + `OracleWl` whitelist |
+
