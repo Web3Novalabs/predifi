@@ -12,6 +12,7 @@
 mod pools;
 mod predictions;
 mod referrals;
+pub mod builders;
 pub mod metrics;
 
 // ── Re-export every public item from each repository module ──────────────────

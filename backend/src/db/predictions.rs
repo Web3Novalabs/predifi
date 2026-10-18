@@ -291,6 +291,8 @@ pub async fn get_users_by_betting_volume(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<UserBettingVolume>, sqlx::Error> {
+    use crate::db::builders::PaginationBuilder;
+
     let rows = sqlx::query_as::<_, UserVolumeRow>(
         r#"
         SELECT
@@ -308,16 +310,13 @@ pub async fn get_users_by_betting_volume(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .enumerate()
-        .map(|(i, r)| UserBettingVolume {
-            user_address: r.user_address,
-            total_volume: r.total_volume,
-            prediction_count: r.prediction_count,
-            rank: offset + i as i64 + 1,
-        })
-        .collect())
+    let pagination = PaginationBuilder::new(offset);
+    Ok(pagination.apply_rank_fn(rows, |i, r| UserBettingVolume {
+        user_address: r.user_address,
+        total_volume: r.total_volume,
+        prediction_count: r.prediction_count,
+        rank: pagination.calculate_rank(i as i64),
+    }))
 }
 
 /// Top users ranked by winnings from settled pools.
@@ -329,6 +328,8 @@ pub async fn get_users_by_winnings(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<UserWinnings>, sqlx::Error> {
+    use crate::db::builders::PaginationBuilder;
+
     let rows = sqlx::query_as::<_, UserWinningsRow>(
         r#"
         WITH pool_winning_totals AS (
@@ -387,25 +388,22 @@ pub async fn get_users_by_winnings(
     .fetch_all(pool)
     .await?;
 
-    Ok(rows
-        .into_iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let win_rate = if r.total_predictions > 0 {
-                r.winning_predictions as f64 / r.total_predictions as f64
-            } else {
-                0.0
-            };
-            UserWinnings {
-                user_address: r.user_address,
-                total_winnings: r.total_winnings,
-                winning_predictions: r.winning_predictions,
-                total_predictions: r.total_predictions,
-                win_rate,
-                rank: offset + i as i64 + 1,
-            }
-        })
-        .collect())
+    let pagination = PaginationBuilder::new(offset);
+    Ok(pagination.apply_rank_fn(rows, |i, r| {
+        let win_rate = if r.total_predictions > 0 {
+            r.winning_predictions as f64 / r.total_predictions as f64
+        } else {
+            0.0
+        };
+        UserWinnings {
+            user_address: r.user_address,
+            total_winnings: r.total_winnings,
+            winning_predictions: r.winning_predictions,
+            total_predictions: r.total_predictions,
+            win_rate,
+            rank: pagination.calculate_rank(i as i64),
+        }
+    }))
 }
 
 /// Resolve the `period` filter (`"week"` / `"month"` / anything else = all-time)
@@ -427,15 +425,11 @@ fn leaderboard_cutoff(period: &str) -> Option<DateTime<Utc>> {
 /// Placeholders: `$1` = limit, `$2` = offset, `$3` = optional pool ID,
 /// `$4` = optional `created_at` cutoff — see [`leaderboard_cutoff`].
 fn leaderboard_sql(rank_by: &str) -> String {
-    // SECURITY: order_by is chosen from a controlled match — no user input
-    // reaches the interpolated string.
-    let order_by = match rank_by {
-        "win_rate" => {
-            "(CASE WHEN ua.settled_count > 0 THEN ua.wins::FLOAT / ua.settled_count ELSE 0 END)"
-        }
-        "streak" => "COALESCE(sc.current_streak, 0)",
-        _ => "ua.total_volume",
-    };
+    use crate::db::builders::SortOrder;
+
+    // Use SortOrder enum to prevent SQL injection; all values are hardcoded.
+    let sort_order = SortOrder::from_leaderboard_rank_by(rank_by);
+    let order_by = sort_order.to_sql();
 
     format!(
         r#"
@@ -525,6 +519,8 @@ pub async fn get_leaderboard_extended(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<LeaderboardEntry>, sqlx::Error> {
+    use crate::db::builders::PaginationBuilder;
+
     let cutoff = leaderboard_cutoff(period);
     let sql = leaderboard_sql(rank_by);
 
@@ -536,27 +532,24 @@ pub async fn get_leaderboard_extended(
         .fetch_all(pool)
         .await?;
 
-    Ok(rows
-        .into_iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let win_rate = if r.settled_count > 0 {
-                r.wins as f64 / r.settled_count as f64
-            } else {
-                0.0
-            };
-            LeaderboardEntry {
-                user_address: r.user_address,
-                total_volume: r.total_volume,
-                prediction_count: r.prediction_count,
-                wins: r.wins,
-                settled_count: r.settled_count,
-                win_rate,
-                current_streak: r.current_streak,
-                rank: offset + i as i64 + 1,
-            }
-        })
-        .collect())
+    let pagination = PaginationBuilder::new(offset);
+    Ok(pagination.apply_rank_fn(rows, |i, r| {
+        let win_rate = if r.settled_count > 0 {
+            r.wins as f64 / r.settled_count as f64
+        } else {
+            0.0
+        };
+        LeaderboardEntry {
+            user_address: r.user_address,
+            total_volume: r.total_volume,
+            prediction_count: r.prediction_count,
+            wins: r.wins,
+            settled_count: r.settled_count,
+            win_rate,
+            current_streak: r.current_streak,
+            rank: pagination.calculate_rank(i as i64),
+        }
+    }))
 }
 
 /// Run `EXPLAIN` on the leaderboard aggregation query used by

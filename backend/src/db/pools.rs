@@ -144,9 +144,9 @@ pub async fn get_active_pools(
 /// `status` accepts `"active"`, `"closed"`, or `"settled"` (defaults to `"active"`).
 ///
 /// # Security
-/// `order_clause` is built from a controlled `match` on `sort_by` — only the
-/// three hardcoded strings reach the SQL. `valid_status` is similarly
-/// allow-listed. No raw user input is interpolated into the query.
+/// `sort_by` and `status` are validated using [`crate::db::builders::SortOrder`]
+/// and [`crate::db::builders::StatusFilter`] enums — only safe values reach SQL.
+/// No raw user input is interpolated into the query.
 pub async fn get_pools_with_filters(
     pool: &PgPool,
     sort_by: &str,
@@ -155,16 +155,11 @@ pub async fn get_pools_with_filters(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<PoolRow>, sqlx::Error> {
-    let order_clause = match sort_by {
-        "popular" => "total_stake DESC",
-        "ending_soon" => "end_time ASC",
-        _ => "created_at DESC", // "new" and default
-    };
+    use crate::db::builders::{CategoryFilter, SortOrder, StatusFilter};
 
-    let valid_status = match status {
-        "active" | "closed" | "settled" => status,
-        _ => "active",
-    };
+    let sort_order = SortOrder::from_pool_sort_by(sort_by);
+    let status_filter = StatusFilter::new(status);
+    let category_filter = CategoryFilter::new(category);
 
     let sql = format!(
         r#"
@@ -172,16 +167,17 @@ pub async fn get_pools_with_filters(
         FROM pools
         WHERE state = $1
           AND ($2::text IS NULL OR category = $2)
-        ORDER BY {order_clause}
+        ORDER BY {}
         LIMIT $3 OFFSET $4
-        "#
+        "#,
+        sort_order.to_sql()
     );
 
     crate::metrics::observe_db(
         "get_pools_with_filters",
         sqlx::query_as::<_, PoolRow>(&sql)
-            .bind(valid_status)
-            .bind(category)
+            .bind(status_filter.to_sql())
+            .bind(category_filter.as_ref())
             .bind(limit)
             .bind(offset)
             .fetch_all(pool),
@@ -195,10 +191,10 @@ pub async fn count_pools_with_filters(
     category: Option<&str>,
     status: &str,
 ) -> Result<i64, sqlx::Error> {
-    let valid_status = match status {
-        "active" | "closed" | "settled" => status,
-        _ => "active",
-    };
+    use crate::db::builders::{CategoryFilter, StatusFilter};
+
+    let status_filter = StatusFilter::new(status);
+    let category_filter = CategoryFilter::new(category);
 
     let count: (i64,) = crate::metrics::observe_db(
         "count_pools_with_filters",
@@ -210,8 +206,8 @@ pub async fn count_pools_with_filters(
               AND ($2::text IS NULL OR category = $2)
             "#,
         )
-        .bind(valid_status)
-        .bind(category)
+        .bind(status_filter.to_sql())
+        .bind(category_filter.as_ref())
         .fetch_one(pool),
     )
     .await?;
