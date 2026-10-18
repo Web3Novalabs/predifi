@@ -6,8 +6,8 @@
 //! - **Dry-run mode**: Simulate migrations inside a transaction that is always
 //!   rolled back, verifying SQL syntax and constraint violations without any
 //!   permanent schema changes.
-//! - **Rollback testing**: Verify that a down-migration successfully reverts
-//!   the schema to its prior state.
+//! - **Rollback testing**: Verify that rolling back the dry-run transaction
+//!   restores the schema to its prior state.
 //! - **Schema diff preview**: Compute a human-readable diff of table/column
 //!   changes that would be introduced by pending migrations.
 //! - **Backward-compatibility checks**: Detect destructive DDL operations
@@ -25,8 +25,8 @@
 //! println!("{}", report.summary());
 //! ```
 
-use sqlx::{FromRow, PgPool};
-use std::collections::HashMap;
+use sqlx::{postgres::PgConnection, FromRow, PgPool};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use tracing::{info, warn};
 
@@ -46,6 +46,12 @@ pub struct ColumnDescriptor {
     pub ordinal_position: i64,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+struct SchemaSnapshot {
+    columns: HashMap<String, Vec<ColumnDescriptor>>,
+    indexes: HashMap<String, HashSet<String>>,
+}
+
 /// Represents a single schema-change entry in the diff output.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SchemaDiffEntry {
@@ -53,15 +59,27 @@ pub enum SchemaDiffEntry {
     TableAdded(String),
     /// A table that exists will be removed.
     TableDropped(String),
+    /// An index that does not yet exist will be created.
+    IndexAdded { table: String, index: String },
+    /// An existing index will be removed.
+    IndexDropped { table: String, index: String },
     /// A column that does not yet exist will be added.
     ColumnAdded {
         table: String,
         column: String,
         data_type: String,
         nullable: bool,
+        has_default: bool,
     },
     /// An existing column will be removed.
     ColumnDropped { table: String, column: String },
+    /// An existing column's default expression will change.
+    DefaultChanged {
+        table: String,
+        column: String,
+        from: Option<String>,
+        to: Option<String>,
+    },
     /// An existing column's type will change.
     TypeChanged {
         table: String,
@@ -83,19 +101,35 @@ impl fmt::Display for SchemaDiffEntry {
         match self {
             Self::TableAdded(t) => write!(f, "[ADD TABLE]    {t}"),
             Self::TableDropped(t) => write!(f, "[DROP TABLE]   {t}"),
+            Self::IndexAdded { table, index } => write!(f, "[ADD INDEX]    {table}.{index}"),
+            Self::IndexDropped { table, index } => write!(f, "[DROP INDEX]   {table}.{index}"),
             Self::ColumnAdded {
                 table,
                 column,
                 data_type,
                 nullable,
+                has_default,
+                ..
             } => write!(
                 f,
-                "[ADD COLUMN]   {table}.{column} {data_type}{}",
-                if *nullable { "" } else { " NOT NULL" }
+                "[ADD COLUMN]   {table}.{column} {data_type}{}{}",
+                if *nullable { "" } else { " NOT NULL" },
+                if *has_default { " DEFAULT" } else { "" }
             ),
             Self::ColumnDropped { table, column } => {
                 write!(f, "[DROP COLUMN]  {table}.{column}")
             }
+            Self::DefaultChanged {
+                table,
+                column,
+                from,
+                to,
+            } => write!(
+                f,
+                "[DEFAULT CHANGE] {table}.{column}: {} → {}",
+                from.as_deref().unwrap_or("<none>"),
+                to.as_deref().unwrap_or("<none>")
+            ),
             Self::TypeChanged {
                 table,
                 column,
@@ -110,8 +144,16 @@ impl fmt::Display for SchemaDiffEntry {
             } => write!(
                 f,
                 "[NULL CHANGE]  {table}.{column}: {} → {}",
-                if *was_nullable { "nullable" } else { "NOT NULL" },
-                if *now_nullable { "nullable" } else { "NOT NULL" }
+                if *was_nullable {
+                    "nullable"
+                } else {
+                    "NOT NULL"
+                },
+                if *now_nullable {
+                    "nullable"
+                } else {
+                    "NOT NULL"
+                }
             ),
         }
     }
@@ -142,8 +184,10 @@ pub struct DryRunResult {
     pub success: bool,
     /// Any SQL error encountered during the dry run.
     pub error: Option<String>,
-    /// List of SQL statements that were executed (best-effort parse).
+    /// Number of migration files applied inside the dry-run transaction.
     pub statements_executed: usize,
+    /// Whether rolling back the dry-run transaction restored the original schema.
+    pub rollback_succeeded: bool,
 }
 
 /// The aggregated report produced by [`MigrationChecker::run`].
@@ -155,7 +199,7 @@ pub struct MigrationReport {
     pub schema_diff: Vec<SchemaDiffEntry>,
     /// Backward-compatibility findings.
     pub compat_findings: Vec<CompatibilityFinding>,
-    /// Whether any breaking change was detected.
+    /// Whether any non-safe change was detected.
     pub has_breaking_changes: bool,
     /// Total pending migration files detected.
     pub pending_migrations: usize,
@@ -178,14 +222,26 @@ impl MigrationReport {
         if let Some(dry) = &self.dry_run {
             out.push_str(&format!(
                 "Dry-run            : {}\n",
-                if dry.success { "✓ PASSED" } else { "✗ FAILED" }
+                if dry.success {
+                    "✓ PASSED"
+                } else {
+                    "✗ FAILED"
+                }
             ));
             if let Some(err) = &dry.error {
                 out.push_str(&format!("  Error            : {err}\n"));
             }
             out.push_str(&format!(
-                "  Statements run   : {}\n",
+                "  Migration files run: {}\n",
                 dry.statements_executed
+            ));
+            out.push_str(&format!(
+                "  Rollback check    : {}\n",
+                if dry.rollback_succeeded {
+                    "PASSED"
+                } else {
+                    "FAILED"
+                }
             ));
         }
 
@@ -195,6 +251,9 @@ impl MigrationReport {
             for entry in &self.schema_diff {
                 out.push_str(&format!("  {entry}\n"));
             }
+        } else if self.pending_migrations > 0 {
+            out.push_str("\n─── Schema Diff ────────────────────────────────────\n");
+            out.push_str("  No schema changes detected\n");
         }
 
         // Compatibility findings
@@ -217,9 +276,9 @@ impl MigrationReport {
 
         out.push_str("\n─── Overall ────────────────────────────────────────\n");
         if self.has_breaking_changes {
-            out.push_str("  ✗ BREAKING CHANGES DETECTED — review before deploy\n");
+            out.push_str("  ✗ UNSAFE CHANGES DETECTED — review before deploy\n");
         } else {
-            out.push_str("  ✓ No breaking changes detected\n");
+            out.push_str("  ✓ No unsafe changes detected\n");
         }
         out.push_str("═══════════════════════════════════════════════════\n");
 
@@ -266,56 +325,112 @@ impl MigrationChecker {
     /// Execute all requested checks and return a consolidated [`MigrationReport`].
     pub async fn run(&self, opts: &CheckOptions) -> Result<MigrationReport, sqlx::Error> {
         let mut report = MigrationReport::default();
+        let migrator = sqlx::migrate!("./migrations");
+        let applied = self.applied_migrations().await?;
 
-        // Snapshot schema BEFORE migrations are applied.
-        let before = if opts.show_diff || opts.check_backward_compat {
-            self.snapshot_schema().await?
-        } else {
-            HashMap::new()
-        };
+        let mut versions = HashSet::new();
+        for migration in migrator.iter() {
+            if !versions.insert(migration.version) {
+                report.dry_run = Some(DryRunResult {
+                    success: false,
+                    error: Some(format!(
+                        "duplicate migration version {} ({})",
+                        migration.version, migration.description
+                    )),
+                    statements_executed: 0,
+                    rollback_succeeded: false,
+                });
+                return Ok(report);
+            }
+        }
+        for version in applied.keys() {
+            if !versions.contains(version) {
+                report.dry_run = Some(DryRunResult {
+                    success: false,
+                    error: Some(format!(
+                        "database contains migration version {version} that is missing from the repository"
+                    )),
+                    statements_executed: 0,
+                    rollback_succeeded: false,
+                });
+                return Ok(report);
+            }
+        }
 
-        // Determine how many migrations are pending.
-        report.pending_migrations = self.count_pending_migrations().await?;
+        let mut pending = Vec::new();
+        for migration in migrator.iter() {
+            match applied.get(&migration.version) {
+                Some((false, _)) => {
+                    report.dry_run = Some(DryRunResult {
+                        success: false,
+                        error: Some(format!(
+                            "migration {} ({}) is recorded as failed",
+                            migration.version, migration.description
+                        )),
+                        statements_executed: 0,
+                        rollback_succeeded: false,
+                    });
+                    return Ok(report);
+                }
+                Some((true, checksum)) if checksum.as_slice() != migration.checksum.as_ref() => {
+                    report.dry_run = Some(DryRunResult {
+                        success: false,
+                        error: Some(format!(
+                            "checksum mismatch for applied migration {} ({})",
+                            migration.version, migration.description
+                        )),
+                        statements_executed: 0,
+                        rollback_succeeded: false,
+                    });
+                    return Ok(report);
+                }
+                Some((true, _)) => {}
+                None => pending.push(migration),
+            }
+        }
+        report.pending_migrations = pending.len();
         info!(
             pending = report.pending_migrations,
             "migration safety check started"
         );
 
-        // Dry-run: apply migrations inside a savepoint, then roll back.
         if opts.dry_run {
-            let dry = self.run_dry_run().await;
+            let before = self.snapshot_schema().await?;
+            let (dry, diff) = self.run_dry_run(&pending, Some(&before)).await;
             report.dry_run = Some(dry);
+            if opts.show_diff || opts.check_backward_compat {
+                report.schema_diff = diff;
+            }
+        } else if opts.show_diff || opts.check_backward_compat {
+            report.dry_run = Some(DryRunResult {
+                success: false,
+                error: Some(
+                    "dry-run is required to generate a schema preview and verify rollback"
+                        .to_string(),
+                ),
+                statements_executed: 0,
+                rollback_succeeded: false,
+            });
+            warn!("schema diff and compatibility checks require dry-run mode");
         }
 
-        // Snapshot schema AFTER applying real migrations.
-        let after = if opts.show_diff || opts.check_backward_compat {
-            // We apply migrations for real only when requested — in dry-run
-            // mode we use the before snapshot for both sides because the
-            // dry-run is rolled back.
-            // For a complete diff experience, call `sqlx migrate run` first
-            // and then call `run` with dry_run = false.
-            self.snapshot_schema().await?
-        } else {
-            HashMap::new()
-        };
-
-        // Schema diff
-        if opts.show_diff {
-            report.schema_diff = compute_schema_diff(&before, &after);
-        }
-
-        // Backward-compatibility analysis
         if opts.check_backward_compat {
             report.compat_findings = analyse_compatibility(&report.schema_diff);
-            report.has_breaking_changes = report.compat_findings.iter().any(|f| {
-                matches!(f.risk, CompatibilityRisk::Breaking(_))
-            });
+            report.has_breaking_changes = report
+                .compat_findings
+                .iter()
+                .any(|finding| finding.risk != CompatibilityRisk::Safe);
         }
 
         if report.has_breaking_changes {
+            let unsafe_findings = report
+                .compat_findings
+                .iter()
+                .filter(|finding| finding.risk != CompatibilityRisk::Safe)
+                .count();
             warn!(
-                breaking = report.compat_findings.len(),
-                "breaking migration changes detected"
+                unsafe_findings,
+                "migration changes require review before zero-downtime deployment"
             );
         }
 
@@ -324,104 +439,201 @@ impl MigrationChecker {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    /// Snapshot the current schema from `information_schema.columns`.
-    ///
-    /// Uses the runtime `sqlx::query_as` form (no `!`) so that this code
-    /// compiles without a `DATABASE_URL` environment variable set at build time.
-    async fn snapshot_schema(
-        &self,
-    ) -> Result<HashMap<String, Vec<ColumnDescriptor>>, sqlx::Error> {
-        // Runtime query — no compile-time DATABASE_URL needed.
+    async fn snapshot_schema(&self) -> Result<SchemaSnapshot, sqlx::Error> {
+        let mut connection = self.pool.acquire().await?;
+        Self::snapshot_schema_on(&mut connection).await
+    }
+
+    async fn snapshot_schema_on(
+        connection: &mut PgConnection,
+    ) -> Result<SchemaSnapshot, sqlx::Error> {
         let rows = sqlx::query_as::<_, ColumnDescriptor>(
             r#"
-            SELECT
-                table_name,
-                column_name,
-                data_type,
-                (is_nullable = 'YES') AS is_nullable,
-                column_default,
-                ordinal_position
+            SELECT table_name, column_name, data_type,
+                   (is_nullable = 'YES') AS is_nullable,
+                   column_default, ordinal_position
             FROM information_schema.columns
             WHERE table_schema = 'public'
             ORDER BY table_name, ordinal_position
             "#,
         )
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *connection)
         .await?;
 
-        let mut map: HashMap<String, Vec<ColumnDescriptor>> = HashMap::new();
+        let mut columns: HashMap<String, Vec<ColumnDescriptor>> = HashMap::new();
         for row in rows {
-            map.entry(row.table_name.clone()).or_default().push(row);
+            columns.entry(row.table_name.clone()).or_default().push(row);
         }
-        Ok(map)
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT tablename, indexname FROM pg_indexes \
+             WHERE schemaname = 'public' ORDER BY tablename, indexname",
+        )
+        .fetch_all(&mut *connection)
+        .await?;
+        let mut indexes: HashMap<String, HashSet<String>> = HashMap::new();
+        for (table, index) in rows {
+            indexes.entry(table).or_default().insert(index);
+        }
+        Ok(SchemaSnapshot { columns, indexes })
     }
 
-    /// Count how many migration files have not yet been applied.
-    async fn count_pending_migrations(&self) -> Result<usize, sqlx::Error> {
-        // sqlx stores applied migrations in `_sqlx_migrations`.
-        // We compare against the filesystem migration files.
-        let migrator = sqlx::migrate!("./migrations");
-        let applied: Vec<i64> = sqlx::query_scalar(
-            "SELECT version FROM _sqlx_migrations ORDER BY version",
+    async fn applied_migrations(&self) -> Result<HashMap<i64, (bool, Vec<u8>)>, sqlx::Error> {
+        let exists: bool =
+            sqlx::query_scalar("SELECT to_regclass('public._sqlx_migrations') IS NOT NULL")
+                .fetch_one(&self.pool)
+                .await?;
+        if !exists {
+            return Ok(HashMap::new());
+        }
+
+        let rows: Vec<(i64, bool, Vec<u8>)> = sqlx::query_as(
+            "SELECT version, success, checksum FROM _sqlx_migrations ORDER BY version",
         )
         .fetch_all(&self.pool)
-        .await
-        .unwrap_or_default();
-
-        let total = migrator.migrations.len();
-        let pending = total.saturating_sub(applied.len());
-        Ok(pending)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(version, success, checksum)| (version, (success, checksum)))
+            .collect())
     }
 
-    /// Run migrations inside a transaction that is always rolled back.
-    async fn run_dry_run(&self) -> DryRunResult {
+    /// Apply pending migrations in one transaction, capture the preview, and
+    /// verify that rolling the transaction back restores the original schema.
+    async fn run_dry_run(
+        &self,
+        pending: &[&sqlx::migrate::Migration],
+        before: Option<&SchemaSnapshot>,
+    ) -> (DryRunResult, Vec<SchemaDiffEntry>) {
         let mut tx = match self.pool.begin().await {
             Ok(tx) => tx,
             Err(e) => {
-                return DryRunResult {
-                    success: false,
-                    error: Some(format!("failed to begin transaction: {e}")),
-                    statements_executed: 0,
-                }
+                return (
+                    DryRunResult {
+                        success: false,
+                        error: Some(format!("failed to begin transaction: {e}")),
+                        statements_executed: 0,
+                        rollback_succeeded: false,
+                    },
+                    Vec::new(),
+                );
             }
         };
-
-        // Apply each pending migration SQL inside the transaction.
-        let migrator = sqlx::migrate!("./migrations");
         let mut count = 0usize;
-
-        for migration in migrator.migrations.iter() {
-            let sql = migration.sql.as_ref();
-            // Split on semicolons for rough statement counting.
-            let stmts: Vec<&str> = sql
-                .split(';')
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
-                .collect();
-            count += stmts.len();
-
-            if let Err(e) = sqlx::query(sql).execute(&mut *tx).await {
-                let _ = tx.rollback().await;
-                return DryRunResult {
+        if let Err(error) =
+            sqlx::raw_sql("SET LOCAL lock_timeout = '5s'; SET LOCAL statement_timeout = '60s';")
+                .execute(&mut *tx)
+                .await
+        {
+            let rollback = tx.rollback().await;
+            return (
+                DryRunResult {
                     success: false,
-                    error: Some(format!(
-                        "migration '{}' failed: {e}",
-                        migration.description
-                    )),
+                    error: Some(format!("failed to configure dry-run timeouts: {error}")),
                     statements_executed: count,
-                };
+                    rollback_succeeded: rollback.is_ok(),
+                },
+                Vec::new(),
+            );
+        }
+        for migration in pending {
+            if migration.no_tx {
+                let rollback = tx.rollback().await;
+                return (
+                    DryRunResult {
+                        success: false,
+                        error: Some(format!(
+                            "migration {} ({}) cannot be dry-run because it disables transactions",
+                            migration.version, migration.description
+                        )),
+                        statements_executed: count,
+                        rollback_succeeded: rollback.is_ok(),
+                    },
+                    Vec::new(),
+                );
+            }
+
+            count += 1;
+            if let Err(error) = sqlx::raw_sql(migration.sql.as_ref())
+                .execute(&mut *tx)
+                .await
+            {
+                let rollback = tx.rollback().await;
+                return (
+                    DryRunResult {
+                        success: false,
+                        error: Some(format!(
+                            "migration {} ({}) failed: {error}",
+                            migration.version, migration.description
+                        )),
+                        statements_executed: count,
+                        rollback_succeeded: rollback.is_ok(),
+                    },
+                    Vec::new(),
+                );
             }
         }
 
-        // Always roll back — this is a dry run.
-        let _ = tx.rollback().await;
-        info!(statements = count, "dry-run complete (rolled back)");
+        let diff = if let Some(before) = before {
+            match Self::snapshot_schema_on(&mut tx).await {
+                Ok(after) => compute_full_schema_diff(before, &after),
+                Err(error) => {
+                    let rollback = tx.rollback().await;
+                    return (
+                        DryRunResult {
+                            success: false,
+                            error: Some(format!("failed to snapshot migrated schema: {error}")),
+                            statements_executed: count,
+                            rollback_succeeded: rollback.is_ok(),
+                        },
+                        Vec::new(),
+                    );
+                }
+            }
+        } else {
+            Vec::new()
+        };
 
-        DryRunResult {
-            success: true,
-            error: None,
-            statements_executed: count,
+        if let Err(error) = tx.rollback().await {
+            return (
+                DryRunResult {
+                    success: false,
+                    error: Some(format!("failed to roll back dry-run transaction: {error}")),
+                    statements_executed: count,
+                    rollback_succeeded: false,
+                },
+                diff,
+            );
         }
+
+        let rollback_succeeded = match self.snapshot_schema().await {
+            Ok(after_rollback) => before.is_none_or(|schema| schema == &after_rollback),
+            Err(error) => {
+                return (
+                    DryRunResult {
+                        success: false,
+                        error: Some(format!("failed to verify rollback: {error}")),
+                        statements_executed: count,
+                        rollback_succeeded: false,
+                    },
+                    diff,
+                )
+            }
+        };
+        let error = (!rollback_succeeded)
+            .then(|| "schema changed after the dry-run transaction was rolled back".to_string());
+        info!(
+            migrations = count,
+            rollback_succeeded, "migration dry-run complete"
+        );
+        (
+            DryRunResult {
+                success: error.is_none(),
+                error,
+                statements_executed: count,
+                rollback_succeeded,
+            },
+            diff,
+        )
     }
 }
 
@@ -451,10 +663,14 @@ pub fn compute_schema_diff(
     // Column-level diff for tables that exist in both snapshots
     for (table, after_cols) in after {
         if let Some(before_cols) = before.get(table) {
-            let before_map: HashMap<&str, &ColumnDescriptor> =
-                before_cols.iter().map(|c| (c.column_name.as_str(), c)).collect();
-            let after_map: HashMap<&str, &ColumnDescriptor> =
-                after_cols.iter().map(|c| (c.column_name.as_str(), c)).collect();
+            let before_map: HashMap<&str, &ColumnDescriptor> = before_cols
+                .iter()
+                .map(|c| (c.column_name.as_str(), c))
+                .collect();
+            let after_map: HashMap<&str, &ColumnDescriptor> = after_cols
+                .iter()
+                .map(|c| (c.column_name.as_str(), c))
+                .collect();
 
             // Columns added
             for (col_name, col) in &after_map {
@@ -464,6 +680,7 @@ pub fn compute_schema_diff(
                         column: col_name.to_string(),
                         data_type: col.data_type.clone(),
                         nullable: col.is_nullable,
+                        has_default: col.column_default.is_some(),
                     });
                 }
             }
@@ -492,6 +709,14 @@ pub fn compute_schema_diff(
                                 now_nullable: after_col.is_nullable,
                             });
                         }
+                        if before_col.column_default != after_col.column_default {
+                            diff.push(SchemaDiffEntry::DefaultChanged {
+                                table: table.clone(),
+                                column: col_name.to_string(),
+                                from: before_col.column_default.clone(),
+                                to: after_col.column_default.clone(),
+                            });
+                        }
                     }
                 }
             }
@@ -499,6 +724,32 @@ pub fn compute_schema_diff(
     }
 
     diff.sort_by(|a, b| format!("{a}").cmp(&format!("{b}")));
+    diff
+}
+
+fn compute_full_schema_diff(
+    before: &SchemaSnapshot,
+    after: &SchemaSnapshot,
+) -> Vec<SchemaDiffEntry> {
+    let mut diff = compute_schema_diff(&before.columns, &after.columns);
+    let empty = HashSet::new();
+    for (table, indexes) in &after.indexes {
+        for index in indexes.difference(before.indexes.get(table).unwrap_or(&empty)) {
+            diff.push(SchemaDiffEntry::IndexAdded {
+                table: table.clone(),
+                index: index.clone(),
+            });
+        }
+    }
+    for (table, indexes) in &before.indexes {
+        for index in indexes.difference(after.indexes.get(table).unwrap_or(&empty)) {
+            diff.push(SchemaDiffEntry::IndexDropped {
+                table: table.clone(),
+                index: index.clone(),
+            });
+        }
+    }
+    diff.sort_by_key(ToString::to_string);
     diff
 }
 
@@ -519,6 +770,10 @@ pub fn analyse_compatibility(diff: &[SchemaDiffEntry]) -> Vec<CompatibilityFindi
 
 fn classify_risk(entry: &SchemaDiffEntry) -> CompatibilityRisk {
     match entry {
+        SchemaDiffEntry::IndexAdded { .. } | SchemaDiffEntry::IndexDropped { .. } => {
+            CompatibilityRisk::Safe
+        }
+
         // Adding a new table is always safe.
         SchemaDiffEntry::TableAdded(_) => CompatibilityRisk::Safe,
 
@@ -530,9 +785,13 @@ fn classify_risk(entry: &SchemaDiffEntry) -> CompatibilityRisk {
 
         // Adding a nullable column with a default is safe for zero-downtime.
         SchemaDiffEntry::ColumnAdded {
-            nullable, table, column, ..
+            nullable,
+            has_default,
+            table,
+            column,
+            ..
         } => {
-            if *nullable {
+            if *nullable || *has_default {
                 CompatibilityRisk::Safe
             } else {
                 CompatibilityRisk::RequiresPhasing(format!(
@@ -543,20 +802,37 @@ fn classify_risk(entry: &SchemaDiffEntry) -> CompatibilityRisk {
         }
 
         // Dropping a column breaks old code that still SELECT/INSERT it.
-        SchemaDiffEntry::ColumnDropped { table, column } => {
-            CompatibilityRisk::Breaking(format!(
-                "Dropping '{table}.{column}' will break old binaries that reference it. \
+        SchemaDiffEntry::ColumnDropped { table, column } => CompatibilityRisk::Breaking(format!(
+            "Dropping '{table}.{column}' will break old binaries that reference it. \
                  Deprecate the column in code first."
-            ))
+        )),
+
+        SchemaDiffEntry::DefaultChanged {
+            table,
+            column,
+            from,
+            to,
+        } => {
+            if from.is_none() && to.is_some() {
+                CompatibilityRisk::Safe
+            } else {
+                CompatibilityRisk::RequiresPhasing(format!(
+                    "Changing the default for '{table}.{column}' may alter old-code inserts; \
+                     verify insert behavior before rollout."
+                ))
+            }
         }
 
         // Type changes are almost always breaking.
-        SchemaDiffEntry::TypeChanged { table, column, from, to } => {
-            CompatibilityRisk::Breaking(format!(
-                "Changing '{table}.{column}' from {from} to {to} may corrupt data or \
+        SchemaDiffEntry::TypeChanged {
+            table,
+            column,
+            from,
+            to,
+        } => CompatibilityRisk::Breaking(format!(
+            "Changing '{table}.{column}' from {from} to {to} may corrupt data or \
                  break deserialization in running replicas."
-            ))
-        }
+        )),
 
         // Making a nullable column NOT NULL breaks old inserts that omit it.
         SchemaDiffEntry::NullabilityChanged {
@@ -581,18 +857,19 @@ fn classify_risk(entry: &SchemaDiffEntry) -> CompatibilityRisk {
 // ── Rollback test helpers ─────────────────────────────────────────────────────
 
 /// Test that applying a migration and then rolling back its transaction
-/// leaves the schema unchanged.
-///
-/// This is primarily useful in integration tests where you can call
-/// [`MigrationChecker::run_rollback_test`] against a fresh database.
+/// leaves the table and column schema unchanged.
 pub async fn run_rollback_test(pool: &PgPool, migration_sql: &str) -> Result<bool, sqlx::Error> {
-    let before = snapshot_public_tables(pool).await?;
+    let checker = MigrationChecker::new(pool.clone());
+    let before = checker.snapshot_schema().await?;
 
     let mut tx = pool.begin().await?;
-    let _ = sqlx::query(migration_sql).execute(&mut *tx).await;
+    if let Err(error) = sqlx::raw_sql(migration_sql).execute(&mut *tx).await {
+        tx.rollback().await?;
+        return Err(error);
+    }
     tx.rollback().await?;
 
-    let after = snapshot_public_tables(pool).await?;
+    let after = checker.snapshot_schema().await?;
     let unchanged = before == after;
 
     if unchanged {
@@ -602,16 +879,6 @@ pub async fn run_rollback_test(pool: &PgPool, migration_sql: &str) -> Result<boo
     }
 
     Ok(unchanged)
-}
-
-/// Return a sorted list of table names in the `public` schema.
-async fn snapshot_public_tables(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
-    sqlx::query_scalar::<_, String>(
-        "SELECT table_name FROM information_schema.tables \
-         WHERE table_schema = 'public' ORDER BY table_name",
-    )
-    .fetch_all(pool)
-    .await
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -635,10 +902,15 @@ mod tests {
     fn diff_detects_new_table() {
         let before: HashMap<String, Vec<ColumnDescriptor>> = HashMap::new();
         let mut after = HashMap::new();
-        after.insert("pools".to_string(), vec![col("pools", "id", "bigint", false)]);
+        after.insert(
+            "pools".to_string(),
+            vec![col("pools", "id", "bigint", false)],
+        );
 
         let diff = compute_schema_diff(&before, &after);
-        assert!(diff.iter().any(|e| matches!(e, SchemaDiffEntry::TableAdded(t) if t == "pools")));
+        assert!(diff
+            .iter()
+            .any(|e| matches!(e, SchemaDiffEntry::TableAdded(t) if t == "pools")));
     }
 
     #[test]
@@ -651,16 +923,18 @@ mod tests {
         let after: HashMap<String, Vec<ColumnDescriptor>> = HashMap::new();
 
         let diff = compute_schema_diff(&before, &after);
-        assert!(
-            diff.iter()
-                .any(|e| matches!(e, SchemaDiffEntry::TableDropped(t) if t == "old_table"))
-        );
+        assert!(diff
+            .iter()
+            .any(|e| matches!(e, SchemaDiffEntry::TableDropped(t) if t == "old_table")));
     }
 
     #[test]
     fn diff_detects_added_column() {
         let mut before = HashMap::new();
-        before.insert("pools".to_string(), vec![col("pools", "id", "bigint", false)]);
+        before.insert(
+            "pools".to_string(),
+            vec![col("pools", "id", "bigint", false)],
+        );
         let mut after = HashMap::new();
         after.insert(
             "pools".to_string(),
@@ -689,7 +963,10 @@ mod tests {
             ],
         );
         let mut after = HashMap::new();
-        after.insert("pools".to_string(), vec![col("pools", "id", "bigint", false)]);
+        after.insert(
+            "pools".to_string(),
+            vec![col("pools", "id", "bigint", false)],
+        );
 
         let diff = compute_schema_diff(&before, &after);
         assert!(diff.iter().any(|e| matches!(
@@ -702,15 +979,58 @@ mod tests {
     #[test]
     fn diff_detects_type_change() {
         let mut before = HashMap::new();
-        before.insert("pools".to_string(), vec![col("pools", "amount", "integer", false)]);
+        before.insert(
+            "pools".to_string(),
+            vec![col("pools", "amount", "integer", false)],
+        );
         let mut after = HashMap::new();
-        after.insert("pools".to_string(), vec![col("pools", "amount", "bigint", false)]);
+        after.insert(
+            "pools".to_string(),
+            vec![col("pools", "amount", "bigint", false)],
+        );
 
         let diff = compute_schema_diff(&before, &after);
         assert!(diff.iter().any(|e| matches!(
             e,
             SchemaDiffEntry::TypeChanged { table, column, from, to }
             if table == "pools" && column == "amount" && from == "integer" && to == "bigint"
+        )));
+    }
+
+    #[test]
+    fn diff_detects_changed_column_default() {
+        let mut before = HashMap::new();
+        let mut old_column = col("pools", "state", "text", false);
+        old_column.column_default = Some("'active'".to_string());
+        before.insert("pools".to_string(), vec![old_column]);
+        let mut after = HashMap::new();
+        let mut new_column = col("pools", "state", "text", false);
+        new_column.column_default = Some("'closed'".to_string());
+        after.insert("pools".to_string(), vec![new_column]);
+
+        let diff = compute_schema_diff(&before, &after);
+        assert!(diff.iter().any(|entry| matches!(
+            entry,
+            SchemaDiffEntry::DefaultChanged { table, column, .. }
+            if table == "pools" && column == "state"
+        )));
+    }
+
+    #[test]
+    fn diff_detects_added_index() {
+        let before = SchemaSnapshot::default();
+        let mut after = SchemaSnapshot::default();
+        after
+            .indexes
+            .entry("pools".to_string())
+            .or_default()
+            .insert("idx_pools_state".to_string());
+
+        let diff = compute_full_schema_diff(&before, &after);
+        assert!(diff.iter().any(|entry| matches!(
+            entry,
+            SchemaDiffEntry::IndexAdded { table, index }
+            if table == "pools" && index == "idx_pools_state"
         )));
     }
 
@@ -728,6 +1048,7 @@ mod tests {
             column: "notes".to_string(),
             data_type: "text".to_string(),
             nullable: true,
+            has_default: false,
         };
         let finding = &analyse_compatibility(&[entry])[0];
         assert_eq!(finding.risk, CompatibilityRisk::Safe);
@@ -740,9 +1061,13 @@ mod tests {
             column: "required_field".to_string(),
             data_type: "text".to_string(),
             nullable: false,
+            has_default: false,
         };
         let finding = &analyse_compatibility(&[entry])[0];
-        assert!(matches!(finding.risk, CompatibilityRisk::RequiresPhasing(_)));
+        assert!(matches!(
+            finding.risk,
+            CompatibilityRisk::RequiresPhasing(_)
+        ));
     }
 
     #[test]
@@ -789,6 +1114,7 @@ mod tests {
             success: true,
             error: None,
             statements_executed: 5,
+            rollback_succeeded: true,
         });
         report.schema_diff = vec![SchemaDiffEntry::TableAdded("new_table".to_string())];
         report.has_breaking_changes = false;
@@ -797,6 +1123,33 @@ mod tests {
         assert!(summary.contains("Pending migrations"));
         assert!(summary.contains("Dry-run"));
         assert!(summary.contains("new_table"));
-        assert!(summary.contains("No breaking changes"));
+        assert!(summary.contains("No unsafe changes"));
+    }
+
+    #[test]
+    fn migrations_have_unique_versions() {
+        let migrator = sqlx::migrate!("./migrations");
+        let mut versions = HashSet::new();
+        for migration in migrator.iter() {
+            assert!(
+                versions.insert(migration.version),
+                "duplicate migration version {} ({})",
+                migration.version,
+                migration.description
+            );
+        }
+    }
+
+    #[test]
+    fn compat_not_null_column_add_with_default_is_safe() {
+        let entry = SchemaDiffEntry::ColumnAdded {
+            table: "pools".to_string(),
+            column: "state".to_string(),
+            data_type: "text".to_string(),
+            nullable: false,
+            has_default: true,
+        };
+        let finding = &analyse_compatibility(&[entry])[0];
+        assert_eq!(finding.risk, CompatibilityRisk::Safe);
     }
 }
