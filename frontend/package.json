@@ -27,7 +27,7 @@
     "react-is": "^19.2.7",
     "recharts": "^3.7.0",
     "swr": "^2.4.1",
-    "tailwind-merge": "^2.3.0"
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
