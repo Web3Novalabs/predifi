@@ -5,11 +5,35 @@ on:
     branches: ["main", "frontend"]
     paths:
       - "frontend/**"
+      - "backend/Cargo.toml"
+      - "backend/Cargo.lock"
+      - "backend/src/openapi.rs"
+      - "backend/src/openapi_tests.rs"
+      - "backend/src/bin/openapi_export.rs"
+      - "backend/src/lib.rs"
+      - "backend/src/routes/**"
+      - "backend/src/db/**"
+      - "backend/src/response.rs"
+      - "backend/src/tags.rs"
+      - "backend/src/price_cache.rs"
+      - "backend/src/redis_cache.rs"
       - ".github/workflows/frontend-ci.yml"
   pull_request:
     branches: ["main", "frontend"]
     paths:
       - "frontend/**"
+      - "backend/Cargo.toml"
+      - "backend/Cargo.lock"
+      - "backend/src/openapi.rs"
+      - "backend/src/openapi_tests.rs"
+      - "backend/src/bin/openapi_export.rs"
+      - "backend/src/lib.rs"
+      - "backend/src/routes/**"
+      - "backend/src/db/**"
+      - "backend/src/response.rs"
+      - "backend/src/tags.rs"
+      - "backend/src/price_cache.rs"
+      - "backend/src/redis_cache.rs"
       - ".github/workflows/frontend-ci.yml"
   workflow_dispatch:
 
@@ -39,20 +63,29 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: ${{ env.NODE_VERSION }}
           cache: "pnpm"
           cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Generate API types
+        run: pnpm generate:api
+
+      - name: Type check generated API types
+        run: pnpm typecheck
 
       - name: Security audit
         run: pnpm audit --audit-level=high

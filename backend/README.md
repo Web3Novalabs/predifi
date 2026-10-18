@@ -176,6 +176,31 @@ cargo test
 
 ---
 
+## Check database migrations
+
+Before deploying schema changes, run the migration preflight against a
+disposable or staging database with the same schema version as the target
+environment:
+
+```bash
+cargo run --bin predifi-migration-check
+```
+
+The command reads `PREDIFI_DATABASE_URL`, applies only pending migrations
+inside a transaction, previews table/column/index changes, checks backward
+compatibility, and verifies the schema is unchanged after rollback. It exits
+with a failure status if a migration cannot be dry-run, its rollback fails, or
+the preview contains a breaking or phased change. It never applies migrations
+permanently. Do not run the preflight against production: even rolled-back DDL
+can hold locks or perform expensive work while it executes.
+
+Migrations must use unique, increasing SQLx version prefixes and should be
+append-only after release. Use expand/backfill/contract deployments for
+destructive changes; do not use this preflight as a substitute for testing
+application behavior or long-running locks on production-sized data.
+
+---
+
 ## Seed local database
 
 A `predifi-seed` binary populates the local PostgreSQL database with

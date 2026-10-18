@@ -325,7 +325,7 @@ pub async fn get_stats(
     let cache_key = crate::redis_cache::stats_cache_key(category, status);
 
     if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        return (StatusCode::OK, Json(cached)).into_response();
+        return ApiResponse::success(cached).into_response();
     }
 
     match crate::db::get_protocol_stats(db, category, status).await {

@@ -14,7 +14,23 @@ pub struct PoolDoc {
     pub name: String,
     pub category: String,
     pub total_stake: i64,
-    pub end_time: i64,
+    pub end_time: String,
+    pub created_at: String,
+    pub state: String,
+    pub creator: String,
+    pub token: String,
+    pub result: Option<String>,
+}
+
+/// OpenAPI schema for a pool in the list response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct PoolListingDoc {
+    pub pool_id: i64,
+    pub name: String,
+    pub category: String,
+    pub tags: Vec<String>,
+    pub total_stake: i64,
+    pub end_time: String,
     pub created_at: String,
     pub state: String,
     pub creator: String,
@@ -44,10 +60,12 @@ pub struct PoolWithOddsDoc {
 /// OpenAPI schema for the paginated pool list response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct PoolListResponse {
-    pub pools: Vec<PoolDoc>,
+    pub pools: Vec<PoolListingDoc>,
+    pub total: i64,
     pub limit: i64,
     pub offset: i64,
     pub status: String,
+    pub category: Option<String>,
     pub sort_by: String,
 }
 
@@ -104,10 +122,12 @@ pub struct UserPredictionDoc {
     pub pool_name: String,
     pub pool_category: String,
     pub pool_state: String,
+    pub pool_end_time: String,
     pub pool_total_stake: i64,
     pub pool_result: Option<String>,
     pub user_outcome: i32,
     pub user_amount: i64,
+    pub prediction_created_at: String,
     pub is_winning_outcome: Option<bool>,
 }
 
@@ -159,11 +179,34 @@ pub struct LeaderboardEntryWinnings {
     pub rank: i64,
 }
 
+/// Leaderboard entry with time-window and pool-scope support.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct LeaderboardEntryExtended {
+    pub user_address: String,
+    pub total_volume: i64,
+    pub prediction_count: i64,
+    pub wins: i64,
+    pub settled_count: i64,
+    pub win_rate: f64,
+    pub current_streak: i64,
+    pub rank: i64,
+}
+
+/// The leaderboard entry shape depends on the requested ranking.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum LeaderboardEntryDoc {
+    Volume(LeaderboardEntryVolume),
+    Winnings(LeaderboardEntryWinnings),
+    Extended(LeaderboardEntryExtended),
+}
+
 /// OpenAPI schema for the leaderboard response.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct LeaderboardResponse {
-    pub leaderboard: Vec<LeaderboardEntryVolume>,
+    pub leaderboard: Vec<LeaderboardEntryDoc>,
     pub rank_by: String,
+    pub period: String,
     pub limit: i64,
     pub offset: i64,
 }
@@ -253,7 +296,41 @@ pub struct HealthResponse {
 /// OpenAPI schema for a generic error response body.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ErrorResponse {
-    pub error: String,
+    pub status: String,
+    pub error: ErrorDetailDoc,
+}
+
+/// OpenAPI schema for the standardized API error detail.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ErrorDetailDoc {
+    pub code: String,
+    pub message: String,
+    pub request_id: String,
+}
+
+/// OpenAPI schema for successful API responses.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+#[aliases(
+    ApiPoolDetailsResponse = ApiSuccess<PoolWithOddsDoc>,
+    ApiStatsResponse = ApiSuccess<ProtocolStatsDoc>,
+    ApiLeaderboardResponse = ApiSuccess<LeaderboardResponse>,
+    ApiHistoryResponse = ApiSuccess<PredictionHistoryResponse>,
+    ApiUserPredictionsResponse = ApiSuccess<UserPredictionsResponse>,
+    ApiMarketPredictionsResponse = ApiSuccess<MarketPredictionsResponse>,
+    ApiReferralEarningsResponse = ApiSuccess<ReferralEarningsResponse>,
+    ApiIndexerOkResponse = ApiSuccess<IndexerOkResponse>,
+    ApiPricesResponse = ApiSuccess<Vec<AssetPriceDoc>>
+)]
+pub struct ApiSuccess<T: ToSchema> {
+    pub status: String,
+    pub data: T,
+}
+
+/// OpenAPI schema for an asset price returned by the prices endpoint.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct AssetPriceDoc {
+    pub symbol: String,
+    pub price_usd: f64,
 }
 
 /// OpenAPI schema for the `pool_created` event ingestion request body.
@@ -316,6 +393,7 @@ pub struct IndexerOkResponse {
     ),
     components(schemas(
         PoolDoc,
+        PoolListingDoc,
         OutcomeOddsDoc,
         PoolWithOddsDoc,
         PoolListResponse,
@@ -329,6 +407,8 @@ pub struct IndexerOkResponse {
         FeeInfoDoc,
         LeaderboardEntryVolume,
         LeaderboardEntryWinnings,
+        LeaderboardEntryExtended,
+        LeaderboardEntryDoc,
         LeaderboardResponse,
         ReferralEarningDoc,
         ReferralEarningsResponse,
@@ -338,9 +418,20 @@ pub struct IndexerOkResponse {
         HealthComponents,
         HealthResponse,
         ErrorResponse,
+        ErrorDetailDoc,
         PoolCreatedPayloadDoc,
         PredictionPlacedPayloadDoc,
         IndexerOkResponse,
+        ApiPoolDetailsResponse,
+        ApiStatsResponse,
+        ApiLeaderboardResponse,
+        ApiHistoryResponse,
+        ApiUserPredictionsResponse,
+        ApiMarketPredictionsResponse,
+        ApiReferralEarningsResponse,
+        ApiIndexerOkResponse,
+        ApiPricesResponse,
+        AssetPriceDoc,
     )),
     tags(
         (name = "health", description = "Service liveness and dependency checks"),
@@ -370,12 +461,14 @@ async fn api_health() {}
     params(
         ("sort_by" = Option<String>, Query, description = "popular | ending_soon | new (default)"),
         ("category" = Option<String>, Query, description = "Category filter e.g. Sports, Crypto"),
+        ("tags" = Option<String>, Query, description = "Comma-separated tag filter; pools matching any tag are included"),
         ("status" = Option<String>, Query, description = "active | closed | settled (default: active)"),
         ("limit" = Option<i64>, Query, description = "Max results (default 20, max 100)"),
         ("offset" = Option<i64>, Query, description = "Pagination offset (default 0)"),
     ),
     responses(
         (status = 200, description = "Paginated pool list", body = PoolListResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
@@ -385,8 +478,10 @@ async fn api_get_pools() {}
 #[utoipa::path(get, path = "/api/v1/pools/{pool_id}", tag = "pools",
     params(("pool_id" = i64, Path, description = "On-chain pool identifier")),
     responses(
-        (status = 200, description = "Pool details with live odds", body = PoolWithOddsDoc),
+        (status = 200, description = "Pool details with live odds", body = ApiPoolDetailsResponse),
         (status = 404, description = "Pool not found", body = ErrorResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
 async fn api_get_pool_by_id() {}
@@ -394,7 +489,8 @@ async fn api_get_pool_by_id() {}
 #[allow(dead_code)]
 #[utoipa::path(get, path = "/api/v1/stats", tag = "stats",
     responses(
-        (status = 200, description = "Protocol-wide aggregate statistics", body = ProtocolStatsDoc),
+        (status = 200, description = "Protocol-wide aggregate statistics", body = ApiStatsResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
@@ -411,7 +507,8 @@ async fn api_get_fees() {}
 #[allow(dead_code)]
 #[utoipa::path(get, path = "/api/v1/prices", tag = "stats",
     responses(
-        (status = 200, description = "Latest cached asset prices"),
+        (status = 200, description = "Latest cached asset prices", body = ApiPricesResponse),
+        (status = 503, description = "Price cache is not ready", body = ErrorResponse),
     )
 )]
 async fn api_get_prices() {}
@@ -419,12 +516,14 @@ async fn api_get_prices() {}
 #[allow(dead_code)]
 #[utoipa::path(get, path = "/api/v1/leaderboard", tag = "leaderboard",
     params(
-        ("rank_by" = Option<String>, Query, description = "volume (default) | winnings"),
+        ("rank_by" = Option<String>, Query, description = "volume (default) | winnings | win_rate | streak"),
+        ("period" = Option<String>, Query, description = "week | month | all (default: all; ignored for winnings)"),
         ("limit" = Option<i64>, Query, description = "Max results (default 20, max 100)"),
         ("offset" = Option<i64>, Query, description = "Pagination offset (default 0)"),
     ),
     responses(
-        (status = 200, description = "User leaderboard", body = LeaderboardResponse),
+        (status = 200, description = "User leaderboard", body = ApiLeaderboardResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
@@ -438,7 +537,8 @@ async fn api_get_leaderboard() {}
         ("offset" = Option<i64>, Query, description = "Pagination offset (default 0)"),
     ),
     responses(
-        (status = 200, description = "Paginated prediction history", body = PredictionHistoryResponse),
+        (status = 200, description = "Paginated prediction history", body = ApiHistoryResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
@@ -452,9 +552,10 @@ async fn api_get_user_history() {}
         ("limit" = Option<i64>, Query, description = "Page size (1–100, default 20)"),
     ),
     responses(
-        (status = 200, description = "Cursor-paginated predictions for the market", body = MarketPredictionsResponse),
+        (status = 200, description = "Cursor-paginated predictions for the market", body = ApiMarketPredictionsResponse),
         (status = 404, description = "Market not found", body = ErrorResponse),
         (status = 503, description = "Database not available", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
 async fn api_get_market_predictions() {}
@@ -467,7 +568,8 @@ async fn api_get_market_predictions() {}
         ("offset" = Option<i64>, Query, description = "Pagination offset (default 0)"),
     ),
     responses(
-        (status = 200, description = "Enhanced predictions with pool status", body = UserPredictionsResponse),
+        (status = 200, description = "Enhanced predictions with pool status", body = ApiUserPredictionsResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
@@ -477,8 +579,9 @@ async fn api_get_user_predictions() {}
 #[utoipa::path(get, path = "/api/v1/referrals/{address}", tag = "referrals",
     params(("address" = String, Path, description = "Stellar referrer address (G...)")),
     responses(
-        (status = 200, description = "Referral summary", body = ReferralEarningsResponse),
+        (status = 200, description = "Referral summary", body = ApiReferralEarningsResponse),
         (status = 503, description = "Database not configured", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
 async fn api_get_referrals() {}
@@ -487,8 +590,9 @@ async fn api_get_referrals() {}
 #[utoipa::path(get, path = "/api/v1/users/{address}/referrals", tag = "referrals",
     params(("address" = String, Path, description = "Stellar referrer address (G...)")),
     responses(
-        (status = 200, description = "Per-pool referral earnings", body = ReferralEarningsResponse),
+        (status = 200, description = "Per-pool referral earnings", body = ApiReferralEarningsResponse),
         (status = 503, description = "Database not configured", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
 async fn api_get_user_referral_earnings() {}
@@ -497,7 +601,8 @@ async fn api_get_user_referral_earnings() {}
 #[utoipa::path(post, path = "/api/v1/indexer/pool-created", tag = "indexer",
     request_body = PoolCreatedPayloadDoc,
     responses(
-        (status = 200, description = "Pool indexed successfully", body = IndexerOkResponse),
+        (status = 200, description = "Pool indexed successfully", body = ApiIndexerOkResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]
@@ -507,7 +612,8 @@ async fn api_ingest_pool_created() {}
 #[utoipa::path(post, path = "/api/v1/indexer/prediction-placed", tag = "indexer",
     request_body = PredictionPlacedPayloadDoc,
     responses(
-        (status = 200, description = "Prediction indexed successfully", body = IndexerOkResponse),
+        (status = 200, description = "Prediction indexed successfully", body = ApiIndexerOkResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
 )]

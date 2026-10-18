@@ -75,15 +75,30 @@ Execute unit and integration tests:
 cargo test
 ```
 
-### Migration tests
+### Migration safety preflight
 
-Run the integration migration round-trip test which spins up a throwaway
-Postgres container, applies the migrations and verifies they can be reverted:
+Run the preflight against a disposable or staging PostgreSQL database, never
+production. It dry-runs pending migrations in a transaction, prints a schema
+preview, checks backward compatibility, and verifies rollback without
+persisting any changes:
 
 ```bash
 cd backend
-cargo test --test migration_roundtrip
+cargo run --bin predifi-migration-check
 ```
+
+The connection is read from `PREDIFI_DATABASE_URL`. The migration round-trip
+integration test additionally requires Docker and is opt-in:
+
+```bash
+cargo test --features integration-tests --test migration_roundtrip -- --ignored
+```
+
+Migration files must have unique, increasing SQLx version prefixes. After a
+migration has shipped, add a new migration rather than editing its contents.
+For zero-downtime releases, use additive expand/backfill/contract steps and
+avoid dropping or changing columns while old application replicas may still
+be running.
 
 ### Formatting
 
