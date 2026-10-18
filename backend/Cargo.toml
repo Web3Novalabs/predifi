@@ -19,6 +19,10 @@ path = "src/bin/seed.rs"
 name = "predifi-openapi"
 path = "src/bin/openapi_export.rs"
 
+[[bin]]
+name = "predifi-migration-check"
+path = "src/bin/migration_check.rs"
+
 [dependencies]
 axum = { version = "0.7.9", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }

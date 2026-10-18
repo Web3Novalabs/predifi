@@ -6,9 +6,10 @@
  * fetcher (see `lib/hooks/usePools.ts`) so that pool data is cached and
  * deduplicated across the app.
  *
- * The shapes here mirror the backend OpenAPI schema (`PoolDoc` /
- * `PoolsResponse` in `backend/src/openapi.rs`).
+ * HTTP response types come from the generated backend OpenAPI spec.
  */
+
+import type { components } from "@/types/api";
 
 /**
  * Base URL of the PrediFi backend API.
@@ -27,50 +28,28 @@ export function wsBaseUrl(): string {
   return `ws://${http}`;
 }
 
-/** A single prediction-market pool. */
-export interface Pool {
-  pool_id: number;
-  name: string;
-  category: string;
-  /** Free-form tags assigned by the creator, e.g. `["btc", "price-prediction"]`. */
-  tags: string[];
-  /** Total amount staked across the pool, in the token's base units. */
-  total_stake: number;
-  /** Pool close time as a Unix timestamp (seconds). */
-  end_time: number;
-  created_at: string;
-  state: string;
-  creator: string;
-  token: string;
-  /** Settled outcome, or `null` while the pool is still open. */
-  result: string | null;
-}
+type ApiPool = components["schemas"]["PoolListingDoc"];
+type ApiPoolDetail = components["schemas"]["PoolWithOddsDoc"];
+
+/** A single prediction-market pool, with backend timestamps normalized to Unix seconds. */
+export type Pool = Omit<ApiPool, "end_time"> & { end_time: number };
 
 /** Per-outcome stake and implied odds from `GET /api/v1/pools/:id`. */
-export interface OutcomeOdds {
-  outcome: number;
-  stake: number;
-  odds: number;
-}
+export type OutcomeOdds = components["schemas"]["OutcomeOddsDoc"];
 
 /** Detailed pool payload including live odds. */
-export interface PoolDetail extends Pool {
-  odds: OutcomeOdds[];
+export type PoolDetail = Omit<ApiPoolDetail, "end_time"> & {
+  end_time: number;
   outcome_descriptions?: string[];
   /** Prediction count derived client-side from live WS updates when available. */
   prediction_count?: number;
-}
+};
 
 /** Response body of `GET /api/v1/pools`. */
-export interface PoolsResponse {
-  pools: Pool[];
-  total: number;
-  limit: number;
-  offset: number;
-  status: string;
-  category?: string | null;
-  sort_by: string;
-}
+export type PoolsResponse = Omit<
+  components["schemas"]["PoolListResponse"],
+  "pools"
+> & { pools: Pool[] };
 
 /** Filters accepted by `GET /api/v1/pools`. */
 export interface PoolsQuery {
@@ -134,13 +113,20 @@ export async function fetchPools(url: string): Promise<PoolsResponse> {
     throw new ApiError(`Failed to load pools (HTTP ${res.status})`, res.status);
   }
 
-  return (await res.json()) as PoolsResponse;
+  const response = (await res.json()) as components["schemas"]["PoolListResponse"];
+  return {
+    ...response,
+    pools: response.pools.map((pool) => ({
+      ...pool,
+      end_time: Math.floor(new Date(pool.end_time).getTime() / 1000),
+    })),
+  };
 }
 
 /**
  * Fetch a single pool with live odds.
  *
- * Handles both raw `PoolWithOdds` JSON and wrapped `{ data: ... }` API responses.
+ * Unwraps the typed API envelope and normalizes the backend timestamp.
  */
 export async function fetchPoolDetail(url: string): Promise<PoolDetail> {
   const res = await fetch(url, { headers: { Accept: "application/json" } });
@@ -149,28 +135,13 @@ export async function fetchPoolDetail(url: string): Promise<PoolDetail> {
     throw new ApiError(`Failed to load pool (HTTP ${res.status})`, res.status);
   }
 
-  const body = (await res.json()) as
-    | (PoolDetail & { end_time?: number | string })
-    | { data?: PoolDetail & { end_time?: number | string }; error?: string };
-
-  if (body && typeof body === "object" && "error" in body && body.error) {
-    throw new ApiError(String(body.error), 404);
-  }
-
-  const pool =
-    body && typeof body === "object" && "data" in body && body.data
-      ? body.data
-      : (body as PoolDetail & { end_time?: number | string });
-
-  const rawEnd = pool.end_time;
-  const endTime =
-    typeof rawEnd === "string"
-      ? Math.floor(new Date(rawEnd).getTime() / 1000)
-      : Number(rawEnd ?? 0);
+  const body =
+    (await res.json()) as components["schemas"]["ApiPoolDetailsResponse"];
+  const pool = body.data;
 
   return {
     ...pool,
-    end_time: endTime,
+    end_time: Math.floor(new Date(pool.end_time).getTime() / 1000),
     odds: pool.odds ?? [],
   };
 }

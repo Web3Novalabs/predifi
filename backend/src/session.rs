@@ -7,7 +7,8 @@
 //! - Session invalidation on password/key changes
 //! - Session activity logging for audit trails
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -28,6 +29,7 @@ const ACTIVITY_LOG_CAPACITY: usize = 2_000;
 #[derive(Debug, Clone, Copy)]
 pub struct SessionConfig {
     pub idle_timeout: Duration,
+    /// Values below one are treated as one so session creation cannot loop indefinitely.
     pub max_sessions_per_user: usize,
 }
 
@@ -81,6 +83,7 @@ pub enum SessionActivityKind {
 pub struct SessionActivity {
     pub kind: SessionActivityKind,
     pub user_address: String,
+    /// Non-secret fingerprint for correlating events; never the bearer token.
     pub session_id: Option<String>,
     pub detail: String,
     pub at_unix_ms: u64,
@@ -94,13 +97,18 @@ pub struct SessionStore {
 
 struct SessionStoreInner {
     config: SessionConfig,
-    /// session_id → session
-    sessions: Mutex<HashMap<String, StoredSession>>,
-    /// user_address → ordered session ids (oldest first)
-    by_user: Mutex<HashMap<String, VecDeque<String>>>,
-    /// user_address → credential/key version
-    key_versions: Mutex<HashMap<String, u64>>,
+    state: Mutex<SessionState>,
     activity: Mutex<VecDeque<SessionActivity>>,
+}
+
+#[derive(Default)]
+struct SessionState {
+    /// session_id → session
+    sessions: HashMap<String, StoredSession>,
+    /// user_address → ordered session ids (oldest first)
+    by_user: HashMap<String, VecDeque<String>>,
+    /// user_address → credential/key version
+    key_versions: HashMap<String, u64>,
 }
 
 impl Default for SessionStore {
@@ -114,9 +122,7 @@ impl SessionStore {
         Self {
             inner: Arc::new(SessionStoreInner {
                 config,
-                sessions: Mutex::new(HashMap::new()),
-                by_user: Mutex::new(HashMap::new()),
-                key_versions: Mutex::new(HashMap::new()),
+                state: Mutex::new(SessionState::default()),
                 activity: Mutex::new(VecDeque::new()),
             }),
         }
@@ -125,49 +131,62 @@ impl SessionStore {
     /// Create a new session, rotating the session id (fixation prevention).
     ///
     /// If `previous_session_id` is provided (e.g. pre-auth cookie), it is
-    /// destroyed and a fresh id is issued — never reuse the pre-login id.
+    /// discarded and a fresh id is issued. It is never accepted as the new
+    /// session or used to revoke a possibly unrelated authenticated session.
     pub fn create_session(
         &self,
         user_address: &str,
         previous_session_id: Option<&str>,
     ) -> UserSession {
         if let Some(old) = previous_session_id {
-            if self.destroy_session(old) {
-                self.log(
-                    SessionActivityKind::RejectedFixation,
-                    user_address,
-                    Some(old),
-                    "pre-auth session id discarded; new id issued",
-                );
-            }
+            self.log(
+                SessionActivityKind::RejectedFixation,
+                user_address,
+                Some(old),
+                "pre-auth session id discarded; new id issued",
+            );
         }
 
         let session_id = generate_session_id();
-        let key_version = self.current_key_version(user_address);
         let now = Instant::now();
+        let mut evicted_ids = Vec::new();
 
         {
-            let mut sessions = self.inner.sessions.lock().expect("sessions");
-            let mut by_user = self.inner.by_user.lock().expect("by_user");
-
-            let user_sessions = by_user
-                .entry(user_address.to_string())
-                .or_insert_with(VecDeque::new);
-
-            // Enforce concurrent session limit (evict oldest).
-            while user_sessions.len() >= self.inner.config.max_sessions_per_user {
-                if let Some(evicted_id) = user_sessions.pop_front() {
-                    sessions.remove(&evicted_id);
-                    self.log(
-                        SessionActivityKind::ConcurrentLimitEvicted,
-                        user_address,
-                        Some(&evicted_id),
-                        "evicted oldest session due to concurrent limit",
-                    );
-                }
+            let mut state = self.inner.state.lock().expect("session state");
+            let stale_ids: Vec<_> = state
+                .by_user
+                .get(user_address)
+                .into_iter()
+                .flatten()
+                .filter(|id| {
+                    state.sessions.get(*id).map_or(true, |session| {
+                        session.last_activity.elapsed() >= self.inner.config.idle_timeout
+                    })
+                })
+                .cloned()
+                .collect();
+            for stale_id in stale_ids {
+                remove_session(&mut state, &stale_id);
+                evicted_ids.push((SessionActivityKind::IdleTimeout, stale_id));
             }
 
-            sessions.insert(
+            // Enforce concurrent session limit (evict oldest).
+            let limit = self.inner.config.max_sessions_per_user.max(1);
+            loop {
+                let evicted = state
+                    .by_user
+                    .get_mut(user_address)
+                    .filter(|sessions| sessions.len() >= limit)
+                    .and_then(VecDeque::pop_front);
+                let Some(evicted_id) = evicted else {
+                    break;
+                };
+                state.sessions.remove(&evicted_id);
+                evicted_ids.push((SessionActivityKind::ConcurrentLimitEvicted, evicted_id));
+            }
+
+            let key_version = *state.key_versions.get(user_address).unwrap_or(&0);
+            state.sessions.insert(
                 session_id.clone(),
                 StoredSession {
                     session_id: session_id.clone(),
@@ -177,9 +196,20 @@ impl SessionStore {
                     last_activity: now,
                 },
             );
-            user_sessions.push_back(session_id.clone());
+            state
+                .by_user
+                .entry(user_address.to_string())
+                .or_default()
+                .push_back(session_id.clone());
         }
 
+        for (kind, evicted_id) in evicted_ids {
+            let detail = match kind {
+                SessionActivityKind::IdleTimeout => "purged idle session before login",
+                _ => "evicted oldest session due to concurrent limit",
+            };
+            self.log(kind, user_address, Some(&evicted_id), detail);
+        }
         self.log(
             SessionActivityKind::Created,
             user_address,
@@ -201,61 +231,69 @@ impl SessionStore {
 
     /// Validate a session token and refresh idle timer. Returns `None` if invalid/expired.
     pub fn validate_and_touch(&self, session_id: &str) -> Option<UserSession> {
-        let mut sessions = self.inner.sessions.lock().expect("sessions");
-        let session = match sessions.get_mut(session_id) {
-            Some(s) => s,
-            None => {
-                self.log(
-                    SessionActivityKind::RejectedMissing,
-                    "",
-                    Some(session_id),
-                    "unknown session id",
-                );
-                return None;
-            }
-        };
+        let mut state = self.inner.state.lock().expect("session state");
+        let (user_address, stored_session_id, key_version, last_activity) =
+            match state.sessions.get(session_id) {
+                Some(session) => (
+                    session.user_address.clone(),
+                    session.session_id.clone(),
+                    session.key_version,
+                    session.last_activity,
+                ),
+                None => {
+                    drop(state);
+                    self.log(
+                        SessionActivityKind::RejectedMissing,
+                        "",
+                        Some(session_id),
+                        "unknown session id",
+                    );
+                    return None;
+                }
+            };
 
-        let idle = session.last_activity.elapsed();
-        if idle > self.inner.config.idle_timeout {
-            let user = session.user_address.clone();
-            let sid = session.session_id.clone();
-            drop(sessions);
-            self.destroy_session(&sid);
+        let idle = last_activity.elapsed();
+        if idle >= self.inner.config.idle_timeout {
+            remove_session(&mut state, &stored_session_id);
+            drop(state);
             self.log(
                 SessionActivityKind::IdleTimeout,
-                &user,
-                Some(&sid),
+                &user_address,
+                Some(&stored_session_id),
                 &format!("idle for {}s", idle.as_secs()),
             );
             self.log(
                 SessionActivityKind::RejectedExpired,
-                &user,
-                Some(&sid),
+                &user_address,
+                Some(&stored_session_id),
                 "session expired due to idle timeout",
             );
             return None;
         }
 
-        let current_kv = self.current_key_version(&session.user_address);
-        if session.key_version != current_kv {
-            let user = session.user_address.clone();
-            let sid = session.session_id.clone();
-            drop(sessions);
-            self.destroy_session(&sid);
+        let current_key_version = *state.key_versions.get(&user_address).unwrap_or(&0);
+        if key_version != current_key_version {
+            remove_session(&mut state, &stored_session_id);
+            drop(state);
             self.log(
                 SessionActivityKind::InvalidatedKeyChange,
-                &user,
-                Some(&sid),
+                &user_address,
+                Some(&stored_session_id),
                 "session key_version mismatch",
             );
             return None;
         }
 
+        let session = state
+            .sessions
+            .get_mut(session_id)
+            .expect("session remains present while state is locked");
         session.last_activity = Instant::now();
         let out = UserSession {
             session_id: session.session_id.clone(),
             user_address: session.user_address.clone(),
         };
+        drop(state);
         self.log(
             SessionActivityKind::Renewed,
             &out.user_address,
@@ -267,22 +305,25 @@ impl SessionStore {
 
     /// Invalidate all sessions for a user after a password/key change.
     pub fn invalidate_on_key_change(&self, user_address: &str) {
-        {
-            let mut versions = self.inner.key_versions.lock().expect("key_versions");
-            let entry = versions.entry(user_address.to_string()).or_insert(0);
-            *entry = entry.saturating_add(1);
-        }
-
-        let ids: Vec<String> = {
-            let by_user = self.inner.by_user.lock().expect("by_user");
-            by_user
+        let ids = {
+            let mut state = self.inner.state.lock().expect("session state");
+            let entry = state
+                .key_versions
+                .entry(user_address.to_string())
+                .or_insert(0);
+            *entry = entry.wrapping_add(1);
+            let ids: Vec<String> = state
+                .by_user
                 .get(user_address)
                 .map(|q| q.iter().cloned().collect())
-                .unwrap_or_default()
+                .unwrap_or_default();
+            for id in &ids {
+                remove_session(&mut state, id);
+            }
+            ids
         };
 
         for id in &ids {
-            self.destroy_session(id);
             self.log(
                 SessionActivityKind::InvalidatedKeyChange,
                 user_address,
@@ -294,35 +335,35 @@ impl SessionStore {
 
     /// Explicit logout — destroy a single session.
     pub fn logout(&self, session_id: &str) -> bool {
-        if let Some(user) = self
-            .inner
-            .sessions
-            .lock()
-            .expect("sessions")
-            .get(session_id)
-            .map(|s| s.user_address.clone())
-        {
-            let ok = self.destroy_session(session_id);
-            if ok {
-                self.log(
-                    SessionActivityKind::Logout,
-                    &user,
-                    Some(session_id),
-                    "user logged out",
-                );
-            }
-            return ok;
-        }
-        false
+        let user = {
+            let mut state = self.inner.state.lock().expect("session state");
+            let Some(user) = state
+                .sessions
+                .get(session_id)
+                .map(|session| session.user_address.clone())
+            else {
+                return false;
+            };
+            remove_session(&mut state, session_id);
+            user
+        };
+        self.log(
+            SessionActivityKind::Logout,
+            &user,
+            Some(session_id),
+            "user logged out",
+        );
+        true
     }
 
     /// Count active sessions for a user (after purging idle ones).
     pub fn active_session_count(&self, user_address: &str) -> usize {
         self.purge_idle_for_user(user_address);
         self.inner
-            .by_user
+            .state
             .lock()
-            .expect("by_user")
+            .expect("session state")
+            .by_user
             .get(user_address)
             .map(|q| q.len())
             .unwrap_or(0)
@@ -339,57 +380,33 @@ impl SessionStore {
             .collect()
     }
 
-    fn current_key_version(&self, user_address: &str) -> u64 {
-        *self
-            .inner
-            .key_versions
-            .lock()
-            .expect("key_versions")
-            .get(user_address)
-            .unwrap_or(&0)
-    }
-
-    fn destroy_session(&self, session_id: &str) -> bool {
-        let removed = {
-            let mut sessions = self.inner.sessions.lock().expect("sessions");
-            sessions.remove(session_id)
-        };
-        if let Some(session) = removed {
-            let mut by_user = self.inner.by_user.lock().expect("by_user");
-            if let Some(q) = by_user.get_mut(&session.user_address) {
-                q.retain(|id| id != session_id);
-                if q.is_empty() {
-                    by_user.remove(&session.user_address);
-                }
-            }
-            true
-        } else {
-            false
-        }
-    }
-
     fn purge_idle_for_user(&self, user_address: &str) {
-        let timeout = self.inner.config.idle_timeout;
-        let stale: Vec<String> = {
-            let sessions = self.inner.sessions.lock().expect("sessions");
-            let by_user = self.inner.by_user.lock().expect("by_user");
-            by_user
+        let stale = {
+            let mut state = self.inner.state.lock().expect("session state");
+            let stale: Vec<String> = state
+                .by_user
                 .get(user_address)
                 .map(|q| {
                     q.iter()
                         .filter(|id| {
-                            sessions
+                            state
+                                .sessions
                                 .get(*id)
-                                .map(|s| s.last_activity.elapsed() > timeout)
+                                .map(|s| {
+                                    s.last_activity.elapsed() >= self.inner.config.idle_timeout
+                                })
                                 .unwrap_or(true)
                         })
                         .cloned()
                         .collect()
                 })
-                .unwrap_or_default()
+                .unwrap_or_default();
+            for id in &stale {
+                remove_session(&mut state, id);
+            }
+            stale
         };
-        for id in stale {
-            self.destroy_session(&id);
+        for id in &stale {
             self.log(
                 SessionActivityKind::IdleTimeout,
                 user_address,
@@ -409,7 +426,7 @@ impl SessionStore {
         let entry = SessionActivity {
             kind,
             user_address: user_address.to_string(),
-            session_id: session_id.map(|s| s.to_string()),
+            session_id: session_id.map(session_fingerprint),
             detail: detail.to_string(),
             at_unix_ms: unix_ms_now(),
         };
@@ -428,23 +445,27 @@ impl SessionStore {
     }
 }
 
-fn generate_session_id() -> String {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    Instant::now().hash(&mut hasher);
-    unix_ms_now().hash(&mut hasher);
-    fastrand_u64().hash(&mut hasher);
-    format!("sess_{:016x}{:016x}", hasher.finish(), fastrand_u64())
+fn remove_session(state: &mut SessionState, session_id: &str) -> bool {
+    let Some(session) = state.sessions.remove(session_id) else {
+        return false;
+    };
+    if let Some(user_sessions) = state.by_user.get_mut(&session.user_address) {
+        user_sessions.retain(|id| id != session_id);
+        if user_sessions.is_empty() {
+            state.by_user.remove(&session.user_address);
+        }
+    }
+    true
 }
 
-fn fastrand_u64() -> u64 {
-    // Lightweight entropy without adding a crate dependency.
-    let t = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0);
-    t.wrapping_mul(0x9e37_79b9_7f4a_7c15).wrapping_add(0x85eb_ca6b)
+fn session_fingerprint(session_id: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    session_id.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn generate_session_id() -> String {
+    format!("sess_{}", uuid::Uuid::new_v4().simple())
 }
 
 fn unix_ms_now() -> u64 {
@@ -505,24 +526,25 @@ mod tests {
             max_sessions_per_user: 3,
         });
         let pre = "pre_auth_fixation_id";
-        // Plant a bogus pre-auth session entry so destroy path is exercised.
-        {
-            let mut sessions = store.inner.sessions.lock().unwrap();
-            sessions.insert(
-                pre.into(),
-                StoredSession {
-                    session_id: pre.into(),
-                    user_address: "GUSER".into(),
-                    key_version: 0,
-                    created_at: Instant::now(),
-                    last_activity: Instant::now(),
-                },
-            );
-        }
         let session = store.create_session("GUSER", Some(pre));
         assert_ne!(session.session_id, pre);
+        assert_eq!(session.session_id.len(), 37);
         assert!(store.validate_and_touch(&session.session_id).is_some());
         assert!(store.validate_and_touch(pre).is_none());
+        let activity = store.activity_log();
+        let fixation = activity
+            .iter()
+            .find(|entry| entry.kind == SessionActivityKind::RejectedFixation)
+            .expect("fixation attempt is logged");
+        assert_ne!(fixation.session_id.as_deref(), Some(pre));
+    }
+
+    #[test]
+    fn supplied_pre_auth_id_does_not_revoke_another_users_session() {
+        let store = SessionStore::default();
+        let victim = store.create_session("GVictim", None);
+        store.create_session("GAttacker", Some(&victim.session_id));
+        assert!(store.validate_and_touch(&victim.session_id).is_some());
     }
 
     #[test]
@@ -534,11 +556,7 @@ mod tests {
         let session = store.create_session("GUSER", None);
         std::thread::sleep(Duration::from_millis(50));
         assert!(store.validate_and_touch(&session.session_id).is_none());
-        let kinds: Vec<_> = store
-            .activity_log()
-            .into_iter()
-            .map(|a| a.kind)
-            .collect();
+        let kinds: Vec<_> = store.activity_log().into_iter().map(|a| a.kind).collect();
         assert!(kinds.contains(&SessionActivityKind::IdleTimeout));
     }
 
@@ -558,6 +576,43 @@ mod tests {
     }
 
     #[test]
+    fn expired_sessions_do_not_evict_active_sessions_at_limit() {
+        let store = SessionStore::new(SessionConfig {
+            idle_timeout: Duration::from_secs(60),
+            max_sessions_per_user: 2,
+        });
+        let expired = store.create_session("GUSER", None);
+        let active = store.create_session("GUSER", None);
+        {
+            let mut state = store.inner.state.lock().unwrap();
+            state
+                .sessions
+                .get_mut(&expired.session_id)
+                .unwrap()
+                .last_activity = Instant::now() - Duration::from_secs(61);
+        }
+
+        let newest = store.create_session("GUSER", None);
+        assert!(store.validate_and_touch(&expired.session_id).is_none());
+        assert!(store.validate_and_touch(&active.session_id).is_some());
+        assert!(store.validate_and_touch(&newest.session_id).is_some());
+        assert_eq!(store.active_session_count("GUSER"), 2);
+    }
+
+    #[test]
+    fn zero_session_limit_still_allows_exactly_one_session() {
+        let store = SessionStore::new(SessionConfig {
+            idle_timeout: Duration::from_secs(60),
+            max_sessions_per_user: 0,
+        });
+        let first = store.create_session("GUSER", None);
+        let second = store.create_session("GUSER", None);
+        assert!(store.validate_and_touch(&first.session_id).is_none());
+        assert!(store.validate_and_touch(&second.session_id).is_some());
+        assert_eq!(store.active_session_count("GUSER"), 1);
+    }
+
+    #[test]
     fn key_change_invalidates_all_sessions() {
         let store = SessionStore::default();
         let s1 = store.create_session("GUSER", None);
@@ -566,11 +621,7 @@ mod tests {
         assert!(store.validate_and_touch(&s1.session_id).is_none());
         assert!(store.validate_and_touch(&s2.session_id).is_none());
         assert_eq!(store.active_session_count("GUSER"), 0);
-        let kinds: Vec<_> = store
-            .activity_log()
-            .into_iter()
-            .map(|a| a.kind)
-            .collect();
+        let kinds: Vec<_> = store.activity_log().into_iter().map(|a| a.kind).collect();
         assert!(kinds.contains(&SessionActivityKind::InvalidatedKeyChange));
     }
 

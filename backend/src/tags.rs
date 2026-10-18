@@ -20,6 +20,10 @@ pub struct PoolListingRow {
     pub total_stake: i64,
     pub end_time: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    pub state: String,
+    pub creator: String,
+    pub token: String,
+    pub result: Option<String>,
 }
 
 /// Fetch pools with optional category/tag/status filters and sort order.
@@ -52,7 +56,8 @@ pub async fn list_pools(
     // pattern already used in db::get_pools_with_filters.
     let sql = format!(
         r#"
-        SELECT pool_id, name, category, tags, total_stake, end_time, created_at
+        SELECT pool_id, name, category, tags, total_stake, end_time, created_at,
+               state, creator, token, result
         FROM pools
         WHERE state = $1
           AND ($2::text IS NULL OR category = $2)

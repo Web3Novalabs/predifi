@@ -1,19 +1,26 @@
 "use client";
 
 import { memo } from "react";
-import { CheckCircle2, Loader2, XCircle, Send } from "lucide-react";
+import { CheckCircle2, Clock3, ExternalLink, Loader2, XCircle, Send } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  useTransactionTracker,
+  type TrackedTransactionStatus,
+} from "@/lib/hooks/useTransactionTracker";
+import type { StellarNetwork } from "@/lib/walletErrors";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type TxStatus = "idle" | "submitted" | "processing" | "confirmed" | "failed";
+export type TxStatus = TrackedTransactionStatus;
 
 export interface TransactionProgressProps {
   status: TxStatus;
   txHash?: string;
   errorMessage?: string;
+  elapsedMs?: number;
+  explorerUrl?: string;
   className?: string;
 }
 
@@ -22,14 +29,14 @@ export interface TransactionProgressProps {
 // ---------------------------------------------------------------------------
 
 interface Step {
-  id: "submitted" | "processing" | "confirmed";
+  id: "submitted" | "pending" | "confirmed";
   label: string;
   sublabel: string;
 }
 
 const STEPS: Step[] = [
   { id: "submitted", label: "Submitted", sublabel: "Transaction sent to network" },
-  { id: "processing", label: "Processing", sublabel: "Awaiting block confirmation" },
+  { id: "pending", label: "Pending", sublabel: "Awaiting block confirmation" },
   { id: "confirmed", label: "Confirmed", sublabel: "Transaction finalised on-chain" },
 ];
 
@@ -40,9 +47,10 @@ const STEPS: Step[] = [
 const STATUS_ORDER: Record<TxStatus, number> = {
   idle: -1,
   submitted: 0,
-  processing: 1,
+  pending: 1,
   confirmed: 2,
-  failed: 1, // show processing as the point of failure
+  failed: 1,
+  timeout: 1,
 };
 
 // ---------------------------------------------------------------------------
@@ -113,12 +121,15 @@ export const TransactionProgress = memo(function TransactionProgress({
   status,
   txHash,
   errorMessage,
+  elapsedMs = 0,
+  explorerUrl,
   className,
 }: TransactionProgressProps) {
   if (status === "idle") return null;
 
   const order = STATUS_ORDER[status];
   const isFailed = status === "failed";
+  const timedOut = status === "timeout";
 
   function stepState(step: Step, stepIdx: number): StepState {
     const stepOrder = stepIdx;
@@ -154,14 +165,15 @@ export const TransactionProgress = memo(function TransactionProgress({
         <span className={cn(
           "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
           status === "confirmed" && "bg-emerald-400/10 text-emerald-400",
-          status === "processing" && "bg-[#37B7C3]/10 text-[#37B7C3]",
+          status === "pending" && "bg-[#37B7C3]/10 text-[#37B7C3]",
           status === "submitted" && "bg-yellow-400/10 text-yellow-400",
           status === "failed" && "bg-red-400/10 text-red-400",
+          timedOut && "bg-yellow-400/10 text-yellow-400",
         )}>
           {status === "confirmed" && <CheckCircle2 className="w-3 h-3" />}
-          {(status === "processing" || status === "submitted") && <Loader2 className="w-3 h-3 animate-spin" />}
+          {(status === "pending" || status === "submitted") && <Loader2 className="w-3 h-3 animate-spin" />}
           {status === "failed" && <XCircle className="w-3 h-3" />}
-          {status.charAt(0).toUpperCase() + status.slice(1)}
+          {timedOut ? "Still pending" : status.charAt(0).toUpperCase() + status.slice(1)}
         </span>
       </div>
 
@@ -191,7 +203,7 @@ export const TransactionProgress = memo(function TransactionProgress({
             {idx < STEPS.length - 1 && (
               <Connector
                 filled={idx < order && !isFailed}
-                animated={idx === order - 1 && status === "processing"}
+                animated={idx === order - 1 && status === "pending"}
               />
             )}
           </div>
@@ -225,8 +237,34 @@ export const TransactionProgress = memo(function TransactionProgress({
       {txHash && (
         <div className="rounded-lg bg-white/[0.03] border border-white/5 px-3 py-2 flex items-center justify-between gap-2">
           <span className="text-[10px] text-zinc-500 flex-shrink-0">TX Hash</span>
-          <span className="text-[10px] font-mono text-zinc-300 truncate">{txHash}</span>
+          <span className="min-w-0 truncate text-right text-[10px] font-mono text-zinc-300">
+            {explorerUrl ? (
+              <a
+                href={explorerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex max-w-full items-center gap-1 hover:text-[#37B7C3]"
+                aria-label="View transaction in Stellar block explorer"
+              >
+                <span className="truncate">{txHash}</span>
+                <ExternalLink className="h-3 w-3 flex-shrink-0" />
+              </a>
+            ) : txHash}
+          </span>
         </div>
+      )}
+
+      {(status === "submitted" || status === "pending" || timedOut) && (
+        <p className="flex items-center gap-1.5 text-xs text-zinc-400" aria-live="polite">
+          <Clock3 className="h-3.5 w-3.5 flex-shrink-0" />
+          {timedOut
+            ? `No confirmation after ${Math.floor(elapsedMs / 1_000)} seconds. The transaction may still confirm; check the explorer before retrying.`
+            : errorMessage
+              ? errorMessage
+              : status === "submitted"
+                ? "Submitted. Estimated confirmation time is about 5-10 seconds."
+                : `Pending for ${Math.floor(elapsedMs / 1_000)}s. Confirmation time varies with network load.`}
+        </p>
       )}
 
       {/* Error message */}
@@ -240,3 +278,45 @@ export const TransactionProgress = memo(function TransactionProgress({
 });
 
 TransactionProgress.displayName = "TransactionProgress";
+
+export interface TransactionStatusTrackerProps {
+  txHash?: string;
+  network?: StellarNetwork;
+  className?: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+/** Poll Soroban RPC for a submitted transaction and render its lifecycle. */
+export function TransactionStatusTracker({
+  txHash,
+  network,
+  className,
+  timeoutMs,
+  pollIntervalMs,
+}: TransactionStatusTrackerProps) {
+  const state = useTransactionTracker(txHash, {
+    network,
+    timeoutMs,
+    pollIntervalMs,
+  });
+  if (!txHash) return null;
+
+  const explorerNetwork =
+    network === "PUBLIC"
+      ? "public"
+      : network === "FUTURENET"
+        ? "futurenet"
+        : "testnet";
+
+  return (
+    <TransactionProgress
+      status={state.status}
+      txHash={txHash}
+      errorMessage={state.errorMessage}
+      elapsedMs={state.elapsedMs}
+      explorerUrl={`https://stellar.expert/explorer/${explorerNetwork}/tx/${encodeURIComponent(txHash)}`}
+      className={className}
+    />
+  );
+}
