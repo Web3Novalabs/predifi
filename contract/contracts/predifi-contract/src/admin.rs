@@ -105,6 +105,7 @@
 use soroban_sdk::{Address, BytesN, contractevent, contractimpl, contracttype, Env, Symbol, Vec};
 
 use crate::{
+    is_valid_fee_bps,
     ClaimWindowUpdateEvent,
     ContractPausedAlertEvent,
     DataKey,
@@ -148,7 +149,7 @@ impl PredifiContract {
         }
 
         // Validate fee_bps on init — consistent with set_fee_bps (INV-6)
-        if !Self::is_valid_fee_bps(fee_bps) {
+        if !is_valid_fee_bps(fee_bps) {
             soroban_sdk::panic_with_error!(&env, PredifiError::InvalidFeeBps);
         }
 
@@ -292,7 +293,7 @@ impl PredifiContract {
         Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_fee_bps")?;
-        if !Self::is_valid_fee_bps(fee_bps) {
+        if !is_valid_fee_bps(fee_bps) {
             return Err(PredifiError::InvalidFeeBps);
         }
         // Only one proposal may be pending at a time.
