@@ -1,14 +1,22 @@
 //! Oracle domain: oracle registration, price feeds, price conditions and
 //! oracle-driven pool resolution.
 
-use soroban_sdk::{contractimpl, log, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{Address, contractevent, contractimpl, contracttype, Env, log, String, Symbol, Vec};
 
 use crate::{
-    DataKey, MarketState, OracleCallback, OracleInitEvent, OracleResolvedEvent,
-    OracleWhitelistAddedEvent, OracleWhitelistRemovedEvent, Pool, PoolResolvedDiagEvent,
-    PoolResolvedEvent, PredifiContract, PredifiContractArgs, PredifiContractClient, PredifiError,
-    PriceConditionSetEvent, PriceFeedUpdatedEvent, PriceFeedsCleanedEvent, ResolutionConflictEvent,
-    ResolutionVoteCastEvent, MAX_PRICE_CONDITION_MATCH_STEPS, MAX_TOLERANCE, UNRESOLVED_OUTCOME,
+    DataKey,
+    MarketState,
+    OracleCallback,
+    Pool,
+    PoolResolvedDiagEvent,
+    PoolResolvedEvent,
+    PredifiContract,
+    PredifiContractArgs,
+    PredifiContractClient,
+    PredifiError,
+    MAX_PRICE_CONDITION_MATCH_STEPS,
+    MAX_TOLERANCE,
+    UNRESOLVED_OUTCOME,
 };
 
 #[contractimpl]
@@ -126,6 +134,13 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(())
+    }
+
+    /// Return the maximum accepted age (seconds) of a price feed read, if the
+    /// oracle is initialised. Reads older than this are rejected with
+    /// `PriceStale` during price-based resolution.
+    pub fn get_max_price_age(env: Env) -> Option<u64> {
+        Self::get_oracle_config(env).map(|(_, max_price_age, _)| max_price_age)
     }
 
     /// Return the current oracle configuration, if initialised.
@@ -371,7 +386,7 @@ impl PredifiContract {
             Self::get_oracle_config(env.clone()).ok_or(PredifiError::OracleNotInitialized)?;
 
         if current_time > timestamp.saturating_add(max_price_age) {
-            return Err(PredifiError::PriceDataInvalid);
+            return Err(PredifiError::PriceStale);
         }
 
         Ok(())
@@ -711,3 +726,109 @@ impl OracleCallback for PredifiContract {
         Ok(())
     }
 }
+
+// ── Domain types & events (moved from lib.rs, issue #1970) ─────────────────
+
+#[contractevent(topics = ["oracle_resolved"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleResolvedEvent {
+    pub pool_id: u64,
+    pub oracle: Address,
+    pub outcome: u32,
+    pub proof: String,
+}
+
+#[contractevent(topics = ["oracle_init"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleInitEvent {
+    pub admin: Address,
+    pub pyth_contract: Address,
+    pub max_price_age: u64,
+    pub min_confidence_ratio: u32,
+}
+
+#[contractevent(topics = ["price_feed_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceFeedUpdatedEvent {
+    pub oracle: Address,
+    pub feed_pair: Symbol,
+    pub price: i128,
+    pub confidence: i128,
+    pub timestamp: u64,
+    pub expires_at: u64,
+}
+
+#[contractevent(topics = ["price_condition_set"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceConditionSetEvent {
+    pub pool_id: u64,
+    pub feed_pair: Symbol,
+    pub target_price: i128,
+    pub operator: u32,
+    pub tolerance_bps: u32,
+}
+
+#[contractevent(topics = ["price_resolved"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceResolvedEvent {
+    pub pool_id: u64,
+    pub feed_pair: Symbol,
+    pub current_price: i128,
+    pub target_price: i128,
+    pub outcome: u32,
+}
+
+/// Emitted when expired price feeds are pruned from storage.
+///
+/// `feeds_removed` is the count of `DataKey::PriceFeed` entries deleted.
+/// `timestamp` is the ledger time at which the cleanup ran.
+#[contractevent(topics = ["price_feeds_cleaned"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PriceFeedsCleanedEvent {
+    pub feeds_removed: u32,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["oracle_whitelist_added"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleWhitelistAddedEvent {
+    pub admin: Address,
+    pub oracle: Address,
+}
+
+#[contractevent(topics = ["oracle_whitelist_removed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OracleWhitelistRemovedEvent {
+    pub admin: Address,
+    pub oracle: Address,
+}
+
+#[contractevent(topics = ["resolution_conflict"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionConflictEvent {
+    pub pool_id: u64,
+    pub oracle: Address,
+    pub outcome: u32,
+    pub existing_outcome: u32,
+}
+
+#[contractevent(topics = ["resolution_vote_cast"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionVoteCastEvent {
+    pub pool_id: u64,
+    pub voter: Address,
+    pub outcome: u32,
+    pub vote_count: u32,
+    pub required_resolutions: u32,
+}
+

@@ -1,18 +1,125 @@
-//! Admin domain: initialisation, pause control, protocol parameters,
-//! fee configuration, token/address whitelists and contract upgrades.
+//! # Admin Operations & System Governance
+//!
+//! This module handles administrative operations, pause control, protocol fee structures,
+//! token whitelists, timelocked governance changes, private pool access control, and contract upgrades.
+//!
+//! ## Admin Roles and Access Control Summary
+//!
+//! The contract uses role-based access control (RBAC). Admin operations require authorization
+//! from either a caller holding the **Admin role (role index 0)** or, for pool-specific whitelist operations,
+//! authorization from the **Pool Creator**.
+//!
+//! ### Admin-Only Operations (Requires Admin Role 0)
+//! An unauthorized caller (lacking Admin role 0) attempting these functions receives `PredifiError::Unauthorized`
+//! or a panic (`"Unauthorized: missing required role"`).
+//!
+//! - **`pause(env, admin)`**: Emergency pause contract execution.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: Panic (`"Unauthorized: missing required role"`)
+//! - **`unpause(env, admin)`**: Resume contract execution.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: Panic (`"Unauthorized: missing required role"`)
+//! - **`set_fee_bps(env, admin, fee_bps)`**: Queue a fee change proposal subject to a 7-day timelock.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`apply_fee_bps(env, admin)`**: Apply a queued fee change once timelock expires.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`cancel_fee_proposal(env, admin)`**: Cancel a pending fee change proposal.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_max_predictions_per_user(env, admin, limit)`**: Set maximum predictions allowed per user.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_prediction_cooldown(env, admin, cooldown_seconds)`**: Set minimum cooldown between predictions.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_resolution_delay(env, admin, delay)`**: Set resolution delay cap in seconds.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_claim_window(env, admin, claim_window_seconds)`**: Set claim window duration.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_min_pool_duration(env, admin, duration)`**: Set minimum pool duration requirement.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_min_stake(env, admin, amount)`**: Set global minimum stake requirement.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`add_token_to_whitelist(env, admin, token)`**: Add token to allowed betting whitelist.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`remove_token_from_whitelist(env, admin, token)`**: Remove token from allowed betting whitelist.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`batch_add_tokens_to_whitelist(env, admin, tokens)`**: Batch add tokens to whitelist.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`batch_remove_tokens_whitelist(env, admin, tokens)`**: Batch remove tokens from whitelist.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`upgrade_contract(env, admin, new_wasm_hash)`**: Upgrade contract Wasm code.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`migrate_state(env, admin)`**: Execute post-upgrade state migration.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`set_fee_tiers(env, admin, tiers)`**: Set dynamic fee tier thresholds.
+//!   - *Role Required*: Admin (0)
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//!
+//! ### Pool-Creator Operations (Requires Pool Creator Authentication)
+//! An unauthorized caller (not matching `pool.creator`) attempting these functions receives `PredifiError::Unauthorized`.
+//!
+//! - **`add_to_whitelist(env, creator, pool_id, user)`**: Add a user to a private pool's whitelist.
+//!   - *Role Required*: Pool Creator
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`remove_from_whitelist(env, creator, pool_id, user)`**: Remove a user from a private pool's whitelist.
+//!   - *Role Required*: Pool Creator
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`batch_add_to_whitelist(env, creator, pool_id, users)`**: Batch add users to a private pool's whitelist.
+//!   - *Role Required*: Pool Creator
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//! - **`batch_remove_from_whitelist(env, creator, pool_id, users)`**: Batch remove users from a private pool's whitelist.
+//!   - *Role Required*: Pool Creator
+//!   - *Error on Unauthorized*: `PredifiError::Unauthorized`
+//!
+//! ### Permissionless / Public Queries & Utilities (No Authorization Required)
+//!
+//! - **`init(env, access_control, treasury, fee_bps, resolution_delay, min_pool_duration, max_predictions_per_user)`**: Initialize contract instance.
+//! - **`is_contract_paused(env)`**: Query contract pause state (`bool`).
+//! - **`get_version(env)`**: Query numeric version code (`u32`).
+//! - **`get_version_string(env)`**: Query semantic version string symbol (`Symbol`).
+//! - **`get_pending_fee_change(env)`**: Query timelocked fee proposal (`Option<PendingFeeChange>`).
+//! - **`get_supported_tokens(env)`**: Query list of whitelisted token addresses (`Vec<Address>`).
+//! - **`is_token_allowed(env, token)`**: Check if a token is whitelisted (`bool`).
+//! - **`get_fees(env)`**: Query fee info (`FeeInfo`).
+//! - **`get_prediction_cooldown(env)`**: Query prediction cooldown seconds (`u64`).
+//! - **`get_contract_info(env)`**: Query aggregated contract info (`ContractInfo`).
+//! - **`is_whitelisted(env, pool_id, user)`**: Query pool whitelist status (`bool`).
+//! - **`batch_check_whitelist(env, pool_id, users)`**: Query whitelist status for multiple users (`Result<Vec<bool>, PredifiError>`).
+//! - **`get_fee_tiers(env)`**: Query configured fee tiers (`Vec<FeeTier>`).
+//! - **`renew_storage_ttl(env, pool_id)`**: Permissionless storage TTL maintenance (`Result<(), PredifiError>`).
+//! - **`get_contract_metadata(env)`**: Query comprehensive contract metadata (`ContractMetadata`).
 
-use soroban_sdk::{contractimpl, Address, BytesN, Env, Symbol, Vec};
+use soroban_sdk::{Address, BytesN, contractevent, contractimpl, contracttype, Env, Symbol, Vec};
 
 use crate::{
-    AddedToWhitelistEvent, ClaimWindowUpdateEvent, Config, ContractInfo, ContractMetadata,
-    ContractPausedAlertEvent, ContractUpgradedEvent, DataKey, FeeChangeCancelEvent,
-    FeeChangeProposeEvent, FeeInfo, FeeTier, FeeTiersUpdateEvent, FeeUpdateEvent, InitEvent,
-    MaxPredictionsUpdateEvent, MinPoolDurationUpdateEvent, MinStakeUpdateEvent, PauseEvent,
-    PendingFeeChange, Pool, PredictionCooldownUpdateEvent, PredifiContract, PredifiContractArgs,
-    PredifiContractClient, PredifiError, RemovedFromWhitelistEvent, ResolutionDelayUpdateEvent,
-    StorageTtlRenewedEvent, TokenWhitelistAddedEvent, TokenWhitelistRemovedEvent, UnpauseEvent,
-    UpgradeEvent, CONTRACT_VERSION, DEFAULT_GLOBAL_MIN_STAKE, DEFAULT_PREDICTION_COOLDOWN_SECONDS,
-    FEE_CHANGE_TIMELOCK_SECONDS, MAX_CLAIM_WINDOW, MAX_RESOLUTION_DELAY, MIN_CLAIM_WINDOW,
+    ClaimWindowUpdateEvent,
+    ContractPausedAlertEvent,
+    DataKey,
+    Pool,
+    PredifiContract,
+    PredifiContractArgs,
+    PredifiContractClient,
+    PredifiError,
+    CONTRACT_VERSION,
+    DEFAULT_GLOBAL_MIN_STAKE,
+    DEFAULT_PREDICTION_COOLDOWN_SECONDS,
+    FEE_CHANGE_TIMELOCK_SECONDS,
+    MAX_CLAIM_WINDOW,
+    MAX_RESOLUTION_DELAY,
+    MIN_CLAIM_WINDOW,
 };
 
 #[contractimpl]
@@ -729,6 +836,23 @@ impl PredifiContract {
         }
     }
 
+    /// Returns the full fee configuration as a [`FeeConfig`]: base protocol fee,
+    /// referral cut, treasury, dynamic fee tiers, any pending fee change and the
+    /// fee-change timelock. Read-only; requires the contract to be initialised.
+    pub fn get_fee_config(env: Env) -> FeeConfig {
+        let config = Self::get_config(&env);
+        let pending = Self::get_pending_fee_change(env.clone());
+        FeeConfig {
+            fee_bps: config.fee_bps,
+            referral_cut_bps: Self::read_referral_cut_bps(&env),
+            treasury: config.treasury,
+            tiers: Self::get_fee_tiers(env.clone()),
+            pending_fee_bps: pending.clone().map(|p| p.new_fee_bps),
+            pending_fee_effective_at: pending.map(|p| p.effective_at),
+            fee_change_timelock_seconds: FEE_CHANGE_TIMELOCK_SECONDS,
+        }
+    }
+
     /// Returns the current cooldown in seconds between consecutive predictions from the same address.
     pub fn get_prediction_cooldown(env: Env) -> u64 {
         Self::get_config(&env).prediction_cooldown_seconds
@@ -1243,3 +1367,381 @@ impl PredifiContract {
         }
     }
 }
+
+// ── Domain types & events (moved from lib.rs, issue #1970) ─────────────────
+
+/// Global protocol configuration.
+///
+/// Contains system-wide settings that control protocol behavior.
+/// These settings can be updated by admin with appropriate governance.
+///
+/// # Invariants
+/// - `fee_bps` must be <= 10,000 (100%) (INV-6)
+/// - `max_predictions_per_user` must be >= 0 (0 = no limit)
+/// - `referral_bps` must be <= 10,000 (100%)
+#[contracttype]
+#[derive(Clone)]
+pub struct Config {
+    /// Protocol fee in basis points (1 bp = 0.01%). Valid range: 0-10,000.
+    /// A value of 5000 represents 50% fee on winnings.
+    pub fee_bps: u32,
+    /// Address that receives protocol fees.
+    pub treasury: Address,
+    /// Address of the access control contract for role-based permissions.
+    pub access_control: Address,
+    /// Minimum delay in seconds after pool end time before resolution is allowed.
+    /// This provides a grace period for oracle data to settle.
+    pub resolution_delay: u64,
+    /// Minimum pool duration in seconds.
+    pub min_pool_duration: u64,
+    /// Global minimum stake amount. Predictions below this are rejected.
+    pub min_stake: i128,
+    /// Maximum number of predictions a user can place per pool.
+    /// A value of 0 means no limit.
+    pub max_predictions_per_user: u32,
+    /// Minimum cooldown in seconds between consecutive predictions from the same address.
+    pub prediction_cooldown_seconds: u64,
+    /// Referral reward rate in basis points (1 bp = 0.01%). Valid range: 0-10,000.
+    /// Represents the share of the protocol fee paid to referrers.
+    /// Default: 500 (5%). Can be raised to 1000 (10%) for referral seasons.
+    pub referral_bps: u32,
+    /// Claim window duration in seconds after pool resolution.
+    /// Users must claim winnings within this time period after resolution.
+    /// Default: 2,592,000 seconds (30 days). Range: 86,400-31,536,000 (1-365 days).
+    pub claim_window_seconds: u64,
+}
+
+/// Fee percentages returned by [`PredifiContract::get_fees`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeInfo {
+    /// Protocol (treasury) fee in basis points (1 bp = 0.01%). Range: 0-10,000.
+    pub treasury_fee_bps: u32,
+    /// Referral cut in basis points — the share of the protocol fee paid to referrers.
+    /// Range: 0-10,000. Default: 5,000 (50%).
+    pub referral_fee_bps: u32,
+}
+
+/// Complete fee configuration returned by [`PredifiContract::get_fee_config`].
+///
+/// Lets a frontend show the fee a user will pay before staking without
+/// hard-coding or inferring on-chain values.
+///
+/// - `fee_bps`: base protocol fee (bps) applied when no tier matches.
+/// - `referral_cut_bps`: share of the protocol fee paid to referrers (bps).
+/// - `treasury`: address receiving protocol fees.
+/// - `tiers`: dynamic fee tiers ordered by ascending `stake_threshold`; the
+///   highest tier whose threshold is <= a pool's total stake overrides `fee_bps`.
+///   Empty when no tiers are configured.
+/// - `pending_fee_bps` / `pending_fee_effective_at`: queued base-fee change and the
+///   timestamp it becomes appliable, or `None` when no proposal is queued.
+/// - `fee_change_timelock_seconds`: delay between proposing and applying a fee change.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeConfig {
+    pub fee_bps: u32,
+    pub referral_cut_bps: u32,
+    pub treasury: Address,
+    pub tiers: Vec<FeeTier>,
+    pub pending_fee_bps: Option<u32>,
+    pub pending_fee_effective_at: Option<u64>,
+    pub fee_change_timelock_seconds: u64,
+}
+
+/// Snapshot of a pending protocol fee change awaiting timelock expiry.
+///
+/// Created when an admin calls [`PredifiContract::set_fee_bps`] and persisted in
+/// instance storage until [`PredifiContract::apply_fee_bps`] commits the change
+/// or [`PredifiContract::cancel_fee_proposal`] discards it.
+///
+/// Only one proposal may exist at a time; a second `set_fee_bps` call while this
+/// record is present returns [`PredifiError::FeeChangePending`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingFeeChange {
+    /// The proposed new protocol fee in basis points (1 bp = 0.01%).
+    pub new_fee_bps: u32,
+    /// Unix timestamp (seconds) at or after which `apply_fee_bps` may execute.
+    pub effective_at: u64,
+    /// The admin address that submitted this proposal.
+    pub proposed_by: Address,
+}
+
+/// Aggregated contract metadata for frontend consumption.
+///
+/// This read model allows clients to fetch protocol configuration and core stats
+/// in one call instead of performing multiple separate getters.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractInfo {
+    /// Contract version tracked in instance storage.
+    pub version: u32,
+    /// Admin address from the access-control contract.
+    pub current_admin: Address,
+    /// Whether the contract is currently paused.
+    pub is_paused: bool,
+    /// Total number of pools created so far.
+    pub total_pools: u64,
+    /// Protocol fee in basis points (1 bp = 0.01%).
+    pub fee_bps: u32,
+    /// Referral fee cut in basis points.
+    pub referral_cut_bps: u32,
+    /// Treasury address that receives protocol fees.
+    pub treasury: Address,
+    /// Access-control contract address.
+    pub access_control: Address,
+    /// Global resolution delay in seconds.
+    pub resolution_delay: u64,
+    /// Minimum pool duration in seconds.
+    pub min_pool_duration: u64,
+    /// Global minimum stake.
+    pub min_stake: i128,
+    /// Maximum predictions allowed per user per pool.
+    pub max_predictions_per_user: u32,
+    /// Minimum cooldown in seconds between consecutive predictions from the same address.
+    pub prediction_cooldown_seconds: u64,
+}
+
+/// Represents a fee tier within the protocol's dynamic fee system.
+///
+/// Fee tiers allow the protocol to adjust fees based on the pool's total volume (stake).
+/// Tiers are applied based on the total stake (volume) of the pool at resolution time.
+/// Higher volumes typically result in lower fee percentages to encourage participation.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTier {
+    /// The `total_stake` threshold at or above which this tier's `fee_bps` becomes applicable.
+    pub stake_threshold: i128,
+    /// The protocol fee in basis points (1 bp = 0.01%) for this tier.
+    /// Must be between 0 and 10,000 (inclusive).
+    pub fee_bps: u32,
+}
+
+/// Extended contract metadata for frontend/tooling consumption.
+///
+/// Combines all protocol configuration, version information, and operational
+/// parameters into a single queryable structure via `get_contract_metadata()`.
+/// Unlike `ContractInfo`, this also exposes oracle configuration, fee tiers
+/// count, active pool count, and the referral volume threshold.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractMetadata {
+    /// Contract version stored in instance storage.
+    pub version: u32,
+    /// Human-readable semantic version string (e.g. `"0_0_0"`).
+    pub version_string: Symbol,
+    /// Admin address resolved from the access-control contract.
+    pub current_admin: Address,
+    /// Whether the contract is currently paused.
+    pub is_paused: bool,
+    /// Total number of pools ever created (monotonically increasing counter).
+    pub total_pools: u64,
+    /// Number of currently active (unresolved, uncanceled) pools.
+    pub active_pools_count: u32,
+    /// Protocol fee in basis points (1 bp = 0.01%).
+    pub fee_bps: u32,
+    /// Referral fee cut in basis points (share of protocol fee paid to referrer).
+    pub referral_cut_bps: u32,
+    /// Minimum referred volume (base token units) a referrer must accumulate
+    /// in a pool before receiving a referral reward. 0 = no minimum.
+    pub referral_min_volume: i128,
+    /// Treasury address that receives protocol fees.
+    pub treasury: Address,
+    /// Access-control contract address.
+    pub access_control: Address,
+    /// Global resolution delay in seconds.
+    pub resolution_delay: u64,
+    /// Minimum pool duration in seconds.
+    pub min_pool_duration: u64,
+    /// Global minimum stake amount (base token units).
+    pub min_stake: i128,
+    /// Maximum predictions allowed per user per pool (0 = no limit).
+    pub max_predictions_per_user: u32,
+    /// Cooldown in seconds between consecutive predictions from the same address.
+    pub prediction_cooldown_seconds: u64,
+    /// Number of dynamic fee tiers currently configured.
+    pub fee_tiers_count: u32,
+    /// Whether oracle/price-feed resolution has been initialized.
+    pub oracle_initialized: bool,
+}
+
+#[contractevent(topics = ["init"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InitEvent {
+    pub access_control: Address,
+    pub treasury: Address,
+    pub fee_bps: u32,
+    pub resolution_delay: u64,
+    pub min_pool_duration: u64,
+    pub max_predictions_per_user: u32,
+}
+
+#[contractevent(topics = ["pause"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PauseEvent {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["unpause"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UnpauseEvent {
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["fee_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeUpdateEvent {
+    pub admin: Address,
+    pub fee_bps: u32,
+}
+
+/// Emitted when an admin queues a fee change proposal via `set_fee_bps`.
+/// The change does not take effect until `apply_fee_bps` is called at or after
+/// `effective_at`.
+#[contractevent(topics = ["fee_change_proposed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeChangeProposeEvent {
+    /// Admin that submitted the proposal.
+    pub admin: Address,
+    /// The proposed new fee in basis points.
+    pub new_fee_bps: u32,
+    /// Unix timestamp at or after which the change may be applied.
+    pub effective_at: u64,
+}
+
+/// Emitted when an admin cancels a pending fee change proposal via
+/// `cancel_fee_proposal` before it has been applied.
+#[contractevent(topics = ["fee_change_canceled"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeChangeCancelEvent {
+    /// Admin that cancelled the proposal.
+    pub admin: Address,
+}
+
+#[contractevent(topics = ["max_predictions_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaxPredictionsUpdateEvent {
+    pub admin: Address,
+    pub limit: u32,
+}
+
+#[contractevent(topics = ["prediction_cooldown_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionCooldownUpdateEvent {
+    pub admin: Address,
+    pub cooldown_seconds: u64,
+}
+
+#[contractevent(topics = ["fee_tiers_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeeTiersUpdateEvent {
+    pub admin: Address,
+    pub tiers_count: u32,
+}
+
+#[contractevent(topics = ["treasury_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryUpdateEvent {
+    pub admin: Address,
+    pub treasury: Address,
+}
+
+#[contractevent(topics = ["resolution_delay_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolutionDelayUpdateEvent {
+    pub admin: Address,
+    pub delay: u64,
+}
+
+#[contractevent(topics = ["min_pool_duration_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinPoolDurationUpdateEvent {
+    pub admin: Address,
+    pub duration: u64,
+}
+
+#[contractevent(topics = ["min_stake_update"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MinStakeUpdateEvent {
+    pub admin: Address,
+    pub min_stake: i128,
+}
+
+#[contractevent(topics = ["token_whitelist_added"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistAddedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
+#[contractevent(topics = ["token_whitelist_removed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TokenWhitelistRemovedEvent {
+    pub admin: Address,
+    pub token: Address,
+}
+
+#[contractevent(topics = ["added_to_whitelist"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddedToWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub added_by: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["removed_from_whitelist"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemovedFromWhitelistEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub removed_by: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["upgrade"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpgradeEvent {
+    pub admin: Address,
+    pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent(topics = ["contract_upgraded"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContractUpgradedEvent {
+    pub old_version: u32,
+    pub new_version: u32,
+    pub upgraded_by: Address,
+}
+
+/// Emitted when `renew_storage_ttl` is called to bump TTLs for pool storage
+/// entries, keeping them alive for another full BUMP_AMOUNT period.
+#[contractevent(topics = ["storage_ttl_renewed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StorageTtlRenewedEvent {
+    /// The pool whose storage TTLs were renewed.
+    pub pool_id: u64,
+    /// Ledger timestamp when the renewal was triggered.
+    pub timestamp: u64,
+}
+

@@ -39,7 +39,7 @@ const TYPE_STYLES: Record<NotificationType, string> = {
 export function NotificationBell() {
   const address = useWalletAddress();
   const [open, setOpen] = useState(false);
-  const { notifications, unreadCount, isLoading, markRead } =
+  const { notifications, unreadCount, isLoading, isError, markRead, refresh } =
     useNotifications(address);
 
   // Don't render anything until a wallet is connected.
@@ -98,6 +98,19 @@ export function NotificationBell() {
               <p className="p-6 text-center text-sm text-zinc-500">
                 Loading…
               </p>
+            ) : isError ? (
+              <div className="p-6 text-center space-y-3">
+                <p className="text-sm text-red-400">
+                  Failed to load notifications.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => refresh()}
+                  className="text-xs font-medium text-[#37B7C3] hover:underline"
+                >
+                  Try again
+                </button>
+              </div>
             ) : notifications.length === 0 ? (
               <p className="p-6 text-center text-sm text-zinc-500">
                 You&apos;re all caught up.

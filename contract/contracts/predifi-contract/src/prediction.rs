@@ -1,13 +1,73 @@
-//! Prediction domain: placing predictions and claiming winnings or refunds.
+//! # Prediction Management & Lifecycle Domain
+//!
+//! This module manages prediction placement, user stake tracking, and the claim / refund lifecycle.
+//!
+//! ## Prediction Record Data Model
+//!
+//! For each user participating in a prediction market pool, the contract persists data across several key entries:
+//!
+//! 1. **`DataKey::Pred(user: Address, pool_id: u64)` -> `Prediction`**:
+//!    - `amount: i128` — Total tokens staked by `user` on `pool_id` for their selected outcome.
+//!    - `outcome: u32` — 0-based outcome index chosen by `user` (`0 <= outcome < pool.options_count`).
+//! 2. **`DataKey::Referrer(user: Address, pool_id: u64)` -> `Address`**:
+//!    - Optional referrer address registered on the user's first prediction placement for this pool.
+//! 3. **`DataKey::ReferredVolume(referrer: Address, pool_id: u64)` -> `i128`**:
+//!    - Cumulative token volume staked by referred users under `referrer` for `pool_id`.
+//! 4. **`DataKey::Claimed(user: Address, pool_id: u64)` -> `bool`**:
+//!    - Persistent sentinel set to `true` when a user claims winnings or a refund for `pool_id` (enforces double-claim prevention `INV-3`).
+//! 5. **`DataKey::LastPredictionTime(user: Address)` -> `u64`**:
+//!    - Ledger timestamp of `user`'s last prediction placement across any pool (used for rate-limiting cooldown enforcement).
+//! 6. **`DataKey::UsrPrdCnt(user: Address)` -> `u32`**:
+//!    - Total count of distinct pools in which `user` holds active predictions.
+//! 7. **`DataKey::UsrPrdIdx(user: Address, index: u32)` -> `u64`**:
+//!    - Maps a 0-based index to `pool_id` for querying user prediction history.
+//!
+//! ## Valid State Transitions
+//!
+//! ### Prediction Placement Lifecycle
+//! ```text
+//! [Uninitialized]
+//!        │
+//!        │  place_prediction(user, pool_id, amount, outcome)
+//!        ▼
+//!   [Placed]  ──(place_prediction with same pool_id & outcome)──► [Stake Increased]
+//! ```
+//! - **Uninitialized -> Placed**: User places their first prediction on an active pool. Tokens are transferred to the contract, `Prediction` struct is created, `participants_count` increments, and any optional `referrer` is recorded.
+//! - **Placed -> Stake Increased**: User places an additional prediction on the *same pool and outcome*. The new stake is added to `prediction.amount` and `pool.total_stake`. (Attempting to select a different outcome index for an existing prediction is rejected).
+//!
+//! ### Settlement & Claim Lifecycle
+//! ```text
+//!                              ┌──► MarketState::Resolved ──► claim_winnings() ──► [Claimed (Winnings)]
+//!                              │
+//!   [Prediction Staked] ───────┼──► MarketState::Canceled ──► claim_refund()   ──► [Claimed (Refund)]
+//!                              │
+//!                              └──► MarketState::Disputed ──► (Awaiting Resolution)
+//! ```
+//! - **Active -> Resolved**: Market resolves with a winning outcome index (`pool.outcome`).
+//!   - If `prediction.outcome == pool.outcome`, caller receives proportional payout `(user_stake / winning_stake) * (total_pool - protocol_fee)`. `DataKey::Claimed(user, pool_id)` is set to `true`.
+//!   - If `prediction.outcome != pool.outcome`, payout is 0.
+//! - **Active / Resolved / Disputed -> Canceled**: Market is canceled due to emergency, invalid oracle output, or quorum failure.
+//!   - All participants receive 100% principal refund (`prediction.amount`). `DataKey::Claimed(user, pool_id)` is set to `true`.
+//! - **Unclaimed -> Claimed**: Transitioning `DataKey::Claimed` to `true` is terminal and irreversible. Re-claiming returns `PredifiError::AlreadyClaimed`.
 
-use soroban_sdk::{contractimpl, token, Address, Env, String, Symbol, Vec};
+use crate::safe_math::SafeMath;
+use soroban_sdk::{Address, contractevent, contractimpl, contracttype, Env, String, Symbol, token, Vec};
 
 use crate::{
-    calculate_claim_payout, calculate_referral_amount, DataKey, HighValuePredictionEvent,
-    MarketState, OutcomeStakesUpdatedEvent, PayoutInput, Pool, Prediction,
-    PredictionBlockedDelistedEvent, PredictionPlacedEvent, PredifiContract, PredifiContractArgs,
-    PredifiContractClient, PredifiError, ReferralPaidEvent, RefundClaimedEvent, RewardClaimedEvent,
-    SuspiciousDoubleClaimEvent, UserPredictionDetail, WinningsClaimedEvent, HIGH_VALUE_THRESHOLD,
+    calculate_claim_payout,
+    calculate_referral_amount,
+    DataKey,
+    HighValuePredictionEvent,
+    PayoutInput,
+    Pool,
+    PredifiContract,
+    PredifiContractArgs,
+    PredifiContractClient,
+    PredifiError,
+    ReferralPaidEvent,
+    RewardClaimedEvent,
+    SuspiciousDoubleClaimEvent,
+    HIGH_VALUE_THRESHOLD,
 };
 
 #[contractimpl]
@@ -323,10 +383,17 @@ impl PredifiContract {
             }
         }
 
-        if config.max_predictions_per_user > 0 {
-            let pred_key = DataKey::Pred(user.clone(), pool_id);
-            let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
+        // Gas optimization (#1940): read `Pred(user, pool_id)` from persistent
+        // storage exactly once per call. This key was previously read twice —
+        // once (conditionally) to check the max-predictions-per-user limit,
+        // then unconditionally again a few lines down to decide whether this
+        // is a new prediction or a stake increase — doubling a persistent
+        // storage IO on every `place_prediction` call that had the limit
+        // configured.
+        let pred_key = DataKey::Pred(user.clone(), pool_id);
+        let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
 
+        if config.max_predictions_per_user > 0 {
             // If user already has a prediction on this pool, allow increasing stake (same prediction)
             // If this is a new prediction for this pool, check if user has reached the limit
             if existing_pred.is_none() {
@@ -347,14 +414,13 @@ impl PredifiContract {
             // as it's the same prediction, not a new pool participation
         }
 
-        let pred_key = DataKey::Pred(user.clone(), pool_id);
-        let existing_pred = env.storage().persistent().get::<_, Prediction>(&pred_key);
         if let Some(mut existing_pred) = existing_pred {
             assert!(
                 existing_pred.outcome == outcome,
                 "Cannot change prediction outcome"
             );
-            existing_pred.amount = existing_pred.amount.checked_add(amount).expect("overflow");
+            existing_pred.amount = SafeMath::safe_add(existing_pred.amount, amount)
+                .map_err(|_| PredifiError::ArithmeticError)?;
             env.storage().persistent().set(&pred_key, &existing_pred);
             Self::extend_persistent(&env, &pred_key);
 
@@ -365,7 +431,9 @@ impl PredifiContract {
                 Self::extend_persistent(&env, &referrer_key);
                 let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
                 let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
-                env.storage().persistent().set(&vol_key, &(vol + amount));
+                let new_vol =
+                    SafeMath::safe_add(vol, amount).map_err(|_| PredifiError::ArithmeticError)?;
+                env.storage().persistent().set(&vol_key, &new_vol);
                 Self::extend_persistent(&env, &vol_key);
             }
         } else {
@@ -389,7 +457,9 @@ impl PredifiContract {
             if let Some(referrer_addr) = active_referrer {
                 let vol_key = DataKey::ReferredVolume(referrer_addr.clone(), pool_id);
                 let vol: i128 = env.storage().persistent().get(&vol_key).unwrap_or(0);
-                env.storage().persistent().set(&vol_key, &(vol + amount));
+                let new_vol =
+                    SafeMath::safe_add(vol, amount).map_err(|_| PredifiError::ArithmeticError)?;
+                env.storage().persistent().set(&vol_key, &new_vol);
                 Self::extend_persistent(&env, &vol_key);
             }
 
@@ -408,7 +478,8 @@ impl PredifiContract {
         }
 
         // Update total stake (INV-1)
-        pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");
+        pool.total_stake = SafeMath::safe_add(pool.total_stake, amount)
+            .map_err(|_| PredifiError::ArithmeticError)?;
         env.storage().persistent().set(&pool_key, &pool);
         Self::bump_ttl(&env, &pool_key);
 
@@ -940,3 +1011,116 @@ impl PredifiContract {
         Ok(results)
     }
 }
+
+// ── Domain types & events (moved from lib.rs, issue #1970) ─────────────────
+
+/// Represents the current state of a prediction market.
+///
+/// State transitions are one-way: `Active` can only transition to `Resolved`, `Canceled`, or `Disputed`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarketState {
+    /// Market is active and accepting predictions.
+    Active = 0,
+    /// Market has been resolved and winnings can be claimed.
+    Resolved = 1,
+    /// Market has been canceled and stakes can be refunded.
+    Canceled = 2,
+    /// Market has been flagged as disputed by a moderator.
+    Disputed = 3,
+}
+
+/// Represents a user's individual stake in a prediction market.
+///
+/// This is the core structure for tracking participation. It is stored as part of the
+/// ledger state for each user-pool pair, mapping a specific outcome to a staked amount.
+#[contracttype]
+#[derive(Clone)]
+pub struct Prediction {
+    /// Total amount of tokens staked by the user on this outcome.
+    pub amount: i128,
+    /// The chosen outcome index (0-based). This corresponds to the index in `Pool.outcome_descriptions`.
+    pub outcome: u32,
+}
+
+/// Detailed information about a user's prediction in a specific pool.
+///
+/// This struct is a convenient "read-only" view that combines user-specific prediction
+/// data with current pool state. It is primarily used for frontend displays and
+/// calculating potential or final winnings.
+#[contracttype]
+#[derive(Clone)]
+pub struct UserPredictionDetail {
+    /// Unique identifier (ID) of the prediction pool.
+    pub pool_id: u64,
+    /// Total amount of tokens the user has staked on their chosen outcome.
+    pub amount: i128,
+    /// The outcome index (0-based) that the user predicted would win.
+    pub user_outcome: u32,
+    /// Unix timestamp when the pool's betting window ends.
+    pub pool_end_time: u64,
+    /// Current operational state of the pool (Active, Resolved, or Canceled).
+    pub pool_state: MarketState,
+    /// The winning outcome index (0-based) if the pool is `Resolved`.
+    /// Set to `UNRESOLVED_OUTCOME` (`u32::MAX`) when the pool has not yet been resolved.
+    /// Callers must check `pool_state == MarketState::Resolved` (or compare against
+    /// `UNRESOLVED_OUTCOME`) before interpreting this value; outcome index `0` is a
+    /// valid winning outcome and must not be confused with the unresolved sentinel.
+    pub pool_outcome: u32,
+}
+
+#[contractevent(topics = ["prediction_placed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+}
+
+#[contractevent(topics = ["winnings_claimed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WinningsClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
+/// Emitted when a `place_prediction` call is rejected because the pool's token
+/// has been removed from the whitelist since the pool was created.
+/// Useful for off-chain monitors to detect affected pools and alert users.
+#[contractevent(topics = ["prediction_blocked_delisted"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionBlockedDelistedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub token: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["refund_claimed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
+/// 🟢 INFO — emitted when all outcome stakes are updated in a single operation.
+/// Useful for markets with many outcomes (e.g., 32+ teams tournament) where
+/// emitting individual events per outcome would be impractical.
+#[contractevent(topics = ["outcome_stakes_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutcomeStakesUpdatedEvent {
+    pub pool_id: u64,
+    /// Number of outcomes in this pool.
+    pub options_count: u32,
+    /// Total stake across all outcomes after the update.
+    pub total_stake: i128,
+}
+

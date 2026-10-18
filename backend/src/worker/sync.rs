@@ -62,9 +62,13 @@ async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64
 /// which causes the simulation to fail gracefully — replace with real XDR when
 /// integrating with the Stellar SDK.
 fn build_get_stakes_xdr(_config: &Config, _pool_id: i64) -> String {
-    // TODO: Encode a real `InvokeContractArgs` XDR using the stellar-xdr crate.
-    // For now, return a placeholder so the module compiles and the structure is
-    // testable without a live Soroban node.
+    // TODO(#1650): replace this placeholder with a real `InvokeContractArgs`
+    // encoded through the `stellar-xdr` crate. The current empty string is
+    // deliberate: `sync_pool_stakes` treats it as an unsuccessful simulation
+    // and leaves the database value unchanged. Correct behaviour will encode
+    // an invocation of `get_pool_outcome_stakes` with the pool ID, submit it
+    // to Soroban RPC, and decode the returned SCVal map before updating the DB.
+    // Keep this tracked until the XDR dependency and live-RPC fixture exist.
     String::new()
 }
 

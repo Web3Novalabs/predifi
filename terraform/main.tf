@@ -28,7 +28,7 @@ locals {
 }
 
 module "compute" {
-  source = "../../modules/compute"
+  source = "./modules/compute"
 
   name_prefix        = local.name_prefix
   vpc_id             = var.vpc_id
@@ -44,7 +44,7 @@ module "compute" {
 }
 
 module "postgres" {
-  source = "../../modules/postgres"
+  source = "./modules/postgres"
 
   name_prefix            = local.name_prefix
   vpc_id                 = var.vpc_id
@@ -59,7 +59,7 @@ module "postgres" {
 }
 
 module "redis" {
-  source = "../../modules/redis"
+  source = "./modules/redis"
 
   name_prefix            = local.name_prefix
   vpc_id                 = var.vpc_id
@@ -71,25 +71,25 @@ module "redis" {
 }
 
 module "ssl" {
-  source = "../../modules/ssl"
+  source = "./modules/ssl"
 
-  domain_name     = var.domain_name
-  route53_zone_id = var.route53_zone_id
+  domain_name               = var.domain_name
+  route53_zone_id           = var.route53_zone_id
   subject_alternative_names = var.ssl_sans
 }
 
 module "loadbalancer" {
-  source = "../../modules/loadbalancer"
+  source = "./modules/loadbalancer"
 
-  name_prefix        = local.name_prefix
-  vpc_id             = var.vpc_id
-  public_subnet_ids  = var.public_subnet_ids
-  certificate_arn    = module.ssl.certificate_arn
-  health_check_path  = var.health_check_path
+  name_prefix       = local.name_prefix
+  vpc_id            = var.vpc_id
+  public_subnet_ids = var.public_subnet_ids
+  certificate_arn   = module.ssl.certificate_arn
+  health_check_path = var.health_check_path
 }
 
 module "dns" {
-  source = "../../modules/dns"
+  source = "./modules/dns"
 
   route53_zone_id   = var.route53_zone_id
   domain_name       = var.domain_name
@@ -99,15 +99,15 @@ module "dns" {
 }
 
 module "monitoring" {
-  source = "../../modules/monitoring"
+  source = "./modules/monitoring"
 
-  name_prefix        = local.name_prefix
-  vpc_id             = var.vpc_id
-  private_subnet_ids = var.private_subnet_ids
-  instance_type      = var.monitoring_instance_type
-  ami_id             = var.ami_id
-  key_name           = var.key_name
-  grafana_admin_user = var.grafana_admin_user
+  name_prefix         = local.name_prefix
+  vpc_id              = var.vpc_id
+  private_subnet_ids  = var.private_subnet_ids
+  instance_type       = var.monitoring_instance_type
+  ami_id              = var.ami_id
+  key_name            = var.key_name
+  grafana_admin_user  = var.grafana_admin_user
   allowed_cidr_blocks = var.monitoring_allowed_cidrs
   prometheus_scrape_targets = [
     module.loadbalancer.alb_dns_name,

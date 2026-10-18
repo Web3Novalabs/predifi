@@ -318,7 +318,7 @@ async fn process_event_batch(
                     }
                 }
             } else if topic_matches("prediction_placed") {
-                match handle_prediction_placed_event(db, event, event_bus).await {
+                match handle_prediction_placed_event(db, redis, event, event_bus).await {
                     Ok(()) => queue.record_success(&job),
                     Err(e) => {
                         error!(id = %event.id, ledger = event.ledger, error = %e, "failed to process prediction_placed event");
@@ -409,6 +409,11 @@ async fn handle_pool_created_event(
     let description = extract_string(data, "description")
         .or_else(|| extract_string(data, "metadata_url"))
         .unwrap_or_default();
+    // #1932: the contract's `PoolCreatedEvent` has carried these since
+    // multi-outcome pools were added; default to a binary pool shape when
+    // an older/partial event payload omits them rather than failing ingest.
+    let options_count = extract_u32(data, "options_count").unwrap_or(2);
+    let outcome_descriptions = extract_string_vec(data, "outcome_descriptions").unwrap_or_default();
 
     let pool_event = crate::db::PoolCreatedEvent {
         pool_id,
@@ -417,6 +422,8 @@ async fn handle_pool_created_event(
         token,
         category,
         description,
+        options_count: options_count as i32,
+        outcome_descriptions,
     };
 
     crate::db::insert_pool_from_event(db, &pool_event)
@@ -429,6 +436,7 @@ async fn handle_pool_created_event(
 
 async fn handle_prediction_placed_event(
     db: &PgPool,
+    redis: &RedisCache,
     event: &StellarEvent,
     event_bus: &crate::ws::EventBus,
 ) -> Result<(), String> {
@@ -465,6 +473,16 @@ async fn handle_prediction_placed_event(
         "outcome": ev.outcome,
         "amount": ev.amount,
     }));
+
+    // Protocol-wide stats and this user's cached prediction history both
+    // just went stale. Without this, `/api/v1/users/:address/predictions`
+    // (now cached, see #1938) would keep serving a pre-prediction snapshot
+    // for up to USER_PREDICTIONS_CACHE_TTL after a confirmed on-chain
+    // prediction — this is the primary ingestion path (events indexed off
+    // the Stellar RPC), unlike `ingest_prediction_placed` in routes/v1.rs
+    // which only invalidated the stats cache.
+    redis.invalidate_stats_cache().await;
+    redis.invalidate_user_predictions_cache(&ev.user_address).await;
 
     Ok(())
 }
@@ -563,6 +581,30 @@ fn extract_i32(data: &Value, key: &str) -> Option<i32> {
 
 fn extract_u64(data: &Value, key: &str) -> Option<u64> {
     extract_i128(data.get(key)?).and_then(|v| u64::try_from(v).ok())
+}
+
+/// Extract a `u32` field (e.g. `options_count`, #1932).
+fn extract_u32(data: &Value, key: &str) -> Option<u32> {
+    extract_i128(data.get(key)?).and_then(|v| u32::try_from(v).ok())
+}
+
+/// Extract a `Vec<String>` field (e.g. `outcome_descriptions`, #1932).
+///
+/// Handles the same "single-key wrapper object" shape `extract_string_value`
+/// unwraps for scalars (some RPC encodings wrap a Soroban `Vec` the same way
+/// they wrap other typed values), as well as a plain JSON array.
+fn extract_string_vec(data: &Value, key: &str) -> Option<Vec<String>> {
+    extract_string_vec_value(data.get(key)?)
+}
+
+fn extract_string_vec_value(value: &Value) -> Option<Vec<String>> {
+    match value {
+        Value::Array(items) => items.iter().map(extract_string_value).collect(),
+        Value::Object(map) if map.len() == 1 => {
+            map.values().next().and_then(extract_string_vec_value)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

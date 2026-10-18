@@ -31,6 +31,10 @@ pub struct PoolDetails {
     pub creator: String,
     pub token: String,
     pub result: Option<String>,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]` or `["Team A", "Team B", "Draw"]`. Empty when the
+    /// pool was indexed before labels were captured (pre-#1932 rows).
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// Per-outcome stake and implied odds.
@@ -55,6 +59,9 @@ pub struct PoolWithOdds {
     pub token: String,
     pub result: Option<String>,
     pub odds: Vec<OutcomeOdds>,
+    /// Human-readable label for each outcome index (#1932). See
+    /// [`PoolDetails::outcome_descriptions`].
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// Aggregate creator reputation / reward-eligibility metrics.
@@ -90,6 +97,15 @@ pub struct PoolCreatedEvent {
     pub token: String,
     pub category: String,
     pub description: String,
+    /// Number of distinct outcome options (#1932). The on-chain event has
+    /// carried this since multi-outcome pools were added
+    /// (`events.rs::PoolCreatedEvent::options_count`); the indexer
+    /// previously discarded it. Defaults to `2` (binary) for callers that
+    /// predate this field.
+    pub options_count: i32,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]`. Mirrors `events.rs::PoolCreatedEvent::outcome_descriptions`.
+    pub outcome_descriptions: Vec<String>,
 }
 
 // ── Internal row types (not exported) ────────────────────────────────────────
@@ -102,8 +118,7 @@ struct OutcomeStakeRow {
 
 // ── Column list shared by template queries ────────────────────────────────────
 
-const POOL_TEMPLATE_COLUMNS: &str =
-    "id, creator, name, category, description, token, \
+const POOL_TEMPLATE_COLUMNS: &str = "id, creator, name, category, description, token, \
      duration_seconds, recurrence_interval_seconds, next_run_at, active";
 
 // ── Read queries ──────────────────────────────────────────────────────────────
@@ -141,9 +156,9 @@ pub async fn get_pools_with_filters(
     offset: i64,
 ) -> Result<Vec<PoolRow>, sqlx::Error> {
     let order_clause = match sort_by {
-        "popular"     => "total_stake DESC",
+        "popular" => "total_stake DESC",
         "ending_soon" => "end_time ASC",
-        _             => "created_at DESC", // "new" and default
+        _ => "created_at DESC", // "new" and default
     };
 
     let valid_status = match status {
@@ -162,13 +177,16 @@ pub async fn get_pools_with_filters(
         "#
     );
 
-    sqlx::query_as::<_, PoolRow>(&sql)
-        .bind(valid_status)
-        .bind(category)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool)
-        .await
+    crate::metrics::observe_db(
+        "get_pools_with_filters",
+        sqlx::query_as::<_, PoolRow>(&sql)
+            .bind(valid_status)
+            .bind(category)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool),
+    )
+    .await
 }
 
 /// Count pools matching optional category and status filters.
@@ -182,17 +200,20 @@ pub async fn count_pools_with_filters(
         _ => "active",
     };
 
-    let count: (i64,) = sqlx::query_as(
-        r#"
-        SELECT COUNT(*)
-        FROM pools
-        WHERE state = $1
-          AND ($2::text IS NULL OR category = $2)
-        "#,
+    let count: (i64,) = crate::metrics::observe_db(
+        "count_pools_with_filters",
+        sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM pools
+            WHERE state = $1
+              AND ($2::text IS NULL OR category = $2)
+            "#,
+        )
+        .bind(valid_status)
+        .bind(category)
+        .fetch_one(pool),
     )
-    .bind(valid_status)
-    .bind(category)
-    .fetch_one(pool)
     .await?;
 
     Ok(count.0)
@@ -203,16 +224,19 @@ pub async fn get_pool_by_id(
     pool: &PgPool,
     pool_id: i64,
 ) -> Result<Option<PoolDetails>, sqlx::Error> {
-    sqlx::query_as::<_, PoolDetails>(
-        r#"
-        SELECT pool_id, name, category, total_stake, end_time, created_at,
-               state, creator, token, result
-        FROM pools
-        WHERE pool_id = $1
-        "#,
+    crate::metrics::observe_db(
+        "get_pool_by_id",
+        sqlx::query_as::<_, PoolDetails>(
+            r#"
+            SELECT pool_id, name, category, total_stake, end_time, created_at,
+                   state, creator, token, result, outcome_descriptions
+            FROM pools
+            WHERE pool_id = $1
+            "#,
+        )
+        .bind(pool_id)
+        .fetch_optional(pool),
     )
-    .bind(pool_id)
-    .fetch_optional(pool)
     .await
 }
 
@@ -221,20 +245,26 @@ pub async fn get_pool_outcome_stakes(
     pool: &PgPool,
     pool_id: i64,
 ) -> Result<Vec<(i32, i64)>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, OutcomeStakeRow>(
-        r#"
-        SELECT outcome, COALESCE(SUM(amount), 0) AS total_stake
-        FROM predictions
-        WHERE pool_id = $1
-        GROUP BY outcome
-        ORDER BY outcome
-        "#,
+    let rows = crate::metrics::observe_db(
+        "get_pool_outcome_stakes",
+        sqlx::query_as::<_, OutcomeStakeRow>(
+            r#"
+            SELECT outcome, COALESCE(SUM(amount), 0) AS total_stake
+            FROM predictions
+            WHERE pool_id = $1
+            GROUP BY outcome
+            ORDER BY outcome
+            "#,
+        )
+        .bind(pool_id)
+        .fetch_all(pool),
     )
-    .bind(pool_id)
-    .fetch_all(pool)
     .await?;
 
-    Ok(rows.into_iter().map(|r| (r.outcome, r.total_stake)).collect())
+    Ok(rows
+        .into_iter()
+        .map(|r| (r.outcome, r.total_stake))
+        .collect())
 }
 
 /// Fetch a pool's full detail joined with real-time odds for each outcome.
@@ -266,6 +296,7 @@ pub async fn get_pool_with_odds(
         token: details.token,
         result: details.result,
         odds,
+        outcome_descriptions: details.outcome_descriptions,
     }))
 }
 
@@ -281,21 +312,27 @@ pub async fn insert_pool_from_event(
     pool: &PgPool,
     event: &PoolCreatedEvent,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        INSERT INTO pools
-            (pool_id, name, category, total_stake, end_time, state, creator, token, created_at)
-        VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW())
-        ON CONFLICT (pool_id) DO NOTHING
-        "#,
+    crate::metrics::observe_db(
+        "insert_pool_from_event",
+        sqlx::query(
+            r#"
+            INSERT INTO pools
+                (pool_id, name, category, total_stake, end_time, state, creator, token, created_at,
+                 options_count, outcome_descriptions)
+            VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW(), $7, $8)
+            ON CONFLICT (pool_id) DO NOTHING
+            "#,
+        )
+        .bind(event.pool_id as i64)
+        .bind(&event.description)
+        .bind(&event.category)
+        .bind(event.end_time as f64)
+        .bind(&event.creator)
+        .bind(&event.token)
+        .bind(event.options_count)
+        .bind(&event.outcome_descriptions)
+        .execute(pool),
     )
-    .bind(event.pool_id as i64)
-    .bind(&event.description)
-    .bind(&event.category)
-    .bind(event.end_time as f64)
-    .bind(&event.creator)
-    .bind(&event.token)
-    .execute(pool)
     .await?;
 
     record_pool_created_for_creator(pool, &event.creator).await?;
@@ -314,29 +351,32 @@ pub async fn resolve_pool_in_db<'e, E>(
 where
     E: Executor<'e, Database = Postgres>,
 {
-    sqlx::query(
-        "UPDATE pools SET state = 'settled', result = $1, resolved_at = NOW() WHERE pool_id = $2",
+    crate::metrics::observe_db(
+        "resolve_pool_in_db",
+        sqlx::query(
+            "UPDATE pools SET state = 'settled', result = $1, resolved_at = NOW() WHERE pool_id = $2",
+        )
+        .bind(winning_outcome.to_string())
+        .bind(pool_id as i64)
+        .execute(executor),
     )
-    .bind(winning_outcome.to_string())
-    .bind(pool_id as i64)
-    .execute(executor)
     .await?;
     Ok(())
 }
 
 /// Mark a pool as closed (cancelled on-chain).
 #[instrument(skip(executor), name = "db.cancel_pool_in_db", fields(pool_id = pool_id))]
-pub async fn cancel_pool_in_db<'e, E>(
-    executor: E,
-    pool_id: u64,
-) -> Result<(), sqlx::Error>
+pub async fn cancel_pool_in_db<'e, E>(executor: E, pool_id: u64) -> Result<(), sqlx::Error>
 where
     E: Executor<'e, Database = Postgres>,
 {
-    sqlx::query("UPDATE pools SET state = 'closed' WHERE pool_id = $1")
-        .bind(pool_id as i64)
-        .execute(executor)
-        .await?;
+    crate::metrics::observe_db(
+        "cancel_pool_in_db",
+        sqlx::query("UPDATE pools SET state = 'closed' WHERE pool_id = $1")
+            .bind(pool_id as i64)
+            .execute(executor),
+    )
+    .await?;
     Ok(())
 }
 
@@ -420,10 +460,7 @@ pub async fn get_creator_stats(
 
 /// Return `true` when a pool has met its minimum participation threshold and
 /// its creator reward has not yet been paid.
-pub async fn is_creator_reward_eligible(
-    pool: &PgPool,
-    pool_id: i64,
-) -> Result<bool, sqlx::Error> {
+pub async fn is_creator_reward_eligible(pool: &PgPool, pool_id: i64) -> Result<bool, sqlx::Error> {
     let row: Option<(bool,)> = sqlx::query_as(
         r#"
         SELECT (total_stake >= min_participation_threshold AND NOT creator_reward_paid)
@@ -475,11 +512,8 @@ pub async fn pay_creator_incentive(
             .fetch_one(pool)
             .await?;
 
-    let amount = calculate_creator_incentive(
-        details.total_stake,
-        treasury_fee_bps,
-        creator_reward_bps,
-    );
+    let amount =
+        calculate_creator_incentive(details.total_stake, treasury_fee_bps, creator_reward_bps);
 
     // Atomic CAS-style update: only succeeds when reward has not yet been paid.
     let updated = sqlx::query(
@@ -589,7 +623,9 @@ pub async fn get_due_pool_templates(pool: &PgPool) -> Result<Vec<PoolTemplate>, 
         "#
     );
 
-    sqlx::query_as::<_, PoolTemplate>(&sql).fetch_all(pool).await
+    sqlx::query_as::<_, PoolTemplate>(&sql)
+        .fetch_all(pool)
+        .await
 }
 
 /// Advance a template's `next_run_at` by one recurrence interval.
@@ -642,7 +678,10 @@ mod tests {
         let stakes = vec![(0i32, 500i64), (1, 500)];
         let odds = calculate_odds(&stakes, 1_000);
         for o in &odds {
-            assert!((o.odds - 2.0).abs() < 1e-9, "50/50 split must yield 2.0 odds");
+            assert!(
+                (o.odds - 2.0).abs() < 1e-9,
+                "50/50 split must yield 2.0 odds"
+            );
         }
     }
 
@@ -695,7 +734,10 @@ mod tests {
             "idx_predictions_pool_user",
             "idx_predictions_amount_desc",
         ] {
-            assert!(sql.contains(name), "migration 009 must define index '{name}'");
+            assert!(
+                sql.contains(name),
+                "migration 009 must define index '{name}'"
+            );
         }
     }
 
@@ -704,6 +746,9 @@ mod tests {
         let sql = include_str!("../../migrations/009_add_predictions_indexes.sql");
         let total = sql.matches("CREATE INDEX").count();
         let idempotent = sql.matches("CREATE INDEX IF NOT EXISTS").count();
-        assert_eq!(total, idempotent, "every CREATE INDEX must use IF NOT EXISTS");
+        assert_eq!(
+            total, idempotent,
+            "every CREATE INDEX must use IF NOT EXISTS"
+        );
     }
 }

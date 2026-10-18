@@ -8,6 +8,8 @@
 use soroban_sdk::{Env, Vec};
 
 use crate::payouts::calculate_odds_bps;
+use crate::safe_math::SafeMath;
+use predifi_errors::PrediFiError;
 
 /// Build a zero-filled outcome stakes vector without realloc churn.
 ///
@@ -42,11 +44,18 @@ pub fn odds_from_stakes(env: &Env, stakes: &Vec<i128>, total_stake: i128) -> Vec
 ///
 /// Callers persist the batch `OutStakes` key once after mutation — avoiding
 /// per-outcome dual writes on the hot `place_prediction` path.
-pub fn apply_stake_delta(stakes: &mut Vec<i128>, outcome: u32, amount: i128) -> i128 {
+///
+/// Returns `ArithmeticError` (and leaves `stakes` untouched) if the new outcome
+/// stake would overflow `i128` (#1917).
+pub fn apply_stake_delta(
+    stakes: &mut Vec<i128>,
+    outcome: u32,
+    amount: i128,
+) -> Result<i128, PrediFiError> {
     let current = stakes.get(outcome).unwrap_or(0);
-    let updated = current + amount;
+    let updated = SafeMath::safe_add(current, amount)?;
     stakes.set(outcome, updated);
-    updated
+    Ok(updated)
 }
 
 #[cfg(test)]
@@ -86,10 +95,30 @@ mod tests {
     fn apply_stake_delta_updates_index() {
         let env = Env::default();
         let mut stakes = alloc_zero_stakes(&env, 3);
-        let updated = apply_stake_delta(&mut stakes, 1, 250);
+        let updated = apply_stake_delta(&mut stakes, 1, 250).unwrap();
         assert_eq!(updated, 250);
         assert_eq!(stakes.get(1), Some(250));
         assert_eq!(stakes.get(0), Some(0));
+    }
+
+    #[test]
+    fn apply_stake_delta_rejects_overflow_and_keeps_stake() {
+        let env = Env::default();
+        let mut stakes = alloc_zero_stakes(&env, 2);
+        stakes.set(0, i128::MAX - 10);
+        assert_eq!(
+            apply_stake_delta(&mut stakes, 0, 11),
+            Err(PrediFiError::ArithmeticError)
+        );
+        assert_eq!(stakes.get(0), Some(i128::MAX - 10));
+    }
+
+    #[test]
+    fn apply_stake_delta_accepts_exact_max() {
+        let env = Env::default();
+        let mut stakes = alloc_zero_stakes(&env, 1);
+        stakes.set(0, i128::MAX - 10);
+        assert_eq!(apply_stake_delta(&mut stakes, 0, 10), Ok(i128::MAX));
     }
 
     #[test]

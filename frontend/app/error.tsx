@@ -98,7 +98,7 @@ export default function Error({
             className="group inline-flex items-center gap-2 rounded-xl border border-[#37B7C3]/30 bg-[#37B7C3]/10 px-6 py-3 text-sm font-medium text-[#37B7C3] transition-all duration-200 hover:bg-[#37B7C3]/20 hover:border-[#37B7C3]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]"
           >
             <RefreshCw className="w-4 h-4" />
-            Try Again
+            Try again
           </button>
           <Link
             href="/"

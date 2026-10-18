@@ -1,8 +1,17 @@
 "use client";
 
 import { memo } from "react";
-import { CheckCircle2, Clock3, ExternalLink, Loader2, XCircle, Send } from "lucide-react";
+import {
+  CheckCircle2,
+  Clock3,
+  ExternalLink,
+  Loader2,
+  RotateCcw,
+  Send,
+  XCircle,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import {
   useTransactionTracker,
   type TrackedTransactionStatus,
@@ -22,6 +31,15 @@ export interface TransactionProgressProps {
   elapsedMs?: number;
   explorerUrl?: string;
   className?: string;
+  /**
+   * Callback to retry the transaction with the same parameters.
+   * When provided, a retry button appears in the failure state.
+   */
+  onRetry?: () => void;
+  /**
+   * Set to true while retry is in progress to show loading state.
+   */
+  isRetrying?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -124,6 +142,8 @@ export const TransactionProgress = memo(function TransactionProgress({
   elapsedMs = 0,
   explorerUrl,
   className,
+  onRetry,
+  isRetrying = false,
 }: TransactionProgressProps) {
   if (status === "idle") return null;
 
@@ -268,9 +288,39 @@ export const TransactionProgress = memo(function TransactionProgress({
       )}
 
       {/* Error message */}
-      {isFailed && errorMessage && (
-        <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2">
-          <p className="text-xs text-red-400">{errorMessage}</p>
+      {isFailed && (errorMessage || onRetry) && (
+        <div className="space-y-3">
+          {errorMessage && (
+            <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2">
+              <p className="text-xs text-red-400">{errorMessage}</p>
+            </div>
+          )}
+
+          {/* Retry button */}
+          {onRetry && (
+            <Button
+              onClick={onRetry}
+              disabled={isRetrying}
+              className={cn(
+                "w-full h-9 rounded-lg font-medium text-sm transition-all duration-200",
+                "bg-[#37B7C3] hover:bg-[#37B7C3]/90 text-[#001112]",
+                "disabled:opacity-50 disabled:cursor-not-allowed",
+                "flex items-center justify-center gap-2"
+              )}
+            >
+              {isRetrying ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Retrying...</span>
+                </>
+              ) : (
+                <>
+                  <RotateCcw className="w-4 h-4" />
+                  <span>Retry Transaction</span>
+                </>
+              )}
+            </Button>
+          )}
         </div>
       )}
     </div>
@@ -285,6 +335,8 @@ export interface TransactionStatusTrackerProps {
   className?: string;
   timeoutMs?: number;
   pollIntervalMs?: number;
+  onRetry?: () => void;
+  isRetrying?: boolean;
 }
 
 /** Poll Soroban RPC for a submitted transaction and render its lifecycle. */
@@ -294,6 +346,8 @@ export function TransactionStatusTracker({
   className,
   timeoutMs,
   pollIntervalMs,
+  onRetry,
+  isRetrying,
 }: TransactionStatusTrackerProps) {
   const state = useTransactionTracker(txHash, {
     network,
@@ -317,6 +371,8 @@ export function TransactionStatusTracker({
       elapsedMs={state.elapsedMs}
       explorerUrl={`https://stellar.expert/explorer/${explorerNetwork}/tx/${encodeURIComponent(txHash)}`}
       className={className}
+      onRetry={onRetry}
+      isRetrying={isRetrying}
     />
   );
 }

@@ -47,6 +47,7 @@ mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
 mod treasury;
+mod creator_incentive;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
@@ -60,6 +61,83 @@ pub use payouts::{
 };
 pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
+pub use pool::{
+    CreatePoolParams,
+    InitialLiquidityProvidedEvent,
+    MaxTotalStakeIncreasedEvent,
+    Pool,
+    PoolCanceledEvent,
+    PoolConfig,
+    PoolCreatedEvent,
+    PoolDescriptionUpdatedEvent,
+    PoolDisputedEvent,
+    PoolReadyForResolutionEvent,
+    PoolResolvedEvent,
+    PoolStats,
+    StakeLimitsUpdatedEvent,
+    StakingClosedEvent,
+};
+pub use prediction::{
+    MarketState,
+    OutcomeStakesUpdatedEvent,
+    Prediction,
+    PredictionBlockedDelistedEvent,
+    PredictionPlacedEvent,
+    RefundClaimedEvent,
+    UserPredictionDetail,
+    WinningsClaimedEvent,
+};
+pub use admin::{
+    AddedToWhitelistEvent,
+    Config,
+    ContractInfo,
+    ContractMetadata,
+    ContractUpgradedEvent,
+    FeeChangeCancelEvent,
+    FeeChangeProposeEvent,
+    FeeConfig,
+    FeeInfo,
+    FeeTier,
+    FeeTiersUpdateEvent,
+    FeeUpdateEvent,
+    InitEvent,
+    MaxPredictionsUpdateEvent,
+    MinPoolDurationUpdateEvent,
+    MinStakeUpdateEvent,
+    PauseEvent,
+    PendingFeeChange,
+    PredictionCooldownUpdateEvent,
+    RemovedFromWhitelistEvent,
+    ResolutionDelayUpdateEvent,
+    StorageTtlRenewedEvent,
+    TokenWhitelistAddedEvent,
+    TokenWhitelistRemovedEvent,
+    TreasuryUpdateEvent,
+    UnpauseEvent,
+    UpgradeEvent,
+};
+pub use oracle::{
+    OracleInitEvent,
+    OracleResolvedEvent,
+    OracleWhitelistAddedEvent,
+    OracleWhitelistRemovedEvent,
+    PriceConditionSetEvent,
+    PriceFeedUpdatedEvent,
+    PriceFeedsCleanedEvent,
+    PriceResolvedEvent,
+    ResolutionConflictEvent,
+    ResolutionVoteCastEvent,
+};
+pub use referral::{
+    ReferralPaidEvent,
+    ReferralThresholdUpdatedEvent,
+    ReferrerUpdatedEvent,
+    RewardClaimedEvent,
+};
+pub use treasury::{
+    EmergencyWithdrawEvent,
+    TreasuryWithdrawnEvent,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ACCESS CONTROL — ROLES & PERMISSIONS
@@ -195,6 +273,8 @@ pub enum PredifiError {
     PriceFeedNotFound = 101,
     /// Price data expired or invalid.
     PriceDataInvalid = 102,
+    /// Price data is older than the configured `max_price_age`.
+    PriceStale = 113,
     /// Price condition not set for pool.
     PriceConditionNotSet = 103,
     /// Total pool stake cap reached or would be exceeded.
@@ -263,335 +343,13 @@ pub enum PredifiError {
     FeeChangePending = 95,
     NoFeeChangePending = 96,
     TimelockNotExpired = 97,
-}
-
-/// Represents the current state of a prediction market.
-///
-/// State transitions are one-way: `Active` can only transition to `Resolved`, `Canceled`, or `Disputed`.
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MarketState {
-    /// Market is active and accepting predictions.
-    Active = 0,
-    /// Market has been resolved and winnings can be claimed.
-    Resolved = 1,
-    /// Market has been canceled and stakes can be refunded.
-    Canceled = 2,
-    /// Market has been flagged as disputed by a moderator.
-    Disputed = 3,
-}
-
-/// Parameters for creating a new prediction pool.
-///
-/// This struct is used internally to validate and organize pool creation data.
-/// All fields must pass validation before a pool can be created.
-#[contracttype]
-#[derive(Clone)]
-pub struct CreatePoolParams {
-    /// Unix timestamp at which the pool opens for predictions.
-    pub start_time: u64,
-    /// Unix timestamp after which no more predictions are accepted.
-    pub end_time: u64,
-    /// The Stellar token contract address used for staking.
-    pub token: Address,
-    /// Number of possible outcomes (must be >= 2 and <= MAX_OPTIONS_COUNT).
-    pub options_count: u32,
-    /// Short human-readable description of the event (max 256 bytes).
-    pub description: String,
-    /// URL pointing to extended metadata, e.g. an IPFS link (max 512 bytes).
-    pub metadata_url: String,
-    /// Minimum stake amount per prediction (must be > 0).
-    pub min_stake: i128,
-    /// Maximum stake amount per prediction (0 = no limit).
-    pub max_stake: i128,
-    /// Optional initial liquidity to provide from creator (house money).
-    pub initial_liquidity: i128,
-    /// Market category for classification (e.g., Sports, Finance, Crypto).
-    pub category: Symbol,
-    /// Whether the pool is private (invite-only).
-    pub private: bool,
-    /// Optional symbol used as an invite key for private pools.
-    pub whitelist_key: Option<Symbol>,
-    /// Human-readable labels for each outcome (length must equal options_count).
-    pub outcome_descriptions: Vec<String>,
-}
-
-/// Represents a prediction pool with all its configuration and state.
-///
-/// A pool is the core data structure that represents a prediction market.
-/// It contains all information about the market, including its lifecycle,
-/// financial configuration, participant constraints, and resolution status.
-///
-/// # Invariants
-/// - `end_time` must be in the future when the pool is created (INV-8).
-/// - `state` can only transition from `Active` to either `Resolved` or `Canceled` (INV-2).
-/// - `total_stake` must always equal the sum of all individual outcome stakes (INV-1).
-/// - For resolved pools: total winnings ≤ `total_stake` (INV-5)
-#[contracttype]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Pool {
-    /// Unix timestamp at which the pool opens for predictions.
-    pub start_time: u64,
-    /// Unix timestamp after which no more predictions (stakes) are accepted.
-    /// This defines the end of the "betting window". Must be > start_time.
-    pub end_time: u64,
-    /// Current operational state of the market.
-    /// Possible values: `Active` (betting open), `Resolved` (result final), `Canceled` (refunds available).
-    pub state: MarketState,
-    /// The winning outcome index (0-based) after resolution.
-    /// Only meaningful if `state` is `Resolved`.
-    /// Uses UNRESOLVED_OUTCOME (u32::MAX) as sentinel for "not yet resolved".
-    pub outcome: u32,
-    /// The contract address of the Stellar token (e.g., USDC) used for all stakes and payouts.
-    pub token: Address,
-    /// Total amount of tokens currently staked in the pool.
-    /// Includes user stakes, initial house liquidity, and any subsequent liquidity injections.
-    pub total_stake: i128,
-    /// Market category for organizational purposes (e.g., Sports, Finance, Crypto).
-    pub category: Symbol,
-    /// A short, human-readable title or question for the prediction market (max 256 bytes).
-    pub description: String,
-    /// A URL (e.g., IPFS URI) pointing to extended metadata, rules, or rich media for the pool.
-    pub metadata_url: String,
-    /// Number of distinct outcomes participants can bet on (must be >= 2).
-    pub options_count: u32,
-    /// Minimum amount a user must stake in a single prediction (must be > 0).
-    pub min_stake: i128,
-    /// Maximum amount a user can stake in a single prediction (0 indicates no limit).
-    pub max_stake: i128,
-    /// Minimum `total_stake` required for the pool to be considered valid for resolution.
-    /// If this is not met by `end_time`, the pool may be eligible for cancellation.
-    pub min_total_stake: i128,
-    /// Hard cap on the `total_stake` the pool can accept (0 indicates no limit).
-    pub max_total_stake: i128,
-    /// Seed liquidity provided by the pool creator at initialization ("house money").
-    /// This amount is part of `total_stake` but is typically excluded from protocol fee calculations.
-    pub initial_liquidity: i128,
-    /// Address of the account that created the pool and provided initial liquidity.
-    pub creator: Address,
-    /// Number of independent oracle/operator resolutions required before the pool is finalized.
-    /// This provides a decentralized consensus mechanism for result verification.
-    pub required_resolutions: u32,
-    /// If true, only whitelisted addresses can participate in this pool.
-    pub private: bool,
-    /// A unique symbol or secret used as an invite key for accessing private pools.
-    pub whitelist_key: Option<Symbol>,
-    /// Human-readable labels for each possible outcome (e.g., ["Yes", "No"]).
-    /// The length of this vector must exactly match `options_count`.
-    pub outcome_descriptions: Vec<String>,
-    /// The specific protocol fee in basis points (1 bp = 0.01%) applied to this pool at resolution.
-    /// This value is typically determined by the dynamic fee tier system.
-    pub fee_bps: u32,
-    /// Number of unique addresses that have placed at least one prediction in this pool.
-    pub participants_count: u32,
-    /// Unix timestamp when the pool was resolved. None for pools created before this feature.
-    /// Used to enforce claim window expiration. Set when pool transitions to MarketState::Resolved.
-    pub resolution_timestamp: Option<u64>,
-}
-
-/// Configuration parameters for creating a prediction pool.
-///
-/// This struct is passed to `create_pool` to define the pool's immutable (or near-immutable)
-/// blueprint. It separates creation-time parameters from the runtime state managed in `Pool`.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PoolConfig {
-    /// Unix timestamp at which the pool opens for predictions.
-    /// Must be less than `end_time`.
-    pub start_time: u64,
-    /// A short, human-readable title or question for the prediction market (max 256 bytes).
-    pub description: String,
-    /// A URL (e.g., IPFS URI) pointing to extended metadata, rules, or rich media (max 512 bytes).
-    pub metadata_url: String,
-    /// Minimum amount a user must stake in a single prediction (must be > 0).
-    pub min_stake: i128,
-    /// Maximum amount a user can stake in a single prediction (0 indicates no limit).
-    /// If non-zero, it must be greater than or equal to `min_stake`.
-    pub max_stake: i128,
-    /// Minimum `total_stake` required for the pool to be considered valid for resolution.
-    /// This ensures the pool has meaningful participation before a result is finalized.
-    pub min_total_stake: i128,
-    /// Hard cap on the `total_stake` the pool can accept (0 indicates no limit).
-    pub max_total_stake: i128,
-    /// Seed liquidity provided by the pool creator at initialization ("house money").
-    /// This amount participates in the pool but is typically excluded from fee calculations.
-    pub initial_liquidity: i128,
-    /// Number of independent oracle/operator resolutions required before the pool is finalized.
-    /// Multi-resolution provides a safety layer against single-oracle failure or manipulation.
-    pub required_resolutions: u32,
-    /// If true, only whitelisted addresses can participate in this pool.
-    pub private: bool,
-    /// A unique symbol or secret used as an invite key for accessing private pools.
-    pub whitelist_key: Option<Symbol>,
-    /// Human-readable labels for each outcome (length must equal options_count).
-    pub outcome_descriptions: Vec<String>,
-}
-
-/// Statistics for a prediction pool.
-///
-/// Provides a snapshot of pool activity including stakes, participants, and odds.
-/// Useful for frontends and analytics.
-#[contracttype]
-#[derive(Clone, Debug, PartialEq)]
-pub struct PoolStats {
-    /// Unique identifier of the pool.
-    pub pool_id: u64,
-    /// Total amount of tokens staked across all outcomes.
-    pub total_stake: i128,
-    /// Vector of stake amounts for each outcome (indexed by outcome number).
-    pub stakes_per_outcome: Vec<i128>,
-    /// Number of unique participants in this pool.
-    pub participants_count: u32,
-    /// Current odds for each outcome in fixed-point format with 4 decimals.
-    /// For example, 10000 represents 1.00x, 5000 represents 0.50x, 20000 represents 2.00x.
-    pub current_odds: Vec<u64>,
-}
-
-/// Global protocol configuration.
-///
-/// Contains system-wide settings that control protocol behavior.
-/// These settings can be updated by admin with appropriate governance.
-///
-/// # Invariants
-/// - `fee_bps` must be <= 10,000 (100%) (INV-6)
-/// - `max_predictions_per_user` must be >= 0 (0 = no limit)
-/// - `referral_bps` must be <= 10,000 (100%)
-#[contracttype]
-#[derive(Clone)]
-pub struct Config {
-    /// Protocol fee in basis points (1 bp = 0.01%). Valid range: 0-10,000.
-    /// A value of 5000 represents 50% fee on winnings.
-    pub fee_bps: u32,
-    /// Address that receives protocol fees.
-    pub treasury: Address,
-    /// Address of the access control contract for role-based permissions.
-    pub access_control: Address,
-    /// Minimum delay in seconds after pool end time before resolution is allowed.
-    /// This provides a grace period for oracle data to settle.
-    pub resolution_delay: u64,
-    /// Minimum pool duration in seconds.
-    pub min_pool_duration: u64,
-    /// Global minimum stake amount. Predictions below this are rejected.
-    pub min_stake: i128,
-    /// Maximum number of predictions a user can place per pool.
-    /// A value of 0 means no limit.
-    pub max_predictions_per_user: u32,
-    /// Minimum cooldown in seconds between consecutive predictions from the same address.
-    pub prediction_cooldown_seconds: u64,
-    /// Referral reward rate in basis points (1 bp = 0.01%). Valid range: 0-10,000.
-    /// Represents the share of the protocol fee paid to referrers.
-    /// Default: 500 (5%). Can be raised to 1000 (10%) for referral seasons.
-    pub referral_bps: u32,
-    /// Claim window duration in seconds after pool resolution.
-    /// Users must claim winnings within this time period after resolution.
-    /// Default: 2,592,000 seconds (30 days). Range: 86,400-31,536,000 (1-365 days).
-    pub claim_window_seconds: u64,
-}
-
-/// Fee percentages returned by [`PredifiContract::get_fees`].
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeInfo {
-    /// Protocol (treasury) fee in basis points (1 bp = 0.01%). Range: 0-10,000.
-    pub treasury_fee_bps: u32,
-    /// Referral cut in basis points — the share of the protocol fee paid to referrers.
-    /// Range: 0-10,000. Default: 5,000 (50%).
-    pub referral_fee_bps: u32,
-}
-
-/// Snapshot of a pending protocol fee change awaiting timelock expiry.
-///
-/// Created when an admin calls [`PredifiContract::set_fee_bps`] and persisted in
-/// instance storage until [`PredifiContract::apply_fee_bps`] commits the change
-/// or [`PredifiContract::cancel_fee_proposal`] discards it.
-///
-/// Only one proposal may exist at a time; a second `set_fee_bps` call while this
-/// record is present returns [`PredifiError::FeeChangePending`].
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PendingFeeChange {
-    /// The proposed new protocol fee in basis points (1 bp = 0.01%).
-    pub new_fee_bps: u32,
-    /// Unix timestamp (seconds) at or after which `apply_fee_bps` may execute.
-    pub effective_at: u64,
-    /// The admin address that submitted this proposal.
-    pub proposed_by: Address,
-}
-
-/// Aggregated contract metadata for frontend consumption.
-///
-/// This read model allows clients to fetch protocol configuration and core stats
-/// in one call instead of performing multiple separate getters.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractInfo {
-    /// Contract version tracked in instance storage.
-    pub version: u32,
-    /// Admin address from the access-control contract.
-    pub current_admin: Address,
-    /// Whether the contract is currently paused.
-    pub is_paused: bool,
-    /// Total number of pools created so far.
-    pub total_pools: u64,
-    /// Protocol fee in basis points (1 bp = 0.01%).
-    pub fee_bps: u32,
-    /// Referral fee cut in basis points.
-    pub referral_cut_bps: u32,
-    /// Treasury address that receives protocol fees.
-    pub treasury: Address,
-    /// Access-control contract address.
-    pub access_control: Address,
-    /// Global resolution delay in seconds.
-    pub resolution_delay: u64,
-    /// Minimum pool duration in seconds.
-    pub min_pool_duration: u64,
-    /// Global minimum stake.
-    pub min_stake: i128,
-    /// Maximum predictions allowed per user per pool.
-    pub max_predictions_per_user: u32,
-    /// Minimum cooldown in seconds between consecutive predictions from the same address.
-    pub prediction_cooldown_seconds: u64,
-}
-
-/// Represents a fee tier within the protocol's dynamic fee system.
-///
-/// Fee tiers allow the protocol to adjust fees based on the pool's total volume (stake).
-/// Tiers are applied based on the total stake (volume) of the pool at resolution time.
-/// Higher volumes typically result in lower fee percentages to encourage participation.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeTier {
-    /// The `total_stake` threshold at or above which this tier's `fee_bps` becomes applicable.
-    pub stake_threshold: i128,
-    /// The protocol fee in basis points (1 bp = 0.01%) for this tier.
-    /// Must be between 0 and 10,000 (inclusive).
-    pub fee_bps: u32,
-}
-
-/// Detailed information about a user's prediction in a specific pool.
-///
-/// This struct is a convenient "read-only" view that combines user-specific prediction
-/// data with current pool state. It is primarily used for frontend displays and
-/// calculating potential or final winnings.
-#[contracttype]
-#[derive(Clone)]
-pub struct UserPredictionDetail {
-    /// Unique identifier (ID) of the prediction pool.
-    pub pool_id: u64,
-    /// Total amount of tokens the user has staked on their chosen outcome.
-    pub amount: i128,
-    /// The outcome index (0-based) that the user predicted would win.
-    pub user_outcome: u32,
-    /// Unix timestamp when the pool's betting window ends.
-    pub pool_end_time: u64,
-    /// Current operational state of the pool (Active, Resolved, or Canceled).
-    pub pool_state: MarketState,
-    /// The winning outcome index (0-based) if the pool is `Resolved`.
-    /// Set to `UNRESOLVED_OUTCOME` (`u32::MAX`) when the pool has not yet been resolved.
-    /// Callers must check `pool_state == MarketState::Resolved` (or compare against
-    /// `UNRESOLVED_OUTCOME`) before interpreting this value; outcome index `0` is a
-    /// valid winning outcome and must not be confused with the unresolved sentinel.
-    pub pool_outcome: u32,
+    /// Issue #1933: pool's `participants_count` is below the configured
+    /// `get_creator_min_participants()` threshold, so the creator incentive
+    /// cannot be claimed yet.
+    MinParticipantsNotMet = 210,
+    /// Issue #1933: `claim_creator_incentive` has already been paid out for
+    /// this pool — it can only be claimed once per pool.
+    CreatorIncentiveAlreadyPaid = 211,
 }
 
 /// Internal storage keys for contract data.
@@ -746,289 +504,28 @@ pub enum DataKey {
     /// Sentinel that records a pool has been marked ready for resolution.
     /// `PoolReady(pool_id)` -> `bool`.
     PoolReady(u64),
-}
 
-/// Represents a user's individual stake in a prediction market.
-///
-/// This is the core structure for tracking participation. It is stored as part of the
-/// ledger state for each user-pool pair, mapping a specific outcome to a staked amount.
-#[contracttype]
-#[derive(Clone)]
-pub struct Prediction {
-    /// Total amount of tokens staked by the user on this outcome.
-    pub amount: i128,
-    /// The chosen outcome index (0-based). This corresponds to the index in `Pool.outcome_descriptions`.
-    pub outcome: u32,
+    // ── Issue #1933: Pool creator incentive system ──────────────────────────
+    /// Creator incentive rate in basis points (share of a pool's protocol fee
+    /// paid to its creator once the participation threshold is met):
+    /// `CreatorIncentiveBps` -> `u32`. Default 0 (disabled) when unset.
+    CreatorIncentiveBps,
+    /// Minimum `Pool.participants_count` required before a pool's creator is
+    /// eligible to claim the incentive: `CreatorMinParticipants` -> `u32`.
+    /// Falls back to `DEFAULT_CREATOR_MIN_PARTICIPANTS` when unset.
+    CreatorMinParticipants,
+    /// Idempotency sentinel — set once `claim_creator_incentive` has paid out
+    /// for a given pool: `CreatorIncentivePaid(pool_id)` -> `bool`.
+    CreatorIncentivePaid(u64),
+    /// Reputation counter: number of pools for which a creator has
+    /// successfully claimed the incentive: `CreatorRewardedPools(creator)` -> `u32`.
+    CreatorRewardedPools(Address),
+    /// Reputation counter: cumulative incentive amount a creator has earned
+    /// across all pools: `CreatorTotalIncentive(creator)` -> `i128`.
+    CreatorTotalIncentive(Address),
 }
 
 // ── Events ───────────────────────────────────────────────────────────────────
-
-#[contractevent(topics = ["init"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InitEvent {
-    pub access_control: Address,
-    pub treasury: Address,
-    pub fee_bps: u32,
-    pub resolution_delay: u64,
-    pub min_pool_duration: u64,
-    pub max_predictions_per_user: u32,
-}
-
-#[contractevent(topics = ["pause"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PauseEvent {
-    pub admin: Address,
-}
-
-#[contractevent(topics = ["unpause"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnpauseEvent {
-    pub admin: Address,
-}
-
-#[contractevent(topics = ["fee_update"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeUpdateEvent {
-    pub admin: Address,
-    pub fee_bps: u32,
-}
-
-/// Emitted when an admin queues a fee change proposal via `set_fee_bps`.
-/// The change does not take effect until `apply_fee_bps` is called at or after
-/// `effective_at`.
-#[contractevent(topics = ["fee_change_proposed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeChangeProposeEvent {
-    /// Admin that submitted the proposal.
-    pub admin: Address,
-    /// The proposed new fee in basis points.
-    pub new_fee_bps: u32,
-    /// Unix timestamp at or after which the change may be applied.
-    pub effective_at: u64,
-}
-
-/// Emitted when an admin cancels a pending fee change proposal via
-/// `cancel_fee_proposal` before it has been applied.
-#[contractevent(topics = ["fee_change_canceled"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeChangeCancelEvent {
-    /// Admin that cancelled the proposal.
-    pub admin: Address,
-}
-
-#[contractevent(topics = ["max_predictions_update"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MaxPredictionsUpdateEvent {
-    pub admin: Address,
-    pub limit: u32,
-}
-
-#[contractevent(topics = ["prediction_cooldown_update"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PredictionCooldownUpdateEvent {
-    pub admin: Address,
-    pub cooldown_seconds: u64,
-}
-
-#[contractevent(topics = ["fee_tiers_update"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FeeTiersUpdateEvent {
-    pub admin: Address,
-    pub tiers_count: u32,
-}
-
-#[contractevent(topics = ["treasury_update"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TreasuryUpdateEvent {
-    pub admin: Address,
-    pub treasury: Address,
-}
-
-#[contractevent(topics = ["resolution_delay_update"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolutionDelayUpdateEvent {
-    pub admin: Address,
-    pub delay: u64,
-}
-#[contractevent(topics = ["min_pool_duration_update"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MinPoolDurationUpdateEvent {
-    pub admin: Address,
-    pub duration: u64,
-}
-
-#[contractevent(topics = ["min_stake_update"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MinStakeUpdateEvent {
-    pub admin: Address,
-    pub min_stake: i128,
-}
-
-#[contractevent(topics = ["pool_ready"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PoolReadyForResolutionEvent {
-    pub pool_id: u64,
-    pub timestamp: u64,
-}
-
-/// Emitted exactly once per pool when its staking window closes, i.e. the
-/// first time `close_staking` is successfully called after `pool.end_time`
-/// has elapsed.
-///
-/// Off-chain subscribers (event indexers, front-ends, keepers) should watch
-/// the `"staking_closed"` topic on this contract to react to the transition —
-/// for example to hide a "Place Prediction" button or to queue a resolution
-/// workflow.  The event is guaranteed to fire **at most once** per pool; the
-/// `StakingClosed(pool_id)` storage sentinel prevents duplicate emission even
-/// if multiple callers race to trigger the transition.
-#[contractevent(topics = ["staking_closed"])]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StakingClosedEvent {
-    /// The pool whose staking window has just closed.
-    pub pool_id: u64,
-    /// The pool's configured `end_time` — the boundary at which staking closed.
-    pub end_time: u64,
-    /// Total stake locked in the pool at the moment staking was closed.
-    pub total_stake: i128,
-    /// Ledger timestamp when this event was emitted.
-    pub timestamp: u64,
-}
-
-#[contractevent(topics = ["pool_created"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PoolCreatedEvent {
-    pub pool_id: u64,
-    pub creator: Address,
-    pub end_time: u64,
-    pub token: Address,
-    pub options_count: u32,
-    pub metadata_url: String,
-    pub initial_liquidity: i128,
-    pub category: Symbol,
-    pub required_resolutions: u32,
-    pub max_total_stake: i128,
-    pub outcome_descriptions: Vec<String>,
-}
-
-#[contractevent(topics = ["initial_liquidity_provided"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InitialLiquidityProvidedEvent {
-    pub pool_id: u64,
-    pub creator: Address,
-    pub amount: i128,
-}
-
-#[contractevent(topics = ["pool_resolved"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PoolResolvedEvent {
-    pub pool_id: u64,
-    pub operator: Address,
-    pub outcome: u32,
-}
-
-#[contractevent(topics = ["oracle_resolved"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OracleResolvedEvent {
-    pub pool_id: u64,
-    pub oracle: Address,
-    pub outcome: u32,
-    pub proof: String,
-}
-
-#[contractevent(topics = ["pool_canceled"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PoolCanceledEvent {
-    pub pool_id: u64,
-    pub caller: Address,
-    pub reason: String,
-    pub operator: Address,
-}
-
-#[contractevent(topics = ["pool_disputed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PoolDisputedEvent {
-    pub pool_id: u64,
-    pub moderator: Address,
-    pub reason: String,
-}
-
-#[contractevent(topics = ["stake_limits_updated"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StakeLimitsUpdatedEvent {
-    pub pool_id: u64,
-    pub operator: Address,
-    pub min_stake: i128,
-    pub max_stake: i128,
-}
-
-#[contractevent(topics = ["pool_description_updated"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PoolDescriptionUpdatedEvent {
-    pub pool_id: u64,
-    pub caller: Address,
-    pub new_description: String,
-}
-
-#[contractevent(topics = ["prediction_placed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PredictionPlacedEvent {
-    pub pool_id: u64,
-    pub user: Address,
-    pub amount: i128,
-    pub outcome: u32,
-}
-
-#[contractevent(topics = ["winnings_claimed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WinningsClaimedEvent {
-    pub pool_id: u64,
-    pub user: Address,
-    pub amount: i128,
-}
-
-#[contractevent(topics = ["reward_claimed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RewardClaimedEvent {
-    pub pool_id: u64,
-    pub user: Address,
-    pub amount: i128,
-    pub claim_type: String,
-}
-
-#[contractevent(topics = ["referral_paid"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReferralPaidEvent {
-    pub pool_id: u64,
-    pub referrer: Address,
-    pub referred_user: Address,
-    pub amount: i128,
-}
 
 // ── Monitoring & Alert Events ─────────────────────────────────────────────────
 // These events are classified by severity and are intended for consumption by
@@ -1125,315 +622,13 @@ pub struct PoolResolvedDiagEvent {
     pub timestamp: u64,
 }
 
-/// 🟢 INFO — emitted when all outcome stakes are updated in a single operation.
-/// Useful for markets with many outcomes (e.g., 32+ teams tournament) where
-/// emitting individual events per outcome would be impractical.
-#[contractevent(topics = ["outcome_stakes_updated"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OutcomeStakesUpdatedEvent {
-    pub pool_id: u64,
-    /// Number of outcomes in this pool.
-    pub options_count: u32,
-    /// Total stake across all outcomes after the update.
-    pub total_stake: i128,
-}
-
-#[contractevent(topics = ["token_whitelist_added"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TokenWhitelistAddedEvent {
-    pub admin: Address,
-    pub token: Address,
-}
-
-#[contractevent(topics = ["token_whitelist_removed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TokenWhitelistRemovedEvent {
-    pub admin: Address,
-    pub token: Address,
-}
-
-/// Emitted when a `place_prediction` call is rejected because the pool's token
-/// has been removed from the whitelist since the pool was created.
-/// Useful for off-chain monitors to detect affected pools and alert users.
-#[contractevent(topics = ["prediction_blocked_delisted"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PredictionBlockedDelistedEvent {
-    pub pool_id: u64,
-    pub user: Address,
-    pub token: Address,
-    pub timestamp: u64,
-}
-
-#[contractevent(topics = ["oracle_whitelist_added"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OracleWhitelistAddedEvent {
-    pub admin: Address,
-    pub oracle: Address,
-}
-
-#[contractevent(topics = ["oracle_whitelist_removed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OracleWhitelistRemovedEvent {
-    pub admin: Address,
-    pub oracle: Address,
-}
-
-#[contractevent(topics = ["added_to_whitelist"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AddedToWhitelistEvent {
-    pub pool_id: u64,
-    pub user: Address,
-    pub added_by: Address,
-    pub timestamp: u64,
-}
-
-#[contractevent(topics = ["removed_from_whitelist"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RemovedFromWhitelistEvent {
-    pub pool_id: u64,
-    pub user: Address,
-    pub removed_by: Address,
-    pub timestamp: u64,
-}
-
-#[contractevent(topics = ["treasury_withdrawn"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TreasuryWithdrawnEvent {
-    pub admin: Address,
-    pub token: Address,
-    pub amount: i128,
-    pub recipient: Address,
-    pub remaining_balance: i128,
-    pub timestamp: u64,
-}
-#[contractevent(topics = ["emergency_withdraw"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EmergencyWithdrawEvent {
-    pub admin: Address,
-    pub token: Address,
-    pub destination: Address,
-    pub amount: i128,
-}
-#[contractevent(topics = ["refund_claimed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RefundClaimedEvent {
-    pub pool_id: u64,
-    pub user: Address,
-    pub amount: i128,
-}
-
-#[contractevent(topics = ["upgrade"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UpgradeEvent {
-    pub admin: Address,
-    pub new_wasm_hash: BytesN<32>,
-}
-
-#[contractevent(topics = ["contract_upgraded"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractUpgradedEvent {
-    pub old_version: u32,
-    pub new_version: u32,
-    pub upgraded_by: Address,
-}
-
-#[contractevent(topics = ["oracle_init"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OracleInitEvent {
-    pub admin: Address,
-    pub pyth_contract: Address,
-    pub max_price_age: u64,
-    pub min_confidence_ratio: u32,
-}
-
-#[contractevent(topics = ["price_feed_updated"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PriceFeedUpdatedEvent {
-    pub oracle: Address,
-    pub feed_pair: Symbol,
-    pub price: i128,
-    pub confidence: i128,
-    pub timestamp: u64,
-    pub expires_at: u64,
-}
-
-#[contractevent(topics = ["price_condition_set"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PriceConditionSetEvent {
-    pub pool_id: u64,
-    pub feed_pair: Symbol,
-    pub target_price: i128,
-    pub operator: u32,
-    pub tolerance_bps: u32,
-}
-
-#[contractevent(topics = ["price_resolved"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PriceResolvedEvent {
-    pub pool_id: u64,
-    pub feed_pair: Symbol,
-    pub current_price: i128,
-    pub target_price: i128,
-    pub outcome: u32,
-}
-
-/// Emitted when expired price feeds are pruned from storage.
-///
-/// `feeds_removed` is the count of `DataKey::PriceFeed` entries deleted.
-/// `timestamp` is the ledger time at which the cleanup ran.
-#[contractevent(topics = ["price_feeds_cleaned"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PriceFeedsCleanedEvent {
-    pub feeds_removed: u32,
-    pub timestamp: u64,
-}
-
-#[contractevent(topics = ["resolution_conflict"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolutionConflictEvent {
-    pub pool_id: u64,
-    pub oracle: Address,
-    pub outcome: u32,
-    pub existing_outcome: u32,
-}
-
-#[contractevent(topics = ["resolution_vote_cast"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ResolutionVoteCastEvent {
-    pub pool_id: u64,
-    pub voter: Address,
-    pub outcome: u32,
-    pub vote_count: u32,
-    pub required_resolutions: u32,
-}
 mod events;
 use events::ClaimWindowUpdateEvent;
 // pub use events::*; // Unused import
 
 // ── Issue #1142: Event emission consistency ───────────────────────────────────
 
-/// Emitted when `update_referrer` successfully changes or removes a referrer
-/// for a (user, pool) pair. Allows off-chain indexers to keep referrer maps
-/// in sync without having to re-scan the full ledger state.
-#[contractevent(topics = ["referrer_updated"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReferrerUpdatedEvent {
-    /// The user whose referrer mapping changed.
-    pub user: Address,
-    /// The pool for which the referrer was updated.
-    pub pool_id: u64,
-    /// New referrer address, or `None` if the referrer was removed.
-    pub new_referrer: Option<Address>,
-}
-
-/// Emitted when `increase_max_total_stake` successfully raises the stake cap
-/// for a pool. Useful for frontends that display the current pool capacity.
-#[contractevent(topics = ["max_stake_increased"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MaxTotalStakeIncreasedEvent {
-    /// The pool whose cap was increased.
-    pub pool_id: u64,
-    /// The creator/caller that raised the cap.
-    pub creator: Address,
-    /// The new `max_total_stake` value (0 = unlimited).
-    pub new_max_total_stake: i128,
-}
-
-/// Emitted when `set_referral_volume_threshold` changes the minimum referred
-/// volume required for a referrer to qualify for a reward.
-#[contractevent(topics = ["referral_threshold_updated"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReferralThresholdUpdatedEvent {
-    /// The admin that updated the threshold.
-    pub admin: Address,
-    /// The new minimum referred volume (in base token units).
-    pub min_volume: i128,
-}
-
-/// Emitted when `renew_storage_ttl` is called to bump TTLs for pool storage
-/// entries, keeping them alive for another full BUMP_AMOUNT period.
-#[contractevent(topics = ["storage_ttl_renewed"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StorageTtlRenewedEvent {
-    /// The pool whose storage TTLs were renewed.
-    pub pool_id: u64,
-    /// Ledger timestamp when the renewal was triggered.
-    pub timestamp: u64,
-}
-
 // ── Issue #1137: Contract metadata struct ────────────────────────────────────
-
-/// Extended contract metadata for frontend/tooling consumption.
-///
-/// Combines all protocol configuration, version information, and operational
-/// parameters into a single queryable structure via `get_contract_metadata()`.
-/// Unlike `ContractInfo`, this also exposes oracle configuration, fee tiers
-/// count, active pool count, and the referral volume threshold.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ContractMetadata {
-    /// Contract version stored in instance storage.
-    pub version: u32,
-    /// Human-readable semantic version string (e.g. `"0_0_0"`).
-    pub version_string: Symbol,
-    /// Admin address resolved from the access-control contract.
-    pub current_admin: Address,
-    /// Whether the contract is currently paused.
-    pub is_paused: bool,
-    /// Total number of pools ever created (monotonically increasing counter).
-    pub total_pools: u64,
-    /// Number of currently active (unresolved, uncanceled) pools.
-    pub active_pools_count: u32,
-    /// Protocol fee in basis points (1 bp = 0.01%).
-    pub fee_bps: u32,
-    /// Referral fee cut in basis points (share of protocol fee paid to referrer).
-    pub referral_cut_bps: u32,
-    /// Minimum referred volume (base token units) a referrer must accumulate
-    /// in a pool before receiving a referral reward. 0 = no minimum.
-    pub referral_min_volume: i128,
-    /// Treasury address that receives protocol fees.
-    pub treasury: Address,
-    /// Access-control contract address.
-    pub access_control: Address,
-    /// Global resolution delay in seconds.
-    pub resolution_delay: u64,
-    /// Minimum pool duration in seconds.
-    pub min_pool_duration: u64,
-    /// Global minimum stake amount (base token units).
-    pub min_stake: i128,
-    /// Maximum predictions allowed per user per pool (0 = no limit).
-    pub max_predictions_per_user: u32,
-    /// Cooldown in seconds between consecutive predictions from the same address.
-    pub prediction_cooldown_seconds: u64,
-    /// Number of dynamic fee tiers currently configured.
-    pub fee_tiers_count: u32,
-    /// Whether oracle/price-feed resolution has been initialized.
-    pub oracle_initialized: bool,
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1719,7 +914,9 @@ impl PredifiContract {
         }
 
         let mut stakes = Self::get_outcome_stakes(env, pool_id, options_count);
-        gas_opt::apply_stake_delta(&mut stakes, outcome, amount);
+        if gas_opt::apply_stake_delta(&mut stakes, outcome, amount).is_err() {
+            soroban_sdk::panic_with_error!(&env, PredifiError::ArithmeticError);
+        }
 
         // Single batch persist — no dual-write of individual OutStake keys
         let key = DataKey::OutStakes(pool_id);
@@ -2136,6 +1333,8 @@ impl PredifiContract {
 
 #[cfg(test)]
 mod issues_1446_1447_1448_1449_boundary_tests;
+#[cfg(test)]
+mod referral_integration_tests;
 #[cfg(test)]
 mod test;
 

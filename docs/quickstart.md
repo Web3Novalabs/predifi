@@ -41,7 +41,7 @@ const contract = new Contract(contractId);
 ```
 
 :::info
-**Contract Addresses**: Contract addresses differ between testnet and mainnet. Check the [deployment guide](./deployment.md) for current addresses.
+**Contract Addresses**: Contract addresses differ between testnet and mainnet. Check the [deployment guide](./SMART_CONTRACT_DEPLOYMENT_GUIDE.md) for current addresses.
 :::
 
 ## Step 3: Find an Active Pool

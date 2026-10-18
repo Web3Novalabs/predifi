@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button, Checkbox } from "@/components/ui";
 import {
   getPersistedValue,
@@ -53,24 +53,20 @@ function isNotificationPrefs(value: unknown): value is NotificationPrefs {
 }
 
 export function NotificationPreferences() {
-  const [prefs, setPrefs] = useState<NotificationPrefs>(DEFAULT_PREFS);
-  const [saved, setSaved] = useState(false);
-  const [saveError, setSaveError] = useState(false);
-
-  useEffect(() => {
+  const [prefs, setPrefs] = useState<NotificationPrefs>(() => {
+    if (typeof window === "undefined") return DEFAULT_PREFS;
     const storedPrefs = getPersistedValue(STORAGE_KEY);
-    if (!storedPrefs) return;
-
+    if (!storedPrefs) return DEFAULT_PREFS;
     try {
       const parsed: unknown = JSON.parse(storedPrefs);
-      // Browser persistence is an external source that is only available after
-      // hydration, so synchronizing it into component state requires an effect.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (isNotificationPrefs(parsed)) setPrefs(parsed);
+      if (isNotificationPrefs(parsed)) return parsed;
     } catch {
       // Ignore malformed browser data and keep the safe defaults.
     }
-  }, []);
+    return DEFAULT_PREFS;
+  });
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState(false);
 
   function handleToggle(key: keyof NotificationPrefs, checked: boolean) {
     setPrefs((prev) => ({ ...prev, [key]: checked }));

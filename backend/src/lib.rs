@@ -5,10 +5,13 @@
 //! handlers live here so both binaries (and the test suite) share a single
 //! source of truth.
 
+pub mod cache_warmer;
 pub mod config;
 pub mod constants;
 pub mod db;
+pub mod email;
 pub mod errors;
+pub mod health;
 pub mod jwt;
 pub mod jwt_security;
 pub mod metrics;
@@ -46,12 +49,8 @@ use axum::Router;
 use http::HeaderValue;
 use serde_json::json;
 use std::sync::Arc;
-use std::time::Duration as TokioDuration;
-use tokio::time::sleep;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::info;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::EnvFilter;
 
 /// Build the CORS middleware layer from the validated origin list in `config`.
 pub fn build_cors(config: &Config) -> CorsLayer {
@@ -77,130 +76,11 @@ pub fn build_cors(config: &Config) -> CorsLayer {
         ])
 }
 
-/// Check database health with a simple query.
-async fn check_db_health(db: &Option<sqlx::PgPool>) -> (String, String) {
-    if let Some(pool) = db {
-        match sqlx::query("SELECT 1").execute(pool).await {
-            Ok(_) => ("ok".to_string(), String::new()),
-            Err(e) => ("unreachable".to_string(), e.to_string()),
-        }
-    } else {
-        ("not_configured".to_string(), String::new())
-    }
-}
-
-/// Check RPC health with retry logic and exponential backoff.
-async fn check_rpc_health(rpc_url: &str, timeout_secs: u64, retry_count: u8) -> (String, String) {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-
-    let max_attempts = retry_count as usize;
-    let mut last_error = String::new();
-
-    for attempt in 0..max_attempts {
-        let rpc_req = client
-            .post(rpc_url)
-            .json(&serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getHealth"
-            }))
-            .send()
-            .await;
-
-        match rpc_req {
-            Ok(res) if res.status().is_success() => {
-                return ("ok".to_string(), String::new());
-            }
-            Ok(res) => {
-                last_error = format!("HTTP {} response", res.status());
-            }
-            Err(e) => {
-                last_error = e.to_string();
-            }
-        }
-
-        if attempt < max_attempts - 1 {
-            let backoff = std::cmp::min(2u64.pow(attempt as u32), 5);
-            sleep(TokioDuration::from_secs(backoff)).await;
-        }
-    }
-
-    ("unreachable".to_string(), last_error)
-}
-
-/// Health-check handler.
+/// Health-check handler (see [`health`]).
 async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Response {
-    use axum::http::StatusCode;
-
-    let mut all_healthy = true;
-    let (db_status, db_error) = check_db_health(&state.db).await;
-    if db_status == "unreachable" {
-        all_healthy = false;
-    }
-
-    let (rpc_status, _rpc_error) = check_rpc_health(
-        &state.config.stellar_rpc_url,
-        state.config.rpc_health_timeout_secs,
-        state.config.rpc_health_retry_count,
-    )
-    .await;
-    if rpc_status == "unreachable" {
-        all_healthy = false;
-    }
-
-    async fn check_redis_health(redis: &redis_cache::RedisCache) -> (String, String) {
-        if !redis.is_available() {
-            return ("not_configured".to_string(), String::new());
-        }
-        if !redis.ping().await {
-            return ("unreachable".to_string(), "Redis ping failed".to_string());
-        }
-        ("ok".to_string(), String::new())
-    }
-
-    fn check_price_cache_health(cache: &price_cache::PriceCache) -> (String, String) {
-        if cache.snapshot().is_empty() {
-            return ("not_ready".to_string(), "price cache is empty".to_string());
-        }
-        ("ok".to_string(), String::new())
-    }
-
-    let (redis_status, redis_error) = check_redis_health(&state.redis).await;
-    if redis_status == "unreachable" || redis_status == "not_configured" {
-        all_healthy = false;
-    }
-
-    let (price_cache_status, _price_cache_error) = check_price_cache_health(&state.cache);
-    if price_cache_status == "not_ready" {
-        all_healthy = false;
-    }
-
-    let body = json!({
-        "status": if all_healthy { "ok" } else { "error" },
-        "service": "predifi-backend",
-        "version": env!("CARGO_PKG_VERSION"),
-        "dependencies": {
-            "db": db_status,
-            "rpc": rpc_status,
-            "redis": redis_status,
-            "price_cache": price_cache_status
-        },
-        "errors": {
-            "db": if db_status == "unreachable" { Some(db_error.clone()) } else { None },
-            "rpc": if rpc_status == "unreachable" { Some("rpc unreachable".to_string()) } else { None },
-            "redis": if redis_status == "unreachable" { Some(redis_error.clone()) } else { None },
-            "price_cache": if price_cache_status == "not_ready" { Some("price cache is empty".to_string()) } else { None }
-        }
-    });
-
-    if all_healthy {
-        (StatusCode::OK, Json(body)).into_response()
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
-    }
+    health::check_all(&state.config, state.db.as_ref(), &state.redis, &state.cache)
+        .await
+        .into_response_with_version(env!("CARGO_PKG_VERSION"))
 }
 
 /// Root handler — returns a welcome message.
@@ -242,7 +122,9 @@ pub fn build_router(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
-        pool_cache: crate::pool_cache::PoolCache::new(),
+        pool_cache: crate::pool_cache::PoolCache::with_negative_ttl(
+            std::time::Duration::from_secs(config.pool_negative_cache_ttl_secs),
+        ),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
@@ -267,7 +149,10 @@ pub fn build_router(
         )
         .merge(openapi::swagger_router())
         .layer(build_cors(&config))
-        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
+        .layer(
+            LoggingLayer::with_metrics(prometheus_metrics.clone())
+                .with_jwt(&config.secret_key, config.jwt_key_version),
+        )
 }
 
 /// Build the Axum router with a live database pool.
@@ -286,7 +171,9 @@ pub fn build_router_with_db(
     let state = routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
-        pool_cache: crate::pool_cache::PoolCache::new(),
+        pool_cache: crate::pool_cache::PoolCache::with_negative_ttl(
+            std::time::Duration::from_secs(config.pool_negative_cache_ttl_secs),
+        ),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),
@@ -311,7 +198,10 @@ pub fn build_router_with_db(
         )
         .merge(openapi::swagger_router())
         .layer(build_cors(&config))
-        .layer(LoggingLayer::with_metrics(prometheus_metrics.clone()))
+        .layer(
+            LoggingLayer::with_metrics(prometheus_metrics.clone())
+                .with_jwt(&config.secret_key, config.jwt_key_version),
+        )
 }
 
 /// Initialise tracing, build the server, and run it to completion.
@@ -328,17 +218,16 @@ pub async fn run_server(config: Config) {
     let otel_tracer = telemetry::init_telemetry_from_env();
     let log_level = config.log_level.clone();
 
+    // JSON by default; PREDIFI_LOG_FORMAT=pretty for local development.
+    let use_json = telemetry::LogFormat::from_env() == telemetry::LogFormat::Json;
+
     if let Some(tracer) = otel_tracer {
-        // Full OTel stack: EnvFilter + OTel layer + fmt layer.
-        telemetry::init_tracing_subscriber(tracer, &log_level, true);
+        // Full OTel stack: reloadable EnvFilter + OTel layer + fmt layer.
+        telemetry::init_tracing_subscriber(tracer, &log_level, use_json);
     } else {
-        // No OTel — plain fmt subscriber.
-        let filter = EnvFilter::new(&log_level);
-        let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
-        tracing_subscriber::registry()
-            .with(filter)
-            .with(fmt_layer.json())
-            .init();
+        // No OTel — reloadable plain subscriber so the admin endpoint can
+        // still change the log level without a restart.
+        telemetry::init_plain_subscriber(&log_level, use_json);
     }
 
     info!("starting predifi-backend server");

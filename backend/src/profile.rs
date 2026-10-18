@@ -12,14 +12,21 @@ use sqlx::{FromRow, PgPool};
 /// Aggregate prediction stats for a user across every pool they've staked in.
 #[derive(Debug, Clone, Serialize)]
 pub struct ProfileStats {
+    /// Total number of predictions placed by the user.
     pub total_predictions: i64,
+    /// Number of settled predictions won by the user.
     pub wins: i64,
+    /// Number of settled predictions lost by the user.
     pub losses: i64,
+    /// Number of predictions that have not settled yet.
     pub pending: i64,
     /// Win rate as a percentage of *settled* predictions (0.0 when none are settled yet).
     pub win_rate: f64,
+    /// Total amount staked across all predictions.
     pub total_staked: i64,
+    /// Total amount paid out for claimed winning predictions.
     pub total_earnings: i64,
+    /// Number of distinct pools with an active position.
     pub active_positions: i64,
 }
 
@@ -83,17 +90,29 @@ pub async fn get_profile_stats(pool: &PgPool, address: &str) -> Result<ProfileSt
 /// Per-prediction claim status, joined with the owning pool's resolution/claim-window state.
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct ClaimStatusRow {
+    /// Database identifier of the prediction.
     pub prediction_id: i64,
+    /// Identifier of the pool containing the prediction.
     pub pool_id: i64,
+    /// Display name of the pool.
     pub pool_name: String,
+    /// Selected outcome index.
     pub outcome: i32,
+    /// Amount staked on the prediction.
     pub amount: i64,
+    /// Current lifecycle state of the pool.
     pub pool_state: String,
+    /// Resolved pool result, when available.
     pub pool_result: Option<String>,
+    /// Whether the prediction won, or `None` before resolution.
     pub is_winner: Option<bool>,
+    /// Whether the prediction has been claimed.
     pub claimed: bool,
+    /// Amount paid for the claim.
     pub claimed_amount: i64,
+    /// End of the pool's claim window, when resolved.
     pub claim_window_expires_at: Option<DateTime<Utc>>,
+    /// Whether the claim window has expired.
     pub claim_expired: bool,
 }
 
@@ -139,9 +158,13 @@ pub async fn get_user_claim_status(
 /// One day's worth of activity, used to render cumulative performance charts.
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct PerformancePoint {
+    /// Start of the UTC day represented by this point.
     pub day: DateTime<Utc>,
+    /// Amount staked during the day.
     pub staked: i64,
+    /// Amount earned during the day.
     pub earnings: i64,
+    /// Number of predictions placed during the day.
     pub predictions: i64,
 }
 
@@ -173,9 +196,13 @@ pub async fn get_performance_over_time(
 /// daily activity series used to draw performance charts.
 #[derive(Debug, Serialize)]
 pub struct UserProfile {
+    /// Stellar address whose profile was requested.
     pub address: String,
+    /// Aggregate prediction statistics.
     pub stats: ProfileStats,
+    /// Per-prediction claim status records.
     pub claims: Vec<ClaimStatusRow>,
+    /// Daily activity points ordered oldest first.
     pub performance: Vec<PerformancePoint>,
 }
 

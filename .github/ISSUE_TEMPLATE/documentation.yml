@@ -1,0 +1,32 @@
+name: Documentation
+description: Report a problem or suggestion for documentation
+title: "[DOCS]: "
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: Thank you for helping improve PrediFi documentation!
+  - type: input
+    id: page_or_file
+    attributes:
+      label: Which page or file?
+      description: The documentation page URL or filepath in the repo.
+      placeholder: e.g. docs/API_REFERENCE.md or CONTRIBUTING.md
+    validations:
+      required: true
+  - type: textarea
+    id: what_is_wrong_or_missing
+    attributes:
+      label: What is wrong or missing?
+      description: Describe what needs improvement or clarification.
+      placeholder: Explain what is inaccurate, outdated, or missing...
+    validations:
+      required: true
+  - type: textarea
+    id: suggested_fix
+    attributes:
+      label: Suggested Fix
+      description: How should this be fixed or updated? (Optional)
+      placeholder: Provide suggestions, draft content, or corrections...
+    validations:
+      required: false

@@ -52,6 +52,9 @@ pub struct PoolWithOddsDoc {
     #[serde(flatten)]
     pub pool: PoolDoc,
     pub odds: Vec<OutcomeOddsDoc>,
+    /// Human-readable label for each outcome index (#1932), e.g.
+    /// `["Yes", "No"]` or `["Team A", "Team B", "Draw"]`.
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// OpenAPI schema for the paginated pool list response.
@@ -232,6 +235,8 @@ pub struct DependencyStatus {
     pub rpc: String,
     pub redis: String,
     pub price_cache: String,
+    /// `ok`, `low`, `critical`, or `unknown`.
+    pub disk: String,
 }
 
 /// OpenAPI schema for the per-dependency error details block inside a health response.
@@ -241,14 +246,49 @@ pub struct HealthErrors {
     pub rpc: Option<String>,
     pub redis: Option<String>,
     pub price_cache: Option<String>,
+    pub disk: Option<String>,
+}
+
+/// OpenAPI schema for one component in a health response (#1946).
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ComponentHealthDoc {
+    /// `healthy`, `degraded`, or `unhealthy`.
+    pub status: String,
+    /// Whether this component failing makes the whole service unusable.
+    pub critical: bool,
+    /// Probe latency in milliseconds, when the component was probed.
+    pub latency_ms: Option<u64>,
+    /// Why the component is not healthy (or why it was not probed).
+    pub message: Option<String>,
+    /// Component-specific details (pool usage, ledger, free space, ...).
+    #[schema(value_type = Option<Object>)]
+    pub details: Option<serde_json::Value>,
+}
+
+/// OpenAPI schema for the per-component block inside a health response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct HealthComponents {
+    pub database: ComponentHealthDoc,
+    pub redis: ComponentHealthDoc,
+    pub stellar_rpc: ComponentHealthDoc,
+    pub disk: ComponentHealthDoc,
+    pub price_cache: ComponentHealthDoc,
 }
 
 /// OpenAPI schema for the full health check response body.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct HealthResponse {
+    /// Legacy summary: `ok`, `degraded`, or `error`.
     pub status: String,
+    /// Worst component status: `healthy`, `degraded`, or `unhealthy`.
+    pub health: String,
     pub service: String,
     pub version: String,
+    /// RFC 3339 timestamp of the check.
+    pub checked_at: String,
+    /// Total time spent running the checks.
+    pub duration_ms: u64,
+    pub components: HealthComponents,
     pub dependencies: DependencyStatus,
     pub errors: HealthErrors,
 }
@@ -302,6 +342,10 @@ pub struct PoolCreatedPayloadDoc {
     pub token: String,
     pub category: String,
     pub description: String,
+    /// Number of distinct outcome options (#1932). Defaults to `2` when omitted.
+    pub options_count: u32,
+    /// Human-readable label for each outcome index (#1932).
+    pub outcome_descriptions: Vec<String>,
 }
 
 /// OpenAPI schema for the `prediction_placed` event ingestion request body.
@@ -370,6 +414,8 @@ pub struct IndexerOkResponse {
         ReferralEarningsResponse,
         DependencyStatus,
         HealthErrors,
+        ComponentHealthDoc,
+        HealthComponents,
         HealthResponse,
         ErrorResponse,
         ErrorDetailDoc,
@@ -404,8 +450,8 @@ pub struct ApiDoc;
 #[allow(dead_code)]
 #[utoipa::path(get, path = "/health", tag = "health",
     responses(
-        (status = 200, description = "All dependencies healthy", body = HealthResponse),
-        (status = 503, description = "One or more dependencies unreachable", body = HealthResponse),
+        (status = 200, description = "All components healthy, or some degraded but serving", body = HealthResponse),
+        (status = 503, description = "At least one component unhealthy", body = HealthResponse),
     )
 )]
 async fn api_health() {}

@@ -1023,6 +1023,64 @@ async fn test_odds_calculation() {
     assert!((odds_with_zero[1].odds - 1.0).abs() < 0.001); // 1.0 / (100000/100000) = 1.0
 }
 
+/// Build a syntactically- and checksum-valid Stellar `G…` test address, so
+/// tests can exercise routes that use `Path<StellarAddress>` as their
+/// extractor without the request being rejected before it reaches the
+/// handler (see `crate::validated_types::StellarAddress`).
+fn test_stellar_address() -> String {
+    use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+    let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+    bytes.extend(std::iter::repeat(0xAB_u8).take(32));
+    let checksum = crc16_xmodem(&bytes);
+    bytes.extend_from_slice(&checksum.to_le_bytes());
+    base32_encode(&bytes)
+}
+
+/// `GET /api/v1/creators/:address/stats` without a DB pool must return 503
+/// with the standard error envelope — not silently 200 with an `"error"`
+/// field in the body, and not a generic panic/500 (#1736).
+#[tokio::test]
+async fn api_v1_creator_stats_returns_503_without_db() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get(&format!(
+        "/api/v1/creators/{}/stats",
+        test_stellar_address()
+    )))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"error\""),
+        "body should use the standard error envelope, got: {body}"
+    );
+}
+
+/// `GET /api/v1/creators/:address/stats` with a malformed address must be
+/// rejected at the extractor with 400, before the handler (and thus the
+/// database) is ever reached.
+#[tokio::test]
+async fn api_v1_creator_stats_rejects_invalid_address() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/creators/not-a-real-address/stats"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
 /// Test pool details endpoint returns error when database is not available.
 #[tokio::test]
 async fn api_v1_pool_details_returns_error_without_db() {

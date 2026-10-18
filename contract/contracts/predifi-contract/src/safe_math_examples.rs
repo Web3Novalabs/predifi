@@ -161,6 +161,47 @@ fn example_rounding_modes() {
     assert!(neutral_payout <= user_payout);
 }
 
+/// Example: Rounding mode comparison for percentage calculations (#1657)
+///
+/// Demonstrates how the three rounding modes perform on SafeMath::percentage:
+/// - ProtocolFavor: always floors (rounds down) to keep fractional dust in protocol reserves
+/// - Neutral: rounds half-up (rounds down when remainder < 50%, rounds up when remainder >= 50%)
+/// - UserFavor: always ceils (rounds up) whenever a fractional remainder exists
+#[test]
+fn example_percentage_rounding_modes_distinct() {
+    let amount = 1000;
+
+    // Case A: Remainder is less than half (3.33% = 333 bps)
+    // 1000 * 333 / 10000 = 33 remainder 3000 (< 5000 half)
+    let bps_below_half = 333;
+    let pf_below = SafeMath::percentage(amount, bps_below_half, RoundingMode::ProtocolFavor).unwrap();
+    let neutral_below = SafeMath::percentage(amount, bps_below_half, RoundingMode::Neutral).unwrap();
+    let uf_below = SafeMath::percentage(amount, bps_below_half, RoundingMode::UserFavor).unwrap();
+
+    assert_eq!(pf_below, 33);     // floors
+    assert_eq!(neutral_below, 33); // half-up (rem 3000 < 5000 -> floors)
+    assert_eq!(uf_below, 34);      // ceils (rem 3000 > 0 -> ceils)
+    assert_eq!(pf_below, neutral_below);
+    assert!(neutral_below < uf_below);
+
+    // Case B: Remainder is at least half (3.75% = 375 bps)
+    // 1000 * 375 / 10000 = 37 remainder 5000 (>= 5000 half)
+    let bps_above_half = 375;
+    let pf_above = SafeMath::percentage(amount, bps_above_half, RoundingMode::ProtocolFavor).unwrap();
+    let neutral_above = SafeMath::percentage(amount, bps_above_half, RoundingMode::Neutral).unwrap();
+    let uf_above = SafeMath::percentage(amount, bps_above_half, RoundingMode::UserFavor).unwrap();
+
+    assert_eq!(pf_above, 37);      // floors
+    assert_eq!(neutral_above, 38); // half-up (rem 5000 >= 5000 -> ceils)
+    assert_eq!(uf_above, 38);      // ceils (rem 5000 > 0 -> ceils)
+    assert!(pf_above < neutral_above);
+    assert_eq!(neutral_above, uf_above);
+
+    // Verify ordering invariants: ProtocolFavor <= Neutral <= UserFavor
+    assert!(pf_below <= neutral_below && neutral_below <= uf_below);
+    assert!(pf_above <= neutral_above && neutral_above <= uf_above);
+}
+
 /// Example: Safe arithmetic operations
 #[test]
 fn example_safe_arithmetic() {

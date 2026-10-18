@@ -40,11 +40,19 @@ consumers.
 To export the spec separately:
 
 ```bash
-cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --out openapi.json
+cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --out backend/openapi.json
 ```
 
-The generator also accepts `SPEC=./openapi.json` to reuse an exported spec, and
+The generator also accepts `SPEC=./openapi.json` to reuse an exported spec and
 `OUT=./types/backend.d.ts` to select a different output path.
+
+To verify that the committed `openapi.json` is up to date:
+
+```bash
+cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --check backend/openapi.json
+```
+
+This verification is run automatically in CI on pull requests and pushes affecting `backend/**`.
 
 ## CI and contract updates
 
@@ -53,10 +61,20 @@ Frontend CI installs Rust and Node dependencies, generates API types, and runs
 OpenAPI schema change that breaks the pool client therefore fails frontend
 typechecking.
 
+Use generated types directly in client code:
+
+```ts
+import type { components } from "@/types/api";
+
+type Pool = components["schemas"]["PoolDoc"];
+type PoolList = components["schemas"]["PoolListResponse"];
+```
+
 When changing an endpoint:
 
 1. Update its `#[utoipa::path(...)]` documentation and registered schemas in
    `backend/src/openapi.rs`.
 2. Update or add runtime schema coverage in `backend/src/openapi_tests.rs`.
-3. Run the OpenAPI tests and `cd frontend && pnpm generate:api && pnpm typecheck`.
-4. Commit the regenerated `frontend/types/api.d.ts` with the contract changes.
+3. Run the OpenAPI tests, then `cd frontend && pnpm generate:api && pnpm typecheck`.
+4. Regenerate and commit `backend/openapi.json` and the generated frontend types
+   with the contract changes.

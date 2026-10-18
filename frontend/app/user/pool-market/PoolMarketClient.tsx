@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle, SearchBar, Skeleton } from "@/components/ui";
+import { Card, CardContent, SearchBar, Skeleton } from "@/components/ui";
 import { SearchResultHighlighter } from "@/components/search/SearchResultHighlighter";
 import { OddsCalculator } from "@/components/ui/odds-calculator";
 import { usePools } from "@/lib/hooks/usePools";

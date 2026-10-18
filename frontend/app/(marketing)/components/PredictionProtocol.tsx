@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useRef, useCallback, memo, useMemo } from "react";
+import Image from "next/image";
 
 // ---------------------------------------------------------------------------
 // Data (module-level constant — never recreated)
@@ -219,12 +220,21 @@ function PredictionProtocol() {
           onTouchEnd={handleTouchEnd}
         >
           <div className="relative w-full max-w-[320px] sm:max-w-[400px] md:max-w-none">
-            <img
+            {/*
+              next/image (#1939): serves this through Next's /_next/image
+              pipeline instead of an unmanaged <img>, so non-visible steps
+              are fetched lazily as the user switches tabs rather than all
+              three being eligible to preload at once. `priority` on the
+              first step avoids an LCP regression for the hero image that's
+              visible without any interaction.
+            */}
+            <Image
               key={activeTab} // key forces re-mount for the fade-in animation
               src={steps[activeTab].image}
               alt={steps[activeTab].title}
               width={400}
               height={700}
+              priority={activeTab === 0}
               className="animate-fade-in w-full h-auto md:h-[700px] object-contain drop-shadow-2xl"
               draggable={false}
             />

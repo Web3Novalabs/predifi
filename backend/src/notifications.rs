@@ -28,6 +28,8 @@ pub enum NotifType {
     PoolResolved,
     ClaimExpiring,
     NewPoolMatch,
+    /// A recurring pool template (#1935) is due to be instantiated again.
+    TemplateDue,
 }
 
 impl NotifType {
@@ -37,6 +39,7 @@ impl NotifType {
             NotifType::PoolResolved => "pool_resolved",
             NotifType::ClaimExpiring => "claim_expiring",
             NotifType::NewPoolMatch => "new_pool_match",
+            NotifType::TemplateDue => "template_due",
         }
     }
 }
@@ -76,6 +79,39 @@ async fn create_notification(
     .bind(title)
     .bind(message)
     .bind(pool_id)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+/// Insert a "recurring pool template is due" notification for `creator`
+/// (#1935).
+///
+/// Unlike [`create_notification`], this has no real `pool_id` yet — the
+/// on-chain pool hasn't been created, since the backend has no custodial
+/// signing key and can't submit that transaction on the creator's behalf
+/// (see `worker::template_scheduler`). The `(user_address, pool_id,
+/// notif_type)` dedupe index only applies `WHERE pool_id IS NOT NULL` (see
+/// migration 010), so this is instead kept idempotent by the caller
+/// advancing the template's `next_run_at` right after a successful insert —
+/// the same due cycle won't be found again until the next recurrence.
+pub async fn create_template_due_notification(
+    pool: &PgPool,
+    creator: &str,
+    title: &str,
+    message: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+        VALUES ($1, $2, $3, $4, NULL)
+        "#,
+    )
+    .bind(creator)
+    .bind(NotifType::TemplateDue.as_str())
+    .bind(title)
+    .bind(message)
     .execute(pool)
     .await?;
 
@@ -386,6 +422,74 @@ pub async fn run_sweep_loop(pool: PgPool, interval: std::time::Duration) {
             warn!(error = %error, "notification sweep failed");
         }
     }
+}
+
+/// Run [`run_notification_sweep`] on a fixed interval and, when an SMTP host
+/// is configured, also deliver undelivered notifications via email.
+///
+/// This variant is used by the server when email credentials are available.
+pub async fn run_sweep_loop_with_email(
+    pool: PgPool,
+    interval: std::time::Duration,
+    smtp_config: crate::email::SmtpConfig,
+) {
+    let mut ticker = tokio::time::interval(interval);
+    loop {
+        ticker.tick().await;
+        if let Err(error) = run_notification_sweep(&pool).await {
+            warn!(error = %error, "notification sweep failed");
+            continue;
+        }
+        if let Err(error) = crate::email::deliver_pending_emails(&pool, &smtp_config).await {
+            warn!(error = %error, "email delivery sweep failed");
+        }
+    }
+}
+
+// ── User email registration endpoints ────────────────────────────────────────
+
+/// User email registration / update request body.
+#[derive(Debug, Deserialize)]
+pub struct RegisterEmailRequest {
+    pub email: String,
+    pub email_enabled: Option<bool>,
+}
+
+/// Upsert a user's email address and opt-in preference.
+pub async fn upsert_user_email(
+    pool: &PgPool,
+    address: &str,
+    email: &str,
+    email_enabled: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        INSERT INTO user_emails (user_address, email, email_enabled, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (user_address)
+        DO UPDATE SET email = $2, email_enabled = $3, updated_at = NOW()
+        "#,
+    )
+    .bind(address)
+    .bind(email)
+    .bind(email_enabled)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Get the email and opt-in state for a user address.
+pub async fn get_user_email(
+    pool: &PgPool,
+    address: &str,
+) -> Result<Option<(String, bool)>, sqlx::Error> {
+    let row: Option<(String, bool)> = sqlx::query_as(
+        "SELECT email, email_enabled FROM user_emails WHERE user_address = $1",
+    )
+    .bind(address)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
 }
 
 #[cfg(test)]

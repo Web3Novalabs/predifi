@@ -9,7 +9,10 @@
     "lint": "next lint",
     "test": "jest",
     "typecheck": "tsc --noEmit",
-    "generate:api": "node ./scripts/generate-api-types.mjs"
+    "generate:api": "node ./scripts/generate-api-types.mjs",
+    "test:coverage": "jest --coverage",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.0.4",
@@ -35,6 +38,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.19",
+    "critters": "^0.0.25",
     "eslint": "^9.39.2",
     "eslint-config-next": "15.1.9",
     "jest": "^29.7.0",
@@ -43,6 +47,7 @@
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "ts-jest": "^29.2.5",
-    "typescript": "^5"
+    "typescript": "^5",
+    "prettier": "^3.5.3"
   }
 }

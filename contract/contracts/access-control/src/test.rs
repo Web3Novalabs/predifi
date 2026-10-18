@@ -973,3 +973,106 @@ fn test_removed_admin_cannot_assign_roles() {
         "An address whose Admin role was revoked must not be able to assign roles"
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Revocation edge cases (issue #1759)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Revoking a role that was never granted is rejected and leaves state untouched.
+#[test]
+fn test_revoke_ungranted_role_is_rejected_without_side_effects() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.init(&admin);
+    client.assign_role(&admin, &user, &Role::Oracle);
+
+    // `user` holds Oracle only; revoking Operator must fail and not touch Oracle
+    // or the operator count.
+    let result = client.try_revoke_role(&admin, &user, &Role::Operator);
+    assert_eq!(result, Err(Ok(PrediFiError::InsufficientPermissions)));
+    assert!(client.has_role(&user, &Role::Oracle));
+    assert_eq!(client.get_operator_count(), 0);
+}
+
+/// Revoking the final admin's Admin role is explicitly rejected with `AdminError`,
+/// so the contract can never be locked out of administration.
+#[test]
+fn test_revoke_final_admin_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.init(&admin);
+
+    let result = client.try_revoke_role(&admin, &admin, &Role::Admin);
+    assert_eq!(result, Err(Ok(PrediFiError::AdminError)));
+    let result = client.try_revoke_all_roles(&admin, &admin);
+    assert_eq!(result, Err(Ok(PrediFiError::AdminError)));
+
+    // Admin authority is fully intact and can still manage roles.
+    assert!(client.has_role(&admin, &Role::Admin));
+    assert!(client.is_admin(&admin));
+    let user = Address::generate(&env);
+    client.assign_role(&admin, &user, &Role::Operator);
+    assert!(client.has_role(&user, &Role::Operator));
+}
+
+/// After handing admin over, the former admin's Admin role is no longer "final"
+/// and the new admin can be protected in the same way.
+#[test]
+fn test_revoke_admin_role_allowed_after_admin_transfer() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.init(&admin);
+    client.propose_new_admin(&admin, &new_admin);
+    client.accept_admin_role(&new_admin);
+
+    // New admin is now the final admin and is protected.
+    assert_eq!(
+        client.try_revoke_role(&new_admin, &new_admin, &Role::Admin),
+        Err(Ok(PrediFiError::AdminError))
+    );
+    // The former admin (no longer current admin) can be stripped of leftovers.
+    client.revoke_all_roles(&new_admin, &admin);
+    assert!(!client.has_role(&admin, &Role::Admin));
+}
+
+/// An account revoking its own role: a non-admin cannot (only the admin revokes),
+/// and the admin may revoke its own non-Admin roles but never its Admin role.
+#[test]
+fn test_self_revocation_behaviour() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.init(&admin);
+    client.assign_role(&admin, &user, &Role::Operator);
+    client.assign_role(&admin, &admin, &Role::Operator);
+
+    // Non-admin cannot renounce its own role.
+    let result = client.try_revoke_role(&user, &user, &Role::Operator);
+    assert_eq!(result, Err(Ok(PrediFiError::Unauthorized)));
+    assert!(client.has_role(&user, &Role::Operator));
+
+    // Admin can revoke its own non-Admin role; operator count is decremented.
+    assert_eq!(client.get_operator_count(), 2);
+    client.revoke_role(&admin, &admin, &Role::Operator);
+    assert!(!client.has_role(&admin, &Role::Operator));
+    assert_eq!(client.get_operator_count(), 1);
+    assert!(client.has_role(&admin, &Role::Admin));
+}

@@ -1,7 +1,7 @@
 //! Referral system end-to-end integration tests (Issue #1334).
 //!
 //! Covers: referrer registration via place_prediction, volume tracking,
-//! referral cut calculation, and self-referral rejection.
+//! referral cut calculation, self-referral rejection, and two-account cycles.
 
 #![cfg(test)]
 
@@ -153,6 +153,61 @@ fn test_update_referrer_self_referral_rejected() {
     let pool_id = make_pool(&env, &client, &creator, &token_address, 5_000);
 
     client.update_referrer(&user, &pool_id, &Some(user.clone()));
+}
+
+/// A user must not be able to refer themselves when placing a prediction.
+/// Self-referral is rejected with Unauthorized (error #10) because the
+/// referrer cannot be the same as the user placing the prediction.
+#[test]
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_place_prediction_self_referral_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_ac_client, client, token_address, _token, token_admin_client, _treasury, _operator, creator) =
+        crate::test::setup(&env);
+
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &100);
+
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 5_000);
+
+    // Self-referral must be rejected: referrer cannot be the user themselves.
+    client.place_prediction(&user, &pool_id, &100, &0, &Some(user.clone()), &None);
+}
+
+/// Two-account referral cycle: A refers B and B refers A.
+/// Both referrals are valid because neither user is referring themselves.
+/// The contract only rejects self-referral (referrer == user) and
+/// contract-as-referrer; it does not detect or block mutual cycles.
+#[test]
+fn test_two_account_referral_cycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (_ac_client, client, token_address, _token, token_admin_client, _treasury, _operator, creator) =
+        crate::test::setup(&env);
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+
+    token_admin_client.mint(&user_a, &300);
+    token_admin_client.mint(&user_b, &200);
+
+    let pool_id = make_pool(&env, &client, &creator, &token_address, 5_000);
+
+    // A refers B — valid: referrer (A) != user (B).
+    client.place_prediction(&user_b, &pool_id, &200, &0, &Some(user_a.clone()), &None);
+    assert_eq!(client.get_referred_volume(&user_a, &pool_id), 200);
+
+    // B refers A — valid: referrer (B) != user (A).
+    // The contract does not detect or reject two-account referral cycles.
+    client.place_prediction(&user_a, &pool_id, &300, &0, &Some(user_b.clone()), &None);
+    assert_eq!(client.get_referred_volume(&user_b, &pool_id), 300);
 }
 
 /// Referred volume is scoped per-pool; different pools have independent counts.
