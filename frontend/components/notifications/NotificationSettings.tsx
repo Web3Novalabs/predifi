@@ -27,6 +27,7 @@ import {
   type UserEmailPrefs,
 } from "@/lib/api/notifications";
 import { Skeleton } from "@/components/ui";
+import { invalidateCache } from "@/lib/cache";
 
 const CATEGORY_INTERESTS = [
   "Crypto",
@@ -39,13 +40,18 @@ const CATEGORY_INTERESTS = [
   "Gaming",
 ];
 
+/** Stable empty list — avoids a new array identity on every render while loading. */
+const EMPTY_INTERESTS: string[] = [];
+
 export function NotificationSettings() {
   const address = useWalletAddress();
 
   // ── Email prefs ────────────────────────────────────────────────────────
   const emailKey = address ? userEmailUrl(address) : null;
-  const { data: emailPrefs, isLoading: emailLoading, mutate: mutateEmail } =
-    useSWR<UserEmailPrefs | null>(emailKey, fetchUserEmail);
+  const { data: emailPrefs, isLoading: emailLoading } = useSWR<UserEmailPrefs | null>(
+    emailKey,
+    fetchUserEmail,
+  );
 
   const [emailInput, setEmailInput] = useState("");
   const [emailEnabled, setEmailEnabled] = useState(true);
@@ -68,7 +74,7 @@ export function NotificationSettings() {
     setEmailSaved(false);
     try {
       await upsertUserEmail(address, emailInput.trim(), emailEnabled);
-      await mutateEmail();
+      await invalidateCache("user");
       setEmailSaved(true);
       setTimeout(() => setEmailSaved(false), 3000);
     } catch (e) {
@@ -76,11 +82,11 @@ export function NotificationSettings() {
     } finally {
       setEmailSaving(false);
     }
-  }, [address, emailInput, emailEnabled, mutateEmail]);
+  }, [address, emailInput, emailEnabled]);
 
   // ── Interests ──────────────────────────────────────────────────────────
   const interestsKey = address ? interestsUrl(address) : null;
-  const { data: savedInterests = [], isLoading: interestsLoading, mutate: mutateInterests } =
+  const { data: savedInterests = EMPTY_INTERESTS, isLoading: interestsLoading } =
     useSWR<string[]>(interestsKey, fetchInterests);
 
   const [interests, setLocalInterests] = useState<string[]>([]);
@@ -105,7 +111,7 @@ export function NotificationSettings() {
     setInterestsSaved(false);
     try {
       await setInterests(address, interests);
-      await mutateInterests();
+      await invalidateCache("user");
       setInterestsSaved(true);
       setTimeout(() => setInterestsSaved(false), 3000);
     } catch (e) {
@@ -113,7 +119,7 @@ export function NotificationSettings() {
     } finally {
       setInterestsSaving(false);
     }
-  }, [address, interests, mutateInterests]);
+  }, [address, interests]);
 
   if (!address) {
     return (
