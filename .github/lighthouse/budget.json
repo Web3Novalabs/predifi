@@ -1,0 +1,18 @@
+[
+  {
+    "path": "/*",
+    "timings": [
+      { "metric": "first-contentful-paint",  "budget": 2000 },
+      { "metric": "largest-contentful-paint", "budget": 3000 },
+      { "metric": "total-blocking-time",      "budget": 300  },
+      { "metric": "cumulative-layout-shift",  "budget": 100  },
+      { "metric": "interactive",              "budget": 4000 }
+    ],
+    "scores": [
+      { "category": "performance",   "minScore": 0.7  },
+      { "category": "accessibility", "minScore": 0.9  },
+      { "category": "best-practices","minScore": 0.85 },
+      { "category": "seo",           "minScore": 0.8  }
+    ]
+  }
+]

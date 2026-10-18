@@ -49,7 +49,7 @@ resource "random_password" "grafana_admin" {
 
 locals {
   scrape_list = join(", ", [for t in var.prometheus_scrape_targets : "\"${t}:8080\""])
-  user_data = <<-EOT
+  user_data   = <<-EOT
     #!/bin/bash
     set -euo pipefail
     if ! command -v docker >/dev/null 2>&1; then

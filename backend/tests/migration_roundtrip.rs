@@ -1,12 +1,11 @@
-//! Integration tests to verify database migrations can be applied and rolled back.
+//! Integration tests for the migration safety preflight.
 //!
-//! These tests spin up a throwaway Postgres container, run the repository migrations,
-//! verify that schema objects are created, then revert the migrations and verify
-//! that schema objects are removed. They are intended as a smoke test for the
-//! SQL migration scripts in `backend/migrations`.
+//! These tests use a throwaway Postgres container to verify pending migration SQL,
+//! preview the schema changes, and confirm transaction rollback leaves no changes.
 
 #[cfg(test)]
 mod tests {
+    use predifi_backend::migration_checks::{run_rollback_test, CheckOptions, MigrationChecker};
     use sqlx::{postgres::PgPoolOptions, PgPool};
     use testcontainers::runners::AsyncRunner;
     use testcontainers_modules::postgres::Postgres;
@@ -35,16 +34,24 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "Requires Docker container for Postgres"]
-    async fn migrations_apply_and_revert() {
+    async fn migration_preflight_previews_and_rolls_back() {
         let (pool, _container) = start_postgres().await;
 
-        // Load migrations from the backend/migrations directory at runtime.
-        let migrator = sqlx::migrate::Migrator::new(std::path::Path::new("migrations"))
+        let report = MigrationChecker::new(pool.clone())
+            .run(&CheckOptions::default())
             .await
-            .expect("load migrator");
-        migrator.run(&pool).await.expect("apply migrations");
+            .expect("run migration safety check");
 
-        // Confirm a known table exists (pools)
+        let dry_run = report.dry_run.expect("dry-run result");
+        assert!(dry_run.success, "{:?}", dry_run.error);
+        assert!(dry_run.rollback_succeeded);
+        assert!(report.pending_migrations > 0);
+        assert!(report
+            .schema_diff
+            .iter()
+            .any(|entry| matches!(entry, predifi_backend::migration_checks::SchemaDiffEntry::TableAdded(name) if name == "pools")));
+
+        // Neither application objects nor SQLx bookkeeping should persist.
         let exists: (bool,) = sqlx::query_as(
             "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'pools')",
         )
@@ -52,22 +59,20 @@ mod tests {
         .await
         .expect("check pools exists");
 
-        assert!(exists.0, "expected 'pools' table to exist after migrations");
+        assert!(!exists.0, "dry-run must not leave the pools table behind");
+        let migration_table_exists: (bool,) =
+            sqlx::query_as("SELECT to_regclass('public._sqlx_migrations') IS NOT NULL")
+                .fetch_one(&pool)
+                .await
+                .expect("check SQLx migration history");
+        assert!(!migration_table_exists.0);
 
-        // Revert migrations (undo all applied migrations).
-        migrator.undo(&pool, 0).await.expect("undo migrations");
-
-        // Confirm the table no longer exists
-        let exists_after: (bool,) = sqlx::query_as(
-            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'pools')",
+        assert!(run_rollback_test(
+            &pool,
+            "CREATE TABLE rollback_probe (id BIGINT PRIMARY KEY); \
+             CREATE INDEX rollback_probe_id_idx ON rollback_probe (id);"
         )
-        .fetch_one(&pool)
         .await
-        .expect("check pools exists after revert");
-
-        assert!(
-            !exists_after.0,
-            "expected 'pools' table to be removed after revert"
-        );
+        .expect("rollback migration SQL"));
     }
 }

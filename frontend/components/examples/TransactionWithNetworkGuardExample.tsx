@@ -63,7 +63,7 @@ export function TransactionWithNetworkGuardExample() {
       const hash = await mockSendTransaction(params);
       
       setTxHash(hash);
-      setTxStatus("processing");
+      setTxStatus("pending");
       
       // Wait for confirmation
       await mockWaitForConfirmation(hash);
@@ -154,10 +154,10 @@ export function TransactionWithNetworkGuardExample() {
 
         <Button
           type="submit"
-          disabled={txStatus === "submitted" || txStatus === "processing"}
+          disabled={txStatus === "submitted" || txStatus === "pending"}
           className="w-full h-10 rounded-lg font-medium bg-[#37B7C3] hover:bg-[#37B7C3]/90 text-[#001112] disabled:opacity-50"
         >
-          {txStatus === "submitted" || txStatus === "processing" ? "Processing..." : "Send Transaction"}
+          {txStatus === "submitted" || txStatus === "pending" ? "Processing..." : "Send Transaction"}
         </Button>
       </form>
 

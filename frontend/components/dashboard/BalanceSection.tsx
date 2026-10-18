@@ -23,11 +23,19 @@ export function BalanceSection({
     onClaim,
 }: BalanceSectionProps) {
     const [pendingAction, setPendingAction] = useState<"withdraw" | "claim" | null>(null);
+    // Optimistically reflect claimed rewards immediately; revert on failure.
+    const [optimisticRewards, setOptimisticRewards] = useState<number | string | null>(null);
+    const displayRewards = optimisticRewards ?? rewards;
 
     const runAction = async (action: "withdraw" | "claim", callback?: () => Promise<void> | void) => {
+        const previousRewards = optimisticRewards;
+        if (action === "claim") setOptimisticRewards(0);
         setPendingAction(action);
         try {
             await callback?.();
+        } catch (error) {
+            if (action === "claim") setOptimisticRewards(previousRewards);
+            throw error;
         } finally {
             setPendingAction(null);
         }
@@ -62,7 +70,7 @@ export function BalanceSection({
                     <h2 className="text-5xl font-bold font-mono tracking-tighter mb-4">{formatUsd(balance)}</h2>
                     <div className="inline-flex items-center px-4 py-2 rounded-full bg-zinc-900 border border-white/5">
                         <span className="text-zinc-400 mr-2">Rewards:</span>
-                        <span className="font-bold text-white font-mono">{formatUsd(rewards)}</span>
+                        <span className="font-bold text-white font-mono">{formatUsd(displayRewards)}</span>
                     </div>
                 </div>
 

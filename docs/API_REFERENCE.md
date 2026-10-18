@@ -170,18 +170,61 @@ Authorization: Bearer <jwt_access_token>
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `address` | string | No | Filter events to only those where `user_address` matches this Stellar account. |
-| `pool_id` | integer | No | Filter events to only those matching this specific `pool_id`. |
+| `address` | string | No | Filter events to only those where `user_address` matches this Stellar account (must be the JWT subject). |
+| `pool_id` | integer | No | Subscribe to one pool (legacy; merged with `pool_ids`). |
+| `pool_ids` | string | No | Comma-separated pool IDs to subscribe to, e.g. `1042,1043`. Max 100 pools per connection. |
+| `events` | string | No | Comma-separated event types to receive, e.g. `prediction_placed,pool_resolved`. |
+| `batch_ms` | integer | No | Batching window, `1`–`1000` ms. Matching events are buffered and sent as one `batch` frame. Omit (or `0`) for one frame per event. |
+| `batch_max` | integer | No | Flush a batch once it holds this many events (default `50`, max `500`). |
+| `compress` | string | No | `deflate` — frames of 1 KiB or more are zlib-compressed and sent as **binary** frames. |
 | `token` | string | No | Bearer token (permitted only in non-production environments). |
 
-> **Tip**: If neither `address` nor `pool_id` is supplied, the client receives all protocol broadcast events across the platform (recommended for global live activity feeds and dashboards).
+> **Tip**: If neither `address` nor any pool is supplied, the client receives all protocol broadcast events across the platform (recommended for global live activity feeds and dashboards). Invalid parameters are rejected with `400` before the upgrade.
+
+### Changing Subscriptions at Runtime
+
+Send JSON control frames on the open socket; each is answered with the current subscription:
+
+```json
+{"action": "subscribe",   "pool_ids": [1044, 1045]}
+{"action": "unsubscribe", "pool_ids": [1042]}
+{"action": "list"}
+```
+
+```json
+{"type": "subscriptions", "pool_ids": [1043, 1044, 1045], "events": []}
+```
+
+An empty `pool_ids` set means "every pool". Unknown frames get `{"type":"error","message":"..."}`. Control frames count towards the per-connection message rate limit (10 per 10 s).
+
+### Batched and Compressed Delivery
+
+With `batch_ms`, events arrive wrapped in a batch envelope (the inner events are exactly the per-event payloads below):
+
+```json
+{"type": "batch", "count": 2, "events": [{"type": "prediction_placed", "...": "..."}, {"type": "prediction_placed", "...": "..."}]}
+```
+
+With `compress=deflate`, any frame of at least 1 KiB is sent as a binary zlib stream; smaller frames stay text. In browsers:
+
+```typescript
+ws.binaryType = "arraybuffer";
+ws.onmessage = async (msg) => {
+  const text = typeof msg.data === "string"
+    ? msg.data
+    : await new Response(new Blob([msg.data]).stream().pipeThrough(new DecompressionStream("deflate"))).text();
+  const frame = JSON.parse(text);
+  const events = frame.type === "batch" ? frame.events : [frame];
+  // ...
+};
+```
 
 ### Connection Limits & Safeguards
 
 - **Handshake Rate Limit**: 10 connection attempts per 60 seconds per IP address (`Token` tier).
 - **Concurrent Connections**: 10,000 maximum active clients per server instance.
-- **Message Size**: Max 1 MB (`1,048,576 bytes`).
-- **Channel Buffer**: 256 messages per connection. Slow consumers that lag behind will have old messages dropped to preserve backend stability.
+- **Message Size**: Max 1 MB (`1,048,576 bytes`) per frame; batches are flushed before exceeding it.
+- **Channel Buffer**: 4,096 events. A consumer that falls further behind receives `{"type":"lagged","missed":N}` and should resynchronise over REST.
 
 ### WebSocket Event Schemas
 

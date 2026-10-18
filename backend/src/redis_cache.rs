@@ -20,7 +20,7 @@
 use crate::metrics::SharedMetrics;
 use redis::{aio::ConnectionManager, AsyncCommands, ErrorKind};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, warn};
 
 /// Default TTL for cached pool data (60 seconds)
@@ -192,7 +192,10 @@ impl RedisCache {
         };
         let mut conn = manager.clone();
 
-        match conn.get::<_, Option<String>>(&namespaced).await {
+        let start = Instant::now();
+        let result = conn.get::<_, Option<String>>(&namespaced).await;
+        self.record_op("get", result.is_ok(), start);
+        match result {
             Ok(Some(data)) => match decode_envelope(&data) {
                 Some(value) => {
                     debug!("Cache hit: {}", key);
@@ -222,6 +225,15 @@ impl RedisCache {
         }
     }
 
+    /// Record a Redis command's latency and outcome via the attached metrics
+    /// sink, if any (`app_redis_operation_duration_seconds`).
+    fn record_op(&self, operation: &str, ok: bool, start: Instant) {
+        if let Some(metrics) = &self.metrics {
+            let result = if ok { "ok" } else { "error" };
+            metrics.record_redis_op(operation, result, start.elapsed().as_secs_f64());
+        }
+    }
+
     /// Record a cache lookup outcome via the attached metrics sink, if any.
     fn record_lookup(&self, cache_name: &str, outcome: &str) {
         if let Some(metrics) = &self.metrics {
@@ -235,7 +247,10 @@ impl RedisCache {
     /// Refuses TTL 0 (would never expire) and caps TTL at [`MAX_TTL_SECS`].
     pub async fn set<T: Serialize>(&self, key: &str, value: &T, ttl_secs: u64) {
         if ttl_secs < MIN_TTL_SECS {
-            warn!("refusing to cache {} with TTL {} (must expire)", key, ttl_secs);
+            warn!(
+                "refusing to cache {} with TTL {} (must expire)",
+                key, ttl_secs
+            );
             return;
         }
         let Some(namespaced) = namespaced_key(key) else {
@@ -255,7 +270,10 @@ impl RedisCache {
             None => return,
         };
 
-        if let Err(err) = conn.set_ex::<_, _, ()>(&namespaced, data, ttl).await {
+        let start = Instant::now();
+        let result = conn.set_ex::<_, _, ()>(&namespaced, data, ttl).await;
+        self.record_op("set", result.is_ok(), start);
+        if let Err(err) = result {
             if is_connection_error(err.kind()) {
                 warn!("Redis connection dropout on SET {}: {}", key, err);
             } else {
@@ -280,7 +298,10 @@ impl RedisCache {
 
         let mut conn = manager.clone();
 
-        if let Err(err) = conn.del::<_, ()>(&namespaced).await {
+        let start = Instant::now();
+        let result = conn.del::<_, ()>(&namespaced).await;
+        self.record_op("del", result.is_ok(), start);
+        if let Err(err) = result {
             if is_connection_error(err.kind()) {
                 warn!("Redis connection dropout on DEL {}: {}", key, err);
             } else {
@@ -307,7 +328,10 @@ impl RedisCache {
         let mut conn = manager.clone();
 
         // Get all keys matching pattern (already namespaced)
-        let keys: Vec<String> = match conn.keys(&namespaced).await {
+        let start = Instant::now();
+        let keys_result = conn.keys(&namespaced).await;
+        self.record_op("keys", keys_result.is_ok(), start);
+        let keys: Vec<String> = match keys_result {
             Ok(k) => k,
             Err(err) => {
                 if is_connection_error(err.kind()) {
@@ -332,7 +356,10 @@ impl RedisCache {
             return;
         }
 
-        if let Err(err) = conn.del::<_, ()>(&scoped).await {
+        let start = Instant::now();
+        let result = conn.del::<_, ()>(&scoped).await;
+        self.record_op("del_many", result.is_ok(), start);
+        if let Err(err) = result {
             if is_connection_error(err.kind()) {
                 warn!(
                     "Redis connection dropout on DEL pattern {}: {}",
@@ -392,7 +419,10 @@ impl RedisCache {
         };
 
         let mut conn = manager.clone();
-        match conn.exists::<_, bool>(&namespaced).await {
+        let start = Instant::now();
+        let result = conn.exists::<_, bool>(&namespaced).await;
+        self.record_op("exists", result.is_ok(), start);
+        match result {
             Ok(exists) => exists,
             Err(err) => {
                 if is_connection_error(err.kind()) {
@@ -417,7 +447,9 @@ impl RedisCache {
         };
 
         let mut conn = manager.clone();
+        let start = Instant::now();
         let r: Result<String, _> = redis::cmd("PING").query_async(&mut conn).await;
+        self.record_op("ping", r.is_ok(), start);
         r.is_ok()
     }
 }

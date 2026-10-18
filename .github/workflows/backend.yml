@@ -197,6 +197,11 @@ jobs:
       - name: Cargo check
         run: cargo check --workspace
 
+      - name: Check migration safety
+        env:
+          PREDIFI_DATABASE_URL: postgres://postgres:postgrespassword@localhost:5432/predifi_test
+        run: cargo run --bin predifi-migration-check
+
       - name: Lint with clippy
         # blocking step: clippy warnings are errors
         run: cargo clippy --all-targets -- -D warnings
@@ -243,4 +248,3 @@ jobs:
           echo "Deploying predifi-backend commit ${{ github.sha }} to staging environment..."
           # Automated deployment script / webhook invocation
           echo "Backend deployment to staging completed successfully."
-

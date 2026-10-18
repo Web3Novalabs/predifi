@@ -68,8 +68,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Apply the persisted theme before paint to avoid a flash of the
+            wrong theme (FOUC). Mirrors the logic in lib/hooks/useTheme.ts. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("predifi:theme")||"system";var m=window.matchMedia("(prefers-color-scheme: dark)").matches;var d=t==="dark"||(t==="system"&&m);var r=document.documentElement;if(d){r.classList.add("dark");r.setAttribute("data-theme","dark");}else{r.classList.remove("dark");r.setAttribute("data-theme","light");}}catch(e){}})();`,
+          }}
+        />
         {/* Preload critical hero images to improve LCP */}
         <link rel="preload" as="image" href="/swirl-pattern.webp" />
         <link rel="preload" as="image" href="/gradient.webp" />

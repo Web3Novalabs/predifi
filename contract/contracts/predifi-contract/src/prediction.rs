@@ -51,14 +51,23 @@
 //! - **Unclaimed -> Claimed**: Transitioning `DataKey::Claimed` to `true` is terminal and irreversible. Re-claiming returns `PredifiError::AlreadyClaimed`.
 
 use crate::safe_math::SafeMath;
-use soroban_sdk::{contractimpl, token, Address, Env, String, Symbol, Vec};
+use soroban_sdk::{Address, contractevent, contractimpl, contracttype, Env, String, Symbol, token, Vec};
 
 use crate::{
-    calculate_claim_payout, calculate_referral_amount, DataKey, HighValuePredictionEvent,
-    MarketState, OutcomeStakesUpdatedEvent, PayoutInput, Pool, Prediction,
-    PredictionBlockedDelistedEvent, PredictionPlacedEvent, PredifiContract, PredifiContractArgs,
-    PredifiContractClient, PredifiError, ReferralPaidEvent, RefundClaimedEvent, RewardClaimedEvent,
-    SuspiciousDoubleClaimEvent, UserPredictionDetail, WinningsClaimedEvent, HIGH_VALUE_THRESHOLD,
+    calculate_claim_payout,
+    calculate_referral_amount,
+    DataKey,
+    HighValuePredictionEvent,
+    PayoutInput,
+    Pool,
+    PredifiContract,
+    PredifiContractArgs,
+    PredifiContractClient,
+    PredifiError,
+    ReferralPaidEvent,
+    RewardClaimedEvent,
+    SuspiciousDoubleClaimEvent,
+    HIGH_VALUE_THRESHOLD,
 };
 
 #[contractimpl]
@@ -1002,3 +1011,116 @@ impl PredifiContract {
         Ok(results)
     }
 }
+
+// ── Domain types & events (moved from lib.rs, issue #1970) ─────────────────
+
+/// Represents the current state of a prediction market.
+///
+/// State transitions are one-way: `Active` can only transition to `Resolved`, `Canceled`, or `Disputed`.
+#[contracttype]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MarketState {
+    /// Market is active and accepting predictions.
+    Active = 0,
+    /// Market has been resolved and winnings can be claimed.
+    Resolved = 1,
+    /// Market has been canceled and stakes can be refunded.
+    Canceled = 2,
+    /// Market has been flagged as disputed by a moderator.
+    Disputed = 3,
+}
+
+/// Represents a user's individual stake in a prediction market.
+///
+/// This is the core structure for tracking participation. It is stored as part of the
+/// ledger state for each user-pool pair, mapping a specific outcome to a staked amount.
+#[contracttype]
+#[derive(Clone)]
+pub struct Prediction {
+    /// Total amount of tokens staked by the user on this outcome.
+    pub amount: i128,
+    /// The chosen outcome index (0-based). This corresponds to the index in `Pool.outcome_descriptions`.
+    pub outcome: u32,
+}
+
+/// Detailed information about a user's prediction in a specific pool.
+///
+/// This struct is a convenient "read-only" view that combines user-specific prediction
+/// data with current pool state. It is primarily used for frontend displays and
+/// calculating potential or final winnings.
+#[contracttype]
+#[derive(Clone)]
+pub struct UserPredictionDetail {
+    /// Unique identifier (ID) of the prediction pool.
+    pub pool_id: u64,
+    /// Total amount of tokens the user has staked on their chosen outcome.
+    pub amount: i128,
+    /// The outcome index (0-based) that the user predicted would win.
+    pub user_outcome: u32,
+    /// Unix timestamp when the pool's betting window ends.
+    pub pool_end_time: u64,
+    /// Current operational state of the pool (Active, Resolved, or Canceled).
+    pub pool_state: MarketState,
+    /// The winning outcome index (0-based) if the pool is `Resolved`.
+    /// Set to `UNRESOLVED_OUTCOME` (`u32::MAX`) when the pool has not yet been resolved.
+    /// Callers must check `pool_state == MarketState::Resolved` (or compare against
+    /// `UNRESOLVED_OUTCOME`) before interpreting this value; outcome index `0` is a
+    /// valid winning outcome and must not be confused with the unresolved sentinel.
+    pub pool_outcome: u32,
+}
+
+#[contractevent(topics = ["prediction_placed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionPlacedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub outcome: u32,
+}
+
+#[contractevent(topics = ["winnings_claimed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WinningsClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
+/// Emitted when a `place_prediction` call is rejected because the pool's token
+/// has been removed from the whitelist since the pool was created.
+/// Useful for off-chain monitors to detect affected pools and alert users.
+#[contractevent(topics = ["prediction_blocked_delisted"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PredictionBlockedDelistedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub token: Address,
+    pub timestamp: u64,
+}
+
+#[contractevent(topics = ["refund_claimed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RefundClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+}
+
+/// 🟢 INFO — emitted when all outcome stakes are updated in a single operation.
+/// Useful for markets with many outcomes (e.g., 32+ teams tournament) where
+/// emitting individual events per outcome would be impractical.
+#[contractevent(topics = ["outcome_stakes_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OutcomeStakesUpdatedEvent {
+    pub pool_id: u64,
+    /// Number of outcomes in this pool.
+    pub options_count: u32,
+    /// Total stake across all outcomes after the update.
+    pub total_stake: i128,
+}
+
