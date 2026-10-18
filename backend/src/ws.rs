@@ -4,8 +4,9 @@
 //! in the `Authorization: Bearer <token>` header. Query-parameter tokens are
 //! accepted only outside production (they leak into access logs). Subscribers
 //! receive events whose `user_address` matches the subscribed wallet.
-//! Omitting `address` delivers all events (useful for dashboards). The indexer
-//! calls [`EventBus::send`] whenever a new prediction is indexed.
+//! Unauthenticated clients may subscribe only to `prediction_placed` events for
+//! explicit pool IDs, which are public market data. The indexer calls
+//! [`EventBus::send`] whenever a new prediction is indexed.
 //!
 //! # High-throughput delivery (#1941)
 //!
@@ -398,6 +399,15 @@ fn connection_settings(
     ))
 }
 
+/// Public pool updates contain only public prediction events and are scoped to
+/// an explicit pool subscription. Wallet and unfiltered subscriptions require JWTs.
+fn is_public_pool_subscription(subscription: &Subscription) -> bool {
+    subscription.wallet.is_none()
+        && !subscription.pools.is_empty()
+        && subscription.event_types.len() == 1
+        && subscription.event_types.contains("prediction_placed")
+}
+
 /// A control frame sent by the client.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -727,30 +737,6 @@ pub async fn ws_handler(
             .into_response();
     }
 
-    let Some(token) = extract_ws_token(&headers, &params, config.is_production()) else {
-        return unauthorized_response("missing or invalid authorization token");
-    };
-
-    let claims =
-        match verify_jwt_token_strict(&token, &config.secret_key, "access", config.jwt_key_version)
-        {
-            Ok(claims) => claims,
-            Err(error) => return unauthorized_response(&error.to_string()),
-        };
-
-    // Authorize wallet subscription: user can only subscribe to their own address
-    if let Some(ref target_address) = params.address {
-        if target_address != &claims.sub {
-            return (
-                StatusCode::FORBIDDEN,
-                axum::Json(serde_json::json!({
-                    "error": "unauthorized wallet subscription",
-                })),
-            )
-                .into_response();
-        }
-    }
-
     let (subscription, options) = match connection_settings(&params) {
         Ok(settings) => settings,
         Err(message) => {
@@ -762,9 +748,40 @@ pub async fn ws_handler(
         }
     };
 
-    crate::tracing_context::record_user_address(&crate::request_logger::redact_address(
-        &claims.sub,
-    ));
+    let token = extract_ws_token(&headers, &params, config.is_production());
+    let claims = match token {
+        Some(token) => {
+            match verify_jwt_token_strict(
+                &token,
+                &config.secret_key,
+                "access",
+                config.jwt_key_version,
+            ) {
+                Ok(claims) => Some(claims),
+                Err(error) => return unauthorized_response(&error.to_string()),
+            }
+        }
+        None if is_public_pool_subscription(&subscription) => None,
+        None => return unauthorized_response("missing or invalid authorization token"),
+    };
+
+    if let Some(ref target_address) = params.address {
+        if claims.as_ref().map(|claims| &claims.sub) != Some(target_address) {
+            return (
+                StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({
+                    "error": "unauthorized wallet subscription",
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    if let Some(claims) = &claims {
+        crate::tracing_context::record_user_address(&crate::request_logger::redact_address(
+            &claims.sub,
+        ));
+    }
     let span = info_span!(
         "websocket.connect",
         correlation_id = %crate::tracing_context::current_correlation_id()
@@ -773,7 +790,7 @@ pub async fn ws_handler(
         pools = subscription.pools.len(),
         batch_ms = options.batch_window.map(|w| w.as_millis() as u64),
         compress = options.compress,
-        subject = %crate::request_logger::redact_address(&claims.sub)
+        subject = ?claims.as_ref().map(|claims| crate::request_logger::redact_address(&claims.sub))
     );
     ws.on_upgrade(move |socket| handle_socket(socket, bus, subscription, options).instrument(span))
 }
@@ -1238,6 +1255,32 @@ mod tests {
         assert!(sub.matches(&bus_event(matching)));
         assert!(!sub.matches(&bus_event(wrong_wallet)));
         assert!(!sub.matches(&bus_event(wrong_type)));
+    }
+
+    #[test]
+    fn public_subscription_is_limited_to_prediction_events_for_pools() {
+        let pool_subscription = Subscription {
+            pools: [1].into_iter().collect(),
+            event_types: ["prediction_placed".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        assert!(is_public_pool_subscription(&pool_subscription));
+
+        let wallet_subscription = Subscription {
+            wallet: Some("GABC".into()),
+            ..pool_subscription.clone()
+        };
+        let unfiltered_subscription = Subscription {
+            event_types: ["prediction_placed".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        let other_event_subscription = Subscription {
+            event_types: ["pool_resolved".to_string()].into_iter().collect(),
+            ..pool_subscription
+        };
+        assert!(!is_public_pool_subscription(&wallet_subscription));
+        assert!(!is_public_pool_subscription(&unfiltered_subscription));
+        assert!(!is_public_pool_subscription(&other_event_subscription));
     }
 
     #[test]

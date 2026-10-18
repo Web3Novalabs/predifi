@@ -22,20 +22,56 @@ export function NetworkSwitchModal({
   switchRecoveryAction,
 }: NetworkSwitchModalProps) {
   const switchBtnRef = useRef<HTMLButtonElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
-  // Trap focus on the switch button when the modal opens
-  useEffect(() => {
-    if (isOpen) switchBtnRef.current?.focus();
-  }, [isOpen]);
-
-  // Block Escape (network switch is mandatory — user must act)
   useEffect(() => {
     if (!isOpen) return;
-    const block = (e: KeyboardEvent) => {
-      if (e.key === "Escape") e.preventDefault();
+
+    const previousFocus =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    switchBtnRef.current?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        return;
+      }
+      if (event.key !== "Tab") return;
+
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      );
+      if (!focusable?.length) {
+        event.preventDefault();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (
+        event.shiftKey &&
+        (document.activeElement === first ||
+          !dialogRef.current?.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last ||
+          !dialogRef.current?.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    document.addEventListener("keydown", block);
-    return () => document.removeEventListener("keydown", block);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      previousFocus?.focus();
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -46,6 +82,7 @@ export function NetworkSwitchModal({
       aria-modal="true"
       aria-labelledby="nsm-title"
       aria-describedby="nsm-desc"
+      ref={dialogRef}
       className={cn(
         "fixed inset-0 z-50 flex items-center justify-center p-4",
         "bg-black/70 backdrop-blur-sm",

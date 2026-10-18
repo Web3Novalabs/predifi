@@ -1,5 +1,6 @@
 import React from "react";
 import { ArrowRight, Check } from "lucide-react";
+import Link from "next/link";
 
 const whyChoosePrediFi = [
   "Earn rewards for accurate predictions",
@@ -33,7 +34,10 @@ export default function BenefitsAndCTASection() {
               <div className="space-y-4">
                 {whyChoosePrediFi.map((benefit, index) => (
                   <div key={index} className="flex gap-4 items-start">
-                    <Check className="w-6 h-6 text-[#37B7C3] flex-shrink-0 mt-0.5" />
+                    <Check
+                      className="w-6 h-6 text-[#37B7C3] flex-shrink-0 mt-0.5"
+                      aria-hidden="true"
+                    />
                     <span className="text-base md:text-lg text-[#FFFFFFCC]">
                       {benefit}
                     </span>
@@ -41,10 +45,10 @@ export default function BenefitsAndCTASection() {
                 ))}
               </div>
 
-              <button className="mt-8 inline-flex items-center px-6 py-3 md:px-8 md:py-4 bg-[#37B7C3] text-black font-medium rounded-2xl hover:bg-[#2aa0ac] transition-colors">
+              <Link href="/user/pool-market" className="mt-8 inline-flex items-center px-6 py-3 md:px-8 md:py-4 bg-[#37B7C3] text-black font-medium rounded-2xl hover:bg-[#2aa0ac] transition-colors">
                 Start Predicting Today
-                <ArrowRight size={20} className="ml-2" />
-              </button>
+                <ArrowRight size={20} className="ml-2" aria-hidden="true" />
+              </Link>
             </div>
           </div>
         </div>
@@ -61,10 +65,10 @@ export default function BenefitsAndCTASection() {
               Join thousands of predictors on PrediFi and start earning rewards for your insights.
             </p>
 
-            <button className="inline-flex items-center px-8 py-4 md:px-10 md:py-5 bg-[#37B7C3] text-black font-semibold rounded-full hover:bg-[#2aa0ac] transition-colors text-lg">
+            <Link href="/user/pool-market" className="inline-flex items-center px-8 py-4 md:px-10 md:py-5 bg-[#37B7C3] text-black font-semibold rounded-full hover:bg-[#2aa0ac] transition-colors text-lg">
               Explore Pools
-              <ArrowRight size={22} className="ml-2" />
-            </button>
+              <ArrowRight size={22} className="ml-2" aria-hidden="true" />
+            </Link>
           </div>
         </div>
       </section>

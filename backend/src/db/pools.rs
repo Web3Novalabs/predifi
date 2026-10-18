@@ -58,6 +58,7 @@ pub struct PoolWithOdds {
     pub creator: String,
     pub token: String,
     pub result: Option<String>,
+    pub prediction_count: i64,
     pub odds: Vec<OutcomeOdds>,
     /// Human-readable label for each outcome index (#1932). See
     /// [`PoolDetails::outcome_descriptions`].
@@ -280,6 +281,15 @@ pub async fn get_pool_with_odds(
     };
 
     let outcome_stakes = get_pool_outcome_stakes(pool, pool_id).await?;
+    let prediction_count = crate::metrics::observe_db(
+        "get_pool_prediction_count",
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM predictions WHERE pool_id = $1",
+        )
+        .bind(pool_id)
+        .fetch_one(pool),
+    )
+    .await?;
     let calculated_total: i64 = outcome_stakes.iter().map(|(_, s)| s).sum();
     let total_stake = std::cmp::max(details.total_stake, calculated_total);
     let odds = calculate_odds(&outcome_stakes, total_stake);
@@ -295,6 +305,7 @@ pub async fn get_pool_with_odds(
         creator: details.creator,
         token: details.token,
         result: details.result,
+        prediction_count,
         odds,
         outcome_descriptions: details.outcome_descriptions,
     }))

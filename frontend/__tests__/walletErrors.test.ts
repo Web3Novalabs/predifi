@@ -110,6 +110,16 @@ describe("walletErrors", () => {
       expect(result?.code).toBe("NETWORK_MISMATCH");
     });
 
+    it("matches the Stellar Testnet network passphrase", () => {
+      expect(checkNetworkMatch("Test SDF Network ; September 2015")).toBeNull();
+    });
+
+    it("does not accept a network name that only contains the required name", () => {
+      expect(checkNetworkMatch("NotTestnet")).toMatchObject({
+        code: "NETWORK_MISMATCH",
+      });
+    });
+
     it("returns null when no wallet network has been reported yet", () => {
       expect(checkNetworkMatch(null)).toBeNull();
       expect(checkNetworkMatch(undefined)).toBeNull();

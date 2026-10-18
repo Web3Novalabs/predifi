@@ -57,7 +57,7 @@ export interface OutcomeOdds {
 export interface PoolDetail extends Pool {
   odds: OutcomeOdds[];
   outcome_descriptions?: string[];
-  /** Prediction count derived client-side from live WS updates when available. */
+  /** Total predictions in the pool. */
   prediction_count?: number;
 }
 

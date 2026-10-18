@@ -42,7 +42,10 @@ export function CountdownTimer({ endTime, className, onExpire }: CountdownTimerP
 
   if (expired) {
     return (
-      <div className={cn("text-sm font-medium text-zinc-500", className)}>
+      <div
+        role="status"
+        className={cn("text-sm font-medium text-zinc-500", className)}
+      >
         Market closed
       </div>
     );
@@ -52,12 +55,13 @@ export function CountdownTimer({ endTime, className, onExpire }: CountdownTimerP
 
   return (
     <div
+      role="timer"
       className={cn(
         "flex items-center gap-2 font-mono text-sm",
         urgent && "animate-pulse text-amber-400",
         className,
       )}
-      aria-live="polite"
+      aria-live="off"
       aria-label={`Time remaining ${remaining.days} days ${remaining.hours} hours ${remaining.minutes} minutes ${remaining.seconds} seconds`}
     >
       {remaining.days > 0 && (
