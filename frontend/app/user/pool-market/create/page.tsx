@@ -33,7 +33,11 @@ export const metadata: Metadata = {
 
 export default function CreatePoolPage() {
   return (
-    <div className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8"
+    >
       <div className="mx-auto max-w-2xl space-y-6">
         {/* Header */}
         <div className="space-y-1">
@@ -46,6 +50,6 @@ export default function CreatePoolPage() {
 
         <CreatePoolForm />
       </div>
-    </div>
+    </main>
   );
 }

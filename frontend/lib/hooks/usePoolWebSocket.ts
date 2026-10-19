@@ -52,6 +52,8 @@ export function usePoolWebSocket({
     }
 
     const params = new URLSearchParams();
+    params.set("pool_id", String(poolId));
+    params.set("events", "prediction_placed");
     if (token) params.set("token", token);
     const qs = params.toString();
     const url = `${wsBaseUrl()}/api/v1/ws${qs ? `?${qs}` : ""}`;

@@ -211,6 +211,7 @@ mod tests {
             creator: "GABC".to_string(),
             token: "XLM".to_string(),
             result: None,
+            prediction_count: 1,
             odds: vec![OutcomeOdds {
                 outcome: 1,
                 stake: 500,

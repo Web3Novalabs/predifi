@@ -64,17 +64,18 @@ export function PoolLeaderboard({ poolId }: PoolLeaderboardProps) {
         <h2 className="text-sm font-semibold text-white uppercase tracking-wide">
           Top Predictors
         </h2>
-        <div className="flex gap-2">
+        <div className="flex gap-2" role="group" aria-label="Rank predictors by">
           {RANK_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
               onClick={() => setRankBy(opt.value)}
+              aria-pressed={rankBy === opt.value}
               className={cn(
                 "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
                 rankBy === opt.value
                   ? "border-[#37B7C3] bg-[#37B7C3]/10 text-[#7DE3EC]"
-                  : "border-zinc-800 text-zinc-500 hover:text-white",
+                  : "border-zinc-800 text-zinc-400 hover:text-white",
               )}
             >
               {opt.label}
@@ -84,11 +85,13 @@ export function PoolLeaderboard({ poolId }: PoolLeaderboardProps) {
       </div>
 
       {isLoading ? (
-        <div className="py-6 text-center text-sm text-zinc-500">Loading…</div>
+        <div className="py-6 text-center text-sm text-zinc-400" role="status" aria-busy="true">
+          Loading predictors…
+        </div>
       ) : error ? (
-        <div className="py-6 text-center text-sm text-red-400">{error}</div>
+        <div className="py-6 text-center text-sm text-red-400" role="alert">{error}</div>
       ) : entries.length === 0 ? (
-        <div className="py-6 text-center text-sm text-zinc-500">
+        <div className="py-6 text-center text-sm text-zinc-400">
           No predictions yet for this pool.
         </div>
       ) : (
@@ -99,7 +102,7 @@ export function PoolLeaderboard({ poolId }: PoolLeaderboardProps) {
               className="flex items-center justify-between gap-4 py-2.5"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <span className="w-5 shrink-0 text-xs font-semibold text-zinc-500 tabular-nums">
+                <span className="w-5 shrink-0 text-xs font-semibold text-zinc-400 tabular-nums">
                   #{entry.rank}
                 </span>
                 <span className="truncate text-sm font-medium text-white">
@@ -112,7 +115,7 @@ export function PoolLeaderboard({ poolId }: PoolLeaderboardProps) {
                   {rankBy === "win_rate" && `${(entry.win_rate * 100).toFixed(0)}%`}
                   {rankBy === "streak" && `${entry.current_streak}🔥`}
                 </span>
-                <span className="text-zinc-500">
+                <span className="text-zinc-400">
                   {entry.prediction_count} predictions
                 </span>
               </div>

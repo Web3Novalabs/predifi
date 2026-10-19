@@ -68,7 +68,6 @@ function CharCount({ current, max }: { current: number; max: number }) {
         "text-xs tabular-nums",
         overLimit ? "text-destructive font-medium" : "text-zinc-600",
       )}
-      aria-live="polite"
     >
       {current}/{max}
     </span>

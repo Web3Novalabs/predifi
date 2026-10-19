@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useId, type KeyboardEvent } from "react";
 import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
@@ -95,6 +95,37 @@ export function PredictionHistoryClient() {
   const address = useCurrentUserAddress();
   const { profile, isLoading, isError, refresh } = useProfile(address);
   const [activeTab, setActiveTab] = useState<Tab>("All");
+  const id = useId();
+
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (
+      event.key !== "ArrowLeft" &&
+      event.key !== "ArrowRight" &&
+      event.key !== "Home" &&
+      event.key !== "End"
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    const tabs = Array.from(
+      event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+        '[role="tab"]',
+      ) ?? [],
+    );
+    if (tabs.length === 0) return;
+
+    const currentIndex = tabs.indexOf(event.currentTarget);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+            tabs.length;
+    tabs[nextIndex].focus();
+    tabs[nextIndex].click();
+  };
 
   const filtered = useMemo(() => {
     const claims = profile?.claims ?? [];
@@ -105,11 +136,18 @@ export function PredictionHistoryClient() {
   const stats = profile?.stats;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8 space-y-8">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8 space-y-8"
+    >
       {/* Profile header */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5">
         <div className="flex items-center gap-5">
-          <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#37B7C3]/40 to-indigo-500/40 border border-white/10 flex-shrink-0" />
+          <div
+            aria-hidden="true"
+            className="w-16 h-16 rounded-full bg-gradient-to-br from-[#37B7C3]/40 to-indigo-500/40 border border-white/10 flex-shrink-0"
+          />
           <div>
             <h1 className="text-2xl font-bold text-white">My Profile</h1>
             <p className="text-zinc-400 text-xs mt-0.5 font-mono">
@@ -166,12 +204,22 @@ export function PredictionHistoryClient() {
             <h2 className="text-base font-semibold text-white">Prediction History</h2>
 
             {/* Tabs */}
-            <div className="flex items-center gap-1 border-b border-zinc-800 overflow-x-auto">
+            <div
+              role="tablist"
+              aria-label="Filter prediction history"
+              className="flex items-center gap-1 border-b border-zinc-800 overflow-x-auto"
+            >
               {TABS.map((tab) => (
                 <button
                   key={tab}
                   type="button"
+                  id={`${id}-tab-${tab.toLowerCase()}`}
+                  role="tab"
+                  aria-selected={activeTab === tab}
+                  aria-controls={`${id}-prediction-panel`}
+                  tabIndex={activeTab === tab ? 0 : -1}
                   onClick={() => setActiveTab(tab)}
+                  onKeyDown={handleTabKeyDown}
                   className={cn(
                     "px-4 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap",
                     activeTab === tab ? "text-[#37B7C3]" : "text-zinc-500 hover:text-zinc-300",
@@ -186,8 +234,16 @@ export function PredictionHistoryClient() {
             </div>
 
             {/* Table */}
+            <div
+              id={`${id}-prediction-panel`}
+              role="tabpanel"
+              aria-labelledby={`${id}-tab-${activeTab.toLowerCase()}`}
+              tabIndex={0}
+              aria-busy={isLoading}
+            >
             {isLoading ? (
               <div className="space-y-2">
+                <p className="sr-only" role="status">Loading predictions…</p>
                 {Array.from({ length: 4 }).map((_, i) => (
                   <Skeleton key={i} className="h-14 w-full rounded-lg" />
                 ))}
@@ -195,62 +251,74 @@ export function PredictionHistoryClient() {
             ) : filtered.length === 0 ? (
               <p className="text-center py-10 text-zinc-500 text-sm">No predictions found.</p>
             ) : (
-              <div className="rounded-xl border border-zinc-800 overflow-hidden">
+              <div
+                className="rounded-xl border border-zinc-800 overflow-hidden"
+                role="table"
+                aria-label="Prediction history"
+                aria-busy={isLoading}
+              >
                 {/* Header */}
-                <div className="hidden sm:grid grid-cols-8 px-4 py-2.5 bg-zinc-900 text-[10px] text-zinc-500 uppercase tracking-wider border-b border-zinc-800">
-                  <span className="col-span-2">Pool</span>
-                  <span>Outcome</span>
-                  <span>Stake</span>
-                  <span>Status</span>
-                  <span className="col-span-2">Claim</span>
-                  <span>Share</span>
+                <div role="rowgroup">
+                  <div className="sr-only sm:not-sr-only sm:grid grid-cols-8 px-4 py-2.5 bg-zinc-900 text-[10px] text-zinc-500 uppercase tracking-wider border-b border-zinc-800" role="row">
+                    <span className="col-span-2" role="columnheader">Pool</span>
+                    <span role="columnheader">Outcome</span>
+                    <span role="columnheader">Stake</span>
+                    <span role="columnheader">Status</span>
+                    <span className="col-span-2" role="columnheader">Claim</span>
+                    <span role="columnheader">Share</span>
+                  </div>
                 </div>
                 {/* Rows */}
-                {filtered.map((claim) => {
-                  const status = predictionStatus(claim);
-                  const shareUrl = shareUrlForClaim(claim);
-                  const shareTitle = `I predicted Outcome ${claim.outcome} on "${claim.pool_name}" — predict with me on PrediFi`;
-                  return (
-                    <div
-                      key={claim.prediction_id}
-                      className="grid grid-cols-3 sm:grid-cols-8 items-center gap-2 px-4 py-3 border-b border-zinc-800/50 last:border-0 hover:bg-white/[0.02] transition-colors"
-                    >
-                      <div className="col-span-2 sm:col-span-2 min-w-0">
-                        <p className="text-sm text-white truncate">{claim.pool_name}</p>
-                      </div>
-                      <span className="text-sm text-zinc-300 hidden sm:block">
-                        Outcome {claim.outcome}
-                      </span>
-                      <span className="text-sm font-mono text-zinc-300 hidden sm:block">
-                        {formatChartValue(claim.amount)}
-                      </span>
-                      <span
-                        className={cn(
-                          "text-[10px] font-semibold px-2 py-1 rounded-full w-fit",
-                          STATUS_STYLES[status],
-                        )}
+                <div role="rowgroup">
+                  {filtered.map((claim) => {
+                    const status = predictionStatus(claim);
+                    const shareUrl = shareUrlForClaim(claim);
+                    const shareTitle = `I predicted Outcome ${claim.outcome} on "${claim.pool_name}" — predict with me on PrediFi`;
+                    return (
+                      <div
+                        key={claim.prediction_id}
+                        className="grid grid-cols-3 sm:grid-cols-8 items-center gap-2 px-4 py-3 border-b border-zinc-800/50 last:border-0 hover:bg-white/[0.02] transition-colors"
+                        role="row"
                       >
-                        {status}
-                      </span>
-                      <div className="col-span-2 hidden sm:block">
-                        <ClaimBadge claim={claim} />
+                        <div className="col-span-2 sm:col-span-2 min-w-0" role="cell">
+                          <p className="text-sm text-white truncate">{claim.pool_name}</p>
+                        </div>
+                        <span className="text-sm text-zinc-300 sr-only sm:not-sr-only sm:block" role="cell">
+                          Outcome {claim.outcome}
+                        </span>
+                        <span className="text-sm font-mono text-zinc-300 sr-only sm:not-sr-only sm:block" role="cell">
+                          {formatChartValue(claim.amount)}
+                        </span>
+                        <span
+                          role="cell"
+                          className={cn(
+                            "text-[10px] font-semibold px-2 py-1 rounded-full w-fit",
+                            STATUS_STYLES[status],
+                          )}
+                        >
+                          {status}
+                        </span>
+                        <div className="col-span-2 sr-only sm:not-sr-only sm:block" role="cell">
+                          <ClaimBadge claim={claim} />
+                        </div>
+                        <div className="flex items-center justify-end gap-1" role="cell">
+                          <CopyButton
+                            text={shareUrl}
+                            size="sm"
+                            aria-label="Copy prediction link"
+                          />
+                          <ShareButton url={shareUrl} title={shareTitle} text={claim.pool_name} />
+                        </div>
                       </div>
-                      <div className="flex items-center justify-end gap-1">
-                        <CopyButton
-                          text={shareUrl}
-                          size="sm"
-                          aria-label="Copy prediction link"
-                        />
-                        <ShareButton url={shareUrl} title={shareTitle} text={claim.pool_name} />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
             )}
+            </div>
           </div>
         </>
       )}
-    </div>
+    </main>
   );
 }

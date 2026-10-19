@@ -102,7 +102,11 @@ const PoolsList = dynamic(
 
 export default function DashboardPage() {
   return (
-    <div className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8 space-y-8">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8 space-y-8"
+    >
       {/* Header */}
       <div className="space-y-1">
         <h1 className="text-3xl font-bold text-white">My Dashboard</h1>
@@ -179,6 +183,6 @@ export default function DashboardPage() {
           </Suspense>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

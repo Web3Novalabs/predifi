@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useCallback, memo } from "react";
+import {
+  useState,
+  useCallback,
+  memo,
+  useId,
+  type KeyboardEvent,
+} from "react";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
 import { formatStake } from "@/lib/stakeFilters";
@@ -59,7 +65,7 @@ const PredictionCard = memo(function PredictionCard({
         <div className="p-4 flex items-center justify-between border-b border-white/5">
           <div>
             <h4 className="font-bold text-base">{prediction.title}</h4>
-            <p className="text-zinc-500 text-xs mt-1">
+            <p className="text-zinc-400 text-xs mt-1">
               {formatUtcDateTime(prediction.date)}
             </p>
           </div>
@@ -67,7 +73,7 @@ const PredictionCard = memo(function PredictionCard({
             <span className="text-emerald-400 text-xs font-bold">
               {prediction.status}
             </span>
-            <ChevronRight className="w-4 h-4 text-zinc-500" />
+            <ChevronRight className="w-4 h-4 text-zinc-400" aria-hidden="true" />
           </div>
         </div>
 
@@ -129,16 +135,58 @@ PredictionCard.displayName = "PredictionCard";
 
 export function PredictionList() {
   const [activeTab, setActiveTab] = useState<"active" | "past">("active");
+  const id = useId();
 
   const handleTabActive = useCallback(() => setActiveTab("active"), []);
   const handleTabPast = useCallback(() => setActiveTab("past"), []);
 
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (
+      event.key !== "ArrowLeft" &&
+      event.key !== "ArrowRight" &&
+      event.key !== "Home" &&
+      event.key !== "End"
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    const tabs = Array.from(
+      event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+        '[role="tab"]',
+      ) ?? [],
+    );
+    if (tabs.length === 0) return;
+
+    const currentIndex = tabs.indexOf(event.currentTarget);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+            tabs.length;
+    tabs[nextIndex].focus();
+    tabs[nextIndex].click();
+  };
+
   return (
     <div className="space-y-6">
       {/* Tab bar */}
-      <div className="flex items-center gap-8 border-b border-zinc-800 pb-1">
+      <div
+        role="tablist"
+        aria-label="Prediction history"
+        className="flex items-center gap-8 border-b border-zinc-800 pb-1"
+      >
         <button
+          id={`${id}-active-tab`}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "active"}
+          aria-controls={`${id}-active-panel`}
+          tabIndex={activeTab === "active" ? 0 : -1}
           onClick={handleTabActive}
+          onKeyDown={handleTabKeyDown}
           className={cn(
             "pb-3 text-sm font-medium transition-colors relative",
             activeTab === "active"
@@ -156,7 +204,14 @@ export function PredictionList() {
         </button>
 
         <button
+          id={`${id}-past-tab`}
+          type="button"
+          role="tab"
+          aria-selected={activeTab === "past"}
+          aria-controls={`${id}-past-panel`}
+          tabIndex={activeTab === "past" ? 0 : -1}
           onClick={handleTabPast}
+          onKeyDown={handleTabKeyDown}
           className={cn(
             "pb-3 text-sm font-medium transition-colors relative",
             activeTab === "past"
@@ -172,17 +227,28 @@ export function PredictionList() {
       </div>
 
       {/* Scrollable list */}
-      {activeTab === "active" ? (
-        <div className="max-h-[600px] overflow-y-auto space-y-4 pr-2">
-          {activePredictions.map((prediction) => (
-            <PredictionCard key={prediction.id} prediction={prediction} />
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-10 text-zinc-500">
-          No past predictions found
-        </div>
-      )}
+      <div
+        id={`${id}-active-panel`}
+        role="tabpanel"
+        aria-labelledby={`${id}-active-tab`}
+        tabIndex={0}
+        hidden={activeTab !== "active"}
+        className="max-h-[600px] overflow-y-auto space-y-4 pr-2"
+      >
+        {activePredictions.map((prediction) => (
+          <PredictionCard key={prediction.id} prediction={prediction} />
+        ))}
+      </div>
+      <div
+        id={`${id}-past-panel`}
+        role="tabpanel"
+        aria-labelledby={`${id}-past-tab`}
+        tabIndex={0}
+        hidden={activeTab !== "past"}
+        className="text-center py-10 text-zinc-400"
+      >
+        No past predictions found
+      </div>
     </div>
   );
 }

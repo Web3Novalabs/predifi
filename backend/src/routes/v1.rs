@@ -867,6 +867,7 @@ pub async fn ingest_prediction_placed(
 
     match crate::db::insert_prediction_from_event_with_pool(db, &event).await {
         Ok(()) => {
+            state.pool_cache.invalidate(event.pool_id as i64);
             state.event_bus.send(&json!({
                 "type": "prediction_placed",
                 "pool_id": event.pool_id,

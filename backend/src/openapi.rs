@@ -51,6 +51,7 @@ pub struct OutcomeOddsDoc {
 pub struct PoolWithOddsDoc {
     #[serde(flatten)]
     pub pool: PoolDoc,
+    pub prediction_count: i64,
     pub odds: Vec<OutcomeOddsDoc>,
     /// Human-readable label for each outcome index (#1932), e.g.
     /// `["Yes", "No"]` or `["Team A", "Team B", "Draw"]`.

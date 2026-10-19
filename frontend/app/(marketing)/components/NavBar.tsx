@@ -1,9 +1,10 @@
 "use client";
 import Link from "next/link";
 import Image from "next/image";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Menu, X } from "lucide-react";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { WalletConnectionControl } from "@/components/WalletConnectionControl";
 
 /**
  * NavBar
@@ -17,9 +18,23 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
  */
 function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setIsOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen]);
 
   return (
     <nav
+      aria-label="Main navigation"
       className="bg-[#000A0B] relative z-50"
       style={{ boxShadow: "0px 20px 25px 0px #000A0B" }}
     >
@@ -28,7 +43,7 @@ function Navbar() {
         <Link href="/" prefetch={true}>
           <Image
             src="/logo.svg"
-            alt="Logo"
+            alt="PrediFi home"
             width={100}
             height={100}
             className="w-[80px] md:w-[100px]"
@@ -80,15 +95,20 @@ function Navbar() {
         {/* DESKTOP CTA + THEME TOGGLE (Hidden on mobile) */}
         <div className="hidden md:flex items-center gap-3">
           <ThemeToggle />
-          <button className="py-[10px] px-5 rounded-2xl bg-[#37B7C3] text-black font-medium hover:bg-[#2aa0ac] transition-colors">
+          <Link href="/user/pool-market" className="py-[10px] px-5 rounded-2xl bg-[#37B7C3] text-black font-medium hover:bg-[#2aa0ac] transition-colors">
             Explore Pools
-          </button>
+          </Link>
         </div>
+
+        <WalletConnectionControl />
 
         {/* MOBILE MENU TOGGLE (Visible on mobile) */}
         <button
+          ref={menuButtonRef}
+          type="button"
           aria-controls="mobile-menu"
           aria-expanded={isOpen}
+          aria-label={isOpen ? "Close navigation menu" : "Open navigation menu"}
           onClick={() => setIsOpen(!isOpen)}
           className="md:hidden text-white focus:outline-none p-2"
         >
@@ -146,9 +166,13 @@ function Navbar() {
             COMMUNITY
           </Link>
 
-          <button className="py-[10px] px-8 rounded-2xl bg-[#37B7C3] text-black font-medium w-fit">
+          <Link
+            href="/user/pool-market"
+            onClick={() => setIsOpen(false)}
+            className="py-[10px] px-8 rounded-2xl bg-[#37B7C3] text-black font-medium w-fit"
+          >
             Explore Pools
-          </button>
+          </Link>
 
           <ThemeToggle />
         </div>

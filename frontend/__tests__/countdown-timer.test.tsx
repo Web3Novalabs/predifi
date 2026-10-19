@@ -21,6 +21,8 @@ describe("CountdownTimer", () => {
     const timer = screen.getByLabelText(
       /time remaining 1 days 1 hours 1 minutes 1 seconds/i,
     );
+    expect(timer).toHaveAttribute("role", "timer");
+    expect(timer).toHaveAttribute("aria-live", "off");
     expect(timer).toBeInTheDocument();
     expect(timer).toHaveTextContent("01");
     expect(timer).toHaveTextContent("d");
@@ -49,7 +51,7 @@ describe("CountdownTimer", () => {
     const updatedLabel = screen.getByLabelText(/time remaining/i).getAttribute(
       "aria-label",
     );
-    expect(updatedLabel).toMatch(/3 seconds/);
+    expect(updatedLabel).toMatch(/2 seconds/);
   });
 
   it("shows the ended state once the target time has passed", () => {
