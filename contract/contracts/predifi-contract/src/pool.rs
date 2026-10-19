@@ -276,7 +276,118 @@ impl PredifiContract {
     ///
     /// let pool_id = contract.create_pool(env, creator, end_time, token, 2, CATEGORY_FINANCE, config)?;
     /// // Only whitelisted users or those with the invite key can participate
-    /// ```
+    /// # Function Signature Parameters
+    ///
+    /// ## `env: Env`
+    /// The Soroban environment providing ledger state, time, and contract context.
+    /// Contains the current timestamp for validation and storage for persistent data.
+    ///
+    /// ## `creator: Address`
+    /// The address creating the pool. Must be authenticated via `creator.require_auth()`.
+    /// The creator receives `PoolCreatedEvent` and can modify certain pool parameters later.
+    /// Must have sufficient token balance if `initial_liquidity > 0`.
+    ///
+    /// ## `end_time: u64`
+    /// Unix timestamp when staking closes (deadline). Must be:
+    /// - Strictly greater than `current_time` (INV-8)
+    /// - Greater than `config.start_time`
+    /// - Within `current_time + MAX_POOL_DURATION` (365 days default)
+    /// - At least `current_time + min_pool_duration` (default: 1 hour)
+    /// - If `config.start_time > 0`, must be > `config.start_time`
+    /// - A `start_time` of 0 means "open immediately"
+    ///
+    /// ## `token: Address`
+    /// The betting token contract address. Must be whitelisted via `is_token_whitelisted`.
+    /// Token address validity is deferred to actual transfer (Soroban pattern).
+    /// All predictions and winnings use this token.
+    ///
+    /// ## `options_count: u32`
+    /// Number of possible outcomes (2 for binary, more for multi-outcome markets).
+    /// Constraints:
+    /// - Minimum: 2 (binary outcome)
+    /// - Maximum: MAX_OPTIONS_COUNT (100)
+    /// - Must match `config.outcome_descriptions.len()`
+    /// - Each outcome must have a unique, non-empty description (1-128 bytes)
+    ///
+    /// ## `category: Symbol`
+    /// Market category symbol for indexing (e.g., `CATEGORY_CRYPTO`, `CATEGORY_SPORTS`).
+    /// Must be a canonical category symbol. Pools are indexed by category for:
+    /// - Efficient pool enumeration by category
+    /// - Category-based analytics and discovery
+    /// - `CatPoolCt(category)` - pool count per category
+    /// - `CatPoolIx(category, index)` - ordered pool IDs per category
+    ///
+    /// ## `config: PoolConfig`
+    /// Detailed pool configuration struct with the following fields:
+    ///
+    /// - `start_time: u64` - When pool opens (0 = immediately, >0 = future timestamp)
+    /// - `description: String` - Pool title (max 256 bytes)
+    /// - `metadata_url: String` - Extended metadata URL (max 512 bytes, e.g., IPFS)
+    /// - `min_stake: i128` - Minimum per-prediction stake (> 0)
+    /// - `max_stake: i128` - Maximum per-prediction stake (0 = unlimited, otherwise >= min_stake)
+    /// - `min_total_stake: i128` - Minimum total stake for valid resolution (> 0)
+    /// - `max_total_stake: i128` - Hard cap on total stake (0 = unlimited)
+    /// - `initial_liquidity: i128` - Creator-provided seed liquidity (typically fee-excluded)
+    /// - `required_resolutions: u32` - Independent resolutions needed (1+)
+    /// - `private: bool` - If true, only whitelisted users can participate
+    /// - `whitelist_key: Option<Symbol>` - Secret symbol for private pool access
+    /// - `outcome_descriptions: Vec<String>` - Labels for each outcome
+    ///
+    /// # Return Value
+    ///
+    /// Returns `Ok(u64)` with the unique pool ID on success. Pool IDs are monotonically
+    /// assigned starting from 0. The ID can be used with:
+    /// - `get_pool(pool_id)` - Retrieve pool state
+    /// - `place_prediction(pool_id, outcome, amount)` - Place bets
+    /// - `resolve_pool(pool_id, outcome)` - Finalize pool
+    /// - `claim_winnings(user, pool_id)` - Collect winnings
+    ///
+    /// Returns `Err(PredifiError)` on validation failures:
+    /// - `ContractPaused` - Contract is paused
+    /// - `InvalidTimestamp` - Time constraints violated
+    /// - `DeadlineInPast` - end_time is in the past
+    /// - `TokenNotWhitelisted` - Token not on whitelist
+    /// - `InvalidData` - Invalid options_count, stake limits, or liquidity
+    /// - `InitialLiquidityBelowSafetyMargin` - Insufficient seed liquidity
+    /// - `RequiredResolutionsExceedOperators` - Not enough operators
+    /// - `MetadataUrlInvalid` - metadata_url exceeds 512 bytes
+    /// - `Unauthorized` - Creator not authenticated (via Soroban auth)
+    ///
+    /// # Events Emitted
+    ///
+    /// - `PoolCreatedEvent` - Pool creation with all parameters
+    /// - `InitialLiquidityProvidedEvent` - If liquidity provided
+    ///
+    /// # Storage Updated
+    ///
+    /// - `DataKey::Pool(pool_id)` - Full pool state
+    /// - `DataKey::PartCnt(pool_id)` - Participant count (0)
+    /// - `DataKey::OutStakes(pool_id)` - Outcome stakes (zeros)
+    /// - `DataKey::CatPoolCt(category)` - Category count (incremented)
+    /// - `DataKey::CatPoolIx(category, index)` - Category pool index
+    /// - `DataKey::PoolIdCtr` - Counter (incremented)
+    /// - `DataKey::ActivePoolIndex` - Active pool tracking
+    ///
+    /// # Post-conditions
+    ///
+    /// - `Pool.state == MarketState::Active`
+    /// - `Pool.outcome == UNRESOLVED_OUTCOME`
+    /// - `Pool.total_stake == initial_liquidity` (if provided)
+    /// - `Pool.fee_bps` set from current config
+    /// - Initial liquidity transferred from creator
+    /// - Pool added to active index
+    ///
+    /// # Safety Guarantees
+    ///
+    /// - No partial pool state on failure (all-or-nothing)
+    /// - No storage leaks on invalid inputs
+    /// - Token transfers only after validation success
+    /// - Index updates are atomic with pool creation
+    /// - All invariants validated before persistence
+    ///
+    /// # Examples
+    ///
+    /// See the full examples in the main documentation above.
     #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
         env: Env,
@@ -1790,33 +1901,81 @@ pub struct Pool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PoolConfig {
     /// Unix timestamp at which the pool opens for predictions.
-    /// Must be less than `end_time`.
+    /// - `0` means the pool opens immediately upon creation.
+    /// - Any positive value must be strictly in the future (greater than current ledger timestamp).
+    /// - Must be less than `end_time`.
+    /// - When non-zero, allows creators to schedule pool opening for a future time.
+    /// - Example: `env.ledger().timestamp() + 3600` opens in 1 hour.
     pub start_time: u64,
-    /// A short, human-readable title or question for the prediction market (max 256 bytes).
+    /// A short, human-readable title or question for the prediction market.
+    /// - Maximum length: 256 bytes.
+    /// - Should clearly state the prediction being made (e.g., "Will BTC exceed $100k by 2025?").
+    /// - Displayed on pool cards and detail pages.
+    /// - Example: "ETH/USD crossing $3500 this week?".
     pub description: String,
-    /// A URL (e.g., IPFS URI) pointing to extended metadata, rules, or rich media (max 512 bytes).
+    /// A URL (typically IPFS) pointing to extended metadata, rules, or rich media.
+    /// - Maximum length: 512 bytes.
+    /// - Can point to JSON metadata, images, videos, or documentation.
+    /// - Off-chain systems use this URL for pool discovery and enrichment.
+    /// - Example: `"ipfs://QmHash..."` or `"https://api.example.com/metadata/123"`.
     pub metadata_url: String,
-    /// Minimum amount a user must stake in a single prediction (must be > 0).
+    /// Minimum amount a user must stake in a single prediction.
+    /// - Must be greater than zero (`min_stake > 0`).
+    /// - Users attempting to stake less will receive an error.
+    /// - Can be used to prevent spam or micro-betting.
+    /// - Example: `1000` requires at least 1000 tokens per prediction.
     pub min_stake: i128,
-    /// Maximum amount a user can stake in a single prediction (0 indicates no limit).
-    /// If non-zero, it must be greater than or equal to `min_stake`.
+    /// Maximum amount a user can stake in a single prediction.
+    /// - `0` means no per-user limit (unlimited betting).
+    /// - If non-zero, must be greater than or equal to `min_stake`.
+    /// - Protects against single-user dominance of a pool.
+    /// - Example: `1000000` caps individual bets at 1 million tokens.
     pub max_stake: i128,
     /// Minimum `total_stake` required for the pool to be considered valid for resolution.
-    /// This ensures the pool has meaningful participation before a result is finalized.
+    /// - Must be greater than zero (`min_total_stake > 0`).
+    /// - Ensures the pool has meaningful participation before a result is finalized.
+    /// - Prevents resolution of low-liquidity pools that may not reflect true market sentiment.
+    /// - Example: `10000` requires at least 10,000 total tokens staked.
     pub min_total_stake: i128,
-    /// Hard cap on the `total_stake` the pool can accept (0 indicates no limit).
+    /// Hard cap on the `total_stake` the pool can accept.
+    /// - `0` means no limit (unlimited total stake).
+    /// - Must be greater than or equal to zero.
+    /// - When combined with `initial_liquidity`, enforces the liquidity safety margin.
+    /// - Protects creators from unlimited liability or excessive exposure.
+    /// - Example: `10000000` caps total pool stake at 10 million tokens.
     pub max_total_stake: i128,
     /// Seed liquidity provided by the pool creator at initialization ("house money").
-    /// This amount participates in the pool but is typically excluded from fee calculations.
+    /// - Typically excluded from fee calculations for fairness.
+    /// - If `max_total_stake > 0` and `initial_liquidity > 0`:
+    ///   `initial_liquidity >= max_total_stake * INITIAL_LIQUIDITY_SAFETY_MARGIN_BPS / 10_000`.
+    /// - Safety margin prevents early high-value predictions from draining a thinly seeded pool.
+    /// - Default safety margin: 10% (1000 basis points).
+    /// - Example: `1000000` seeds the pool with 1 million tokens.
     pub initial_liquidity: i128,
     /// Number of independent oracle/operator resolutions required before the pool is finalized.
-    /// Multi-resolution provides a safety layer against single-oracle failure or manipulation.
+    /// - Must be at least 1 (`required_resolutions >= 1`).
+    /// - Multi-resolution provides safety against single-oracle failure or manipulation.
+    /// - When `operator_count > 0`, `required_resolutions <= operator_count`.
+    /// - If `operator_count == 0`, oracle resolution is allowed (fallback).
+    /// - Example: `2` requires two independent resolutions before finalization.
     pub required_resolutions: u32,
     /// If true, only whitelisted addresses can participate in this pool.
+    /// - Whitelisted users: those in the access control whitelist.
+    /// - Private pool users: those possessing the `whitelist_key`.
+    /// - Public pools (`private: false`) allow any address to participate.
+    /// - Example: `true` for exclusive prediction markets.
     pub private: bool,
     /// A unique symbol or secret used as an invite key for accessing private pools.
+    /// - If `None`, no invite key is required (use access control whitelist only).
+    /// - If `Some(symbol)`, users can join by proving knowledge of this key.
+    /// - The key is validated via `validate_referral_code`.
+    /// - Example: `Some(symbol_short!("SECRET_INVITE_KEY"))`.
     pub whitelist_key: Option<Symbol>,
-    /// Human-readable labels for each outcome (length must equal options_count).
+    /// Human-readable labels for each outcome (length must equal `options_count`).
+    /// - Each label must be between 1 and 128 bytes.
+    ///- Labels are ordered: index 0 is the first outcome, index 1 is the second, etc.
+    /// - Users bet on outcome indices (0, 1, 2, ...).
+    /// - Example: `["No", "Yes"]` for binary, `["Team A", "Team B", "Draw"]` for 3 outcomes.
     pub outcome_descriptions: Vec<String>,
 }
 
