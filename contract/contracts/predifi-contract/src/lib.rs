@@ -56,8 +56,9 @@ use soroban_sdk::{
 
 pub use constants::*;
 pub use payouts::{
-    calculate_claim_payout, calculate_odds_bps, calculate_protocol_fee, calculate_referral_amount,
-    calculate_winnings, PayoutBreakdown, PayoutInput,
+    calculate_claim_payout, calculate_dynamic_fee, calculate_odds_bps, calculate_protocol_fee,
+    calculate_referral_amount, calculate_winnings, is_valid_fee_bps, FeeTierInput, PayoutBreakdown,
+    PayoutInput,
 };
 pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
@@ -745,12 +746,6 @@ impl PredifiContract {
         )
     }
 
-    /// Pure: Validate fee basis points
-    /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
-    fn is_valid_fee_bps(fee_bps: u32) -> bool {
-        fee_bps <= 10_000
-    }
-
     /// Pure: Check if a pool is currently active.
     /// A pool is active iff it has not been resolved, not been canceled,
     /// and its state is explicitly `MarketState::Active`.
@@ -1307,20 +1302,22 @@ impl PredifiContract {
     /// the returned value satisfies `is_valid_fee_bps`.
     fn calculate_dynamic_fee(env: &Env, pool: &Pool) -> u32 {
         let config = Self::get_config(env);
-        let tiers = Self::get_fee_tiers(env.clone());
-        let mut applied_fee = config.fee_bps;
-
-        let mut max_threshold = -1i128;
-        for i in 0..tiers.len() {
-            if let Some(tier) = tiers.get(i) {
-                if pool.total_stake >= tier.stake_threshold && tier.stake_threshold > max_threshold
-                {
-                    max_threshold = tier.stake_threshold;
-                    applied_fee = tier.fee_bps;
-                }
-            }
-        }
-        applied_fee
+        let tiers_vec = Self::get_fee_tiers(env.clone());
+        
+        // Convert soroban FeeTier to payouts module FeeTierInput for pure calculation
+        let tier_inputs: Vec<crate::payouts::FeeTierInput> = tiers_vec
+            .iter()
+            .map(|t| crate::payouts::FeeTierInput {
+                stake_threshold: t.stake_threshold,
+                fee_bps: t.fee_bps,
+            })
+            .collect();
+        
+        crate::payouts::calculate_dynamic_fee(
+            pool.total_stake,
+            &tier_inputs,
+            config.fee_bps,
+        )
     }
 }
 
