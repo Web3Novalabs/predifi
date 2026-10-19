@@ -13,7 +13,7 @@ pr-description.md
 **/DEPENDENCY_AUDIT_LOCAL.md
 README_CLS_IMPLEMENTATION.md
 security-audit-report.md
-RUSTDOC_CHANGES.md
+CHANGES.md
 
 # Kiro IDE workspace metadata
 .kiro/

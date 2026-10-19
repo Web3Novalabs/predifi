@@ -244,6 +244,12 @@ mod openapi_tests;
 #[cfg(all(test, feature = "integration-tests"))]
 mod redis_integration_tests;
 #[cfg(all(test, feature = "integration-tests"))]
+mod referral_integration_tests;
+#[cfg(all(test, feature = "integration-tests"))]
+mod fee_tier_integration_tests;
+#[cfg(all(test, feature = "integration-tests"))]
+mod price_feed_integration_tests;
+#[cfg(all(test, feature = "integration-tests"))]
 mod test_support;
 #[cfg(test)]
 mod tests;
