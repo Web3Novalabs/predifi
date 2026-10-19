@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
 import { formatChartValue } from "@/lib/stakeFilters";
@@ -8,8 +9,44 @@ import { useCurrentUserAddress } from "@/lib/hooks/useCurrentUserAddress";
 import { useProfile } from "@/lib/hooks/useProfile";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { PerformanceCharts } from "@/components/profile/PerformanceCharts";
-import { Skeleton } from "@/components/ui";
+import { ShareButton, CopyButton, Skeleton } from "@/components/ui";
 import type { ClaimStatus } from "@/lib/api/profile";
+import type { PerformanceChartsProps } from "@/components/profile/PerformanceCharts";
+
+/**
+ * Dynamically import the recharts-based performance charts so the recharts
+ * library (and its d3 dependencies) is code-split into its own chunk instead
+ * of inflating the initial `/user/my-profile` bundle (#1939). Mirrors the
+ * same pattern already used for `StakedChart` on the dashboard.
+ */
+const PerformanceCharts = dynamic<PerformanceChartsProps>(
+  () =>
+    import("@/components/profile/PerformanceCharts").then(
+      (mod) => mod.PerformanceCharts,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Skeleton className="h-[280px] lg:col-span-2 rounded-xl" />
+        <Skeleton className="h-[280px] rounded-xl" />
+      </div>
+    ),
+  },
+);
+
+/**
+ * Issue #1931: social sharing for individual predictions. Mirrors the
+ * pool-level share URL in `app/user/pool-market/[id]/page.tsx`, but adds the
+ * `?outcome=` query param so the shared link (and its OG card, via
+ * `/api/og/pool/[id]`) highlights this specific prediction rather than the
+ * pool's overall leaderboard of outcomes.
+ */
+const SITE_URL = "https://predifi.app";
+
+function shareUrlForClaim(claim: ClaimStatus): string {
+  return `${SITE_URL}/user/pool-market/${claim.pool_id}?outcome=${claim.outcome}`;
+}
 
 type PredictionStatus = "Active" | "Won" | "Lost" | "Pending";
 
@@ -59,12 +96,11 @@ export function PredictionHistoryClient() {
   const { profile, isLoading, isError, refresh } = useProfile(address);
   const [activeTab, setActiveTab] = useState<Tab>("All");
 
-  const claims = profile?.claims ?? [];
-
   const filtered = useMemo(() => {
+    const claims = profile?.claims ?? [];
     if (activeTab === "All") return claims;
     return claims.filter((c) => predictionStatus(c) === activeTab);
-  }, [claims, activeTab]);
+  }, [profile?.claims, activeTab]);
 
   const stats = profile?.stats;
 
@@ -161,20 +197,23 @@ export function PredictionHistoryClient() {
             ) : (
               <div className="rounded-xl border border-zinc-800 overflow-hidden">
                 {/* Header */}
-                <div className="hidden sm:grid grid-cols-7 px-4 py-2.5 bg-zinc-900 text-[10px] text-zinc-500 uppercase tracking-wider border-b border-zinc-800">
+                <div className="hidden sm:grid grid-cols-8 px-4 py-2.5 bg-zinc-900 text-[10px] text-zinc-500 uppercase tracking-wider border-b border-zinc-800">
                   <span className="col-span-2">Pool</span>
                   <span>Outcome</span>
                   <span>Stake</span>
                   <span>Status</span>
                   <span className="col-span-2">Claim</span>
+                  <span>Share</span>
                 </div>
                 {/* Rows */}
                 {filtered.map((claim) => {
                   const status = predictionStatus(claim);
+                  const shareUrl = shareUrlForClaim(claim);
+                  const shareTitle = `I predicted Outcome ${claim.outcome} on "${claim.pool_name}" — predict with me on PrediFi`;
                   return (
                     <div
                       key={claim.prediction_id}
-                      className="grid grid-cols-2 sm:grid-cols-7 items-center gap-2 px-4 py-3 border-b border-zinc-800/50 last:border-0 hover:bg-white/[0.02] transition-colors"
+                      className="grid grid-cols-3 sm:grid-cols-8 items-center gap-2 px-4 py-3 border-b border-zinc-800/50 last:border-0 hover:bg-white/[0.02] transition-colors"
                     >
                       <div className="col-span-2 sm:col-span-2 min-w-0">
                         <p className="text-sm text-white truncate">{claim.pool_name}</p>
@@ -195,6 +234,14 @@ export function PredictionHistoryClient() {
                       </span>
                       <div className="col-span-2 hidden sm:block">
                         <ClaimBadge claim={claim} />
+                      </div>
+                      <div className="flex items-center justify-end gap-1">
+                        <CopyButton
+                          text={shareUrl}
+                          size="sm"
+                          aria-label="Copy prediction link"
+                        />
+                        <ShareButton url={shareUrl} title={shareTitle} text={claim.pool_name} />
                       </div>
                     </div>
                   );

@@ -151,26 +151,29 @@ pub async fn get_user_prediction_history(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<PredictionHistoryRow>, sqlx::Error> {
-    sqlx::query_as::<_, PredictionHistoryRow>(
-        r#"
-        SELECT
-            p.pool_id,
-            pl.name   AS pool_name,
-            pl.result AS pool_result,
-            p.outcome,
-            p.amount,
-            p.created_at
-        FROM predictions p
-        JOIN pools pl ON pl.pool_id = p.pool_id
-        WHERE p.user_address = $1
-        ORDER BY p.created_at DESC
-        LIMIT $2 OFFSET $3
-        "#,
+    crate::metrics::observe_db(
+        "get_user_prediction_history",
+        sqlx::query_as::<_, PredictionHistoryRow>(
+            r#"
+            SELECT
+                p.pool_id,
+                pl.name   AS pool_name,
+                pl.result AS pool_result,
+                p.outcome,
+                p.amount,
+                p.created_at
+            FROM predictions p
+            JOIN pools pl ON pl.pool_id = p.pool_id
+            WHERE p.user_address = $1
+            ORDER BY p.created_at DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(address)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool),
     )
-    .bind(address)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
     .await
 }
 
@@ -181,31 +184,34 @@ pub async fn get_user_predictions(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<UserPrediction>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, UserPredictionRow>(
-        r#"
-        SELECT
-            p.id          AS prediction_id,
-            p.pool_id,
-            pl.name       AS pool_name,
-            pl.category   AS pool_category,
-            pl.state      AS pool_state,
-            pl.end_time   AS pool_end_time,
-            pl.total_stake AS pool_total_stake,
-            pl.result     AS pool_result,
-            p.outcome     AS user_outcome,
-            p.amount      AS user_amount,
-            p.created_at  AS prediction_created_at
-        FROM predictions p
-        JOIN pools pl ON pl.pool_id = p.pool_id
-        WHERE p.user_address = $1
-        ORDER BY p.created_at DESC
-        LIMIT $2 OFFSET $3
-        "#,
+    let rows = crate::metrics::observe_db(
+        "get_user_predictions",
+        sqlx::query_as::<_, UserPredictionRow>(
+            r#"
+            SELECT
+                p.id          AS prediction_id,
+                p.pool_id,
+                pl.name       AS pool_name,
+                pl.category   AS pool_category,
+                pl.state      AS pool_state,
+                pl.end_time   AS pool_end_time,
+                pl.total_stake AS pool_total_stake,
+                pl.result     AS pool_result,
+                p.outcome     AS user_outcome,
+                p.amount      AS user_amount,
+                p.created_at  AS prediction_created_at
+            FROM predictions p
+            JOIN pools pl ON pl.pool_id = p.pool_id
+            WHERE p.user_address = $1
+            ORDER BY p.created_at DESC
+            LIMIT $2 OFFSET $3
+            "#,
+        )
+        .bind(address)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool),
     )
-    .bind(address)
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
     .await?;
 
     Ok(rows
@@ -247,30 +253,35 @@ pub async fn get_market_predictions(
     after_id: Option<i64>,
     limit: i64,
 ) -> Result<Vec<MarketPredictionRow>, sqlx::Error> {
-    sqlx::query_as::<_, MarketPredictionRow>(
-        r#"
-        SELECT id, pool_id, user_address, outcome, amount, created_at
-        FROM predictions
-        WHERE pool_id = $1
-          AND ($2::bigint IS NULL OR id < $2)
-        ORDER BY id DESC
-        LIMIT $3
-        "#,
+    crate::metrics::observe_db(
+        "get_market_predictions",
+        sqlx::query_as::<_, MarketPredictionRow>(
+            r#"
+            SELECT id, pool_id, user_address, outcome, amount, created_at
+            FROM predictions
+            WHERE pool_id = $1
+              AND ($2::bigint IS NULL OR id < $2)
+            ORDER BY id DESC
+            LIMIT $3
+            "#,
+        )
+        .bind(pool_id)
+        .bind(after_id)
+        .bind(limit + 1) // +1 to detect next-page existence
+        .fetch_all(pool),
     )
-    .bind(pool_id)
-    .bind(after_id)
-    .bind(limit + 1) // +1 to detect next-page existence
-    .fetch_all(pool)
     .await
 }
 
 /// Total prediction count for a pool (used for the `total` response field).
 pub async fn count_market_predictions(pool: &PgPool, pool_id: i64) -> Result<i64, sqlx::Error> {
-    let (count,): (i64,) =
+    let (count,): (i64,) = crate::metrics::observe_db(
+        "count_market_predictions",
         sqlx::query_as("SELECT COUNT(*) FROM predictions WHERE pool_id = $1")
             .bind(pool_id)
-            .fetch_one(pool)
-            .await?;
+            .fetch_one(pool),
+    )
+    .await?;
     Ok(count)
 }
 
@@ -397,22 +408,25 @@ pub async fn get_users_by_winnings(
         .collect())
 }
 
-/// Extended leaderboard with time-window and pool-scope filtering (#1363).
+/// Resolve the `period` filter (`"week"` / `"month"` / anything else = all-time)
+/// into the `created_at` cutoff timestamp used by [`leaderboard_sql`].
+fn leaderboard_cutoff(period: &str) -> Option<DateTime<Utc>> {
+    match period {
+        "week" => Some(Utc::now() - chrono::Duration::days(7)),
+        "month" => Some(Utc::now() - chrono::Duration::days(30)),
+        _ => None,
+    }
+}
+
+/// Build the leaderboard aggregation query for a given ranking key.
 ///
-/// * `rank_by` — `"volume"` (default) | `"win_rate"` | `"streak"`
-/// * `period`  — `"week"` | `"month"` | `"all"` (default)
-/// * `pool_id` — when `Some`, restricts ranking to a single pool
+/// Shared between [`get_leaderboard_extended`] (which runs it) and
+/// [`explain_leaderboard_plan`] (which asks Postgres to `EXPLAIN` it), so the
+/// query a test inspects can never drift from the query actually served.
 ///
-/// `current_streak` is the count of the user's most recent consecutive wins
-/// on settled predictions, ordered by pool `end_time`.
-pub async fn get_leaderboard_extended(
-    pool: &PgPool,
-    rank_by: &str,
-    period: &str,
-    pool_id: Option<i64>,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<LeaderboardEntry>, sqlx::Error> {
+/// Placeholders: `$1` = limit, `$2` = offset, `$3` = optional pool ID,
+/// `$4` = optional `created_at` cutoff — see [`leaderboard_cutoff`].
+fn leaderboard_sql(rank_by: &str) -> String {
     // SECURITY: order_by is chosen from a controlled match — no user input
     // reaches the interpolated string.
     let order_by = match rank_by {
@@ -423,13 +437,7 @@ pub async fn get_leaderboard_extended(
         _ => "ua.total_volume",
     };
 
-    let cutoff: Option<DateTime<Utc>> = match period {
-        "week"  => Some(Utc::now() - chrono::Duration::days(7)),
-        "month" => Some(Utc::now() - chrono::Duration::days(30)),
-        _       => None,
-    };
-
-    let sql = format!(
+    format!(
         r#"
         WITH scoped_predictions AS (
             SELECT p.user_address, p.pool_id, p.amount, p.outcome, p.created_at,
@@ -498,7 +506,27 @@ pub async fn get_leaderboard_extended(
         ORDER BY {order_by} DESC
         LIMIT $1 OFFSET $2
         "#
-    );
+    )
+}
+
+/// Extended leaderboard with time-window and pool-scope filtering (#1363).
+///
+/// * `rank_by` — `"volume"` (default) | `"win_rate"` | `"streak"`
+/// * `period`  — `"week"` | `"month"` | `"all"` (default)
+/// * `pool_id` — when `Some`, restricts ranking to a single pool
+///
+/// `current_streak` is the count of the user's most recent consecutive wins
+/// on settled predictions, ordered by pool `end_time`.
+pub async fn get_leaderboard_extended(
+    pool: &PgPool,
+    rank_by: &str,
+    period: &str,
+    pool_id: Option<i64>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<LeaderboardEntry>, sqlx::Error> {
+    let cutoff = leaderboard_cutoff(period);
+    let sql = leaderboard_sql(rank_by);
 
     let rows = sqlx::query_as::<_, LeaderboardRow>(&sql)
         .bind(limit)
@@ -531,33 +559,66 @@ pub async fn get_leaderboard_extended(
         .collect())
 }
 
+/// Run `EXPLAIN` on the leaderboard aggregation query used by
+/// [`get_leaderboard_extended`] and return the plan as a single string (one
+/// line per row Postgres returns).
+///
+/// Exists so a test can assert the plan uses an index rather than a
+/// sequential scan on `predictions` for a pool-scoped leaderboard (#1733),
+/// without duplicating (and risking drift from) the real query text — both
+/// functions build their SQL from [`leaderboard_sql`].
+pub async fn explain_leaderboard_plan(
+    pool: &PgPool,
+    rank_by: &str,
+    period: &str,
+    pool_id: Option<i64>,
+    limit: i64,
+    offset: i64,
+) -> Result<String, sqlx::Error> {
+    let cutoff = leaderboard_cutoff(period);
+    let sql = format!("EXPLAIN {}", leaderboard_sql(rank_by));
+
+    let lines: Vec<String> = sqlx::query_scalar(&sql)
+        .bind(limit)
+        .bind(offset)
+        .bind(pool_id)
+        .bind(cutoff)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(lines.join("\n"))
+}
+
 /// Protocol-wide aggregate stats, optionally scoped by category and/or state.
 pub async fn get_protocol_stats(
     pool: &PgPool,
     category: Option<&str>,
     state: Option<&str>,
 ) -> Result<ProtocolStats, sqlx::Error> {
-    sqlx::query_as::<_, ProtocolStats>(
-        r#"
-        WITH filtered_pools AS (
-            SELECT pool_id, total_stake
-            FROM pools
-            WHERE ($1::text IS NULL OR category = $1)
-              AND ($2::text IS NULL OR state    = $2)
+    crate::metrics::observe_db(
+        "get_protocol_stats",
+        sqlx::query_as::<_, ProtocolStats>(
+            r#"
+            WITH filtered_pools AS (
+                SELECT pool_id, total_stake
+                FROM pools
+                WHERE ($1::text IS NULL OR category = $1)
+                  AND ($2::text IS NULL OR state    = $2)
+            )
+            SELECT
+                COALESCE(SUM(total_stake), 0) AS total_value_locked,
+                (SELECT COUNT(*)
+                 FROM predictions p
+                 WHERE p.pool_id IN (SELECT pool_id FROM filtered_pools)
+                ) AS total_bets,
+                COUNT(*) AS total_pools
+            FROM filtered_pools
+            "#,
         )
-        SELECT
-            COALESCE(SUM(total_stake), 0) AS total_value_locked,
-            (SELECT COUNT(*)
-             FROM predictions p
-             WHERE p.pool_id IN (SELECT pool_id FROM filtered_pools)
-            ) AS total_bets,
-            COUNT(*) AS total_pools
-        FROM filtered_pools
-        "#,
+        .bind(category)
+        .bind(state)
+        .fetch_one(pool),
     )
-    .bind(category)
-    .bind(state)
-    .fetch_one(pool)
     .await
 }
 
@@ -586,13 +647,11 @@ pub async fn insert_prediction_from_event(
     .execute(&mut **tx)
     .await?;
 
-    sqlx::query(
-        "UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2",
-    )
-    .bind(event.amount)
-    .bind(event.pool_id as i64)
-    .execute(&mut **tx)
-    .await?;
+    sqlx::query("UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2")
+        .bind(event.amount)
+        .bind(event.pool_id as i64)
+        .execute(&mut **tx)
+        .await?;
 
     Ok(())
 }
@@ -604,9 +663,18 @@ pub async fn insert_prediction_from_event_with_pool(
     pool: &PgPool,
     event: &PredictionPlacedEvent,
 ) -> Result<(), sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    insert_prediction_from_event(&mut tx, event).await?;
-    tx.commit().await?;
+    crate::metrics::observe_db("insert_prediction", async {
+        let mut tx = pool.begin().await?;
+        insert_prediction_from_event(&mut tx, event).await?;
+        tx.commit().await
+    })
+    .await?;
+
+    // Both ingestion paths (Stellar listener and the indexer webhook) commit
+    // through here, so this is the single place to count indexed predictions.
+    if let Some(metrics) = crate::metrics::global() {
+        metrics.record_prediction(event.amount.max(0) as u64);
+    }
     Ok(())
 }
 
@@ -675,7 +743,11 @@ mod tests {
         if has_next {
             rows.truncate(limit as usize);
         }
-        let cursor = if has_next { rows.last().map(|r| r.id) } else { None };
+        let cursor = if has_next {
+            rows.last().map(|r| r.id)
+        } else {
+            None
+        };
         assert!(has_next);
         assert_eq!(cursor, Some(8));
         assert_eq!(rows.len(), 3);

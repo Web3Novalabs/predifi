@@ -1,0 +1,47 @@
+# CODEOWNERS — automatic reviewer assignment (Issue #1815)
+#
+# GitHub requests a review from the matching owner whenever a pull request
+# touches a path below. Without this, review requests are assigned by hand and
+# a change to an area can be merged without anyone who knows that area seeing
+# it.
+#
+# Rules are evaluated top to bottom and **the last match wins** — not the most
+# specific one. So the catch-all goes first and the narrow paths after it,
+# which is the opposite of how .gitignore reads.
+#
+# Owners must have write access to the repository, or GitHub silently skips the
+# rule rather than reporting an error. If a review is not being requested for an
+# area, that is the first thing to check.
+#
+# Replace the placeholder teams below with real teams or usernames before
+# merging — a CODEOWNERS file naming a team that does not exist assigns nothing
+# and is worse than none, because the repository looks covered.
+
+# ─── Default ─────────────────────────────────────────────────────────────────
+# Anything not matched by a rule further down.
+*                           @Web3Novalabs/maintainers
+
+# ─── Soroban contract ────────────────────────────────────────────────────────
+# On-chain code: a mistake here is immutable once deployed and can move funds.
+/contract/                  @Web3Novalabs/contract-reviewers
+
+# ─── Rust backend ────────────────────────────────────────────────────────────
+/backend/                   @Web3Novalabs/backend-reviewers
+
+# ─── Next.js frontend ────────────────────────────────────────────────────────
+/frontend/                  @Web3Novalabs/frontend-reviewers
+
+# ─── Infrastructure ──────────────────────────────────────────────────────────
+# Terraform and Docker: changes here affect every environment at once.
+/terraform/                 @Web3Novalabs/infra-reviewers
+/docker/                    @Web3Novalabs/infra-reviewers
+/docker-compose.yml         @Web3Novalabs/infra-reviewers
+
+# ─── Repository automation ───────────────────────────────────────────────────
+# Workflows, templates, and this file. A change to CI can disable the checks
+# protecting everything above, so it is owned by maintainers rather than by the
+# area whose workflow is being edited.
+/.github/                   @Web3Novalabs/maintainers
+
+# ─── Security policy ─────────────────────────────────────────────────────────
+/SECURITY.md                @Web3Novalabs/maintainers

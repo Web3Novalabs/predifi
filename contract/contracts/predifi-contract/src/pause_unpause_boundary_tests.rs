@@ -11,7 +11,9 @@
 
 extern crate std;
 
-use crate::{MarketState, PoolConfig, PredifiContract, PredifiContractClient, PredifiError};
+use crate::{
+    FeeTier, MarketState, PoolConfig, PredifiContract, PredifiContractClient, PredifiError,
+};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
@@ -562,4 +564,300 @@ fn test_1528_update_pool_description_blocked_during_pause_restored_after_unpause
         String::from_str(&env, "updated after unpause"),
         "description must be updated after unpausing"
     );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #1754 — Every state-changing entry point must reject calls while paused
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `require_not_paused` is the first statement in every state-mutating public
+// function, before any other validation (auth, role checks, pool lookups).
+// That means each call below is expected to fail with `ContractPaused`
+// regardless of whether its other arguments are otherwise valid — the point
+// of this test is that the pause guard itself is present and runs first, not
+// that the rest of the function's preconditions are satisfied. A missing
+// guard would instead surface as some other error (or a panic), which is
+// exactly the gap this test is meant to catch.
+#[test]
+fn test_1754_paused_contract_rejects_every_state_changing_entry_point() {
+    let env = Env::default();
+    let ctx = PauseTestEnv::new(&env);
+
+    // Create one real pool before pausing so pool-scoped calls have a
+    // syntactically valid (if not necessarily precondition-satisfying) target.
+    let pool_id = ctx.create_pool(7_200);
+    let dummy_user = Address::generate(&env);
+    let empty_addrs: soroban_sdk::Vec<Address> = vec![&env];
+    let empty_pool_ids: soroban_sdk::Vec<u64> = vec![&env];
+
+    ctx.client.pause(&ctx.admin);
+    assert!(ctx.client.is_contract_paused());
+
+
+    // --- admin.rs ---------------------------------------------------------
+    assert_eq!(ctx.client.try_set_fee_bps(&ctx.admin, &100u32), Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(ctx.client.try_apply_fee_bps(&ctx.admin), Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(ctx.client.try_cancel_fee_proposal(&ctx.admin), Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(
+        ctx.client
+            .try_set_max_predictions_per_user(&ctx.admin, &10u32),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_set_prediction_cooldown(&ctx.admin, &0u64),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_set_resolution_delay(&ctx.admin, &0u64),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_set_claim_window(&ctx.admin, &0u64),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_set_min_pool_duration(&ctx.admin, &0u64),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_set_min_stake(&ctx.admin, &1i128),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_add_token_to_whitelist(&ctx.admin, &ctx.token_address),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_remove_token_from_whitelist(&ctx.admin, &ctx.token_address),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_batch_add_tokens_to_whitelist(&ctx.admin, &empty_addrs),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_batch_remove_tokens_whitelist(&ctx.admin, &empty_addrs),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(ctx.client.try_migrate_state(&ctx.admin), Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(
+        ctx.client
+            .try_add_to_whitelist(&ctx.creator, &pool_id, &dummy_user),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_remove_from_whitelist(&ctx.creator, &pool_id, &dummy_user),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_batch_add_to_whitelist(&ctx.creator, &pool_id, &empty_addrs),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_batch_remove_from_whitelist(&ctx.creator, &pool_id, &empty_addrs),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    let tiers = vec![
+        &env,
+        FeeTier {
+            stake_threshold: 0,
+            fee_bps: 0,
+        },
+    ];
+    assert_eq!(
+        ctx.client.try_set_fee_tiers(&ctx.admin, &tiers),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+
+    // --- pool.rs ------------------------------------------------------------
+    assert_eq!(
+        ctx.client.try_create_pool(
+            &ctx.creator,
+            &(ctx.env.ledger().timestamp() + 7_200),
+            &ctx.token_address,
+            &2u32,
+            &symbol_short!("Tech"),
+            &PoolConfig {
+                start_time: 0,
+                description: String::from_str(&env, "paused create attempt"),
+                metadata_url: String::from_str(&env, "ipfs://paused"),
+                min_stake: 1i128,
+                max_stake: 0i128,
+                max_total_stake: 0i128,
+                min_total_stake: 1i128,
+                initial_liquidity: 0i128,
+                required_resolutions: 1u32,
+                private: false,
+                whitelist_key: None,
+                outcome_descriptions: vec![
+                    &env,
+                    String::from_str(&env, "No"),
+                    String::from_str(&env, "Yes"),
+                ],
+            },
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_increase_max_total_stake(&ctx.creator, &pool_id, &0i128),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_update_pool_description(
+            &ctx.creator,
+            &pool_id,
+            &String::from_str(&env, "attempted while paused"),
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_resolve_pool(&ctx.operator, &pool_id, &0u32),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(ctx.client.try_mark_pool_ready(&pool_id), Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(ctx.client.try_close_staking(&pool_id), Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(
+        ctx.client.try_cancel_pool(
+            &ctx.operator,
+            &pool_id,
+            &String::from_str(&env, "paused cancel"),
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_emergency_cancel_pool(
+            &ctx.operator,
+            &pool_id,
+            &String::from_str(&env, "paused emergency cancel"),
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_set_stake_limits(&ctx.operator, &pool_id, &1i128, &0i128),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_flag_disputed_pool(
+            &ctx.operator,
+            &pool_id,
+            &String::from_str(&env, "paused dispute"),
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+
+    // --- oracle.rs ------------------------------------------------------------
+    let oracle_addr = Address::generate(&env);
+    assert_eq!(
+        ctx.client.try_add_oracle(&ctx.admin, &oracle_addr),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_remove_oracle(&ctx.admin, &oracle_addr),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_init_oracle(&ctx.admin, &oracle_addr, &60u64, &500u32),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_set_price_condition(
+            &ctx.operator,
+            &pool_id,
+            &symbol_short!("BTCUSD"),
+            &100i128,
+            &0u32,
+            &50u32,
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_update_price_feed(
+            &oracle_addr,
+            &symbol_short!("BTCUSD"),
+            &100i128,
+            &1i128,
+            &0u64,
+            &1u64,
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(ctx.client.try_resolve_pool_from_price(&pool_id), Err(Ok(PredifiError::ContractPaused)));
+    assert_eq!(
+        ctx.client.try_oracle_resolve(
+            &oracle_addr,
+            &pool_id,
+            &0u32,
+            &String::from_str(&env, "paused proof"),
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+
+    // --- treasury.rs ------------------------------------------------------------
+    assert_eq!(
+        ctx.client.try_set_treasury(&ctx.admin, &ctx.treasury),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_withdraw_treasury(
+            &ctx.admin,
+            &ctx.token_address,
+            &1i128,
+            &ctx.treasury,
+        ),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+
+    // --- referral.rs ------------------------------------------------------------
+    assert_eq!(
+        ctx.client.try_set_referral_cut_bps(&ctx.admin, &500u32),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_set_referral_rate(&ctx.admin, &500u32),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_update_referrer(&dummy_user, &pool_id, &None),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_set_referral_volume_threshold(&ctx.admin, &0i128),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+
+    // --- prediction.rs ------------------------------------------------------------
+    assert_eq!(
+        ctx.client
+            .try_place_prediction(&dummy_user, &pool_id, &1_000i128, &0u32, &None, &None),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_claim_winnings(&dummy_user, &pool_id),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client
+            .try_batch_claim_winnings(&dummy_user, &empty_pool_ids),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+    assert_eq!(
+        ctx.client.try_claim_refund(&dummy_user, &pool_id),
+        Err(Ok(PredifiError::ContractPaused))
+    );
+
+    // Pause state and pool data must be untouched by any of the rejected calls above.
+    assert!(ctx.client.is_contract_paused());
+    assert_eq!(ctx.client.get_pool(&pool_id).state, MarketState::Active);
 }

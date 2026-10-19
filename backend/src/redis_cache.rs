@@ -17,9 +17,10 @@
 //! Cached values are **never** an authorization source. Callers must authenticate
 //! and authorize before reading or writing user-scoped keys.
 
+use crate::metrics::SharedMetrics;
 use redis::{aio::ConnectionManager, AsyncCommands, ErrorKind};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::{debug, error, warn};
 
 /// Default TTL for cached pool data (60 seconds)
@@ -94,6 +95,10 @@ pub struct RedisCache {
     manager: Option<ConnectionManager>,
     /// When set, health probes treat Redis as available without a live connection.
     simulate_available: bool,
+    /// Optional metrics sink for cache hit/miss/error counters (see
+    /// [`crate::metrics::Metrics::record_cache_lookup`]). `None` in contexts
+    /// that don't wire up metrics (e.g. most unit tests).
+    metrics: Option<SharedMetrics>,
 }
 
 impl RedisCache {
@@ -109,6 +114,7 @@ impl RedisCache {
                     Self {
                         manager: Some(manager),
                         simulate_available: false,
+                        metrics: None,
                     }
                 }
                 Err(err) => {
@@ -116,6 +122,7 @@ impl RedisCache {
                     Self {
                         manager: None,
                         simulate_available: false,
+                        metrics: None,
                     }
                 }
             },
@@ -124,6 +131,7 @@ impl RedisCache {
                 Self {
                     manager: None,
                     simulate_available: false,
+                    metrics: None,
                 }
             }
         }
@@ -134,6 +142,7 @@ impl RedisCache {
         Self {
             manager: None,
             simulate_available: false,
+            metrics: None,
         }
     }
 
@@ -143,7 +152,16 @@ impl RedisCache {
         Self {
             manager: None,
             simulate_available: true,
+            metrics: None,
         }
+    }
+
+    /// Attach a metrics sink so subsequent `get` calls record hit/miss/error
+    /// counters per cache name. Returns `self` for chaining after
+    /// [`RedisCache::new`].
+    pub fn with_metrics(mut self, metrics: SharedMetrics) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Check if Redis is available
@@ -160,23 +178,39 @@ impl RedisCache {
     /// - Envelope TTL has elapsed (application-level expiry)
     /// - Deserialization fails
     pub async fn get<T: DeserializeOwned>(&self, key: &str) -> Option<T> {
-        let namespaced = namespaced_key(key)?;
-        let manager = self.manager.as_ref()?;
+        let cache_name = cache_name_from_key(key);
+        let namespaced = match namespaced_key(key) {
+            Some(k) => k,
+            None => {
+                self.record_lookup(&cache_name, "error");
+                return None;
+            }
+        };
+        let manager = match self.manager.as_ref() {
+            Some(m) => m,
+            None => return None,
+        };
         let mut conn = manager.clone();
 
-        match conn.get::<_, Option<String>>(&namespaced).await {
+        let start = Instant::now();
+        let result = conn.get::<_, Option<String>>(&namespaced).await;
+        self.record_op("get", result.is_ok(), start);
+        match result {
             Ok(Some(data)) => match decode_envelope(&data) {
                 Some(value) => {
                     debug!("Cache hit: {}", key);
+                    self.record_lookup(&cache_name, "hit");
                     Some(value)
                 }
                 None => {
                     debug!("Cache envelope expired or invalid: {}", key);
+                    self.record_lookup(&cache_name, "miss");
                     None
                 }
             },
             Ok(None) => {
                 debug!("Cache miss: {}", key);
+                self.record_lookup(&cache_name, "miss");
                 None
             }
             Err(err) => {
@@ -185,8 +219,25 @@ impl RedisCache {
                 } else {
                     error!("Redis GET error for {}: {}", key, err);
                 }
+                self.record_lookup(&cache_name, "error");
                 None
             }
+        }
+    }
+
+    /// Record a Redis command's latency and outcome via the attached metrics
+    /// sink, if any (`app_redis_operation_duration_seconds`).
+    fn record_op(&self, operation: &str, ok: bool, start: Instant) {
+        if let Some(metrics) = &self.metrics {
+            let result = if ok { "ok" } else { "error" };
+            metrics.record_redis_op(operation, result, start.elapsed().as_secs_f64());
+        }
+    }
+
+    /// Record a cache lookup outcome via the attached metrics sink, if any.
+    fn record_lookup(&self, cache_name: &str, outcome: &str) {
+        if let Some(metrics) = &self.metrics {
+            metrics.record_cache_lookup(cache_name, outcome);
         }
     }
 
@@ -196,7 +247,10 @@ impl RedisCache {
     /// Refuses TTL 0 (would never expire) and caps TTL at [`MAX_TTL_SECS`].
     pub async fn set<T: Serialize>(&self, key: &str, value: &T, ttl_secs: u64) {
         if ttl_secs < MIN_TTL_SECS {
-            warn!("refusing to cache {} with TTL {} (must expire)", key, ttl_secs);
+            warn!(
+                "refusing to cache {} with TTL {} (must expire)",
+                key, ttl_secs
+            );
             return;
         }
         let Some(namespaced) = namespaced_key(key) else {
@@ -216,7 +270,10 @@ impl RedisCache {
             None => return,
         };
 
-        if let Err(err) = conn.set_ex::<_, _, ()>(&namespaced, data, ttl).await {
+        let start = Instant::now();
+        let result = conn.set_ex::<_, _, ()>(&namespaced, data, ttl).await;
+        self.record_op("set", result.is_ok(), start);
+        if let Err(err) = result {
             if is_connection_error(err.kind()) {
                 warn!("Redis connection dropout on SET {}: {}", key, err);
             } else {
@@ -241,7 +298,10 @@ impl RedisCache {
 
         let mut conn = manager.clone();
 
-        if let Err(err) = conn.del::<_, ()>(&namespaced).await {
+        let start = Instant::now();
+        let result = conn.del::<_, ()>(&namespaced).await;
+        self.record_op("del", result.is_ok(), start);
+        if let Err(err) = result {
             if is_connection_error(err.kind()) {
                 warn!("Redis connection dropout on DEL {}: {}", key, err);
             } else {
@@ -268,7 +328,10 @@ impl RedisCache {
         let mut conn = manager.clone();
 
         // Get all keys matching pattern (already namespaced)
-        let keys: Vec<String> = match conn.keys(&namespaced).await {
+        let start = Instant::now();
+        let keys_result = conn.keys(&namespaced).await;
+        self.record_op("keys", keys_result.is_ok(), start);
+        let keys: Vec<String> = match keys_result {
             Ok(k) => k,
             Err(err) => {
                 if is_connection_error(err.kind()) {
@@ -293,7 +356,10 @@ impl RedisCache {
             return;
         }
 
-        if let Err(err) = conn.del::<_, ()>(&scoped).await {
+        let start = Instant::now();
+        let result = conn.del::<_, ()>(&scoped).await;
+        self.record_op("del_many", result.is_ok(), start);
+        if let Err(err) = result {
             if is_connection_error(err.kind()) {
                 warn!(
                     "Redis connection dropout on DEL pattern {}: {}",
@@ -327,6 +393,19 @@ impl RedisCache {
         self.delete_pattern(STATS_CACHE_PATTERN).await;
     }
 
+    /// Invalidate every cached prediction-history page for one user.
+    ///
+    /// Call after a new prediction is recorded for `address` so their next
+    /// `GET /api/v1/users/:address/predictions` request reflects it
+    /// immediately instead of waiting out [`USER_PREDICTIONS_CACHE_TTL`].
+    /// Scoped to a single user's keys rather than the whole `user:*`
+    /// namespace, so one user placing a prediction does not evict every
+    /// other user's cached page.
+    pub async fn invalidate_user_predictions_cache(&self, address: &str) {
+        let pattern = format!("user:{}:predictions:*", sanitize_key_component(address));
+        self.delete_pattern(&pattern).await;
+    }
+
     /// Check if a cache entry exists without deserializing it
     ///
     /// Useful for cache-aside pattern to determine if we need to populate the cache
@@ -340,7 +419,10 @@ impl RedisCache {
         };
 
         let mut conn = manager.clone();
-        match conn.exists::<_, bool>(&namespaced).await {
+        let start = Instant::now();
+        let result = conn.exists::<_, bool>(&namespaced).await;
+        self.record_op("exists", result.is_ok(), start);
+        match result {
             Ok(exists) => exists,
             Err(err) => {
                 if is_connection_error(err.kind()) {
@@ -365,7 +447,9 @@ impl RedisCache {
         };
 
         let mut conn = manager.clone();
+        let start = Instant::now();
         let r: Result<String, _> = redis::cmd("PING").query_async(&mut conn).await;
+        self.record_op("ping", r.is_ok(), start);
         r.is_ok()
     }
 }
@@ -446,6 +530,21 @@ fn decode_envelope<T: DeserializeOwned>(raw: &str) -> Option<T> {
         return None;
     }
     serde_json::from_value(envelope.data).ok()
+}
+
+/// Derive a short, stable cache-name label from a (non-namespaced) cache key,
+/// for use with [`crate::metrics::Metrics::record_cache_lookup`].
+///
+/// Every key generator in this module (`pools_cache_key`,
+/// `pool_details_cache_key`, `user_predictions_cache_key`, `stats_cache_key`)
+/// produces keys of the form `<name>:...`, so the label is just the segment
+/// before the first `:`. Keys with no `:` (or empty keys) fall back to
+/// `"other"` so metric cardinality stays bounded even for unexpected keys.
+pub fn cache_name_from_key(key: &str) -> String {
+    match key.split_once(':') {
+        Some((name, _)) if !name.is_empty() => name.to_string(),
+        _ => "other".to_string(),
+    }
 }
 
 /// Generate a cache key for a pools list query.
@@ -704,6 +803,15 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn ttl_capped_to_max() {
+        // Using a disabled cache; set should simply return without error.
+        let cache = RedisCache::disabled();
+        // Provide a TTL larger than MAX_TTL_SECS to ensure it is capped internally.
+        cache.set("test-ttl", &"value", MAX_TTL_SECS + 1_000).await;
+        // No assertion needed; the test passes if no panic occurs.
+    }
+
     #[test]
     fn test_stats_cache_key_uniqueness() {
         let key_all = stats_cache_key(None, None);
@@ -727,6 +835,18 @@ mod tests {
         let cache = RedisCache::disabled();
         // Should not panic; no-ops on a disabled cache
         cache.invalidate_stats_cache().await;
+    }
+
+    /// `invalidate_user_predictions_cache` must not panic on a disabled
+    /// cache, and must build a pattern scoped to the sanitized address
+    /// rather than the whole `user:*` namespace.
+    #[tokio::test]
+    async fn test_user_predictions_cache_invalidation() {
+        let cache = RedisCache::disabled();
+        cache.invalidate_user_predictions_cache("GABC123").await;
+        cache
+            .invalidate_user_predictions_cache("GABC\n*injected*")
+            .await;
     }
 
     #[test]

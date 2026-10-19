@@ -19,6 +19,10 @@ path = "src/bin/seed.rs"
 name = "predifi-openapi"
 path = "src/bin/openapi_export.rs"
 
+[[bin]]
+name = "predifi-migration-check"
+path = "src/bin/migration_check.rs"
+
 [dependencies]
 axum = { version = "0.7.9", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }
@@ -55,6 +59,10 @@ predifi-errors = { path = "../contract/contracts/predifi-errors", features = ["s
 jsonwebtoken = "9"
 governor = "0.8"
 tower_governor = "0.4"
+# Email delivery for notification sweep (#1929)
+# zlib compression for opt-in WebSocket frame compression (#1941)
+flate2 = "1"
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "hostname"] }
 
 [features]
 integration-tests = []

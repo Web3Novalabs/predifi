@@ -3,6 +3,7 @@ import Link from "next/link";
 import Image from "next/image";
 import React, { useState } from "react";
 import { Menu, X } from "lucide-react";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 /**
  * NavBar
@@ -76,10 +77,13 @@ function Navbar() {
           </Link>
         </div>
 
-        {/* DESKTOP CTA BUTTON (Hidden on mobile) */}
-        <button className="hidden md:block py-[10px] px-5 rounded-2xl bg-[#37B7C3] text-black font-medium hover:bg-[#2aa0ac] transition-colors">
-          Explore Pools
-        </button>
+        {/* DESKTOP CTA + THEME TOGGLE (Hidden on mobile) */}
+        <div className="hidden md:flex items-center gap-3">
+          <ThemeToggle />
+          <button className="py-[10px] px-5 rounded-2xl bg-[#37B7C3] text-black font-medium hover:bg-[#2aa0ac] transition-colors">
+            Explore Pools
+          </button>
+        </div>
 
         {/* MOBILE MENU TOGGLE (Visible on mobile) */}
         <button
@@ -145,6 +149,8 @@ function Navbar() {
           <button className="py-[10px] px-8 rounded-2xl bg-[#37B7C3] text-black font-medium w-fit">
             Explore Pools
           </button>
+
+          <ThemeToggle />
         </div>
       )}
     </nav>

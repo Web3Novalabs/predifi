@@ -11,6 +11,7 @@ import {
 } from "@/components/ui";
 import { SearchResultHighlighter } from "@/components/search/SearchResultHighlighter";
 import { usePools } from "@/lib/hooks/usePools";
+import { useTags } from "@/lib/hooks/useTags";
 import { usePoolsQuery, type SortBy, type PoolStatus } from "@/lib/hooks/usePoolsQuery";
 import type { Pool } from "@/lib/api/pools";
 
@@ -19,22 +20,9 @@ import type { Pool } from "@/lib/api/pools";
 // ---------------------------------------------------------------------------
 
 export interface SearchablePoolsProps {
-  /**
-   * Override loading state from a parent (e.g. skeleton screens for SSR).
-   * Takes priority over the SWR loading state.
-   */
   isLoading?: boolean;
-  /** Force the skeleton state regardless of fetch status. */
   forceLoading?: boolean;
-  /**
-   * Default sort order. Passed to {@link usePoolsQuery} as `defaultSortBy`.
-   * Defaults to `"new"`.
-   */
   defaultSortBy?: SortBy;
-  /**
-   * Default lifecycle status. Passed to {@link usePoolsQuery} as
-   * `defaultStatus`. Defaults to `"active"`.
-   */
   defaultStatus?: PoolStatus;
 }
 
@@ -54,6 +42,19 @@ const STATUS_OPTIONS: { value: PoolStatus; label: string }[] = [
   { value: "settled", label: "Settled" },
 ];
 
+const CATEGORIES = [
+  "All",
+  "Crypto",
+  "Sports",
+  "Politics",
+  "Finance",
+  "Entertainment",
+  "Technology",
+  "Science",
+  "Gaming",
+  "Other",
+];
+
 // ---------------------------------------------------------------------------
 // SearchablePools
 // ---------------------------------------------------------------------------
@@ -63,14 +64,12 @@ const STATUS_OPTIONS: { value: PoolStatus; label: string }[] = [
  *
  * A self-contained pool browser that combines:
  *   - URL-synced filter/sort/pagination state via {@link usePoolsQuery}
- *   - Server-side sorted + filtered pool fetching via {@link usePools}
- *   - Client-side text search applied on top of the server result set,
- *     using the debounced search value from {@link usePoolsQuery} so the
- *     input doesn't stutter while the user types
+ *   - Server-side full-text search (`?q=`) and filtering via {@link usePools}
+ *   - Category, tag, sort, and status filters
+ *   - Offset-based pagination controls
  *
- * All filter state is reflected in the URL search params (`?q=`, `?sort=`,
- * `?status=`, `?category=`) so searches are bookmarkable and the browser
- * back/forward buttons work as expected.
+ * All filter state is reflected in the URL search params so searches are
+ * bookmarkable and the browser back/forward buttons work as expected.
  */
 export function SearchablePools({
   isLoading = false,
@@ -84,10 +83,18 @@ export function SearchablePools({
     debouncedSearch,
     sortBy,
     status,
+    category,
+    tags,
+    page,
+    pageSize,
     poolsQuery,
     setSearch,
     setSortBy,
     setStatus,
+    setCategory,
+    toggleTag,
+    setPage,
+    reset,
   } = usePoolsQuery({ defaultSortBy, defaultStatus });
 
   // ── Data fetching ────────────────────────────────────────────────────────
@@ -99,20 +106,7 @@ export function SearchablePools({
     refresh,
   } = usePools(poolsQuery);
 
-  // ── Client-side text filter ──────────────────────────────────────────────
-  // We apply an in-memory text filter on top of the server's response.
-  // This covers name, category, and token matching. Once the backend adds
-  // full-text search, this memo can be removed and `pools` used directly.
-  const filteredPools = useMemo(() => {
-    const q = debouncedSearch.toLowerCase().trim();
-    if (!q) return pools;
-    return pools.filter(
-      (pool) =>
-        pool.name.toLowerCase().includes(q) ||
-        pool.category.toLowerCase().includes(q) ||
-        pool.token.toLowerCase().includes(q),
-    );
-  }, [pools, debouncedSearch]);
+  const { tags: availableTags } = useTags();
 
   // ── Search handler ───────────────────────────────────────────────────────
   const handleSearch = useCallback(
@@ -120,7 +114,12 @@ export function SearchablePools({
     [setSearch],
   );
 
-  // ── Skeleton items (memoised to prevent re-allocation) ───────────────────
+  // ── Pagination ───────────────────────────────────────────────────────────
+  const totalPages = Math.ceil(total / pageSize);
+  const hasPrev = page > 0;
+  const hasNext = page < totalPages - 1;
+
+  // ── Skeleton items ───────────────────────────────────────────────────────
   const skeletonItems = useMemo(
     () =>
       Array.from({ length: 4 }).map((_, i) => (
@@ -150,6 +149,14 @@ export function SearchablePools({
     );
   }
 
+  // ── Active filter count badge ────────────────────────────────────────────
+  const activeFilters =
+    (category ? 1 : 0) +
+    tags.length +
+    (debouncedSearch ? 1 : 0) +
+    (status !== defaultStatus ? 1 : 0) +
+    (sortBy !== defaultSortBy ? 1 : 0);
+
   // ── Main render ──────────────────────────────────────────────────────────
   return (
     <Card className="bg-[#121212] border-none text-white h-full min-h-[400px]">
@@ -159,25 +166,51 @@ export function SearchablePools({
           <div className="space-y-1">
             <CardTitle className="text-lg font-medium">Prediction Pools</CardTitle>
             <p className="text-sm text-zinc-400">
-              Search by name, category, or token. Filters are reflected in the URL.
+              Search by name, category, tag, or token. Filters are bookmarkable via URL.
             </p>
           </div>
-          <span className="inline-flex items-center justify-center rounded-full bg-[#37B7C3]/10 px-3 py-1 text-xs font-medium text-[#7DE3EC] sm:shrink-0">
-            {total.toLocaleString()}{" "}
-            {status === "active" ? "active" : status === "closed" ? "closed" : "settled"}
-          </span>
+          <div className="flex items-center gap-2 sm:shrink-0">
+            <span className="inline-flex items-center justify-center rounded-full bg-[#37B7C3]/10 px-3 py-1 text-xs font-medium text-[#7DE3EC]">
+              {total.toLocaleString()}{" "}
+              {status === "active" ? "active" : status === "closed" ? "closed" : "settled"}
+            </span>
+            {activeFilters > 0 && (
+              <button
+                type="button"
+                onClick={reset}
+                className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+              >
+                Clear {activeFilters} filter{activeFilters !== 1 ? "s" : ""}
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Search input */}
         <SearchBar
-          placeholder="Search pools by name, category, token…"
+          placeholder="Full-text search by name, category, or tag…"
           value={search}
           onSearch={handleSearch}
           aria-label="Search pools"
           className="w-full"
         />
 
-        {/* Filter bar — sort + status */}
+        {/* Category filter */}
+        <CategoryFilter
+          selected={category}
+          onSelect={setCategory}
+        />
+
+        {/* Tag filter (only when tags exist) */}
+        {availableTags.length > 0 && (
+          <TagFilter
+            availableTags={availableTags}
+            activeTags={tags}
+            onToggleTag={toggleTag}
+          />
+        )}
+
+        {/* Sort + status filter bar */}
         <FilterBar
           sortBy={sortBy}
           status={status}
@@ -189,17 +222,127 @@ export function SearchablePools({
       <CardContent>
         {isError ? (
           <ErrorState onRetry={refresh} />
-        ) : filteredPools.length === 0 ? (
+        ) : pools.length === 0 ? (
           <EmptyState query={debouncedSearch} />
         ) : (
-          <div className="space-y-3">
-            {filteredPools.map((pool) => (
-              <PoolRow key={pool.pool_id} pool={pool} query={debouncedSearch} />
-            ))}
-          </div>
+          <>
+            <div className="space-y-3">
+              {pools.map((pool) => (
+                <PoolRow key={pool.pool_id} pool={pool} query={debouncedSearch} />
+              ))}
+            </div>
+
+            {/* Pagination controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between pt-4 mt-4 border-t border-zinc-800">
+                <p className="text-xs text-zinc-500">
+                  Page {page + 1} of {totalPages} · {total.toLocaleString()} results
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPage(page - 1)}
+                    disabled={!hasPrev}
+                    className="rounded-md px-3 py-1.5 text-xs font-medium bg-zinc-900 text-zinc-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    ← Prev
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPage(page + 1)}
+                    disabled={!hasNext}
+                    className="rounded-md px-3 py-1.5 text-xs font-medium bg-zinc-900 text-zinc-300 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    Next →
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CategoryFilter
+// ---------------------------------------------------------------------------
+
+interface CategoryFilterProps {
+  selected: string;
+  onSelect: (category: string) => void;
+}
+
+function CategoryFilter({ selected, onSelect }: CategoryFilterProps) {
+  return (
+    <div
+      className="flex flex-wrap gap-1.5"
+      role="group"
+      aria-label="Category filter"
+    >
+      {CATEGORIES.map((cat) => {
+        const value = cat === "All" ? "" : cat;
+        const active = selected === value;
+        return (
+          <button
+            key={cat}
+            type="button"
+            onClick={() => onSelect(active ? "" : value)}
+            aria-pressed={active}
+            className={[
+              "rounded-full px-3 py-1 text-xs font-medium transition-colors",
+              active
+                ? "bg-[#37B7C3]/20 text-[#7DE3EC] ring-1 ring-[#37B7C3]/40"
+                : "bg-zinc-900 text-zinc-500 hover:text-zinc-300",
+            ].join(" ")}
+          >
+            {cat}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// TagFilter
+// ---------------------------------------------------------------------------
+
+interface TagFilterProps {
+  availableTags: string[];
+  activeTags: string[];
+  onToggleTag: (tag: string) => void;
+}
+
+function TagFilter({ availableTags, activeTags, onToggleTag }: TagFilterProps) {
+  return (
+    <div
+      className="flex flex-wrap gap-1.5"
+      role="group"
+      aria-label="Tag filter"
+    >
+      <span className="text-xs text-zinc-600 self-center pr-1">Tags:</span>
+      {availableTags.slice(0, 20).map((tag) => {
+        const active = activeTags.includes(tag);
+        return (
+          <button
+            key={tag}
+            type="button"
+            onClick={() => onToggleTag(tag)}
+            aria-pressed={active}
+            className={[
+              "rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+              active
+                ? "bg-indigo-500/20 text-indigo-300 ring-1 ring-indigo-500/40"
+                : "bg-zinc-800/80 text-zinc-500 hover:text-zinc-300",
+            ].join(" ")}
+          >
+            #{tag}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -288,6 +431,18 @@ function PoolRow({ pool, query }: { pool: Pool; query: string }) {
           {" · "}
           {pool.total_stake.toLocaleString()} {pool.token}
         </p>
+        {pool.tags.length > 0 && (
+          <div className="flex flex-wrap gap-1 pt-0.5">
+            {pool.tags.slice(0, 5).map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center rounded-full bg-zinc-800 px-2 py-px text-[10px] font-medium text-zinc-400"
+              >
+                #{tag}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <PoolStateChip state={pool.state} />
     </div>

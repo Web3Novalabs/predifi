@@ -1,7 +1,7 @@
 groups:
   - name: predifi_production_alerts
     rules:
-      # API Error Rate > 1%
+      # ── 1. API Error Rate (5xx > 1% over 5m) ───────────────────────────────
       - alert: HighApiErrorRate
         expr: (sum(rate(app_http_requests_total{status=~"5.."}[5m])) / sum(rate(app_http_requests_total[5m]))) * 100 > 1
         for: 2m
@@ -11,7 +11,7 @@ groups:
           summary: "API HTTP 5xx error rate exceeded 1%"
           description: "API HTTP 5xx error rate is currently {{ $value | printf \"%.2f\" }}% over the last 5 minutes."
 
-      # p99 Latency > 500ms
+      # ── 2. Request Latency (p99 > 500ms over 5m) ───────────────────────────
       - alert: HighP99Latency
         expr: histogram_quantile(0.99, sum(rate(app_http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
         for: 3m
@@ -21,24 +21,63 @@ groups:
           summary: "API p99 latency is greater than 500ms"
           description: "The 99th percentile HTTP request latency is {{ $value | printf \"%.3f\" }}s."
 
-      # Database Connection Pool Exhaustion / Failures
-      - alert: DatabasePoolExhausted
+      # ── 3. Worker Queue Depth & DLQ Accumulation ────────────────────────────
+      - alert: WorkerQueueBacklog
+        expr: app_worker_queue_depth > 50
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker queue depth exceeded 50 jobs"
+          description: "Worker queue backlog is currently {{ $value }} jobs, indicating worker lag or processing delays."
+
+      - alert: WorkerDLQBacklog
+        expr: app_worker_dlq_depth > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker dead-letter queue (DLQ) backlog exceeded 10 jobs"
+          description: "Worker DLQ contains {{ $value }} failed jobs that exhausted retries and require operator intervention."
+
+      # ── 4. Database Connection Saturation ───────────────────────────────────
+      - alert: DatabaseConnectionPoolSaturated
+        expr: db_pool_utilization_ratio > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool utilization exceeded 80%"
+          description: "Database connection pool utilization is currently {{ $value | printf \"%.1f\" }}% (checked out / total slots)."
+
+      - alert: DatabaseConnectionPoolCritical
+        expr: db_pool_utilization_ratio > 0.95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool utilization near exhaustion (>95%)"
+          description: "Database connection pool is at {{ $value | printf \"%.1f\" }}% utilization, risking query timeouts and failures."
+
+      # ── Auxiliary Reliability Alerts ────────────────────────────────────────
+      # Database Query Failure Spike
+      - alert: DatabaseQueryFailures
         expr: sum(rate(app_db_queries_total{result="error"}[5m])) > 5
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "Database connection pool exhaustion or query error spike"
+          summary: "Database query error spike detected"
           description: "Database queries are failing at {{ $value | printf \"%.1f\" }} errors per second."
 
-      # Redis Memory Usage > 80% / Redis Operation Failures
-      - alert: HighRedisMemoryUsage
+      # Redis Operation Failures
+      - alert: HighRedisErrors
         expr: sum(rate(app_redis_operations_total{result="error"}[5m])) > 10
         for: 2m
         labels:
           severity: warning
         annotations:
-          summary: "High Redis operation error rate or high memory usage (>80%)"
+          summary: "High Redis operation error rate"
           description: "Redis operations are failing at {{ $value | printf \"%.1f\" }} errors per second."
 
       # Contract Interaction Failures
@@ -51,7 +90,7 @@ groups:
           summary: "Smart contract interaction failure detected"
           description: "Contract operations are producing errors."
 
-      # Backend Out-of-Memory / High Memory Event
+      # Backend Memory Usage > 90%
       - alert: BackendMemoryHigh
         expr: (app_memory_used_bytes / app_memory_total_bytes) * 100 > 90
         for: 2m

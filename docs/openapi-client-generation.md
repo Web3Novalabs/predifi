@@ -1,74 +1,80 @@
-# OpenAPI spec validation & TypeScript client generation
+# OpenAPI contract validation and TypeScript types
 
-Covers [#1381](https://github.com/Web3Novalabs/predifi/issues/1381).
+The backend API contract is defined in `backend/src/openapi.rs`. Integration
+tests exercise the real Axum router and compare representative response bodies
+with their documented OpenAPI schemas. The frontend generates TypeScript types
+from that same spec and uses generated types in its pool API client.
 
-The backend documents its HTTP API by hand in `backend/src/openapi.rs`. Because
-those annotations sit on stub functions rather than on the handlers themselves,
-nothing stops the spec from drifting away from the router. Two pieces keep it
-honest: integration tests that check the spec against the live router, and a
-generator that turns the spec into frontend types.
+## Validate the contract
 
-## 1. Spec validation
-
-`backend/src/openapi_tests.rs` builds the real Axum router (via
-`build_router`) and asserts:
-
-| Test | What it catches |
-| --- | --- |
-| `documented_paths_are_routed` | A documented endpoint that the router does not serve (404/405) |
-| `every_schema_ref_resolves` | A `$ref` pointing at a schema that was never registered in `components(schemas(...))` |
-| `documented_operations_declare_responses` | An operation with no responses, or no 2xx response — generators emit `unknown` bodies for these |
-| `spec_is_served_as_valid_json` | `/api-docs/openapi.json` not serving, or serving something other than the compiled-in `ApiDoc` |
-
-Run them with:
+Run the backend contract tests with:
 
 ```bash
 cargo test --manifest-path backend/Cargo.toml openapi
 ```
 
-A handler returning 500/503 without a database is fine — the tests assert the
-route *exists*, not that it succeeds.
+The tests verify that documented paths are routed, every schema reference
+resolves, operations declare success responses, the spec endpoint serves the
+compiled spec, and representative runtime responses match their documented
+status and JSON schema. The test router has no database connection, so pool
+operations exercise their documented dependency-error responses; `/fees`
+exercises a successful response.
 
-## 2. Exporting the spec
+## Generate frontend types
 
-```bash
-cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --out openapi.json
-```
-
-No server, database, or Redis required — the spec is compiled in. Omit `--out`
-to print to stdout.
-
-## 3. Generating TypeScript types
+Install frontend dependencies and run:
 
 ```bash
-cd frontend && pnpm generate:api
+cd frontend
+pnpm install
+pnpm generate:api
 ```
 
-This exports the spec and runs [`openapi-typescript`](https://openapi-ts.dev)
-over it, writing `frontend/types/api.d.ts`. Then import the generated types
-instead of hand-writing response shapes:
+The script exports the spec from the Rust source (no server, database, or Redis
+needed) and writes `frontend/types/api.d.ts`. The generated file is used by
+`frontend/lib/api/pools.ts` for response types. The pool-list endpoint retains
+its direct success body, while pool details use the documented API envelope;
+the client normalizes date-time strings to Unix seconds for existing UI
+consumers.
+
+To export the spec separately:
+
+```bash
+cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --out backend/openapi.json
+```
+
+The generator also accepts `SPEC=./openapi.json` to reuse an exported spec and
+`OUT=./types/backend.d.ts` to select a different output path.
+
+To verify that the committed `openapi.json` is up to date:
+
+```bash
+cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi -- --check backend/openapi.json
+```
+
+This verification is run automatically in CI on pull requests and pushes affecting `backend/**`.
+
+## CI and contract updates
+
+Frontend CI installs Rust and Node dependencies, generates API types, and runs
+`pnpm typecheck` before linting, tests, and the production build. A backend
+OpenAPI schema change that breaks the pool client therefore fails frontend
+typechecking.
+
+Use generated types directly in client code:
 
 ```ts
 import type { components } from "@/types/api";
 
 type Pool = components["schemas"]["PoolDoc"];
 type PoolList = components["schemas"]["PoolListResponse"];
-
-async function fetchPools(): Promise<PoolList> {
-  const res = await fetch("/api/v1/pools");
-  return res.json();
-}
 ```
 
-Overrides: `OUT=./types/backend.d.ts pnpm generate:api` changes the output
-path, `SPEC=./openapi.json pnpm generate:api` reuses an existing spec file
-(useful in CI, where the spec can be exported once and shared).
+When changing an endpoint:
 
-## Keeping it in sync
-
-When you add or change an endpoint:
-
-1. Add the `#[utoipa::path(...)]` stub in `backend/src/openapi.rs`, and register
-   any new schema in `components(schemas(...))`.
-2. Run the spec tests — they fail if the stub and the router disagree.
-3. Re-run `pnpm generate:api` and commit the regenerated types.
+1. Update its `#[utoipa::path(...)]` documentation and registered schemas in
+   `backend/src/openapi.rs`.
+2. Update or add runtime schema coverage in `backend/src/openapi_tests.rs`.
+3. Run the OpenAPI tests, then `cd frontend && pnpm generate:api && pnpm typecheck`.
+4. Regenerate and commit `backend/openapi.json` and the generated frontend types
+   with the contract changes.

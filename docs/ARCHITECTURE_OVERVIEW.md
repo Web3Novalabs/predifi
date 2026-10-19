@@ -1,441 +1,592 @@
 # PrediFi Architecture Overview
 
-PrediFi is a Stellar/Soroban prediction-market system made up of Soroban smart contracts, a Rust backend API, a Next.js frontend, and supporting infrastructure for persistence, caching, indexing, and monitoring.
+**Version**: 1.0.0  
+**Scope**: Smart Contract Layer, Backend Service, Frontend State Management, and End-to-End Component Interactions.  
+**Platform**: Stellar / Soroban (Protocol 23, Soroban SDK 23.5.3)  
+
+---
 
 ## Table of Contents
 
-- [Technology Stack](#technology-stack)
-- [Repository Layout](#repository-layout)
-- [High-Level System](#high-level-system)
-- [Smart Contract Architecture](#smart-contract-architecture)
-- [Storage Architecture](#storage-architecture)
-- [Backend API Flow](#backend-api-flow)
-- [Frontend State Management](#frontend-state-management)
-- [End-to-End Data Flow](#end-to-end-data-flow)
-- [Prediction Lifecycle](#prediction-lifecycle)
-- [Security and Access Control](#security-and-access-control)
-- [Deployment and Infrastructure](#deployment-and-infrastructure)
-- [Monitoring and Observability](#monitoring-and-observability)
-- [Operational Boundaries](#operational-boundaries)
+1. [Executive Summary](#executive-summary)
+2. [Technology Stack](#technology-stack)
+3. [System Component Architecture](#system-component-architecture)
+4. [Smart Contract Architecture & Interactions](#smart-contract-architecture--interactions)
+   - [Contract Interaction Diagram](#contract-interaction-diagram)
+   - [Contract Modules & Responsibilities](#contract-modules--responsibilities)
+   - [Ledger Storage Architecture](#ledger-storage-architecture)
+5. [Backend API Flow](#backend-api-flow)
+   - [Request Lifecycle Sequence Diagram](#request-lifecycle-sequence-diagram)
+   - [Backend Subsystems & State Structure](#backend-subsystems--state-structure)
+   - [Caching Hierarchy & Invalidation Strategy](#caching-hierarchy--invalidation-strategy)
+6. [Frontend State Management](#frontend-state-management)
+   - [State Management Architecture Diagram](#state-management-architecture-diagram)
+   - [Client-Side Data Flow & Cache Strategy](#client-side-data-flow--cache-strategy)
+   - [Session & Persistence Fallback Layer](#session--persistence-fallback-layer)
+   - [Transaction Signing & Simulation Lifecycle](#transaction-signing--simulation-lifecycle)
+7. [End-to-End Data Flow](#end-to-end-data-flow)
+   - [Pool Creation Flow](#pool-creation-flow)
+   - [Prediction Staking & Event Indexing Flow](#prediction-staking--event-indexing-flow)
+   - [Oracle Price Updates & Automated Resolution](#oracle-price-updates--automated-resolution)
+   - [Payout Settlement & Fee Routing Flow](#payout-settlement--fee-routing-flow)
+8. [Prediction Market Lifecycle State Machine](#prediction-market-lifecycle-state-machine)
+9. [Security Invariants & Reentrancy Guards](#security-invariants--reentrancy-guards)
+10. [Monitoring, Telemetry & Observability](#monitoring-telemetry--observability)
+
+---
+
+## Executive Summary
+
+PrediFi is a decentralized, non-custodial prediction market protocol deployed on the Stellar network using Soroban smart contracts. It enables users to create binary and categorical markets, stake positions using whitelisted Stellar tokens (including native XLM and stablecoins), and claim provably fair payouts upon outcome resolution.
+
+The architecture combines on-chain financial guarantees and immutable settlement with a high-throughput, low-latency off-chain indexing and caching layer to power modern, responsive web experiences.
+
+---
 
 ## Technology Stack
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Blockchain | Stellar + Soroban (SDK 23.4.1, Protocol 23) | Smart contract execution, settlement |
-| Contracts | Rust (`no_std`) + `soroban-sdk` | Pool lifecycle, staking, payouts, oracle |
-| Backend | Rust + Axum + Tokio | REST API, indexing, health checks |
-| Database | PostgreSQL (SQLx) | Indexed pool/prediction data, referrals, stats |
-| Cache | Redis + in-memory `PriceCache` / `PoolCache` | Hot reads, rate limiting, session data |
-| Frontend | Next.js 15 + TypeScript + SWR + Tailwind | User-facing market UI, wallet integration |
-| Infra | Docker Compose, Terraform (AWS), GitHub Actions | Local dev, cloud provisioning, CI |
-| Observability | Prometheus metrics, tracing (OTel), Horizon events | Metrics, logs, contract event streaming |
+| Layer | Component | Technology | Purpose |
+|-------|-----------|------------|---------|
+| **Blockchain** | Network | Stellar Mainnet / Testnet (Protocol 23) | Decentralized settlement and consensus. |
+| **Smart Contracts** | Runtime | Soroban WASM (`no_std` Rust, SDK 23.5.3) | Execution of pools, staking, payouts, and access control. |
+| **Backend** | Web Framework | Rust, Axum 0.7, Tokio | High-performance asynchronous HTTP and WebSocket server. |
+| **Persistence** | Relational DB | PostgreSQL 16 (SQLx) | Indexed relational storage for fast querying of pools and history. |
+| **Caching** | Caches | Redis 7 + In-Memory `PoolCache` & `PriceCache` | Hot read caching, rate limiting tokens, and price feeds. |
+| **Frontend** | Application | Next.js 15 (React 19, TypeScript, Tailwind) | User-facing responsive web application and wallet interface. |
+| **Wallet** | Signer | Freighter Wallet & Stellar SDK | Client-side transaction building, simulation, and cryptographic signing. |
+| **Oracles** | Data Feeds | Pyth Network Adapter & Whitelisted Oracles | Real-world price and outcome feeds for automated market settlement. |
+| **Telemetry** | Observability | Prometheus & OpenTelemetry (Tracing) | Metrics scraping, request latency profiling, and audit logging. |
 
-## Repository Layout
+---
 
-```
-predifi/
-├── contract/
-│   ├── contracts/
-│   │   ├── predifi-contract/   # Main market contract
-│   │   │   └── src/
-│   │   │       ├── lib.rs              # Types, errors, DataKey, events
-│   │   │       ├── pool.rs             # Pool creation & lifecycle
-│   │   │       ├── prediction.rs       # place_prediction / claim paths
-│   │   │       ├── price_feed.rs       # Full oracle adapter (Pyth)
-│   │   │       ├── price_feed_simple.rs# Simplified tuple adapter
-│   │   │       ├── oracle.rs           # Oracle whitelist & callbacks
-│   │   │       ├── payouts.rs          # Pure fee/payout math
-│   │   │       ├── treasury.rs         # Protocol fee accrual / withdrawal
-│   │   │       ├── referral.rs         # Referral volume & reward routing
-│   │   │       ├── safe_math.rs        # Overflow-checked arithmetic
-│   │   │       └── admin.rs            # Pause, fee, treasury, whitelist ops
-│   │   ├── access-control/     # Role management (Admin/Operator/Oracle)
-│   │   └── predifi-errors/     # Shared error enum (native + Soroban)
-│   └── Cargo.toml
-├── backend/
-│   └── src/
-│       ├── server.rs / lib.rs  # Axum router, health, CORS, metrics
-│       ├── config.rs           # Env-driven configuration
-│       ├── db/                 # Postgres pools, predictions, referrals, metrics
-│       ├── routes/             # API v1 handlers (pools, predictions, etc.)
-│       ├── price_cache.rs      # In-memory oracle price snapshot
-│       ├── pool_cache.rs       # In-memory pool snapshot
-│       ├── redis_cache.rs      # Redis client & helpers
-│       ├── rate_limit.rs       # Tiered rate limiting
-│       ├── jwt.rs              # JWT auth & validation
-│       └── telemetry.rs        # OTel / tracing setup
-├── frontend/
-│   ├── app/                    # Next.js App Router (server + client components)
-│   ├── components/             # Reusable UI, wallet, market components
-│   ├── lib/
-│   │   ├── api/                # Typed backend client (pools, predictions)
-│   │   └── hooks/              # SWR hooks (usePools, etc.)
-│   └── providers/              # SWRProvider, wallet context
-├── docs/                       # Architecture, API ref, deployment guides
-├── docker/ & docker-compose.yml
-└── terraform/                  # AWS modules, environment configs
-```
+## System Component Architecture
 
-## High-Level System
+The diagram below details the operational boundaries and network protocols connecting clients, backend services, external oracles, and the Stellar ledger.
 
 ```mermaid
-flowchart LR
-    User[User wallet/browser]
-    Frontend[Next.js frontend]
-    Backend[Rust Axum backend]
-    Redis[(Redis cache)]
-    Postgres[(Postgres)]
-    StellarRPC[Stellar RPC]
-    Predifi[PrediFi contract]
-    Access[Access-control contract]
-    Oracle[Pyth/oracle feed]
+flowchart TB
+    subgraph ClientLayer["Client Layer"]
+        User["User Browser"]
+        Freighter["Freighter Wallet"]
+        User <--> Freighter
+    end
 
-    User --> Frontend
-    Frontend --> Backend
-    Frontend --> StellarRPC
-    Backend --> Postgres
-    Backend --> Redis
-    Backend --> StellarRPC
-    StellarRPC --> Predifi
-    Predifi --> Access
-    Predifi --> Oracle
+    subgraph FrontendApp["Frontend Application (Next.js 15)"]
+        UIComponents["React Server/Client Components"]
+        SWRCache["SWR Data Cache"]
+        PersistentStore["Cookie / LocalStorage Fallback"]
+        UIComponents <--> SWRCache
+        UIComponents <--> PersistentStore
+    end
+
+    subgraph BackendCluster["Backend Service (Rust / Axum)"]
+        Router["Axum Router & Middleware Stack"]
+        AppState["Shared AppState"]
+        PoolCache["In-Memory PoolCache"]
+        PriceCache["In-Memory PriceCache"]
+        EventBus["WebSocket EventBus"]
+        StellarWorker["Stellar Listener Worker"]
+        Router --> AppState
+        AppState --> PoolCache
+        AppState --> PriceCache
+        AppState --> EventBus
+        StellarWorker --> EventBus
+    end
+
+    subgraph DataStorage["Data & Storage Layer"]
+        Postgres[(PostgreSQL Database)]
+        RedisCache[(Redis Cache)]
+        AppState --> Postgres
+        AppState --> RedisCache
+        StellarWorker --> Postgres
+        StellarWorker --> RedisCache
+    end
+
+    subgraph StellarNetwork["Stellar / Soroban Blockchain"]
+        StellarRPC["Stellar Horizon & Soroban RPC"]
+        AccessControlContract["Access Control Contract"]
+        PredifiContract["PrediFi Market Contract"]
+        PythOracle["Pyth Oracle / External Feeds"]
+        StellarRPC --> PredifiContract
+        PredifiContract <--> AccessControlContract
+        PredifiContract <--> PythOracle
+    end
+
+    User <--> FrontendApp
+    FrontendApp -- "REST & WebSocket (WSS)" --> Router
+    FrontendApp -- "Simulate & Submit Signed TX" --> StellarRPC
+    BackendCluster -- "Query Ledger & Poll Events" --> StellarRPC
 ```
 
-Request paths:
+---
 
-- **Read path (fast):** `Frontend → Backend → (Redis/PoolCache → Postgres)` — cached pool lists, stats, leaderboards. Falls back to Stellar RPC for on-chain truth when needed.
-- **Write path (settlement):** `Frontend → Stellar RPC → PrediFi contract` — signed Soroban transactions for `create_pool`, `place_prediction`, `resolve_pool`, `claim_winnings`. Backend indexes the resulting events.
+## Smart Contract Architecture & Interactions
 
-## Smart Contract Architecture
+The contract layer separates administrative authorization from market mechanics to enhance upgradeability, auditability, and principle of least privilege.
 
-The contract layer keeps authorization separate from protocol logic. The main PrediFi contract owns market state and delegates role checks to the access-control contract.
+### Contract Interaction Diagram
 
 ```mermaid
 flowchart TD
-    Admin[Admin/operator/oracle addresses]
-    AccessControl[access-control contract]
-    Predifi[predifi-contract]
-    Pool[Pool lifecycle module]
-    Prediction[Prediction/staking module]
-    Payout[Payout/treasury/referral modules]
-    OracleModule[Oracle/price-feed modules]
-    Storage[(Soroban storage)]
+    subgraph ExternalCallers["External Invocations"]
+        AdminUser["Admin Signer"]
+        OperatorUser["Operator Signer"]
+        OracleFeeder["Oracle Signer"]
+        MarketUser["Market Participant (Bettor/Creator)"]
+    end
 
-    Admin --> AccessControl
-    Predifi --> AccessControl
-    Predifi --> Pool
-    Predifi --> Prediction
-    Predifi --> Payout
-    Predifi --> OracleModule
-    Pool --> Storage
-    Prediction --> Storage
-    Payout --> Storage
-    OracleModule --> Storage
+    subgraph AccessControl["access-control Contract"]
+        RoleRegistry["Role Registry (Admin=0, Operator=1, Oracle=3)"]
+        HasRoleCheck["has_role(address, role)"]
+        AdminRoleGuard["require_admin(caller)"]
+    end
+
+    subgraph PredifiMarket["predifi-contract"]
+        AdminModule["admin.rs (Init, Pause, Timelocked Fees, Whitelist)"]
+        PoolModule["pool.rs (create_pool, resolve_pool, cancel_pool)"]
+        PredictionModule["prediction.rs (place_prediction, claim_winnings)"]
+        PayoutModule["payouts.rs (calculate_payout, odds, protocol fee)"]
+        TreasuryModule["treasury.rs (fee collection, withdraw_treasury)"]
+        ReferralModule["referral.rs (attribution, referral rewards)"]
+        OracleModule["oracle.rs & price_feed.rs (Pyth condition evaluation)"]
+        SafeMath["safe_math.rs (overflow-checked math)"]
+        RentGuard["RentGuard (reentrancy lockout)"]
+    end
+
+    subgraph LedgerStorage["Soroban Storage Tiers"]
+        InstanceStorage[("Instance Storage: Config, Whitelist, Paused")]
+        PersistentStorage[("Persistent Storage: Pools, Predictions, Stakes, TTLs")]
+        TempStorage[("Temporary Storage: Votes, RentGuard")]
+    end
+
+    AdminUser --> AdminModule
+    AdminUser --> RoleRegistry
+    OperatorUser --> PoolModule
+    OracleFeeder --> OracleModule
+    MarketUser --> PredictionModule
+    MarketUser --> PoolModule
+
+    PoolModule -- "Cross-Contract Role Check" --> HasRoleCheck
+    OracleModule -- "Cross-Contract Role Check" --> HasRoleCheck
+    AdminModule -- "Cross-Contract Role Check" --> HasRoleCheck
+
+    PredictionModule --> RentGuard
+    PredictionModule --> PayoutModule
+    PredictionModule --> ReferralModule
+    PredictionModule --> SafeMath
+    PoolModule --> OracleModule
+    PayoutModule --> TreasuryModule
+
+    AdminModule --> InstanceStorage
+    PoolModule --> PersistentStorage
+    PredictionModule --> PersistentStorage
+    RentGuard --> TempStorage
 ```
 
-### Module Responsibilities
+### Contract Modules & Responsibilities
 
-| Module | File | Responsibility |
-|--------|------|---------------|
-| **Pool** | `pool.rs` | `create_pool`, `update_pool_description`, `close_staking`, `cancel_pool`, `resolve_pool` (operator voting), `emergency_cancel_pool` |
-| **Prediction** | `prediction.rs` | `place_prediction` (staking, cooldown, limits, referrals), `claim_winnings` / `claim_refund` / `batch_claim_winnings`, `get_user_predictions` |
-| **Price Feed (full)** | `price_feed.rs` | `init_oracle`, `update_price_feed`, `is_price_valid`, `evaluate_price_condition`, `resolve_pool_from_price`, `cleanup_expired_feeds` — Pyth-style `PriceFeed` / `PriceCondition` / `OracleConfig` structs |
-| **Price Feed (simple)** | `price_feed_simple.rs` | Tuple-backed variant `(feed_pair, target_price, operator, tolerance_bps)` with deviation guard (5×) and permissionless cleanup |
-| **Oracle** | `oracle.rs` | Oracle whitelist, `oracle_resolve` callback, confidence & staleness checks |
-| **Payouts** | `payouts.rs` | Pure fee/payout math (`calculate_claim_payout`, `calculate_referral_amount`, `calculate_odds_bps`) — protocol-favor rounding, INV-4 enforcement |
-| **Treasury** | `treasury.rs` | Fee accrual accounting, `withdraw_treasury` (admin only) |
-| **Referral** | `referral.rs` | `Referrer(user, pool)` / `ReferredVolume` tracking, referral cut on claim |
-| **Safe Math** | `safe_math.rs` | `SafeMath::percentage`, `proportion`, `calculate_share` with checked arithmetic |
-| **Admin** | `admin.rs` | `init`, `pause`/`unpause`, `set_fee_bps` (timelocked), `set_treasury`, `add/remove_token_whitelist`, `upgrade_contract` |
-| **Access Control** | `access-control/` | Role registry (Admin=0, Operator=1, Oracle=3); `has_role` cross-contract call |
+| Module | Source File | Core Functions & Responsibilities |
+|--------|-------------|-----------------------------------|
+| **Access Control** | `access-control/src/lib.rs` | RBAC contract defining roles (`Admin=0`, `Operator=1`, `Moderator=2`, `Oracle=3`). Implements safe two-step admin transfer (`propose_new_admin`, `accept_admin_role`) and final admin revocation guard. |
+| **Admin & Governance** | `predifi-contract/src/admin.rs` | Protocol initialization with 6 parameters (`init`), emergency pausing (`pause`, `unpause`), 7-day timelocked fee adjustments (`set_fee_bps`, `apply_fee_bps`), token whitelisting, and contract upgrade logic. |
+| **Pool Lifecycle** | `predifi-contract/src/pool.rs` | Market pool creation (`create_pool`), staking closure (`close_staking`), cancellation (`cancel_pool`, `emergency_cancel_pool`), and multi-operator consensus resolution (`resolve_pool`). |
+| **Prediction & Staking** | `predifi-contract/src/prediction.rs` | Staking execution with token transfer (`place_prediction`), single claim (`claim_winnings`), full principal refunds (`claim_refund`), and multi-market batch claims (`batch_claim_winnings`). |
+| **Payouts & Settlement** | `predifi-contract/src/payouts.rs` | Pure mathematical routines: `calculate_claim_payout`, `calculate_referral_amount`, `calculate_odds_bps`. Enforces protocol-favor rounding and Invariant INV-4. |
+| **Treasury & Accrual** | `predifi-contract/src/treasury.rs` | Tracks accumulated protocol fees in contract instance storage; provides privileged withdrawal (`withdraw_treasury`) to authorized recipients. |
+| **Referrals & Affiliates** | `predifi-contract/src/referral.rs` | Tracks referrer attribution (`Referrer(user, pool)`), accumulates affiliate volume, and routes referral fee shares upon winning claims. |
+| **Price Feed & Oracle** | `predifi-contract/src/oracle.rs`, `price_feed.rs` | Pyth Network adapter integration, price feed freshness validation (`is_price_valid`), threshold evaluation (`evaluate_price_condition`), and automated pool resolution (`resolve_pool_from_price`). |
+| **Safe Math** | `predifi-contract/src/safe_math.rs` | Arithmetic safety primitives (`checked_add`, `checked_mul`, `checked_div`, `percentage`, `proportion`). |
 
-Core interactions:
+### Ledger Storage Architecture
 
-1. Admin deploys and initializes `access-control`, then assigns operator and oracle roles.
-2. Admin initializes `predifi-contract` with the access-control address, treasury, fee basis points, and timing parameters.
-3. Pool creators create markets with bounded options, stake limits, and end times.
-4. Users place predictions with whitelisted tokens.
-5. Operators or oracle flows resolve pools after the configured resolution delay.
-6. Winners claim payouts; protocol and referral fees are routed through treasury/referral logic.
+Soroban provides three storage tiers with distinct durability and rent profiles:
 
-```mermaid
-flowchart TD
-    A[Admin deploys access-control] --> B[Admin assigns Operator/Oracle roles]
-    B --> C[Admin init predifi-contract]
-    C --> D[Creator: create_pool]
-    D --> E[User: place_prediction]
-    E --> F{end_time + delay elapsed?}
-    F -->|yes| G[Operator/oracle: resolve_pool]
-    G --> H[User: claim_winnings / claim_refund]
-    H --> I[Treasury withdraw]
-```
+1. **Instance Storage (Contract-Global)**:
+   - Contains immutable configuration: `Config` (treasury address, fee basis points, resolution delay, min duration, max predictions).
+   - Operational flags: `Paused` boolean, `TokenWhitelist` list, `PendingFeeBps` proposal with timestamp.
+2. **Persistent Storage (Per-Entity Data)**:
+   - Market pools: `Pool(pool_id) -> Pool`.
+   - Stake records: `Pred(user, pool_id) -> UserPrediction`, `OutStakes(pool_id) -> Vec<i128>`.
+   - Claims: `Claimed(user, pool_id) -> bool` (write-once duplicate claim guard).
+   - Pagination indices: `UsrPrdCnt`, `UsrPrdIdx`, `ActivePool`, `CatPoolCt`.
+   - *TTL Strategy*: Every read/write extends key durability by $535,680$ ledgers (~30 days). Permissionless `renew_storage_ttl(pool_id)` allows community maintenance.
+3. **Temporary Storage (Transient State)**:
+   - Reentrancy locks: `RentGuard` active flag.
+   - Operator voting records: `ResVote(pool_id, operator)` auto-expire after resolution window.
 
-## Storage Architecture
-
-Soroban offers three storage tiers; PrediFi uses them as follows:
-
-```mermaid
-flowchart TD
-    subgraph Instance["Instance storage (contract-global)"]
-        Config[Config]
-        Paused[Paused]
-        Version[Version]
-        ReferralCutBps[ReferralCutBps]
-        FeeTiers[FeeTiers]
-        TokenWhitelist[TokenWhitelist]
-        PendingFeeBps[PendingFeeBps]
-    end
-    subgraph Persistent["Persistent storage (per-key TTL, manual extend)"]
-        Pool[Pool pool_id]
-        Pred[Pred user pool_id]
-        Claimed[Claimed user pool_id]
-        OutStakes[OutStakes pool_id / OutStake]
-        UsrPrd[UsrPrdCnt / UsrPrdIdx]
-        LastTime[LastPredictionTime user]
-        Referrer[Referrer / ReferredVolume]
-        PriceFeed[PriceFeed feed_pair]
-        PriceCond[PriceCondition pool_id]
-        OracleConfig[OracleConfig]
-        Whitelist[Whitelist pool_id user]
-        ActivePool[ActivePool / ActivePoolIdx]
-    end
-    subgraph Temporary["Temporary storage (auto-expiry)"]
-        ResVote[ResVote pool_id voter]
-        ResVoteCt[ResVoteCt pool_id outcome]
-        ResTotal[ResTotal pool_id]
-        RentGuard[RentGuard]
-    end
-```
-
-Key patterns:
-
-- **TTL management:** `extend_persistent` / `bump_ttl` is called on every read/write of persistent keys; `RentGuard` uses temporary storage for reentrancy protection.
-- **Batch vs individual stakes:** `OutStakes(pool_id) -> Vec<i128>` (preferred) with fallback to `OutStake(pool_id, outcome)` for backward compatibility.
-- **Index structures:** `UsrPrdCnt` + `UsrPrdIdx` for pagination; `ActivePool` / `ActivePoolIdx` for active-pool enumeration; `CatPoolCt` / `CatPoolIx` per category.
-- **Price feed registry:** `PriceFeedList: Vec<Symbol>` tracks all pairs for `cleanup_expired_feeds`.
+---
 
 ## Backend API Flow
 
-The backend is an Axum service. It builds application state from configuration, database connections, Redis/cache clients, metrics, and Stellar RPC settings.
+The backend service is an Axum web server orchestrating public reads, private administrative endpoints, real-time event streaming, and indexer ingestion.
+
+### Request Lifecycle Sequence Diagram
 
 ```mermaid
 sequenceDiagram
-    participant Client as Frontend/API client
-    participant Axum as Axum router
-    participant Middleware as CORS/logging/rate limit/metrics
-    participant Handler as API handler
-    participant DB as Postgres
-    participant Cache as Redis/price cache
-    participant RPC as Stellar RPC
+    autonumber
+    participant Client as Frontend / API Client
+    participant CORS as CORS & RequestLogger Middleware
+    participant RateLimiter as Governor Rate Limiter
+    participant JWT as JWT Authenticator
+    participant Handler as Route Handler
+    participant Cache as Memory / Redis Cache
+    participant DB as PostgreSQL Database
+    participant RPC as Stellar Horizon / RPC
 
-    Client->>Axum: HTTP request
-    Axum->>Middleware: apply request middleware
-    Middleware->>Handler: validated request state
-    Handler->>Cache: read/write cached data
-    Handler->>DB: persist or query indexed records
-    Handler->>RPC: fetch chain/RPC state when needed
-    Handler-->>Client: JSON response
+    Client->>CORS: HTTP Request (Method, Headers, Body)
+    CORS->>CORS: Validate Origin, attach Request ID UUID
+    CORS->>RateLimiter: Check IP Token Bucket
+    alt Bucket Empty (Exceeded Quota)
+        RateLimiter-->>Client: 429 Too Many Requests (Retry-After)
+    else Tokens Available
+        RateLimiter->>JWT: Verify Auth Header (if protected route)
+        alt Token Expired / Invalid
+            JWT-->>Client: 401 Unauthorized / 403 Forbidden
+        else Authenticated / Public Route
+            JWT->>Handler: Dispatch Request with AppState
+            Handler->>Cache: Check In-Memory / Redis Cache
+            alt Cache Hit
+                Cache-->>Handler: Return Cached Payload
+            else Cache Miss
+                Handler->>DB: Query Indexed Tables (SQLx)
+                opt Fallback or Live Verification Required
+                    Handler->>RPC: Read Raw Soroban Ledger
+                    RPC-->>Handler: Return Ledger Entry
+                end
+                DB-->>Handler: Return Row Set
+                Handler->>Cache: Populate Cache with TTL
+            end
+            Handler-->>Client: 200 OK (Standard JSON ApiResponse Envelope)
+        end
+    end
 ```
 
-### Request Lifecycle
+### Backend Subsystems & State Structure
 
-1. **Routing:** `lib.rs:build_router` mounts `/`, `/health`, `/metrics`, `/api/*`, and Swagger UI. `routes::router` / `router_with_db` wire versioned handlers.
-2. **Middleware stack (outer → inner):** CORS (`build_cors`) → `LoggingLayer` (request logger + Prometheus) → rate limiting (`rate_limit`) → JWT auth where required.
-3. **AppState:** `Arc<Config>` + `PriceCache` + `PoolCache` + `RedisCache` + optional `PgPool` + `Metrics` + `EventBus`. Cloned per request via Axum `State`.
-4. **Handlers:** Validate inputs (`validated_types`), hit cache first (`PoolCache` / `Redis`), fall back to Postgres, optionally call Stellar RPC for chain truth, then return JSON.
-5. **Health:** `GET /health` checks Postgres (`SELECT 1`), Redis (`PING`), `PriceCache` (non-empty), and Stellar RPC `getHealth` with retry/backoff. Reports per-dependency status plus `SERVICE_UNAVAILABLE` if any check fails.
+The application state (`AppState`) is cloned across worker threads via `Arc`:
 
-Health endpoints check database reachability, Redis availability, the price cache, and Stellar RPC `getHealth`. The API stores indexed prediction-market data in Postgres and uses Redis/price cache paths to keep common reads fast.
+```rust
+pub struct AppState {
+    pub config: Arc<Config>,
+    pub cache: PriceCache,
+    pub pool_cache: PoolCache,
+    pub redis: RedisCache,
+    pub db: Option<PgPool>,
+    pub metrics: SharedMetrics,
+    pub event_bus: EventBus,
+}
+```
 
 ```mermaid
 flowchart LR
-    subgraph Backend Internals
-        Config[Config]
-        PoolCache[(PoolCache)]
-        PriceCache[(PriceCache)]
-        Redis[(Redis)]
-        DB[(Postgres)]
-        RPC[Stellar RPC]
-        Handlers[Route handlers]
-        Metrics[Prometheus]
-        WS[WebSocket EventBus]
+    subgraph AppStateComponents["Shared AppState (Arc)"]
+        Config["Configuration (Arc<Config>)"]
+        PoolCache["PoolCache (Negative TTL Support)"]
+        PriceCache["PriceCache (Live Price Feeds)"]
+        RedisCache["Redis Cache Client"]
+        PgPool["PostgreSQL Connection Pool"]
+        SharedMetrics["Prometheus Metrics Registry"]
+        EventBus["Broadcast EventBus (Cap=256)"]
     end
-    Handlers --> PoolCache
-    Handlers --> PriceCache
-    Handlers --> Redis
-    Handlers --> DB
-    Handlers --> RPC
-    Handlers --> Metrics
-    Handlers --> WS
+
+    subgraph Workers["Background Workers"]
+        StellarListener["Stellar Event Listener"]
+        PriceFeedPoller["Oracle Price Poller"]
+    end
+
+    StellarListener --> PgPool
+    StellarListener --> RedisCache
+    StellarListener --> EventBus
+    PriceFeedPoller --> PriceCache
 ```
+
+### Caching Hierarchy & Invalidation Strategy
+
+1. **L1 In-Memory Caches**:
+   - `PoolCache`: Retains recent pool metadata and live odds. Implements negative caching for non-existent pool queries to prevent database cache stampedes.
+   - `PriceCache`: Thread-safe read/write buffer for asset prices updated by oracle pollers.
+2. **L2 Distributed Cache (Redis)**:
+   - Caches serialized pool listings, category indexes, leaderboard rankings, and stats summaries.
+   - Keys: `predifi:pools:active`, `predifi:stats:summary`, `predifi:leaderboard:volume`.
+3. **Cache Invalidation**:
+   - Ingesting a `prediction_placed` event immediately calls `state.redis.invalidate_stats_cache()`.
+   - Resolving a pool purges `PoolCache` and triggers recalculation of leaderboard stats.
+
+---
 
 ## Frontend State Management
 
-The frontend uses the Next.js App Router. Above-the-fold marketing components are loaded eagerly, while heavier below-the-fold sections are dynamically imported to keep initial rendering lean.
+The frontend architecture combines Next.js 15 App Router server-side capabilities with responsive client-side reactive state.
+
+### State Management Architecture Diagram
 
 ```mermaid
 flowchart TD
-    App[Next.js App Router]
-    Server[Server components]
-    Client[Client components]
-    Wallet[Wallet UI/session state]
-    Persist[Cookie/localStorage persistence]
-    API[Backend API]
-    RPC[Stellar RPC/wallet signing]
+    subgraph BrowserEnvironment["Browser / Client Environment"]
+        subgraph UIComponents["React Components (Next.js 15)"]
+            MarketPages["Market Detail & Listing Pages"]
+            BetModal["Prediction Staking Modal"]
+            UserDashboard["User Portfolio & Stats"]
+        end
 
-    App --> Server
-    App --> Client
-    Client --> Wallet
-    Wallet --> Persist
-    Client --> API
-    Wallet --> RPC
-```
+        subgraph ReactiveState["State & Cache Management"]
+            SWRLayer["SWR Data Cache (Deduped, Revalidate)"]
+            WalletContext["Wallet Context (Freighter / Address / Balance)"]
+            OptimisticUI["Optimistic State Machine"]
+        end
 
-### Layers
-
-| Layer | Mechanism | Details |
-|-------|-----------|---------|
-| **Server components** | Next.js App Router | Static rendering, SEO, initial data fetch |
-| **Client components** | React + SWR | `SWRProvider` (no revalidate on focus/reconnect, deduped), `usePools()` → `lib/api/pools.ts` typed client, `NEXT_PUBLIC_API_BASE_URL` |
-| **Wallet / session** | Freighter + context | Signing, `require_auth` flows, session persistence |
-| **Persistence** | Cookies → localStorage fallback | Reads cookies first, falls back to localStorage for privacy modes that block cookies |
-| **Signing** | Stellar SDK + Freighter | `contract.call("place_prediction", ...)` via `TransactionBuilder` + `simulateTransaction` before submit |
-
-Client-side persistence reads cookies first and falls back to localStorage for browser privacy modes that block cookie writes. Wallet-facing UI owns user interaction state, while backend and Stellar RPC calls provide market and chain data.
-
-```mermaid
-flowchart LR
-    subgraph Browser
-        UI[React UI]
-        SWR[SWR cache]
-        Wallet[Wallet context]
-        Store[Cookie/localStorage]
+        subgraph ClientPersistence["Storage Persistence Fallback"]
+            HttpOnlyCookie["1. HttpOnly Secure Cookies"]
+            DocumentCookie["2. document.cookie"]
+            LocalStorageFallback["3. localStorage (Privacy Mode Fallback)"]
+        end
     end
-    UI --> SWR
-    SWR --> API[Backend /api/v1]
-    Wallet --> StellarRPC[Stellar RPC]
-    Wallet --> Store
-    UI --> Wallet
+
+    subgraph ExternalServices["External Endpoints"]
+        BackendAPI["PrediFi Backend API (REST/WSS)"]
+        StellarRPCNode["Stellar Soroban RPC Node"]
+    end
+
+    MarketPages <--> SWRLayer
+    BetModal <--> WalletContext
+    BetModal --> OptimisticUI
+    OptimisticUI --> SWRLayer
+
+    WalletContext <--> ClientPersistence
+    SWRLayer <-- "GET /api/v1/..." --> BackendAPI
+    SWRLayer <-- "WebSocket Stream" --> BackendAPI
+    WalletContext -- "Build & Submit TX" --> StellarRPCNode
 ```
 
-## End-to-End Data Flow
+### Client-Side Data Flow & Cache Strategy
 
-```mermaid
-flowchart LR
-    Create[Create pool]
-    Stake[Place prediction]
-    Index[Index/query data]
-    Resolve[Resolve pool]
-    Claim[Claim winnings]
+- **SWR (Stale-While-Revalidate)**: Drives read queries (`usePools`, `usePoolDetails`, `useMarketPredictions`). Configured with automatic deduplication within 2-second windows and live background revalidation upon window focus.
+- **Optimistic Updates**: When a prediction is submitted, the frontend updates user balances and implied outcome odds optimistically while awaiting on-chain confirmation. If the transaction fails during simulation or submission, state rolls back automatically.
 
-    Create --> ContractState[(Soroban pool state)]
-    Stake --> ContractState
-    ContractState --> Index
-    Index --> Backend[(Backend/Postgres/Redis)]
-    Backend --> Frontend[Frontend views]
-    OracleData[Oracle price data] --> Resolve
-    Resolve --> ContractState
-    ContractState --> Claim
-```
+### Session & Persistence Fallback Layer
 
-The contract is the source of truth for pool state, stakes, resolution, and payouts. The backend improves queryability and operational visibility, while the frontend presents current market state and submits signed user actions.
+To guarantee functionality across diverse mobile browsers and strict privacy modes (e.g. Brave shields, Safari ITP):
+1. **Primary**: Tries reading server-issued `HttpOnly` secure session cookies.
+2. **Secondary**: Reads client-accessible `document.cookie`.
+3. **Fallback**: If cookies are blocked, falls back to `localStorage` with AES-GCM encrypted session blobs for persistent address and preferences storage.
+
+### Transaction Signing & Simulation Lifecycle
+
+Before requesting user signature in Freighter, all contract interactions execute the standard Soroban simulation protocol:
 
 ```mermaid
 sequenceDiagram
-    participant Creator
-    participant Contract as Soroban Contract
-    participant Backend
-    participant User
-    participant Oracle
+    autonumber
+    participant UI as Staking UI
+    participant SDK as Stellar SDK
+    participant RPC as Stellar RPC
+    participant Wallet as Freighter Extension
+    participant Network as Stellar Ledger
 
-    Creator->>Contract: create_pool (signed)
-    Contract-->>Backend: PoolCreatedEvent (indexed)
-    User->>Contract: place_prediction (signed, token transfer)
-    Contract-->>Backend: PredictionPlacedEvent (indexed)
-    Backend->>Backend: Update Postgres + caches
-    Oracle->>Contract: update_price_feed (oracle auth)
-    Creator->>Contract: set_price_condition (pool → feed binding)
-    User->>Contract: resolve_pool / resolve_pool_from_price (after delay)
-    Contract-->>Backend: PoolResolvedEvent
-    User->>Contract: claim_winnings (payout + referral split)
-    Contract-->>Backend: WinningsClaimedEvent / ReferralPaidEvent
+    UI->>SDK: Build place_prediction Transaction
+    SDK->>RPC: simulateTransaction(tx)
+    RPC-->>SDK: Simulation Response (Gas, Footprint, Auth, Result)
+    alt Simulation Failed (Contract Error #Code)
+        SDK-->>UI: Throw Decoded Error (e.g. "PredictionTooLate #43")
+        UI-->>UI: Display Actionable Error Toast to User
+    else Simulation Succeeded
+        SDK->>Wallet: requestSignTransaction(simulatedTx)
+        Wallet-->>UI: Prompt User Approval Modal
+        alt User Rejects
+            Wallet-->>UI: Transaction Rejected by User
+        else User Signs
+            Wallet-->>SDK: Return Signed Transaction Envelope XDR
+            SDK->>RPC: sendTransaction(signedTx)
+            RPC-->>SDK: Transaction Hash (Pending Status)
+            SDK->>RPC: getTransaction(hash) (Poll until Success)
+            RPC-->>SDK: Final Ledger Status: SUCCESS
+            SDK-->>UI: Confirmation Alert & Live Odds Refresh
+        end
+    end
 ```
 
-## Prediction Lifecycle
+---
+
+## End-to-End Data Flow
+
+### 1. Pool Creation Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Creator as Pool Creator
+    participant Contract as PrediFi Contract
+    participant Horizon as Stellar Horizon / Events
+    participant Indexer as Backend Indexer Worker
+    participant DB as Postgres
+    participant Client as Web Clients
+
+    Creator->>Contract: create_pool(title, end_time, options, token, stake_limits)
+    Contract->>Contract: Verify options count, duration, whitelisted token
+    Contract->>Contract: Write Pool to Persistent Storage & Emit PoolCreatedEvent
+    Horizon->>Indexer: Detect PoolCreatedEvent on Ledger
+    Indexer->>DB: INSERT into pools table
+    Indexer->>Client: Broadcast pool_created on WebSocket
+```
+
+### 2. Prediction Staking & Event Indexing Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as Bettor
+    participant SAC as Token SAC Contract
+    participant Predifi as PrediFi Contract
+    participant Worker as Stellar Listener Worker
+    participant EventBus as WebSocket EventBus
+    participant Dashboard as Live Dashboard Client
+
+    User->>Predifi: place_prediction(pool_id, outcome, amount, referrer)
+    Predifi->>Predifi: Check RentGuard, cooldown, and limits
+    Predifi->>SAC: transfer(from: User, to: Predifi, amount)
+    SAC-->>Predifi: Token Transfer Success
+    Predifi->>Predifi: Update OutStakes & emit PredictionPlacedEvent
+    Worker->>Worker: Ingest event from RPC stream
+    Worker->>EventBus: event_bus.send(prediction_placed)
+    EventBus-->>Dashboard: Push JSON event over WebSocket
+    Dashboard->>Dashboard: Increment live volume & re-render odds chart
+```
+
+### 3. Oracle Price Updates & Automated Resolution
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Pyth as Pyth Network
+    participant Feeder as Oracle Bot
+    participant Contract as PrediFi Contract
+    participant Resolver as Any Caller / Operator
+
+    Feeder->>Contract: update_price_feed(feed_pair, price, conf, timestamp)
+    Contract->>Contract: Store fresh price in Persistent Storage
+    Note over Contract: Pool end_time + resolution_delay elapses
+    Resolver->>Contract: resolve_pool_from_price(pool_id)
+    Contract->>Contract: Evaluate price condition against cached feed
+    Contract->>Contract: Set pool state to Resolved (winning outcome selected)
+    Contract->>Contract: Emit PoolResolvedEvent
+```
+
+### 4. Payout Settlement & Fee Routing Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Winner as Winning Bettor
+    participant Contract as PrediFi Contract
+    participant Payouts as payouts.rs Math
+    participant Treasury as Protocol Treasury
+    participant Referrer as Affiliate Wallet
+    participant SAC as Token SAC Contract
+
+    Winner->>Contract: claim_winnings(pool_id)
+    Contract->>Contract: Check Claimed(user, pool_id) == false
+    Contract->>Payouts: calculate_claim_payout(user_stake, win_pool, total_pool, fee_bps)
+    Payouts-->>Contract: Net Payout, Protocol Fee, Referral Share
+    Contract->>Contract: Mark Claimed = true
+    Contract->>SAC: transfer(to: Winner, amount: Net Payout)
+    Contract->>SAC: transfer(to: Referrer, amount: Referral Share)
+    Contract->>Treasury: Accrue Protocol Fee
+    Contract->>Contract: Emit WinningsClaimedEvent & ReferralPaidEvent
+```
+
+---
+
+## Prediction Market Lifecycle State Machine
+
+A prediction pool progresses through strictly regulated, monotonic states:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Active: create_pool
-    Active --> Active: place_prediction (stake, referral, cooldown)
-    Active --> Ready: close_staking (after end_time)
-    Ready --> Resolved: resolve_pool / oracle_resolve (quorum)
-    Ready --> Canceled: cancel_pool / emergency_cancel_pool
-    Active --> Canceled: cancel_pool (before resolve)
-    Resolved --> Claimed: claim_winnings (per user, write-once)
-    Canceled --> Refunded: claim_refund (full principal)
+    [*] --> Active: create_pool()
+    note right of Active
+        - Staking open
+        - Token whitelist enforced
+        - Cooldown between bets enforced
+    end note
+
+    Active --> Active: place_prediction()
+    Active --> StakingClosed: Ledger timestamp >= pool.end_time
+    note right of StakingClosed
+        - Predictions blocked
+        - Resolution delay countdown active
+    end note
+
+    Active --> Canceled: cancel_pool() / emergency_cancel_pool()
+    StakingClosed --> Canceled: emergency_cancel_pool() (multisig)
+
+    StakingClosed --> Resolving: resolution_delay elapsed
+    Resolving --> Resolved: resolve_pool() [quorum] / resolve_pool_from_price() [oracle]
+    Resolving --> Disputed: Moderator flags dispute
+
+    Disputed --> Resolved: Arbitrator resolution decision
+    Disputed --> Canceled: Arbitrator cancellation decision
+
+    Resolved --> Claimed: claim_winnings() [Winners withdraw]
+    Canceled --> Refunded: claim_refund() [Full principal returned]
+
     Claimed --> [*]
     Refunded --> [*]
 ```
 
-## Security and Access Control
+---
 
-| Concern | Mechanism |
-|---------|-----------|
-| **Roles** | `access-control` contract: Admin (0), Operator (1), Oracle (3). `require_role` cross-calls `has_role`. Moderator (2) reserved for disputes (#595). |
-| **Auth** | `require_auth` on all value-moving / privileged entry points; `mock_all_auths` in tests |
-| **Reentrancy** | `RentGuard` (temporary storage) around `place_prediction`, `claim_winnings`, `claim_refund`, `withdraw_treasury` |
-| **Arithmetic** | `SafeMath` with checked `add`/`sub`/`mul`/`div`, `RoundingMode::ProtocolFavor` for fees |
-| **Invariants** | INV-1 (total = Σ outcome stakes) … INV-8 (end_time > creation) — enforced in handlers & `payouts.rs` |
-| **Input validation** | `min_stake`/`max_stake`/`max_total_stake`, `options_count` bounds, `outcome < options_count`, fee BPS ≤ 10_000, whitelist checks |
-| **Oracle safety** | Staleness (age + expiry), confidence ratio, 5× deviation guard (simple adapter), manual fallback |
-| **Pause** | `Paused` instance flag — blocks all state-mutating ops; `is_contract_paused` getter + `PauseEvent`/`UnpauseEvent` |
+## Security Invariants & Reentrancy Guards
 
-## Deployment and Infrastructure
+PrediFi enforces eight formal protocol invariants verified in unit and integration test suites:
+
+| Invariant | Specification | Enforcement Mechanism |
+|-----------|---------------|-----------------------|
+| **INV-1** | $\text{Pool Total Stake} = \sum_{i=0}^{N-1} \text{Outcome Stake}_i$ | Checked arithmetic on every `place_prediction`. |
+| **INV-2** | No payouts exceed total pool stake vault balance. | Bounded payouts in `payouts.rs` with `RoundingMode::ProtocolFavor`. |
+| **INV-3** | Double claims are impossible. | Write-once `Claimed(user, pool_id)` persistent storage key. |
+| **INV-4** | $\text{Protocol Fee} + \text{Referral Cut} + \text{Net Winnings} \le \text{Gross Payout}$. | Explicit conservation check prior to token disbursements. |
+| **INV-5** | State transitions are irreversible (monotonic). | `MarketState` machine guards (`Active -> Resolved/Canceled`). |
+| **INV-6** | Protocol fee basis points $\le 10,000$ ($100\%$). | Parameter validation on `init` and `set_fee_bps`. |
+| **INV-7** | Reentrancy attacks are impossible. | `RentGuard` lock acquisition on `place_prediction` and `claim_winnings`. |
+| **INV-8** | End time must be strictly greater than creation timestamp. | Minimum pool duration constraint (`min_pool_duration`). |
+
+---
+
+## Monitoring, Telemetry & Observability
 
 ```mermaid
-flowchart TD
-    GitHub[GitHub Actions CI]
-    Build[stellar contract build]
-    WASM[WASM artifact]
-    Deploy[stellar contract deploy / install]
-    RPC[Stellar RPC / Testnet / Mainnet]
-    Docker[Docker Compose]
-    Terraform[Terraform AWS]
-    BackendSvc[Backend service]
-    FrontendSvc[Frontend Vercel/Next.js]
+flowchart LR
+    subgraph Signals["Observability Signals"]
+        MetricsEndpoint["GET /metrics (Prometheus)"]
+        TraceLogger["OpenTelemetry Tracing / JSON Logger"]
+        HorizonEvents["Stellar Horizon Event Stream"]
+    end
 
-    GitHub --> Build
-    Build --> WASM
-    WASM --> Deploy
-    Deploy --> RPC
-    Docker --> BackendSvc
-    Terraform --> BackendSvc
-    BackendSvc --> RPC
-    FrontendSvc --> BackendSvc
-    FrontendSvc --> RPC
+    subgraph Aggregators["Monitoring Infrastructure"]
+        PrometheusServer["Prometheus Server"]
+        LokiGrafana["Grafana & Loki Dashboard"]
+        PagerDutyAlerts["PagerDuty On-Call Alerts"]
+    end
+
+    MetricsEndpoint --> PrometheusServer
+    TraceLogger --> LokiGrafana
+    HorizonEvents --> PagerDutyAlerts
+    PrometheusServer --> LokiGrafana
 ```
 
-- **Local dev:** `docker-compose.yml` brings up Postgres + Redis + backend + frontend; `contract/Makefile` wraps `stellar contract build` / `cargo test`.
-- **Contract deploy:** `stellar contract build` → `stellar contract deploy --wasm target/.../predifi_contract.wasm --source ACCOUNT --network testnet/mainnet`; TTL extended via `stellar contract extend`.
-- **Backend deploy:** Docker image → AWS via Terraform modules (`terraform/modules/`); env-driven `Config` (RPC URL, DB URL, Redis URL, CORS origins, log level).
-- **Frontend deploy:** Vercel / Next.js standalone; `NEXT_PUBLIC_API_BASE_URL` points at the backend.
+### Metrics & Diagnostic Endpoints
 
-## Monitoring and Observability
+- **`/metrics`**: Exports real-time Prometheus counters and gauges:
+  - `http_requests_total{method, path, status}`
+  - `http_request_duration_seconds{path}`
+  - `db_pool_active_connections`, `db_pool_idle_connections`
+  - `websocket_active_clients`
+  - `cache_hits_total{cache="pool"|"price"|"redis"}`
+- **`/health`**: Evaluates individual subsystem health (`db`, `rpc`, `redis`, `price_cache`). Returns 200 OK if all operational, or 503 Service Unavailable with per-dependency diagnostics.
+- **Contract Event Monitoring**: Scrapers watch for high-priority security topics: `unauthorized_resolution`, `unauthorized_admin_op`, `double_claim_attempt`, `contract_paused_alert`.
 
-| Signal | Source | Consumer |
-|--------|--------|----------|
-| **Prometheus metrics** | `backend/src/metrics.rs` + `LoggingLayer` | `GET /metrics` scraped by Prometheus |
-| **Health** | `GET /health` (DB, Redis, PriceCache, RPC) | Load balancer / uptime monitor |
-| **Tracing** | `telemetry.rs` (OTel when `TELEMETRY_ENABLED=true`, else JSON fmt) | Collector / Grafana |
-| **Contract events** | `events.rs` (`PredictionPlaced`, `PoolResolved`, `WinningsClaimed`, `ReferralPaid`, alert topics `unauthorized_*`, `double_claim_attempt`, `contract_paused_alert`, `high_value_prediction`) | Horizon event streaming → SIEM / PagerDuty |
-| **Price feed freshness** | `price_feed::is_price_valid` / `PriceCache` | Backend price-cache health gate |
+---
 
-## Operational Boundaries
-
-- Contract state changes require signed Soroban transactions and role checks where applicable.
-- Backend state is derived/indexed application data and should not be treated as the source of truth for settlement.
-- Frontend persistence is convenience state only; it must not be trusted for authorization or settlement.
-- Oracle-based resolution depends on configured price-feed freshness, confidence, and registered oracle settings.
-- `PriceFeedList` growth is bounded by `cleanup_expired_feeds` — operators should schedule periodic cleanup (daily/weekly).
-- Fee changes are timelocked (`PendingFeeBps` + `effective_at`) — `set_fee_bps` queues, `apply_fee_bps` commits after delay, `cancel_fee_proposal` aborts.
+**Document Maintained By**: Web3Novalabs Core Engineering  
+**Source Code References**: [predifi-contract](file:///Users/victor/Desktop/Pvsaint/predifi/contract/contracts/predifi-contract/src/lib.rs), [access-control](file:///Users/victor/Desktop/Pvsaint/predifi/contract/contracts/access-control/src/lib.rs), [backend server.rs](file:///Users/victor/Desktop/Pvsaint/predifi/backend/src/server.rs), [frontend api client](file:///Users/victor/Desktop/Pvsaint/predifi/frontend/lib/api/pools.ts)

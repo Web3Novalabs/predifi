@@ -5,14 +5,39 @@ on:
     branches: ["main", "frontend"]
     paths:
       - "frontend/**"
+      - "backend/Cargo.toml"
+      - "backend/Cargo.lock"
+      - "backend/src/openapi.rs"
+      - "backend/src/openapi_tests.rs"
+      - "backend/src/bin/openapi_export.rs"
+      - "backend/src/lib.rs"
+      - "backend/src/routes/**"
+      - "backend/src/db/**"
+      - "backend/src/response.rs"
+      - "backend/src/tags.rs"
+      - "backend/src/price_cache.rs"
+      - "backend/src/redis_cache.rs"
       - ".github/workflows/frontend-ci.yml"
   pull_request:
     branches: ["main", "frontend"]
     paths:
       - "frontend/**"
+      - "backend/Cargo.toml"
+      - "backend/Cargo.lock"
+      - "backend/src/openapi.rs"
+      - "backend/src/openapi_tests.rs"
+      - "backend/src/bin/openapi_export.rs"
+      - "backend/src/lib.rs"
+      - "backend/src/routes/**"
+      - "backend/src/db/**"
+      - "backend/src/response.rs"
+      - "backend/src/tags.rs"
+      - "backend/src/price_cache.rs"
+      - "backend/src/redis_cache.rs"
       - ".github/workflows/frontend-ci.yml"
   workflow_dispatch:
 
+# Cancel superseded runs on the same branch; different refs run independently.
 concurrency:
   group: frontend-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -38,6 +63,123 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate API types
+        run: pnpm generate:api
+
+      - name: Type check generated API types
+        run: pnpm typecheck
+
+      - name: Security audit
+        run: pnpm audit --audit-level=high
+
+      - name: Format Check (Lint)
+        run: pnpm run lint -- --max-warnings=0
+
+      # Coverage replaces the plain test run rather than sitting alongside it
+      # (Issue #1812) — running the suite twice doubles the slowest step in this
+      # job for no extra signal. `--coverage` still fails the job on a failing
+      # test, so nothing is lost.
+      - name: Run Unit & Component Tests with coverage
+        run: pnpm run test:coverage
+
+      # Published to the job summary so the figure is visible from the Actions
+      # tab without downloading an artifact or scrolling the log. A coverage
+      # number nobody sees does not change behaviour, which is the whole point
+      # of the issue.
+      - name: Publish coverage summary
+        if: always()
+        run: |
+          {
+            echo "## Frontend test coverage"
+            echo
+            if [ -f coverage/coverage-summary.json ]; then
+              node -e '
+                const total = require("./coverage/coverage-summary.json").total;
+                const row = (name, m) => `| ${name} | ${m.pct}% | ${m.covered}/${m.total} |`;
+                console.log("| Metric | Covered | Count |");
+                console.log("|---|---|---|");
+                console.log(row("Statements", total.statements));
+                console.log(row("Branches",   total.branches));
+                console.log(row("Functions",  total.functions));
+                console.log(row("Lines",      total.lines));
+              '
+            else
+              echo "_No coverage summary produced — the test step likely failed before coverage was written._"
+            fi
+            echo
+            echo "<details><summary>Per-directory breakdown</summary>"
+            echo
+            echo '```'
+            # The per-file table, folded to directories so a gap is locatable
+            # without reading 51 rows.
+            if [ -f coverage/lcov.info ]; then
+              awk -F: '
+                /^SF:/  { path = $2; sub(/\/[^\/]*$/, "", path); dir = path }
+                /^LF:/  { found[dir] += $2 }
+                /^LH:/  { hit[dir]   += $2 }
+                END {
+                  printf "%-45s %8s %10s\n", "DIRECTORY", "LINES", "COVERED"
+                  for (d in found) {
+                    pct = found[d] > 0 ? (hit[d] * 100 / found[d]) : 0
+                    printf "%-45s %8d %9.1f%%\n", d, found[d], pct
+                  }
+                }
+              ' coverage/lcov.info | sort
+            else
+              echo "no lcov.info"
+            fi
+            echo '```'
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Kept even on a failing run: when a test breaks, the HTML report is how
+      # you find out what else that file was the only cover for.
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: frontend/coverage/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Build Check
+        run: pnpm run build
+
+  lighthouse:
+    name: Lighthouse CI (Performance Regression)
+    runs-on: ubuntu-latest
+    needs: quality
+    if: github.event_name == 'pull_request'
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: ./frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -53,14 +195,31 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Security audit
-        run: pnpm audit --audit-level=high
-
-      - name: Format Check (Lint)
-        run: pnpm run lint -- --max-warnings=0
-
-      - name: Run Unit & Component Tests
-        run: pnpm test
-
-      - name: Build Check
+      - name: Build for Lighthouse
         run: pnpm run build
+        env:
+          NODE_ENV: production
+
+      - name: Run Lighthouse CI
+        uses: treosh/lighthouse-ci-action@v12
+        with:
+          urls: |
+            http://localhost:3000/
+            http://localhost:3000/markets
+            http://localhost:3000/leaderboard
+          uploadArtifacts: true
+          temporaryPublicStorage: true
+          budgetPath: .github/lighthouse/budget.json
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+
+      - name: Publish Lighthouse summary
+        if: always()
+        run: |
+          {
+            echo "## Lighthouse CI Results"
+            echo
+            echo "Scanned routes: \`/\`, \`/markets\`, \`/leaderboard\`"
+            echo
+            echo "See the uploaded Lighthouse report artifact for per-route details."
+          } >> "$GITHUB_STEP_SUMMARY"

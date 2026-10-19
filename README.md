@@ -156,6 +156,10 @@ git clone https://github.com/Web3Novalabs/predifi.git
 cd predifi
 ```
 
+> **New here?** See [docs/local-development.md](./docs/local-development.md) for the full
+> clone-to-tests walkthrough, and [docs/environment-variables.md](./docs/environment-variables.md)
+> for every backend environment variable.
+
 ---
 
 #### 2. Smart Contracts

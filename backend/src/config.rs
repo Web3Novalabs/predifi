@@ -20,6 +20,12 @@ const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
 const DEFAULT_REFERRAL_FEE_BPS: u32 = 5000;
 const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
+const DEFAULT_REDIS_REQUIRED: bool = false;
+/// Default TTL, in seconds, for negative (pool-not-found) entries in the
+/// in-memory pool cache. Deliberately lower than the pool cache's positive
+/// TTL (10s, see `crate::pool_cache::POOL_CACHE_TTL`) per
+/// `PoolCache::with_negative_ttl`'s contract.
+const DEFAULT_POOL_NEGATIVE_CACHE_TTL_SECS: u64 = 5;
 const DEFAULT_SECRET_KEY: &str = "predifi-dev-secret-do-not-use-in-production-32";
 const DEFAULT_APP_ENV: &str = "development";
 const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = crate::constants::DEFAULT_INDEXER_MAX_BATCH_SIZE;
@@ -90,6 +96,23 @@ pub struct Config {
     pub sentry_dsn: Option<String>,
     /// Redis connection URL (default `redis://localhost:6379`).
     pub redis_url: String,
+    /// Whether Redis is required for the service to be considered healthy
+    /// (default `false`).
+    ///
+    /// Read from `PREDIFI_REDIS_REQUIRED` (`"true"`/`"false"`, case-insensitive).
+    /// Controls startup behaviour when Redis is unreachable:
+    /// - `true`: startup fails fast with a clear error and the process exits.
+    /// - `false`: startup logs a single explicit warning and continues in a
+    ///   degraded state, which is reflected by the `/ready` endpoint.
+    pub redis_required: bool,
+    /// TTL in seconds for negative (pool-not-found) entries in the in-memory
+    /// pool cache (default `5`). Read from
+    /// `PREDIFI_POOL_NEGATIVE_CACHE_TTL_SECS`. Kept separate from — and
+    /// intended to be lower than — the pool cache's positive TTL, so a pool
+    /// ID that turns out not to exist is reflected as a fast cached 404
+    /// without hammering Postgres, while a pool created shortly after a
+    /// negative lookup becomes visible again quickly.
+    pub pool_negative_cache_ttl_secs: u64,
     /// Validated list of origins permitted by the CORS policy.
     ///
     /// Loaded from the `PREDIFI_CORS_ALLOWED_ORIGINS` environment variable as a
@@ -119,6 +142,20 @@ pub struct Config {
     /// In production, this should be configured to restrict WebSocket connections to trusted domains.
     /// Uses the same validation logic as CORS origins.
     pub allowed_ws_origins: Vec<String>,
+
+    // ── Email delivery (#1929) ────────────────────────────────────────────
+    /// SMTP server hostname for outbound email delivery.  `None` disables
+    /// email notifications.  Read from `PREDIFI_SMTP_HOST`.
+    pub smtp_host: Option<String>,
+    /// SMTP server port (default `587` for STARTTLS).
+    pub smtp_port: u16,
+    /// SMTP username.  Read from `PREDIFI_SMTP_USERNAME`.
+    pub smtp_username: Option<String>,
+    /// SMTP password.  Read from `PREDIFI_SMTP_PASSWORD`.
+    pub smtp_password: Option<String>,
+    /// "From" address used in outbound notification emails.
+    /// Read from `PREDIFI_SMTP_FROM`, defaults to `"noreply@predifi.app"`.
+    pub smtp_from: String,
 }
 
 impl Config {
@@ -195,6 +232,12 @@ impl Config {
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
         let sentry_dsn = vars.get("PREDIFI_SENTRY_DSN").cloned();
         let redis_url = get_string(vars, "PREDIFI_REDIS_URL", DEFAULT_REDIS_URL);
+        let redis_required = get_bool(vars, "PREDIFI_REDIS_REQUIRED", DEFAULT_REDIS_REQUIRED)?;
+        let pool_negative_cache_ttl_secs = get_u64(
+            vars,
+            "PREDIFI_POOL_NEGATIVE_CACHE_TTL_SECS",
+            DEFAULT_POOL_NEGATIVE_CACHE_TTL_SECS,
+        )?;
 
         // Parse and strictly validate CORS origins.
         let cors_allowed_origins = parse_cors_origins(vars)?;
@@ -210,6 +253,13 @@ impl Config {
         let allowed_ws_origins = parse_ws_origins(vars)?;
 
         let app_env = get_string(vars, "PREDIFI_APP_ENV", DEFAULT_APP_ENV);
+
+        // ── Email (#1929) ─────────────────────────────────────────────────────
+        let smtp_host = vars.get("PREDIFI_SMTP_HOST").cloned().filter(|s| !s.is_empty());
+        let smtp_port = get_u16(vars, "PREDIFI_SMTP_PORT", 587)?;
+        let smtp_username = vars.get("PREDIFI_SMTP_USERNAME").cloned().filter(|s| !s.is_empty());
+        let smtp_password = vars.get("PREDIFI_SMTP_PASSWORD").cloned().filter(|s| !s.is_empty());
+        let smtp_from = get_string(vars, "PREDIFI_SMTP_FROM", "noreply@predifi.app");
 
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
@@ -242,15 +292,30 @@ impl Config {
             stellar_rpc_url,
             sentry_dsn,
             redis_url,
+            redis_required,
+            pool_negative_cache_ttl_secs,
             cors_allowed_origins,
             secret_key,
             jwt_key_version,
             indexer_max_batch_size,
             app_env,
             allowed_ws_origins,
+            smtp_host,
+            smtp_port,
+            smtp_username,
+            smtp_password,
+            smtp_from,
         };
 
         config.validate()?;
+        // Fail fast on required variables that have no safe compiled-in
+        // fallback: production must be handed an explicit database DSN.
+        if config.is_production() && !vars.contains_key("PREDIFI_DATABASE_URL") {
+            return Err(ConfigError::MissingRequired {
+                key: "PREDIFI_DATABASE_URL",
+                description: "PostgreSQL connection string used by the backend",
+            });
+        }
         Ok(config)
     }
 
@@ -432,6 +497,48 @@ impl Config {
             });
         }
 
+        // ── Log level ───────────────────────────────────────────────────────
+        if let Err(reason) = validate_log_level(&self.log_level) {
+            return Err(ConfigError::InvalidValue {
+                key: "RUST_LOG",
+                reason,
+            });
+        }
+
+        // ── Email / SMTP (#1929) ────────────────────────────────────────────
+        if self.smtp_port == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SMTP_PORT",
+                reason: String::from("must be a non-zero TCP port (1-65535)"),
+            });
+        }
+        // A host without credentials (or credentials without a host) is an
+        // incompatible combination: it would fail only at first send time.
+        if self.smtp_host.is_some() && self.smtp_username.is_some() && self.smtp_password.is_none() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SMTP_PASSWORD",
+                reason: String::from(
+                    "must be set when PREDIFI_SMTP_USERNAME is set (SMTP auth requires both)",
+                ),
+            });
+        }
+        if self.smtp_host.is_some() && self.smtp_username.is_none() && self.smtp_password.is_some() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SMTP_USERNAME",
+                reason: String::from(
+                    "must be set when PREDIFI_SMTP_PASSWORD is set (SMTP auth requires both)",
+                ),
+            });
+        }
+        if self.smtp_host.is_some() && self.smtp_from.trim().is_empty() {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_SMTP_FROM",
+                reason: String::from(
+                    "must be a non-empty address when SMTP delivery is enabled",
+                ),
+            });
+        }
+
         Ok(())
     }
 
@@ -445,12 +552,11 @@ impl Config {
         self.app_env.eq_ignore_ascii_case(PRODUCTION_ENV_VALUE)
     }
 
-    /// Build a minimal [`Config`] suitable for unit tests.
+    /// Build a minimal [`Config`] suitable for unit and integration tests.
     ///
     /// Uses `127.0.0.1:0` (OS-assigned port), an in-memory-style Postgres URL,
     /// and the compiled-in fee defaults so tests do not depend on environment
     /// variables.
-    #[cfg(test)]
     pub fn default_for_test() -> Self {
         Self {
             host: String::from("127.0.0.1"),
@@ -473,12 +579,19 @@ impl Config {
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
+            redis_required: DEFAULT_REDIS_REQUIRED,
+            pool_negative_cache_ttl_secs: DEFAULT_POOL_NEGATIVE_CACHE_TTL_SECS,
             cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
             secret_key: String::from(DEFAULT_SECRET_KEY),
             jwt_key_version: 0,
             indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
             app_env: String::from(DEFAULT_APP_ENV),
             allowed_ws_origins: Vec::new(), // Empty for permissive mode in tests
+            smtp_host: None,
+            smtp_port: 587,
+            smtp_username: None,
+            smtp_password: None,
+            smtp_from: String::from("noreply@predifi.app"),
         }
     }
 }
@@ -761,6 +874,24 @@ fn get_u64(
     }
 }
 
+fn get_bool(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+    default: bool,
+) -> Result<bool, ConfigError> {
+    match vars.get(key) {
+        Some(value) => match value.to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Ok(true),
+            "false" | "0" | "no" | "off" => Ok(false),
+            _ => Err(ConfigError::InvalidValue {
+                key,
+                reason: format!("must be a boolean (true/false), got '{value}'"),
+            }),
+        },
+        None => Ok(default),
+    }
+}
+
 fn get_usize(
     vars: &HashMap<String, String>,
     key: &'static str,
@@ -847,8 +978,68 @@ fn validate_url_has_host(url: &str, key: &'static str) -> Result<(), ConfigError
     Ok(())
 }
 
-/// Return the value of `key` from `vars`, or `Err(ConfigError::MissingRequired)` if absent.
+/// Validate an `EnvFilter`-style log directive list at startup.
 ///
+/// Accepts comma-separated directives such as `info`,
+/// `predifi_backend=debug,warn`. When a directive carries `target=level`, the
+/// level must be a known tracing level; a bare directive must be a known level
+/// or a target name. Invalid values would otherwise surface only when the
+/// tracing subscriber is built.
+fn validate_log_level(value: &str) -> Result<(), String> {
+    const LEVELS: [&str; 6] = ["error", "warn", "info", "debug", "trace", "off"];
+
+    for directive in value.split(',') {
+        let directive = directive.trim();
+        if directive.is_empty() {
+            return Err(String::from(
+                "must be a comma-separated list of log directives with no empty entries \
+                 (e.g. 'info' or 'predifi_backend=debug,warn')",
+            ));
+        }
+
+        let level = match directive.rsplit_once('=') {
+            Some((target, level)) => {
+                if target.trim().is_empty() {
+                    return Err(format!(
+                        "directive '{}' is missing a target before '='",
+                        directive
+                    ));
+                }
+                level.trim()
+            }
+            // A bare directive is either a level or a target name.
+            None => {
+                if LEVELS.iter().any(|l| l.eq_ignore_ascii_case(directive)) {
+                    continue;
+                }
+                if directive.contains(':')
+                    && directive
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':'))
+                {
+                    continue;
+                }
+                return Err(format!(
+                    "'{}' is not a valid log level or directive; expected one of {}",
+                    directive,
+                    LEVELS.join(", ")
+                ));
+            }
+        };
+
+        if !LEVELS.iter().any(|l| l.eq_ignore_ascii_case(level)) {
+            return Err(format!(
+                "'{}' is not a valid log level; expected one of {}",
+                level,
+                LEVELS.join(", ")
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Return the value of `key` from `vars`, or `Err(ConfigError::MissingRequired)` if absent.///
 /// Use this for environment variables that **must** be explicitly set in
 /// production deployments (i.e. variables with no safe compiled-in default).
 #[allow(dead_code)]
@@ -1703,7 +1894,9 @@ mod tests {
             database_url: String::from("postgres://user:pass@db-host:5432/predifi"),
             ..Config::default_for_test()
         };
-        config.validate().expect("URL with userinfo should be valid");
+        config
+            .validate()
+            .expect("URL with userinfo should be valid");
     }
 
     // -- db_connect_timeout_secs --
@@ -1909,10 +2102,7 @@ mod tests {
     #[test]
     fn config_rejects_default_secret_in_production_via_env() {
         let vars = HashMap::from([
-            (
-                String::from("PREDIFI_APP_ENV"),
-                String::from("production"),
-            ),
+            (String::from("PREDIFI_APP_ENV"), String::from("production")),
             // Default secret key is not set, so from_map uses DEFAULT_SECRET_KEY.
         ]);
         assert!(matches!(
@@ -1928,10 +2118,7 @@ mod tests {
 
     #[test]
     fn config_reads_app_env_from_env() {
-        let vars = HashMap::from([(
-            String::from("PREDIFI_APP_ENV"),
-            String::from("staging"),
-        )]);
+        let vars = HashMap::from([(String::from("PREDIFI_APP_ENV"), String::from("staging"))]);
         let config = Config::from_map(&vars).unwrap();
         assert_eq!(config.app_env, "staging");
     }
@@ -1941,5 +2128,116 @@ mod tests {
         let vars = HashMap::new();
         let config = Config::from_map(&vars).unwrap();
         assert_eq!(config.app_env, DEFAULT_APP_ENV);
+    }
+
+    // -- startup validation of log level, SMTP, and required vars (#1974) --
+
+    #[test]
+    fn config_rejects_invalid_log_level() {
+        let vars = HashMap::from([(String::from("RUST_LOG"), String::from("verbose"))]);
+        let error = Config::from_map(&vars).expect_err("unknown log level must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "RUST_LOG",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn config_accepts_target_log_directives() {
+        let vars = HashMap::from([(
+            String::from("RUST_LOG"),
+            String::from("predifi_backend=debug,sqlx=info,warn"),
+        )]);
+        Config::from_map(&vars).expect("target=level directives are valid EnvFilter syntax");
+    }
+
+    #[test]
+    fn config_rejects_invalid_level_after_target() {
+        let vars = HashMap::from([(
+            String::from("RUST_LOG"),
+            String::from("predifi_backend=verbose"),
+        )]);
+        let error = Config::from_map(&vars).expect_err("bad level must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "RUST_LOG",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn config_rejects_smtp_username_without_password() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_SMTP_HOST"), String::from("smtp.example.com")),
+            (String::from("PREDIFI_SMTP_USERNAME"), String::from("bot")),
+        ]);
+        let error = Config::from_map(&vars).expect_err("half-configured SMTP auth must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_SMTP_PASSWORD",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn config_rejects_zero_smtp_port() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_SMTP_HOST"), String::from("smtp.example.com")),
+            (String::from("PREDIFI_SMTP_PORT"), String::from("0")),
+        ]);
+        let error = Config::from_map(&vars).expect_err("port 0 must be rejected");
+        assert!(
+            matches!(
+                error,
+                ConfigError::InvalidValue {
+                    key: "PREDIFI_SMTP_PORT",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn config_requires_database_url_in_production() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_APP_ENV"), String::from("production")),
+            (
+                String::from("PREDIFI_SECRET_KEY"),
+                String::from("a-very-strong-production-secret-key-at-least-32-bytes"),
+            ),
+            (
+                String::from("PREDIFI_WS_ALLOWED_ORIGINS"),
+                String::from("https://app.predifi.com"),
+            ),
+        ]);
+        let error =
+            Config::from_map(&vars).expect_err("production without PREDIFI_DATABASE_URL must fail");
+        assert!(
+            matches!(
+                error,
+                ConfigError::MissingRequired {
+                    key: "PREDIFI_DATABASE_URL",
+                    ..
+                }
+            ),
+            "unexpected error: {error}"
+        );
     }
 }

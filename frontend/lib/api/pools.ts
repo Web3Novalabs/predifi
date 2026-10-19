@@ -6,9 +6,10 @@
  * fetcher (see `lib/hooks/usePools.ts`) so that pool data is cached and
  * deduplicated across the app.
  *
- * The shapes here mirror the backend OpenAPI schema (`PoolDoc` /
- * `PoolsResponse` in `backend/src/openapi.rs`).
+ * HTTP response types come from the generated backend OpenAPI spec.
  */
+
+import type { components } from "@/types/api";
 
 /**
  * Base URL of the PrediFi backend API.
@@ -27,50 +28,32 @@ export function wsBaseUrl(): string {
   return `ws://${http}`;
 }
 
-/** A single prediction-market pool. */
-export interface Pool {
-  pool_id: number;
-  name: string;
-  category: string;
-  /** Free-form tags assigned by the creator, e.g. `["btc", "price-prediction"]`. */
+type ApiPool = components["schemas"]["PoolListResponse"]["pools"][number] & {
   tags: string[];
-  /** Total amount staked across the pool, in the token's base units. */
-  total_stake: number;
-  /** Pool close time as a Unix timestamp (seconds). */
-  end_time: number;
-  created_at: string;
-  state: string;
-  creator: string;
-  token: string;
-  /** Settled outcome, or `null` while the pool is still open. */
-  result: string | null;
-}
+};
+type ApiPoolDetail = components["schemas"]["PoolWithOddsDoc"];
+type RuntimePoolDetail = Omit<ApiPoolDetail, "end_time"> & {
+  end_time: string | number;
+};
+
+/** A single prediction-market pool, with backend timestamps normalized to Unix seconds. */
+export type Pool = Omit<ApiPool, "end_time"> & { end_time: number };
 
 /** Per-outcome stake and implied odds from `GET /api/v1/pools/:id`. */
-export interface OutcomeOdds {
-  outcome: number;
-  stake: number;
-  odds: number;
-}
+export type OutcomeOdds = components["schemas"]["OutcomeOddsDoc"];
 
 /** Detailed pool payload including live odds. */
-export interface PoolDetail extends Pool {
-  odds: OutcomeOdds[];
-  outcome_descriptions?: string[];
+export type PoolDetail = Omit<ApiPoolDetail, "end_time"> & {
+  end_time: number;
   /** Prediction count derived client-side from live WS updates when available. */
   prediction_count?: number;
-}
+};
 
 /** Response body of `GET /api/v1/pools`. */
-export interface PoolsResponse {
-  pools: Pool[];
-  total: number;
-  limit: number;
-  offset: number;
-  status: string;
-  category?: string | null;
-  sort_by: string;
-}
+export type PoolsResponse = Omit<
+  components["schemas"]["PoolListResponse"],
+  "pools" | "total"
+> & { pools: Pool[]; total: number; q?: string | null };
 
 /** Filters accepted by `GET /api/v1/pools`. */
 export interface PoolsQuery {
@@ -80,6 +63,8 @@ export interface PoolsQuery {
   category?: string;
   /** Tag filter — a pool matches if any of its tags overlap this list. */
   tags?: string[];
+  /** Full-text search query across pool name, category, and tags. */
+  q?: string;
   /** Lifecycle filter. Defaults to `"active"` on the backend. */
   status?: "active" | "closed" | "settled";
   limit?: number;
@@ -97,6 +82,7 @@ export function poolsUrl(query: PoolsQuery = {}): string {
   if (query.sort_by) params.set("sort_by", query.sort_by);
   if (query.category) params.set("category", query.category);
   if (query.tags && query.tags.length > 0) params.set("tags", query.tags.join(","));
+  if (query.q && query.q.trim()) params.set("q", query.q.trim());
   if (query.status) params.set("status", query.status);
   if (query.limit != null) params.set("limit", String(query.limit));
   if (query.offset != null) params.set("offset", String(query.offset));
@@ -121,63 +107,204 @@ export class ApiError extends Error {
   }
 }
 
+/** Error raised when a request exceeds the timeout. */
+export class TimeoutError extends Error {
+  constructor(message: string = "Request timeout") {
+    super(message);
+    this.name = "TimeoutError";
+  }
+}
+
+/** Default timeout for API requests in milliseconds. */
+const DEFAULT_REQUEST_TIMEOUT = 30000; // 30 seconds
+
+/**
+ * Execute a fetch with an optional timeout.
+ *
+ * @param url - The URL to fetch.
+ * @param options - Fetch options and timeout configuration.
+ * @param timeout - Timeout in milliseconds. Defaults to DEFAULT_REQUEST_TIMEOUT.
+ * @throws {TimeoutError} When the request exceeds the timeout.
+ * @throws {ApiError} When the response status is not 2xx.
+ */
+export async function fetchWithTimeout(
+  url: string,
+  options: RequestInit = {},
+  timeout: number = DEFAULT_REQUEST_TIMEOUT,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    const res = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    return res;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new TimeoutError(`Request timeout after ${timeout}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * SWR fetcher for pool data.
  *
  * @param url - A URL produced by {@link poolsUrl}.
+ * @param timeout - Optional timeout in milliseconds. Defaults to DEFAULT_REQUEST_TIMEOUT.
  * @throws {ApiError} When the response status is not 2xx.
+ * @throws {TimeoutError} When the request exceeds the timeout.
  */
-export async function fetchPools(url: string): Promise<PoolsResponse> {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+export async function fetchPools(url: string, timeout?: number): Promise<PoolsResponse> {
+  const res = await fetchWithTimeout(url, { headers: { Accept: "application/json" } }, timeout);
 
   if (!res.ok) {
     throw new ApiError(`Failed to load pools (HTTP ${res.status})`, res.status);
   }
 
-  return (await res.json()) as PoolsResponse;
+  const body: unknown = await res.json();
+  if (!isPoolsResponse(body)) {
+    throw new ApiError("Invalid pools response shape", 500);
+  }
+
+  return {
+    ...body,
+    pools: body.pools.map((pool) => ({
+      ...pool,
+      end_time: Math.floor(new Date(pool.end_time).getTime() / 1000),
+    })),
+  };
+}
+
+/** Type guard to validate PoolsResponse shape. */
+function isPoolsResponse(
+  obj: unknown,
+): obj is Omit<components["schemas"]["PoolListResponse"], "pools" | "total"> & {
+  pools: ApiPool[];
+  q?: string | null;
+  total: number;
+} {
+  if (!obj || typeof obj !== "object") return false;
+  const r = obj as Record<string, unknown>;
+  return (
+    Array.isArray(r.pools) &&
+    r.pools.every(isPoolListing) &&
+    typeof r.total === "number" &&
+    typeof r.limit === "number" &&
+    typeof r.offset === "number" &&
+    typeof r.status === "string" &&
+    typeof r.sort_by === "string" &&
+    (r.category == null || typeof r.category === "string") &&
+    (r.q == null || typeof r.q === "string")
+  );
+}
+
+function isPoolListing(obj: unknown): obj is ApiPool {
+  if (!obj || typeof obj !== "object") return false;
+  const pool = obj as Record<string, unknown>;
+  return (
+    typeof pool.pool_id === "number" &&
+    typeof pool.name === "string" &&
+    typeof pool.category === "string" &&
+    Array.isArray(pool.tags) &&
+    pool.tags.every((tag) => typeof tag === "string") &&
+    typeof pool.total_stake === "number" &&
+    typeof pool.end_time === "string" &&
+    typeof pool.created_at === "string" &&
+    typeof pool.state === "string" &&
+    typeof pool.creator === "string" &&
+    typeof pool.token === "string" &&
+    (pool.result == null || typeof pool.result === "string")
+  );
+}
+
+function isOutcomeOdds(obj: unknown): obj is OutcomeOdds {
+  if (!obj || typeof obj !== "object") return false;
+  const odds = obj as Record<string, unknown>;
+  return (
+    typeof odds.outcome === "number" &&
+    typeof odds.stake === "number" &&
+    typeof odds.odds === "number"
+  );
+}
+
+/** Type guard to validate PoolDetail shape. */
+function isPoolDetail(obj: unknown): obj is RuntimePoolDetail {
+  if (!obj || typeof obj !== "object") return false;
+  const pool = obj as Record<string, unknown>;
+  return (
+    typeof pool.pool_id === "number" &&
+    typeof pool.name === "string" &&
+    typeof pool.category === "string" &&
+    typeof pool.total_stake === "number" &&
+    (typeof pool.end_time === "number" || typeof pool.end_time === "string") &&
+    typeof pool.created_at === "string" &&
+    typeof pool.state === "string" &&
+    typeof pool.creator === "string" &&
+    typeof pool.token === "string" &&
+    (pool.result == null || typeof pool.result === "string") &&
+    Array.isArray(pool.odds) &&
+    pool.odds.every(isOutcomeOdds) &&
+    Array.isArray(pool.outcome_descriptions) &&
+    pool.outcome_descriptions.every((description) => typeof description === "string")
+  );
+}
+
+/** Type guard to validate wrapped pool response. */
+function isWrappedPoolDetail(
+  obj: unknown,
+): obj is { status: string; data: RuntimePoolDetail } {
+  if (!obj || typeof obj !== "object") return false;
+  const body = obj as Record<string, unknown>;
+  return (
+    typeof body.status === "string" &&
+    "data" in body &&
+    isPoolDetail(body.data)
+  );
 }
 
 /**
  * Fetch a single pool with live odds.
  *
- * Handles both raw `PoolWithOdds` JSON and wrapped `{ data: ... }` API responses.
+ * @param url - The pool detail URL.
+ * @param timeout - Optional timeout in milliseconds. Defaults to DEFAULT_REQUEST_TIMEOUT.
+ * @throws {ApiError} When the response status is not 2xx.
+ * @throws {TimeoutError} When the request exceeds the timeout.
  */
-export async function fetchPoolDetail(url: string): Promise<PoolDetail> {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+export async function fetchPoolDetail(url: string, timeout?: number): Promise<PoolDetail> {
+  const res = await fetchWithTimeout(url, { headers: { Accept: "application/json" } }, timeout);
 
   if (!res.ok) {
     throw new ApiError(`Failed to load pool (HTTP ${res.status})`, res.status);
   }
 
-  const body = (await res.json()) as
-    | (PoolDetail & { end_time?: number | string })
-    | { data?: PoolDetail & { end_time?: number | string }; error?: string };
-
-  if (body && typeof body === "object" && "error" in body && body.error) {
-    throw new ApiError(String(body.error), 404);
+  const body: unknown = await res.json();
+  if (!isWrappedPoolDetail(body)) {
+    throw new ApiError("Invalid pool response shape", 500);
   }
 
-  const pool =
-    body && typeof body === "object" && "data" in body && body.data
-      ? body.data
-      : (body as PoolDetail & { end_time?: number | string });
-
-  const rawEnd = pool.end_time;
-  const endTime =
-    typeof rawEnd === "string"
-      ? Math.floor(new Date(rawEnd).getTime() / 1000)
-      : Number(rawEnd ?? 0);
+  const pool = body.data;
 
   return {
     ...pool,
-    end_time: endTime,
+    end_time:
+      typeof pool.end_time === "string"
+        ? Math.floor(new Date(pool.end_time).getTime() / 1000)
+        : pool.end_time,
     odds: pool.odds ?? [],
   };
 }
 
-/** Helper function to fetch a pool detail by ID directly. */
-export async function fetchPoolById(id: string | number): Promise<PoolDetail> {
-  return fetchPoolDetail(poolDetailUrl(id));
+/** Helper function to fetch a pool detail by ID directly.
+ * @param id - The pool ID.
+ * @param timeout - Optional timeout in milliseconds.
+ */
+export async function fetchPoolById(id: string | number, timeout?: number): Promise<PoolDetail> {
+  return fetchPoolDetail(poolDetailUrl(id), timeout);
 }
 
 /** Live event pushed over `/api/v1/ws`. */

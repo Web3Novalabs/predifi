@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Pool creator incentive system (#1933): `claim_creator_incentive` pays a
+  pool's creator a configurable share (`set_creator_incentive_bps`) of that
+  pool's protocol fee once it reaches a minimum participation threshold
+  (`set_creator_min_participants`, default 5 unique participants) and is
+  resolved. Reward/reputation metrics are queryable via `get_creator_stats`.
+
 ## [0.1.0] - 2026-03-24
 
 ### Added

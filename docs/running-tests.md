@@ -10,6 +10,7 @@ This document outlines the commands and requirements for running test suites acr
 | :--- | :--- | :--- | :--- | :--- |
 | **Frontend** | `cd frontend && pnpm test` | Jest + React Testing Library | No | React components, UI hooks, state managers, and formatting utilities |
 | **Backend Unit Tests** | `cd backend && cargo test` | Rust built-in test runner | No | Route validation, types, caching logic, rate limiting, and business logic |
+| **Backend Load Tests** | `cd backend && cargo test --features integration-tests --test load_pools -- --nocapture` | `testcontainers` + Axum oneshot | **Yes** (Docker daemon) | Throughput and latency percentiles for `GET /v1/pools` |
 | **Backend Integration Tests** | `cd backend && cargo test --features integration-tests` | `testcontainers` (Rust) | **Yes** (Docker daemon) | Real PostgreSQL migrations, schema roundtrips, and database queries |
 | **Contract Unit Tests** | `cd contract && cargo test` | Soroban Rust SDK test env | No | Contract mechanics, authorization checks, odds calculations, and payouts |
 | **Contract Full Workspace** | `bash contract/scripts/test_all.sh` | Bash + Cargo workspace | No | Sequential run across `predifi-errors`, `access-control`, and `predifi-contract` with summary report |
@@ -182,5 +183,57 @@ bash contract/scripts/test_all.sh
    - Ensure Docker Desktop or the Docker daemon is running: `docker ps`.
    - Check file permissions on the Docker socket (`/var/run/docker.sock`).
 3. **Frontend test module resolution**:
-   - Ensure dependencies are installed: `cd frontend && pnpm install`.
-   - If Jest cache becomes stale: `cd frontend && pnpm test -- --clearCache`.
+    - Ensure dependencies are installed: `cd frontend && pnpm install`.
+    - If Jest cache becomes stale: `cd frontend && pnpm test -- --clearCache`.
+
+---
+
+## 6. Backend Load Tests
+
+Load tests verify that the most-hit endpoints sustain acceptable throughput and
+latency under concurrency.  They require Docker because they spin up a throwaway
+PostgreSQL container via `testcontainers`.
+
+### Command
+
+```bash
+cd backend && cargo test --features integration-tests --test load_pools -- --nocapture
+```
+
+### What is measured
+
+| Metric | Description |
+| :--- | :--- |
+| **throughput** | Requests per second at the configured concurrency |
+| **p50_latency** | Median response time |
+| **p95_latency** | 95th-percentile response time |
+| **p99_latency** | 99th-percentile response time |
+
+### Configuration
+
+Edit `backend/tests/load_pools.rs` to tune the scenario:
+
+```rust
+const CONCURRENT_REQUESTS: usize = 50;
+const TOTAL_REQUESTS: usize = 500;
+```
+
+### Baseline
+
+Run the test and record the output.  Store the p50 / p95 / p99 values as the
+baseline.  Future PRs that increase these numbers should be investigated as
+regressions.
+
+Example output:
+
+```text
+=== Pool listing load test ===
+concurrency:     50
+total_requests:  500
+errors:          0
+duration:        2.34s
+throughput:      213.68 req/s
+p50_latency:     4.12ms
+p95_latency:     8.76ms
+p99_latency:     12.45ms
+```
