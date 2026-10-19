@@ -25,7 +25,10 @@ export interface WalletConnectionState {
 type FreighterLike = {
   isConnected?: () => Promise<boolean>;
   getNetwork?: () => Promise<string>;
-  getNetworkDetails?: () => Promise<{ network: string; networkPassphrase?: string }>;
+  getNetworkDetails?: () => Promise<{
+    network?: string;
+    networkPassphrase?: string;
+  }>;
   getPublicKey?: () => Promise<string>;
   requestAccess?: () => Promise<string>;
 };
@@ -75,9 +78,13 @@ export function useWalletConnection(): WalletConnectionState {
 
       // Network check before requesting access
       try {
+        const networkDetails = api.getNetworkDetails
+          ? await withWalletTimeout(api.getNetworkDetails(), 60_000)
+          : null;
         const network =
-          (await api.getNetworkDetails?.())?.network ??
-          (await api.getNetwork?.()) ??
+          networkDetails?.network ??
+          networkDetails?.networkPassphrase ??
+          (api.getNetwork ? await withWalletTimeout(api.getNetwork(), 60_000) : null) ??
           null;
         const mismatch = checkNetworkMatch(network);
         if (mismatch) {
@@ -85,12 +92,8 @@ export function useWalletConnection(): WalletConnectionState {
           return null;
         }
       } catch (netErr) {
-        // Some wallets throw if locked — classify rather than swallow.
-        const classified = classifyWalletError(netErr);
-        if (classified.code !== "UNKNOWN") {
-          setError(classified);
-          return null;
-        }
+        setError(classifyWalletError(netErr));
+        return null;
       }
 
       const publicKey = await withWalletTimeout(
@@ -103,7 +106,7 @@ export function useWalletConnection(): WalletConnectionState {
           }
           throw makeWalletError("EXTENSION_NOT_INSTALLED");
         })(),
-        60_000
+        60_000,
       );
 
       if (!publicKey || typeof publicKey !== "string") {
@@ -115,18 +118,7 @@ export function useWalletConnection(): WalletConnectionState {
       setAddress(publicKey);
       return publicKey;
     } catch (err) {
-      // withWalletTimeout may reject with a WalletError directly
-      if (
-        err &&
-        typeof err === "object" &&
-        "code" in err &&
-        "recoveryAction" in err
-      ) {
-        setError(err as WalletError);
-        return null;
-      }
-      const classified = classifyWalletError(err);
-      setError(classified);
+      setError(classifyWalletError(err));
       return null;
     } finally {
       setIsConnecting(false);

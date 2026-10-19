@@ -58,6 +58,7 @@ pub struct PoolWithOdds {
     pub creator: String,
     pub token: String,
     pub result: Option<String>,
+    pub prediction_count: i64,
     pub odds: Vec<OutcomeOdds>,
     /// Human-readable label for each outcome index (#1932). See
     /// [`PoolDetails::outcome_descriptions`].
@@ -144,9 +145,9 @@ pub async fn get_active_pools(
 /// `status` accepts `"active"`, `"closed"`, or `"settled"` (defaults to `"active"`).
 ///
 /// # Security
-/// `order_clause` is built from a controlled `match` on `sort_by` — only the
-/// three hardcoded strings reach the SQL. `valid_status` is similarly
-/// allow-listed. No raw user input is interpolated into the query.
+/// `sort_by` and `status` are validated using [`crate::db::builders::SortOrder`]
+/// and [`crate::db::builders::StatusFilter`] enums — only safe values reach SQL.
+/// No raw user input is interpolated into the query.
 pub async fn get_pools_with_filters(
     pool: &PgPool,
     sort_by: &str,
@@ -155,16 +156,11 @@ pub async fn get_pools_with_filters(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<PoolRow>, sqlx::Error> {
-    let order_clause = match sort_by {
-        "popular" => "total_stake DESC",
-        "ending_soon" => "end_time ASC",
-        _ => "created_at DESC", // "new" and default
-    };
+    use crate::db::builders::{CategoryFilter, SortOrder, StatusFilter};
 
-    let valid_status = match status {
-        "active" | "closed" | "settled" => status,
-        _ => "active",
-    };
+    let sort_order = SortOrder::from_pool_sort_by(sort_by);
+    let status_filter = StatusFilter::new(status);
+    let category_filter = CategoryFilter::new(category);
 
     let sql = format!(
         r#"
@@ -172,16 +168,17 @@ pub async fn get_pools_with_filters(
         FROM pools
         WHERE state = $1
           AND ($2::text IS NULL OR category = $2)
-        ORDER BY {order_clause}
+        ORDER BY {}
         LIMIT $3 OFFSET $4
-        "#
+        "#,
+        sort_order.to_sql()
     );
 
     crate::metrics::observe_db(
         "get_pools_with_filters",
         sqlx::query_as::<_, PoolRow>(&sql)
-            .bind(valid_status)
-            .bind(category)
+            .bind(status_filter.to_sql())
+            .bind(category_filter.as_ref())
             .bind(limit)
             .bind(offset)
             .fetch_all(pool),
@@ -195,10 +192,10 @@ pub async fn count_pools_with_filters(
     category: Option<&str>,
     status: &str,
 ) -> Result<i64, sqlx::Error> {
-    let valid_status = match status {
-        "active" | "closed" | "settled" => status,
-        _ => "active",
-    };
+    use crate::db::builders::{CategoryFilter, StatusFilter};
+
+    let status_filter = StatusFilter::new(status);
+    let category_filter = CategoryFilter::new(category);
 
     let count: (i64,) = crate::metrics::observe_db(
         "count_pools_with_filters",
@@ -210,8 +207,8 @@ pub async fn count_pools_with_filters(
               AND ($2::text IS NULL OR category = $2)
             "#,
         )
-        .bind(valid_status)
-        .bind(category)
+        .bind(status_filter.to_sql())
+        .bind(category_filter.as_ref())
         .fetch_one(pool),
     )
     .await?;
@@ -280,6 +277,15 @@ pub async fn get_pool_with_odds(
     };
 
     let outcome_stakes = get_pool_outcome_stakes(pool, pool_id).await?;
+    let prediction_count = crate::metrics::observe_db(
+        "get_pool_prediction_count",
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM predictions WHERE pool_id = $1",
+        )
+        .bind(pool_id)
+        .fetch_one(pool),
+    )
+    .await?;
     let calculated_total: i64 = outcome_stakes.iter().map(|(_, s)| s).sum();
     let total_stake = std::cmp::max(details.total_stake, calculated_total);
     let odds = calculate_odds(&outcome_stakes, total_stake);
@@ -295,6 +301,7 @@ pub async fn get_pool_with_odds(
         creator: details.creator,
         token: details.token,
         result: details.result,
+        prediction_count,
         odds,
         outcome_descriptions: details.outcome_descriptions,
     }))

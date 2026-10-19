@@ -43,9 +43,10 @@ export type Pool = Omit<ApiPool, "end_time"> & { end_time: number };
 export type OutcomeOdds = components["schemas"]["OutcomeOddsDoc"];
 
 /** Detailed pool payload including live odds. */
-export type PoolDetail = Omit<ApiPoolDetail, "end_time"> & {
-  end_time: number;
-  /** Prediction count derived client-side from live WS updates when available. */
+export interface PoolDetail extends Pool {
+  odds: OutcomeOdds[];
+  outcome_descriptions?: string[];
+  /** Total predictions in the pool. */
   prediction_count?: number;
 };
 

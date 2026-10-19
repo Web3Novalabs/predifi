@@ -1,5 +1,6 @@
 import React from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 
 const featuresData = [
@@ -79,10 +80,13 @@ const Features = React.memo(function Features() {
                   {feature.description}
                 </p>
 
-                <button className="inline-flex items-center px-4 py-2.5 md:p-[10.35px] bg-[#37B7C31A] rounded-[16px] text-[#0AB4C4] hover:bg-[#37B7C333] transition-colors font-medium">
+                <Link
+                  href="/user/pool-market"
+                  className="inline-flex items-center px-4 py-2.5 md:p-[10.35px] bg-[#37B7C31A] rounded-[16px] text-[#0AB4C4] hover:bg-[#37B7C333] transition-colors font-medium"
+                >
                   Learn more
-                  <ArrowRight size={18} className="ml-2" />
-                </button>
+                  <ArrowRight size={18} className="ml-2" aria-hidden="true" />
+                </Link>
               </div>
             </div>
           );

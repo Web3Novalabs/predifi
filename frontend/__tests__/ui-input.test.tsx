@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Input } from '../components/ui/Input';
 
@@ -26,5 +26,26 @@ describe('Input', () => {
   it('respects disabled', () => {
     render(<Input disabled placeholder="Disabled input" />);
     expect(screen.getByPlaceholderText('Disabled input')).toBeDisabled();
+  });
+
+  it('keeps password visibility toggle keyboard-accessible', async () => {
+    const user = userEvent.setup();
+    render(<Input type="password" label="Password" />);
+
+    const input = screen.getByLabelText('Password');
+    await user.tab();
+    expect(input).toHaveFocus();
+
+    await user.tab();
+    const toggle = screen.getByRole('button', { name: 'Show password' });
+    expect(toggle).toHaveFocus();
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+
+    fireEvent.click(toggle);
+    expect(input).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: 'Hide password' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 });

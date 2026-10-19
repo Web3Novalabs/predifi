@@ -24,7 +24,7 @@ interface WalletErrorBannerProps {
 /**
  * Clear user-facing wallet error with recovery CTA.
  *
- * USER_REJECTED is treated as a neutral dismissal — the user intentionally
+ * USER_REJECTED is treated as a neutral status — the user intentionally
  * cancelled, so no error styling or `role="alert"` is used (#1771).
  */
 export function WalletErrorBanner({
@@ -33,18 +33,17 @@ export function WalletErrorBanner({
   onDismiss,
   className,
 }: WalletErrorBannerProps) {
-  // A deliberate cancellation is not an error — render neutral copy only.
+  // A deliberate cancellation is a status, but still offers a way to retry.
   if (error.code === "USER_REJECTED") {
     return (
       <div
-        className={cn(
-          "rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-left",
-          className
-        )}
+        role="status"
+        aria-live="polite"
+        className={cn("rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 text-left", className)}
         data-testid="wallet-rejection-notice"
       >
         <div className="flex items-center justify-between gap-3">
-          <p className="text-sm text-zinc-400">Request cancelled. Approve in your wallet to continue.</p>
+          <p className="text-sm font-semibold text-zinc-200">{error.title}</p>
           {onDismiss && (
             <button
               type="button"
@@ -56,6 +55,15 @@ export function WalletErrorBanner({
             </button>
           )}
         </div>
+        <p className="mt-1 text-sm text-zinc-400">{error.message}</p>
+        <p className="mt-2 text-sm text-zinc-300">{error.recoveryAction}</p>
+        {onRetry && (
+          <div className="mt-3">
+            <Button type="button" size="small" onClick={onRetry}>
+              Try again
+            </Button>
+          </div>
+        )}
       </div>
     );
   }
@@ -67,7 +75,7 @@ export function WalletErrorBanner({
       role="alert"
       className={cn(
         "rounded-xl border border-zinc-800 bg-zinc-900/90 p-4 text-left shadow-lg",
-        className
+        className,
       )}
     >
       <div className="flex gap-3">
