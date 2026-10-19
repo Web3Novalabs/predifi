@@ -712,128 +712,908 @@ impl PredifiContract {
 
     /// Finalises a prediction pool by recording an operator's vote for a winning outcome.
     ///
-    /// This is the manual, operator-backed resolution entry point. Resolution uses a
-    /// **multi-vote / threshold model**: each address with Operator role (role `1`)
-    /// calls this function once to cast a vote. The pool transitions to
-    /// [`MarketState::Resolved`] only when one outcome accumulates at least
-    /// `pool.required_resolutions` votes. If operators disagree, the conflicting vote
-    /// is recorded and [`PredifiError::ResolutionConflict`] is returned; the pool stays
-    /// active so administrators can investigate and retry with the agreed outcome.
+    /// This is the manual, operator-backed resolution entry point for prediction markets.
+    /// Resolution uses a **multi-vote / threshold model** to ensure consensus among trusted
+    /// operators before finalizing a pool's result. Each address with Operator role (role `1`)
+    /// calls this function once to cast a vote for a specific outcome. The pool transitions
+    /// to [`MarketState::Resolved`] only when one outcome accumulates at least
+    /// `pool.required_resolutions` votes.
     ///
-    /// This function does not read an oracle or price feed. For an automated price
-    /// condition, [`Self::resolve_pool_from_price`] validates the configured feed,
-    /// evaluates its target and tolerance, and persists the resulting outcome directly.
-    /// An external oracle can instead submit a signed outcome through `oracle_resolve`,
-    /// which participates in the same threshold and conflict model. These paths share
-    /// the resolution-delay guard and emit [`PoolResolvedEvent`] when finalisation occurs.
+    /// ## Multi-Vote Threshold Model
+    ///
+    /// The protocol implements a Byzantine fault-tolerant resolution mechanism:
+    ///
+    /// ```text
+    /// ┌─────────────────────────────────────────────────────────────────────────────┐
+    /// │ 1. Operator votes for outcome (this function)                               │
+    /// │    - Operator calls resolve_pool with pool_id and winning_outcome           │
+    /// │    - Vote stored in temporary storage (DataKey::ResVote)                    │
+    /// │    - Vote count incremented per outcome (DataKey::ResVoteCt)                │
+    /// │    - ResolutionVoteCastEvent emitted for observability                      │
+    /// │                                                                              │
+    /// │ 2. Threshold check after each vote                                          │
+    /// │    - new_outcome_votes >= pool.required_resolutions?                        │
+    /// │    - If YES: pool transitions to Resolved, outcome locked                   │
+    /// │    - If NO: pool stays Active, more votes needed                            │
+    /// │                                                                              │
+    /// │ 3. Conflict detection                                                       │
+    /// │    - If different operators vote for different outcomes                     │
+    /// │    - ResolutionConflictEvent emitted                                        │
+    /// │    - Error returned, pool stays Active                                      │
+    /// │    - Allows manual adjudication before final resolution                     │
+    /// └─────────────────────────────────────────────────────────────────────────────┘
+    /// ```
+    ///
+    /// ## Operator Roles and Trust Model
+    ///
+    /// Operators are trusted entities configured by the contract admin:
+    ///
+    /// * **Role**: Operators hold role `1` defined in the role management system
+    /// * **Authentication**: Each operator must sign the transaction via `require_auth()`
+    /// * **Voting**: Each operator may vote exactly once per pool (duplicate votes rejected)
+    /// * **Consensus**: `pool.required_resolutions` votes determine the final outcome
+    /// * **Disagreement**: Conflicting votes trigger `ResolutionConflictEvent` for review
+    ///
+    /// ## Resolution Delay Enforcement
+    ///
+    /// A configurable cooling-off period prevents premature resolution:
+    ///
+    /// * **Formula**: `eligible_at = pool.end_time + config.resolution_delay`
+    /// * **Guard**: `current_ledger_timestamp >= eligible_at`
+    /// * **Purpose**: Allows time for:
+    ///   * Late price-feed updates to propagate
+    ///   * All oracle observations to settle
+    ///   * Off-chain price reconciliation before locking in outcome
+    /// * **Saturating arithmetic**: Prevents timestamp overflow from making pools resolvable earlier
+    /// * **Inclusive comparison**: Resolution allowed at the exact `eligible_at` timestamp
+    ///
+    /// ## Resolution Paths Comparison
+    ///
+    /// The protocol provides multiple resolution paths, all sharing the same guard and event
+    /// semantics but differing in how the winning outcome is determined:
+    ///
+    /// | Path | Function | Outcome Source | Use Case |
+    /// |------|----------|----------------|----------|
+    /// | Manual (this) | `resolve_pool` | Operator vote | Admin-controlled resolution, dispute resolution |
+    /// | Automated | `resolve_pool_from_price` | Price feed evaluation | Fully automated markets with price conditions |
+    /// | Oracle-signed | `oracle_resolve` | Oracle signature | Markets requiring signed oracle data |
+    ///
+    /// * **Manual (`resolve_pool`)**: Operator manually determines and votes for the winning
+    ///   outcome. Suitable for markets without automated price feeds or when manual intervention
+    ///   is required (e.g., resolving disputes, edge cases).
+    /// * **Automated (`resolve_pool_from_price`)**: Protocol reads configured price feed,
+    ///   evaluates the condition (e.g., "BTC/USD > 50000"), and automatically persists the
+    ///   resulting outcome (0 or 1) without human intervention.
+    /// * **Oracle-signed (`oracle_resolve`)**: External oracle provides a cryptographically
+    ///   signed outcome that is verified against the oracle registry before being recorded
+    ///   as a vote in the threshold model.
+    ///
+    /// All three paths enforce the same invariants:
+    /// * Pool must be in `Active` state
+    /// * Resolution delay must have elapsed
+    /// * Outcome must be valid (0 <= outcome < options_count, not UNRESOLVED_OUTCOME)
+    /// * Pool is removed from active index only after reaching threshold
+    /// * `PoolResolvedEvent` and `PoolResolvedDiagEvent` are emitted upon finalization
     ///
     /// # Parameters
     ///
-    /// - `env` — The Soroban execution environment (ledger, storage, auth).
-    /// - `operator` — The address casting a resolution vote; must hold Operator role (`1`)
-    ///   and must sign the transaction via `require_auth`.
-    /// - `pool_id` — The unique identifier of the pool to resolve.  The pool must exist
-    ///   in persistent storage.
-    /// - `outcome` — The 0-based index of the winning outcome the operator is voting for.
+    /// * `env` - The [`Env`](soroban_sdk::Env) providing access to:
+    ///   * **Ledger state**: Timestamp, sequence numbers for temporal validations
+    ///   * **Storage**: Persistent storage for pool state, temporary storage for votes
+    ///   * **Authentication**: `operator.require_auth()` for role verification
+    ///   * **Event emission**: Soroban event system for resolution events
+    /// * `operator` - The [`Address`](soroban_sdk::Address) casting a resolution vote. Must:
+    ///   * Hold Operator role (`1`) for this pool's role management context
+    ///   * Sign the transaction via `require_auth()`
+    ///   * Not have previously voted for this pool (duplicate guard)
+    ///   * Be authorized to participate in the resolution threshold
+    /// * `pool_id` - A unique 64-bit identifier referencing the prediction pool to resolve.
+    ///   The pool must exist in persistent storage at `DataKey::Pool(pool_id)`.
+    /// * `outcome` - A 0-based index of the winning outcome the operator is voting for.
     ///   Must satisfy `0 <= outcome < pool.options_count` and must not equal
-    ///   `UNRESOLVED_OUTCOME` (`u32::MAX`).
+    ///   `UNRESOLVED_OUTCOME` (`u32::MAX`), which is reserved for pools that have not
+    ///   yet been decided.
     ///
-    /// # Resolution flow
+    /// # Resolution Flow
     ///
-    /// 1. **Auth & role check** — `operator` must sign the transaction and hold the
-    ///    Operator role for `pool_id` (`require_operator_role_for_resolution`).
-    /// 2. **State guard** — the pool must be in `MarketState::Active`; Locked,
-    ///    Resolved, and Cancelled pools are rejected with [`PredifiError::InvalidPoolState`].
-    /// 3. **Resolution delay** — `current_ledger_time >= pool.end_time + config.resolution_delay`
-    ///    must hold. This cooling-off period allows late price-feed updates and oracle
-    ///    observations to settle before any outcome is locked in. The comparison is
-    ///    inclusive: resolution is allowed at the exact eligibility timestamp.
-    ///    The addition is saturating, so timestamp overflow cannot make a pool resolvable
-    ///    earlier than intended. Violations return
-    ///    [`PredifiError::ResolutionDelayNotMet`].
-    /// 4. **Outcome validation** — `outcome` must satisfy
-    ///    `0 <= outcome < pool.options_count` and must not equal `UNRESOLVED_OUTCOME`
-    ///    (the sentinel value reserved for pools that have not yet been decided).
-    ///    Invalid values return [`PredifiError::InvalidOutcome`].
-    /// 5. **Duplicate-vote guard** — each operator may vote exactly once per pool.
-    ///    A second call from the same address returns [`PredifiError::OracleAlreadyVoted`].
-    /// 6. **Vote recording** — the vote is stored in temporary ledger storage under
-    ///    `DataKey::ResVote(pool_id, operator)`.  Per-outcome tallies are maintained
-    ///    in `DataKey::ResVoteCt(pool_id, outcome)` and the total vote count in
-    ///    `DataKey::ResTotal(pool_id)`.
-    /// 7. **Conflict detection** — if any other outcome already has votes, a
-    ///    [`ResolutionConflictEvent`] is emitted and [`PredifiError::ResolutionConflict`]
-    ///    is returned, leaving the pool in `Active` so administrators can adjudicate.
-    /// 8. **Threshold check & finalisation** — once `new_outcome_votes >= pool.required_resolutions`:
-    ///    - `pool.state` is set to `MarketState::Resolved`.
-    ///    - `pool.outcome` is recorded.
-    ///    - A dynamic protocol fee (`pool.fee_bps`) is calculated via
-    ///      [`Self::calculate_dynamic_fee`].
-    ///    - `pool.resolution_timestamp` is stamped with the current ledger time.
-    ///    - The pool is removed from the global active index.
-    ///    - [`PoolResolvedEvent`] and [`PoolResolvedDiagEvent`] are published.
+    /// The resolution process follows a strict sequence of validations and vote tallies.
+    /// Each step is idempotent and can be executed in a single transaction, with all
+    /// state mutations occurring atomically.
     ///
-    /// # Oracle and price-feed relationship
-    ///
-    /// The outcome passed to this function is already an operator determination; this
-    /// function intentionally does not interpret prices. The automated path performs
-    /// the following before persisting an outcome: load the pool's [`PriceCondition`],
-    /// load its configured feed, reject stale or expired data, compare the normalized
-    /// feed price with the target using the configured operator and tolerance, and map
-    /// the condition to outcome `1` (met) or `0` (not met). The oracle callback path
-    /// accepts an oracle-authenticated outcome and records it as a vote. Both paths
-    /// enforce the same active-state, valid-outcome, and resolution-delay invariants.
-    ///
-    /// # Payout calculation (post-resolution)
-    ///
-    /// This function does **not** distribute funds directly. Winners call
-    /// `claim_winnings` after resolution. The payout helper first calculates the
-    /// protocol fee from the entire pool, then distributes the remainder
-    /// proportionally. For a winning stake `s`, total winning-side stake `W`, total
-    /// pool stake `T`, and fee rate `f = pool.fee_bps / 10_000`, the stages are:
+    /// ## Step-by-Step Flow
     ///
     /// ```text
-    /// protocol_fee = T * f
-    /// payout_pool  = T - protocol_fee
-    /// winnings     = s * payout_pool / W
+    /// ┌──────────────────────────────────────────────────────────────────────────────┐
+    /// │ Step 1: Auth & Role Check                                                    │
+    /// │   • operator.require_auth()                                                  │
+    /// │   • require_operator_role_for_resolution(&env, &operator, pool_id)           │
+    /// │   • Returns Err(InvalidPoolState) if pool not Active                         │
+    /// │                                                                              │
+    /// │ Step 2: Resolution Delay Check                                               │
+    /// │   • eligible_at = pool.end_time + config.resolution_delay                    │
+    /// │   • if current_time < eligible_at: Err(ResolutionDelayNotMet)                │
+    /// │                                                                              │
+    /// │ Step 3: Outcome Validation                                                   │
+    /// │   • if outcome >= pool.options_count: Err(InvalidOutcome)                    │
+    /// │   • if outcome == UNRESOLVED_OUTCOME: Err(InvalidOutcome)                    │
+    /// │                                                                              │
+    /// │ Step 4: Duplicate Vote Guard                                                 │
+    /// │   • if DataKey::ResVote(pool_id, operator) exists: Err(OracleAlreadyVoted)   │
+    /// │                                                                              │
+    /// │ Step 5: Vote Recording                                                       │
+    /// │   • Store vote: DataKey::ResVote(pool_id, operator) = outcome                │
+    /// │   • Increment total votes: DataKey::ResTotal(pool_id)++                      │
+    /// │   • Increment outcome votes: DataKey::ResVoteCt(pool_id, outcome)++          │
+    /// │   • Emit ResolutionVoteCastEvent                                             │
+    /// │                                                                              │
+    /// │ Step 6: Conflict Detection                                                   │
+    /// │   • For each outcome i ≠ current_outcome:                                    │
+    /// │     - if DataKey::ResVoteCt(pool_id, i) > 0:                                 │
+    /// │       • Emit ResolutionConflictEvent                                         │
+    /// │       • Return Err(ResolutionConflict)                                       │
+    /// │                                                                              │
+    /// │ Step 7: Threshold Check & Finalization                                       │
+    /// │   • if new_outcome_votes >= pool.required_resolutions:                       │
+    /// │     • pool.state = Resolved                                                  │
+    /// │     • pool.outcome = outcome                                                 │
+    /// │     • pool.fee_bps = calculate_dynamic_fee(&env, &pool)                      │
+    /// │     • pool.resolution_timestamp = current_time                               │
+    /// │     • Remove from active index (remove_from_active_index)                    │
+    /// │     • Emit PoolResolvedEvent                                                 │
+    /// │     • Emit PoolResolvedDiagEvent                                             │
+    /// └──────────────────────────────────────────────────────────────────────────────┘
     /// ```
     ///
-    /// Arithmetic is checked and uses protocol-favouring rounding. A zero winning
-    /// stake or zero user stake produces zero winnings, and the no-value-creation
-    /// invariant ensures a claimant cannot receive more than the pool total.
+    /// ## Detailed Step Explanations
     ///
-    /// # Emitted events
+    /// ### 1. Auth & Role Check
     ///
-    /// | Event | When |
-    /// |---|---|
-    /// | [`ResolutionVoteCastEvent`] | Every successful vote, regardless of threshold |
-    /// | [`ResolutionConflictEvent`] | When a vote conflicts with an earlier outcome |
-    /// | [`PoolResolvedEvent`] | When the threshold is reached and the pool is finalised; contains `pool_id`, the finalising operator, and the winning `outcome` |
-    /// | [`PoolResolvedDiagEvent`] | Same trigger as `PoolResolvedEvent`; carries stake diagnostics |
+    /// The function first verifies that:
+    /// * The transaction is signed by the claimed `operator` address
+    /// * The `operator` holds the Operator role (`1`) for this pool
+    /// * The pool exists and is in `Active` state
+    ///
+    /// Failure at this stage prevents any state mutations and returns early.
+    ///
+    /// ### 2. Resolution Delay Check
+    ///
+    /// The cooling-off period ensures:
+    /// * All price updates have time to propagate
+    /// * All oracle observations have settled
+    /// * No premature finalization before market conditions stabilize
+    ///
+    /// **Example**: If `pool.end_time = 1000` and `config.resolution_delay = 3600` (1 hour):
+    /// * Resolution allowed at or after timestamp 4600
+    /// * Attempt at timestamp 4599 returns `ResolutionDelayNotMet`
+    /// * Attempt at timestamp 4600 proceeds to next check
+    ///
+    /// ### 3. Outcome Validation
+    ///
+    /// Two validation rules ensure outcome integrity:
+    /// * `outcome < pool.options_count`: Prevents out-of-bounds indexing
+    /// * `outcome != UNRESOLVED_OUTCOME`: Prevents using sentinel value as final outcome
+    ///
+    /// ### 4. Duplicate Vote Guard
+    ///
+    /// Each operator may vote exactly once to prevent:
+    /// * Operator bias through repeated voting
+    /// * Sybil attacks via operator address duplication
+    /// * Accidental double-voting from transaction retries
+    ///
+    /// The vote is stored in **temporary storage** (`DataKey::ResVote`) which is isolated
+    /// to the current transaction but visible to all contract functions within that transaction.
+    ///
+    /// ### 5. Vote Recording
+    ///
+    /// Three storage keys track the voting state:
+    ///
+    /// | Key | Type | Value | Purpose |
+    /// |-----|------|-------|---------|
+    /// | `DataKey::ResVote(pool_id, operator)` | `u32` | outcome | Which outcome this operator voted for |
+    /// | `DataKey::ResTotal(pool_id)` | `u32` | total votes | Total number of votes cast for this pool |
+    /// | `DataKey::ResVoteCt(pool_id, outcome)` | `u32` | vote count | Number of votes for this specific outcome |
+    ///
+    /// Temporary storage is automatically cleaned up at the end of the transaction.
+    ///
+    /// ### 6. Conflict Detection
+    ///
+    /// After recording the new vote, the function checks if any **other** outcome already
+    /// has votes:
+    ///
+    /// ```rust,no_run
+    /// // Pseudocode for conflict detection
+    /// if new_total_votes > new_outcome_votes {
+    ///     for i in 0..pool.options_count {
+    ///         if i == outcome { continue; }  // Skip current outcome
+    ///         if outcome_votes[i] > 0 {
+    ///             // Conflict detected! Emit event and return error.
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// **Why check if `new_total_votes > new_outcome_votes`?**
+    /// * If this is the first vote (`new_total_votes == new_outcome_votes == 1`), no conflict possible
+    /// * If the new vote is the second vote but for the same outcome, no conflict (consensus)
+    /// * Only if different outcomes have votes do we have a genuine conflict
+    ///
+    /// **Behavior**: Conflict is non-fatal to the transaction. The current vote is recorded,
+    /// the event is emitted, but the pool remains `Active` for manual resolution.
+    ///
+    /// ### 7. Threshold Check & Finalization
+    ///
+    /// Once a threshold is reached, the following state transitions occur atomically:
+    ///
+    /// ```rust,no_run
+    /// pool.state = MarketState::Resolved;
+    /// pool.outcome = outcome;
+    /// pool.fee_bps = Self::calculate_dynamic_fee(&env, &pool);
+    /// pool.resolution_timestamp = Some(env.ledger().timestamp());
+    /// Self::remove_from_active_index(&env, pool_id);
+    /// ```
+    ///
+    /// **Dynamic Fee Calculation**: The fee rate is determined based on the pool's total
+    /// stake at resolution time, using the protocol's dynamic fee tier system.
+    ///
+    /// **Active Index Removal**: The pool is removed from the global `ActiveIndex` to
+    /// prevent further predictions and to enable efficient enumeration of active pools.
+    ///
+    /// # Oracle and Price Feed Relationship
+    ///
+    /// This manual resolution function does **not** read or evaluate price feeds. The
+    /// outcome is already determined by the calling operator based on external information
+    /// (price feeds, off-chain data, market events). For automated price-condition-based
+    /// resolution, see [`Self::resolve_pool_from_price`].
+    ///
+    /// ## Resolution Path Comparison
+    ///
+    /// The protocol provides two automated resolution paths that integrate with price feeds
+    /// and oracles:
+    ///
+    /// ### Automated Price-Feed Resolution (`resolve_pool_from_price`)
+    ///
+    /// ```text
+    /// ┌──────────────────────────────────────────────────────────────────────────────┐
+    /// │ 1. Load PriceCondition: pool.price_condition                               │
+    /// │    • feed_id: Price feed identifier                                         │
+    /// │    • target: Target price level                                             │
+    /// │    • operator: Comparison operator (GT, LT, EQ, GTE, LTE)                   │
+    /// │    • tolerance: Acceptable deviation from target                            │
+    /// │                                                                              │
+    /// │ 2. Fetch Price Feed Data                                                    │
+    /// │    • Load FeedConfig for feed_id                                            │
+    /// │    • Retrieve latest price from price feed adapter                          │
+    /// │    • Validate feed is not stale (timestamp within tolerance)                │
+    /// │    • Validate feed is not expired (expiration timestamp not reached)        │
+    /// │                                                                              │
+    /// │ 3. Evaluate Price Condition                                                 │
+    /// │    • normalized_price = feed_price / 10^feed_decimals                       │
+    /// │    • condition_met = compare(normalized_price, target, operator, tolerance) │
+    /// │       • GT:  normalized_price >  target + tolerance                         │
+    /// │       • LT:  normalized_price <  target - tolerance                         │
+    /// │       • GTE: normalized_price >= target + tolerance                         │
+    /// │       • LTE: normalized_price <= target - tolerance                         │
+    /// │       • EQ:  |normalized_price - target| <= tolerance                       │
+    /// │                                                                              │
+    /// │ 4. Persist Outcome                                                          │
+    /// │    • outcome = if condition_met { 1 } else { 0 }                            │
+    /// │    • pool.state = Resolved                                                  │
+    /// │    • pool.outcome = outcome                                                 │
+    /// │    • ... (same finalization as manual resolution)                           │
+    /// └──────────────────────────────────────────────────────────────────────────────┘
+    /// ```
+    ///
+    /// ### Oracle-Signed Resolution (`oracle_resolve`)
+    ///
+    /// The oracle callback path allows external oracles to submit cryptographically
+    /// signed outcomes:
+    ///
+    /// ```text
+    /// ┌──────────────────────────────────────────────────────────────────────────────┐
+    /// │ 1. Oracle Registry Lookup                                                   │
+    /// │    • Verify oracle address is registered                                    │
+    /// │    • Load oracle's public key and signature scheme                          │
+    /// │                                                                              │
+    /// │ 2. Signature Verification                                                   │
+    /// │    • Verify signature over pool_id + outcome + timestamp                    │
+    /// │    • Verify signature was created by registered oracle                      │
+    /// │    • Verify timestamp is within acceptable window                           │
+    /// │                                                                              │
+    /// │ 3. Record Oracle Vote                                                       │
+    /// │    • Store vote in temporary storage (same as manual)                       │
+    /// │    • Increment vote tallies (same as manual)                                │
+    /// │    • Conflict detection (same as manual)                                    │
+    /// │    • Threshold check (same as manual)                                       │
+    /// └──────────────────────────────────────────────────────────────────────────────┘
+    /// ```
+    ///
+    /// ## Shared Invariants Across All Paths
+    ///
+    /// All three resolution paths (`resolve_pool`, `resolve_pool_from_price`, `oracle_resolve`)
+    /// enforce identical invariants:
+    ///
+    /// | Invariant | Description |
+    /// |-----------|-------------|
+    /// | `pool.state == Active` | Pool must be active to allow resolution |
+    /// | `resolution_delay elapsed` | Cooling-off period must be satisfied |
+    /// | `valid outcome` | Outcome is within bounds and not sentinel |
+    /// | `active index removal` | Pool removed from active index only after resolution |
+    /// | `event emission` | `PoolResolvedEvent` and `PoolResolvedDiagEvent` emitted |
+    ///
+    /// This ensures consistent behavior regardless of how the winning outcome was determined.
+    ///
+    /// ## Price Feed Integration Details
+    ///
+    /// For automated resolution, the price feed system provides:
+    ///
+    /// * **Feed Registration**: Price feeds are registered with metadata (asset pair,
+    ///   decimal places, update frequency, source)
+    /// * **Data Validation**: Each feed includes staleness and expiration checks
+    /// * **Operator Selection**: Configurable comparison operators (>, <, >=, <=, ==)
+    /// * **Tolerance Support**: Configurable tolerance for edge cases (e.g., 0.1% drift)
+    /// * **Fallback Mechanism**: If feed is unavailable, manual resolution remains available
+    ///
+    /// See `price_feed.rs` and `price_feed_simple.rs` for complete price feed implementation.
+    ///
+    /// # Payout Calculation (Post-Resolution)
+    ///
+    /// This function does **not** distribute funds directly. Instead, it finalizes the
+    /// pool's state and prepares it for the `claim_winnings` phase, where winners can
+    /// claim their proportional share of the pool.
+    ///
+    /// ## Two-Phase Resolution and Claiming
+    ///
+    /// The protocol separates resolution from payout to ensure atomicity and allow
+    /// time for dispute windows:
+    ///
+    /// ```text
+    /// ┌──────────────────────────────────────────────────────────────────────────────┐
+    /// │ PHASE 1: Resolution (this function)                                          │
+    /// │ • Pool transitions from Active → Resolved                                    │
+    /// │ • Winning outcome is locked in (pool.outcome)                                │
+    /// │ • Protocol fee rate is determined (pool.fee_bps)                             │
+    /// │ • Resolution timestamp is recorded (pool.resolution_timestamp)               │
+    /// │ • Pool is removed from active index                                          │
+    /// │ • Event emitted: PoolResolvedEvent                                           │
+    /// │ • NO funds are transferred yet                                               │
+    /// └──────────────────────────────────────────────────────────────────────────────┘
+    ///                                    │
+    ///                                    ▼
+    /// ┌──────────────────────────────────────────────────────────────────────────────┐
+    /// │ PHASE 2: Claiming (claim_winnings function)                                 │
+    /// │ • Winners call claim_winnings with their prediction data                    │
+    /// │ • Protocol fee is calculated from pool total                                │
+    /// │ • Referral fees are calculated (if applicable)                              │
+    /// │ • User's proportional share is computed                                     │
+    /// │ • Tokens are transferred to winner and referrer                             │
+    /// │ • Claimed sentinel is set to prevent double-claim                           │
+    /// └──────────────────────────────────────────────────────────────────────────────┘
+    /// ```
+    ///
+    /// ## Payout Algorithm Details
+    ///
+    /// When a user calls `claim_winnings` after resolution, the payout is calculated as:
+    ///
+    /// ```text
+    /// Given:
+    ///   s = user's stake on winning outcome
+    ///   W = total stake on winning outcome (winning_stake)
+    ///   T = total pool stake (pool.total_stake)
+    ///   f = protocol fee rate = pool.fee_bps / 10_000
+    ///
+    /// Step 1: Calculate Protocol Fee (from entire pool)
+    ///   protocol_fee = T * f
+    ///
+    /// Step 2: Calculate Payout Pool (remaining after fee)
+    ///   payout_pool = T - protocol_fee
+    ///
+    /// Step 3: Calculate User's Proportional Share of Payout Pool
+    ///   user_share = s * payout_pool / W
+    ///
+    /// Step 4: Calculate Total Winnings (user_share + returned principal)
+    ///   winnings = user_share + s
+    ///   (This equals s * (payout_pool / W + 1) = s * (T - protocol_fee) / W + s)
+    ///
+    /// Step 5: Calculate Referral Fee (if applicable)
+    ///   referral_fee = protocol_fee * referral_bps / 10_000
+    ///   (referral_bps is Config::referral_bps, default 500 = 5%)
+    ///
+    /// Final Transfers:
+    ///   - Referrer receives: referral_fee
+    ///   - Treasury receives: protocol_fee - referral_fee
+    ///   - User receives: winnings - referral_fee
+    /// ```
+    ///
+    /// ## Example Calculation
+    ///
+    /// ```text
+    /// Pool State (after resolution):
+    ///   pool.total_stake = 100,000 tokens
+    ///   winning_stake = 60,000 tokens (outcome 1)
+    ///   pool.fee_bps = 25 (0.25%)
+    ///   referral_bps = 500 (5%)
+    ///
+    /// User Prediction:
+    ///   user.stake = 1,000 tokens (on outcome 1)
+    ///   user.referrer = Some("GA...XYZ")
+    ///
+    /// Payout Calculation:
+    ///   Step 1: protocol_fee = 100,000 * 25 / 10_000 = 250 tokens
+    ///   Step 2: payout_pool = 100,000 - 250 = 99,750 tokens
+    ///   Step 3: user_share = 1,000 * 99,750 / 60,000 = 1,662.5 tokens
+    ///   Step 4: winnings = 1,662.5 + 1,000 = 2,662.5 tokens
+    ///   Step 5: referral_fee = 250 * 500 / 10_000 = 12.5 tokens
+    ///
+    /// Final Transfers:
+    ///   Referrer receives: 12.5 tokens
+    ///   Treasury receives: 250 - 12.5 = 237.5 tokens
+    ///   User receives: 2,662.5 - 12.5 = 2,650 tokens
+    ///   Total distributed: 2,650 + 12.5 + 237.5 + 97,100 (other winners) = 100,000 ✓
+    /// ```
+    ///
+    /// ## Arithmetic Properties
+    ///
+    /// * **Checked arithmetic**: All multiplications and divisions use `SafeMath` to
+    ///   prevent overflow/underflow
+    /// * **Protocol-favouring rounding**: Integer division rounds in favor of the protocol
+    ///   (e.g., `floor(s * payout_pool / W)` ensures protocol receives at least its fee)
+    /// * **Zero stake handling**: Zero winning stake or zero user stake produces zero winnings
+    /// * **No value creation**: No claimant can receive more than the pool's total stake
+    ///
+    /// ## Edge Cases
+    ///
+    /// | Case | Behavior |
+    /// |------|----------|
+    /// | `winning_stake == 0` | All stakes refunded (no pool fee applied) |
+    /// | `user_stake == 0` | User receives 0 winnings (no participation) |
+    /// | `pool.total_stake == 0` | Invalid state, should not occur |
+    /// | `protocol_fee > user_winnings` | User receives 0 (all goes to protocol) |
+    /// | `referral_fee > protocol_fee` | Impossible by construction |
+    ///
+    /// See `claim_winnings_internal` in `prediction.rs` for complete payout implementation.
+    ///
+    /// # Emitted Events
+    ///
+    /// This function emits events in two categories: ongoing voting events (emitted on
+    /// every successful call) and finalization events (emitted only when threshold is
+    /// reached and pool transitions to `Resolved` state).
+    ///
+    /// ## Ongoing Voting Events
+    ///
+    /// ### ResolutionVoteCastEvent
+    ///
+    /// Emitted **every time** a successful vote is recorded, regardless of whether
+    /// the threshold has been reached.
+    ///
+    /// ```rust,ignore
+    /// event ResolutionVoteCastEvent {
+    ///     pool_id: u64,
+    ///     voter: Address,
+    ///     outcome: u32,
+    ///     vote_count: u32,      // Number of votes for this outcome AFTER this vote
+    ///     required_resolutions: u32  // Threshold needed for resolution
+    /// }
+    /// ```
+    ///
+    /// **Fields:**
+    /// * `pool_id` - The prediction pool being resolved
+    /// * `voter` - The operator address casting the vote
+    /// * `outcome` - The winning outcome index the operator voted for
+    /// * `vote_count` - The **cumulative** vote count for this outcome **after** this vote
+    /// * `required_resolutions` - The threshold number of votes required for final resolution
+    ///
+    /// **Use cases:**
+    /// * Live resolution tracking dashboard
+    /// * Alerting when a threshold is approaching
+    /// * Monitoring operator participation
+    ///
+    /// **Example timeline:**
+    /// ```text
+    /// Threshold = 3 votes
+    ///
+    /// Vote 1 (Operator A votes for outcome 1):
+    ///   ResolutionVoteCastEvent {
+    ///     pool_id: 1,
+    ///     voter: "GA...AAA",
+    ///     outcome: 1,
+    ///     vote_count: 1,         // First vote for outcome 1
+    ///     required_resolutions: 3
+    ///   }
+    ///
+    /// Vote 2 (Operator B votes for outcome 1):
+    ///   ResolutionVoteCastEvent {
+    ///     pool_id: 1,
+    ///     voter: "GA...BBB",
+    ///     outcome: 1,
+    ///     vote_count: 2,         // Second vote for outcome 1
+    ///     required_resolutions: 3
+    ///   }
+    ///
+    /// Vote 3 (Operator C votes for outcome 1):
+    ///   ResolutionVoteCastEvent {
+    ///     pool_id: 1,
+    ///     voter: "GA...CCC",
+    ///     outcome: 1,
+    ///     vote_count: 3,         // Third vote for outcome 1
+    ///     required_resolutions: 3
+    ///   }
+    ///   → Threshold met! Pool transitions to Resolved.
+    /// ```
+    ///
+    /// ### ResolutionConflictEvent
+    ///
+    /// Emitted when an operator casts a vote for an outcome that **differs** from an
+    /// earlier vote already recorded for this pool.
+    ///
+    /// ```rust,ignore
+    /// event ResolutionConflictEvent {
+    ///     pool_id: u64,
+    ///     oracle: Address,        // Address casting the conflicting vote
+    ///     outcome: u32,           // Outcome this operator just voted for
+    ///     existing_outcome: u32   // Outcome that already had votes
+    /// }
+    /// ```
+    ///
+    /// **Fields:**
+    /// * `pool_id` - The prediction pool with conflicting votes
+    /// * `oracle` - The operator address casting the conflicting vote
+    /// * `outcome` - The outcome index this operator just voted for
+    /// * `existing_outcome` - The outcome index that already had votes (conflict target)
+    ///
+    /// **Behavior:**
+    /// * The current vote **is still recorded** (not discarded)
+    /// * The conflict event is emitted for observability
+    /// * The function returns `Err(PredifiError::ResolutionConflict)`
+    /// * The pool remains in `Active` state for manual resolution
+    ///
+    /// **Use cases:**
+    /// * Operator consensus monitoring
+    /// * Dispute detection and escalation
+    /// * Operator reputation tracking
+    ///
+    /// **Example scenario:**
+    /// ```text
+    /// Initial state: Operator A votes for outcome 1
+    /// Current state: outcome 1 has 2 votes, outcome 0 has 0 votes
+    ///
+    /// New vote: Operator B votes for outcome 0
+    ///   → ResolutionConflictEvent emitted:
+    ///     oracle: "GA...BBB", outcome: 0, existing_outcome: 1
+    ///   → Returns Err(ResolutionConflict)
+    ///   → Pool stays Active, administrators investigate dispute
+    /// ```
+    ///
+    /// ## Finalization Events
+    ///
+    /// These events are emitted **only once** when the pool transitions to `Resolved`
+    /// state after reaching the required vote threshold.
+    ///
+    /// ### PoolResolvedEvent
+    ///
+    /// Emitted when the vote threshold is reached and the pool transitions from
+    /// `Active` to `Resolved` state.
+    ///
+    /// ```rust,ignore
+    /// event PoolResolvedEvent {
+    ///     pool_id: u64,
+    ///     operator: Address,      // Operator who triggered threshold (final vote caster)
+    ///     outcome: u32            // Final winning outcome
+    /// }
+    /// ```
+    ///
+    /// **Fields:**
+    /// * `pool_id` - The prediction pool that was resolved
+    /// * `operator` - The operator address that cast the **final vote** triggering threshold
+    /// * `outcome` - The winning outcome index that achieved the required votes
+    ///
+    /// **Use cases:**
+    /// * Off-chain resolution indexing
+    /// * Notification of pool finalization
+    /// * Triggering claim processing pipelines
+    ///
+    /// **Example:**
+    /// ```json
+    /// {
+    ///   "topic": ["PoolResolvedEvent"],
+    ///   "data": [
+    ///     {"val": "u64", "Val": 123},
+    ///     {"val": "bytes", "Val": "GA...XYZ"},
+    ///     {"val": "u32", "Val": 1}
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// ### PoolResolvedDiagEvent
+    ///
+    /// A diagnostic event emitted alongside `PoolResolvedEvent` to provide stake
+    /// analytics for the resolved pool.
+    ///
+    /// ```rust,ignore
+    /// event PoolResolvedDiagEvent {
+    ///     pool_id: u64,
+    ///     outcome: u32,           // Winning outcome
+    ///     total_stake: i128,      // Total tokens staked in pool
+    ///     winning_stake: i128,    // Tokens staked on winning outcome
+    ///     timestamp: u64          // Ledger timestamp of resolution
+    /// }
+    /// ```
+    ///
+    /// **Fields:**
+    /// * `pool_id` - The prediction pool that was resolved
+    /// * `outcome` - The winning outcome index
+    /// * `total_stake` - Total tokens staked in the pool (all outcomes)
+    /// * `winning_stake` - Tokens staked on the winning outcome
+    /// * `timestamp` - Ledger timestamp when resolution occurred
+    ///
+    /// **Use cases:**
+    /// * Pool performance analytics
+    /// * Volume tracking by outcome
+    /// * Protocol revenue calculation
+    /// * Post-resolution reporting
+    ///
+    /// **Example:**
+    /// ```json
+    /// {
+    ///   "topic": ["PoolResolvedDiagEvent"],
+    ///   "data": [
+    ///     {"val": "u64", "Val": 123},
+    ///     {"val": "u32", "Val": 1},
+    ///     {"val": "i128", "Val": "100000000"},
+    ///     {"val": "i128", "Val": "60000000"},
+    ///     {"val": "u64", "Val": 1234567890}
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// ## Event Ordering Guarantees
+    ///
+    /// * Events are emitted **after** all validations pass
+    /// * Events are emitted **after** state mutations are committed
+    /// * `ResolutionVoteCastEvent` and `ResolutionConflictEvent` are emitted **before**
+    ///   the function returns (even on error)
+    /// * `PoolResolvedEvent` and `PoolResolvedDiagEvent` are emitted **after** pool
+    ///   state is updated to `Resolved`
+    /// * All events use the Soroban event system (`publish`)
+    ///
+    /// ## Event Summary Table
+    ///
+    /// | Event | Trigger | Emitted on Error? | Purpose |
+    /// |-------|---------|-------------------|---------|
+    /// | `ResolutionVoteCastEvent` | Every vote | No | Track voting progress |
+    /// | `ResolutionConflictEvent` | Vote conflict | No | Detect operator disagreement |
+    /// | `PoolResolvedEvent` | Threshold reached | No | Finalize pool resolution |
+    /// | `PoolResolvedDiagEvent` | Threshold reached | No | Provide stake analytics |
     ///
     /// # Errors
     ///
-    /// | Error | Condition |
-    /// |---|---|
-    /// | [`PredifiError::ContractPaused`] | The contract is globally paused |
-    /// | [`PredifiError::InvalidPoolState`] | Pool is not `Active` |
-    /// | [`PredifiError::ResolutionDelayNotMet`] | Too early to resolve |
-    /// | [`PredifiError::InvalidOutcome`] | `outcome >= options_count` or equals sentinel |
-    /// | [`PredifiError::OracleAlreadyVoted`] | This operator already voted for this pool |
-    /// | [`PredifiError::ResolutionConflict`] | Operators disagree on the winning outcome |
+    /// All errors are of type [`PredifiError`] and cause the transaction to abort
+    /// with a Soroban error code. Errors are checked in the following order:
+    /// contract pause → operator role → pool state → resolution delay → outcome
+    /// validity → duplicate vote → conflict detection.
+    ///
+    /// ## Error Reference
+    ///
+    /// | Error | Code | Check Location | Description | Recovery Guidance |
+    /// |-------|------|----------------|-------------|-------------------|
+    /// | `PredifiError::ContractPaused` | 100 | First | Contract is globally paused; all state-mutating operations suspended | Wait for admin to unpause |
+    /// | `PredifiError::InvalidPoolState` | 105 | Second | Pool is not in `Active` state (Resolved, Cancelled, or non-existent) | Verify pool exists and is Active |
+    /// | `PredifiError::ResolutionDelayNotMet` | 201 | Third | Current ledger time is before `eligible_at` | Wait for `end_time + resolution_delay` to elapse |
+    /// | `PredifiError::InvalidOutcome` | 106 | Fourth | Outcome is out of bounds or equals sentinel | Validate `0 <= outcome < options_count` and `outcome != u32::MAX` |
+    /// | `PredifiError::OracleAlreadyVoted` | 202 | Fifth | This operator has already voted for this pool | Use a different operator address or wait for resolution |
+    /// | `PredifiError::ResolutionConflict` | 203 | Sixth | A different outcome already has votes; operators disagree | Administrators must adjudicate and resolve the dispute |
+    ///
+    /// ## Error Code Categories
+    ///
+    /// * **Codes 100-199**: User input and validation errors (paused contract, invalid state, invalid outcome)
+    /// * **Codes 200-299**: Resolution-specific errors (delay not met, duplicate vote, conflict)
+    ///
+    /// ## Recovery Guidance
+    ///
+    /// ### For Resolvers (Operators)
+    ///
+    /// * **ContractPaused**: Monitor contract status via admin events; wait for admin to unpause
+    /// * **InvalidPoolState**: Verify pool exists via `get_pool` and check `state == Active`
+    /// * **ResolutionDelayNotMet**: Calculate `eligible_at = pool.end_time + config.resolution_delay` and wait
+    /// * **InvalidOutcome**: Confirm `pool.options_count` and use valid 0-based index
+    /// * **OracleAlreadyVoted**: Check `DataKey::ResVote(pool_id, operator)`; use different operator
+    /// * **ResolutionConflict**: Administrators must review conflicting votes and decide on final outcome
+    ///
+    /// ### For Front-End Integration
+    ///
+    /// ```rust,no_run
+    /// // Example: Checking if resolution is possible before attempting
+    /// let pool = client.get_pool(&pool_id);
+    /// let config = client.get_config();
+    /// let current_time = env.ledger().timestamp();
+    /// let eligible_at = pool.end_time + config.resolution_delay;
+    ///
+    /// if current_time < eligible_at {
+    ///     // Resolution not yet possible; show countdown to user
+    /// } else if pool.state != MarketState::Active {
+    ///     // Pool already resolved or cancelled
+    /// } else {
+    ///     // Safe to attempt resolution
+    ///     client.resolve_pool(&operator, &pool_id, &winning_outcome);
+    /// }
+    /// ```
+    ///
+    /// ### For Admin Monitoring
+    ///
+    /// * Monitor `ResolutionConflictEvent` for operator disagreements requiring intervention
+    /// * Monitor `PoolResolvedEvent` to track resolution throughput
+    /// * Monitor `ResolutionVoteCastEvent` for slow resolution (approaching but not reaching threshold)
+    ///
+    /// ## Conflict Resolution Workflow
+    ///
+    /// When `ResolutionConflict` is encountered:
+    ///
+    /// ```text
+    /// 1. Conflict detected: Operator B votes for outcome 0 while outcome 1 already has votes
+    ///    ↓
+    /// 2. ResolutionConflictEvent emitted; function returns error
+    ///    ↓
+    /// 3. Pool remains in Active state with both outcomes having votes
+    ///    ↓
+    /// 4. Administrators review conflict:
+    ///    - Check external data sources for correct outcome
+    ///    - Communicate with operators to reach consensus
+    ///    - Determine if pool should be manually resolved or cancelled
+    ///    ↓
+    /// 5. Operators vote again:
+    ///    - If consensus reached: vote for agreed outcome
+    ///    - If conflict persists: repeat until threshold met for one outcome
+    ///    - If dispute unresolved: admin may cancel pool (refunds to participants)
+    ///    ↓
+    /// 6. Threshold reached for one outcome → PoolResolvedEvent emitted
+    /// ```
     ///
     /// # Preconditions
     ///
-    /// - `pool.state == MarketState::Active`
-    /// - `operator` holds Operator role (`1`) for `pool_id`
-    /// - `env.ledger().timestamp() >= pool.end_time + config.resolution_delay`
+    /// All preconditions must be satisfied for the function to proceed. Failures return
+    /// errors early, before any state mutations. The function checks preconditions in
+    /// the order listed below for optimal error reporting.
     ///
-    /// # Postconditions (on threshold reached)
+    /// ## Auth & Role Preconditions
     ///
-    /// - `pool.state == MarketState::Resolved` (INV-2 state transition satisfied)
-    /// - `pool.outcome == outcome`
-    /// - `pool.resolution_timestamp == Some(current_time)`
-    /// - Pool is removed from the global active index
+    /// | Condition | INV | Description | Verification Method |
+    /// |-----------|-----|-------------|---------------------|
+    /// | `operator.require_auth()` | INV-1 | Transaction signed by claimed operator | Soroban `require_auth()` |
+    /// | `operator` has Operator role | INV-17 | Operator holds role `1` for pool | `require_operator_role_for_resolution()` |
+    ///
+    /// ## Pool State Preconditions
+    ///
+    /// | Condition | INV | Description | Error on Failure |
+    /// |-----------|-----|-------------|------------------|
+    /// | `pool.state == MarketState::Active` | INV-2 | Pool is not Locked, Resolved, or Cancelled | `InvalidPoolState` |
+    /// | Pool exists in storage | INV-18 | Pool record present at `DataKey::Pool(pool_id)` | Panic (pool not found) |
+    ///
+    /// ## Temporal Preconditions
+    ///
+    /// | Condition | INV | Description | Calculation |
+    /// |-----------|-----|-------------|-------------|
+    /// | `current_time >= eligible_at` | INV-19 | Resolution delay has elapsed | `eligible_at = pool.end_time + config.resolution_delay` |
+    ///
+    /// **Example**: If `pool.end_time = 10000` and `config.resolution_delay = 3600` (1 hour):
+    /// * Resolution allowed at or after timestamp 13600
+    /// * Attempt at timestamp 13599 returns `ResolutionDelayNotMet`
+    /// * Saturating addition prevents overflow from making pools resolvable earlier
+    ///
+    /// ## Outcome Validation Preconditions
+    ///
+    /// | Condition | INV | Description | Sentinel Value |
+    /// |-----------|-----|-------------|----------------|
+    /// | `0 <= outcome < pool.options_count` | INV-20 | Outcome within valid range | `UNRESOLVED_OUTCOME` (`u32::MAX`) |
+    /// | `outcome != UNRESOLVED_OUTCOME` | INV-21 | Not using sentinel as final outcome | `u32::MAX` |
+    ///
+    /// ## Vote Integrity Preconditions
+    ///
+    /// | Condition | INV | Description | Storage Location |
+    /// |-----------|-----|-------------|------------------|
+    /// | No existing vote from operator | INV-22 | Operator has not voted previously | `DataKey::ResVote(pool_id, operator)` |
+    ///
+    /// ## Precondition Checklist (for callers)
+    ///
+    /// ```rust,no_run
+    /// // Before calling resolve_pool, verify:
+    /// let pool = client.get_pool(&pool_id);
+    /// let config = client.get_config();
+    /// let current_time = env.ledger().timestamp();
+    /// let eligible_at = pool.end_time + config.resolution_delay;
+    ///
+    /// // 1. Contract not paused (implicit via require_not_paused)
+    /// // 2. Operator has correct role (implicit via require_operator_role_for_resolution)
+    /// assert_eq!(pool.state, MarketState::Active, "Pool must be Active");
+    /// // 3. Resolution delay elapsed
+    /// assert!(current_time >= eligible_at, "Resolution delay not met");
+    /// // 4. Outcome is valid
+    /// assert!(outcome < pool.options_count, "Outcome out of bounds");
+    /// assert!(outcome != u32::MAX, "Outcome cannot be UNRESOLVED_OUTCOME");
+    /// // 5. Operator has not voted (check via DataKey::ResVote)
+    /// // 6. Transaction is signed by operator
+    /// ```
+    ///
+    /// # Postconditions (On Threshold Reached)
+    ///
+    /// When `new_outcome_votes >= pool.required_resolutions`, the following state
+    /// transitions occur atomically. All postconditions are guaranteed if the function
+    /// returns `Ok(())` with `PoolResolvedEvent` emitted.
+    ///
+    /// ## Pool State Transitions
+    ///
+    /// | Field | Before | After | Description |
+    /// |-------|--------|-------|-------------|
+    /// | `pool.state` | `MarketState::Active` | `MarketState::Resolved` | Pool finalization |
+    /// | `pool.outcome` | undefined | `outcome` | Winning outcome recorded |
+    /// | `pool.fee_bps` | dynamic tier (if not set) | `calculate_dynamic_fee(&env, &pool)` | Fee rate determined at resolution |
+    /// | `pool.resolution_timestamp` | `None` | `Some(current_time)` | Resolution time stamp |
+    ///
+    /// ## Storage Mutations
+    ///
+    /// | Key | Type | Change | Purpose |
+    /// |-----|------|--------|---------|
+    /// | `DataKey::Pool(pool_id)` | `Pool` | state=Resolved, outcome, fee_bps, resolution_timestamp | Pool finalization |
+    /// | `DataKey::ResVote(pool_id, operator)` | `u32` | Removed (temp) | Vote removed from temporary storage |
+    /// | `DataKey::ResTotal(pool_id)` | `u32` | Removed (temp) | Vote count cleared |
+    /// | `DataKey::ResVoteCt(pool_id, outcome)` | `u32` | Removed (temp) | Outcome vote count cleared |
+    /// | ActiveIndex | `Vec<u64>` | `pool_id` removed | Pool no longer in active enumeration |
+    ///
+    /// **Note**: Temporary storage keys (`ResVote`, `ResTotal`, `ResVoteCt`) are cleared
+    /// automatically when the transaction ends, but explicit removal may occur for cleanup.
+    ///
+    /// ## Event Emissions
+    ///
+    /// | Event | Trigger | Guaranteed When |
+    /// |-------|---------|-----------------|
+    /// | `ResolutionVoteCastEvent` | Vote recording | Always (before threshold) |
+    /// | `ResolutionConflictEvent` | Conflict detection | If conflict exists (before threshold) |
+    /// | `PoolResolvedEvent` | Threshold reached | **Only** when `new_outcome_votes >= required_resolutions` |
+    /// | `PoolResolvedDiagEvent` | Threshold reached | **Only** when threshold reached |
+    ///
+    /// ## Invariant Guarantees
+    ///
+    /// | INV | Statement | Verification |
+    /// |-----|-----------|--------------|
+    /// | INV-2 | State transition: `Active → Resolved` | `pool.state == MarketState::Resolved` |
+    /// | INV-23 | Outcome recording: `pool.outcome == voted_outcome` | `pool.outcome == outcome` |
+    /// | INV-24 | Resolution timestamp: `Some(timestamp)` recorded | `pool.resolution_timestamp.is_some()` |
+    /// | INV-25 | Active index removal: Pool not in active set | `get_active_pools()` excludes `pool_id` |
+    /// | INV-26 | Fee calculation: `fee_bps` set | `pool.fee_bps > 0` (unless pool has zero stake) |
+    ///
+    /// ## Claimability Postconditions
+    ///
+    /// After resolution, predictions are claimable:
+    ///
+    /// ```text
+    /// Claim eligibility:
+    ///   • Prediction exists at DataKey::Pred(user, pool_id)
+    ///   • Prediction.outcome == pool.outcome (winning outcome)
+    ///   • Claimed(user, pool_id) == false (not yet claimed)
+    ///
+    /// Payout eligibility:
+    ///   • Winning-side predictions: proportional payout of (pool.total_stake - protocol_fee)
+    ///   • Losing-side predictions: 0 payout (stake returned as part of payout calculation)
+    ///   • No prediction: 0 payout (no participation)
+    /// ```
+    ///
+    /// See `claim_winnings_internal` for complete claiming logic.
+    ///
+    /// ## Atomicity Guarantees
+    ///
+    /// * All storage mutations occur in a single transaction
+    /// * If any mutation fails, all prior mutations are rolled back (Soroban atomicity)
+    /// * Events are emitted after all mutations are complete
+    /// * No partial resolution is possible; threshold is either met or not met
+    ///
+    /// ## Edge Case: Threshold Reached in Single Vote
+    ///
+    /// If `required_resolutions == 1` (single operator pool):
+    /// * First vote immediately meets threshold
+    /// * `new_outcome_votes == new_total_votes == 1`
+    /// * No conflict possible (no other outcomes have votes)
+    /// * `PoolResolvedEvent` emitted in same transaction
+    ///
+    /// This configuration is suitable for admin-controlled test pools or single-operator
+    /// markets where the operator is the sole authority for resolution.
     pub fn resolve_pool(
         env: Env,
         operator: Address,
