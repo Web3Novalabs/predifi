@@ -1331,6 +1331,8 @@ mod issues_1446_1447_1448_1449_boundary_tests;
 #[cfg(test)]
 mod issues_1878_1879_1884_1885_boundary_tests;
 #[cfg(test)]
+mod lifecycle_integration_tests;
+#[cfg(test)]
 mod referral_integration_tests;
 #[cfg(test)]
 mod test;
