@@ -311,20 +311,63 @@ pub struct ErrorDetailDoc {
 
 /// OpenAPI schema for successful API responses.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
-#[aliases(
-    ApiPoolDetailsResponse = ApiSuccess<PoolWithOddsDoc>,
-    ApiStatsResponse = ApiSuccess<ProtocolStatsDoc>,
-    ApiLeaderboardResponse = ApiSuccess<LeaderboardResponse>,
-    ApiHistoryResponse = ApiSuccess<PredictionHistoryResponse>,
-    ApiUserPredictionsResponse = ApiSuccess<UserPredictionsResponse>,
-    ApiMarketPredictionsResponse = ApiSuccess<MarketPredictionsResponse>,
-    ApiReferralEarningsResponse = ApiSuccess<ReferralEarningsResponse>,
-    ApiIndexerOkResponse = ApiSuccess<IndexerOkResponse>,
-    ApiPricesResponse = ApiSuccess<Vec<AssetPriceDoc>>
-)]
 pub struct ApiSuccess<T: ToSchema> {
     pub status: String,
     pub data: T,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiPoolDetailsResponse {
+    pub status: String,
+    pub data: PoolWithOddsDoc,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiStatsResponse {
+    pub status: String,
+    pub data: ProtocolStatsDoc,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiLeaderboardResponse {
+    pub status: String,
+    pub data: LeaderboardResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiHistoryResponse {
+    pub status: String,
+    pub data: PredictionHistoryResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiUserPredictionsResponse {
+    pub status: String,
+    pub data: UserPredictionsResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiMarketPredictionsResponse {
+    pub status: String,
+    pub data: MarketPredictionsResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiReferralEarningsResponse {
+    pub status: String,
+    pub data: ReferralEarningsResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiIndexerOkResponse {
+    pub status: String,
+    pub data: IndexerOkResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiPricesResponse {
+    pub status: String,
+    pub data: Vec<AssetPriceDoc>,
 }
 
 /// OpenAPI schema for an asset price returned by the prices endpoint.
