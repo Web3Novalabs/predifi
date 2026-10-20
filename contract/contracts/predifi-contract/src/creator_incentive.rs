@@ -41,13 +41,48 @@
 //! winnings — it reduces the amount the treasury would otherwise sweep via
 //! `withdraw_treasury` for that pool's fee.
 
-use soroban_sdk::{contractimpl, token, Address, Env};
+use soroban_sdk::{contractimpl, contracttype, token, Address, Env};
 
 use crate::{
-    calculate_protocol_fee, CreatorIncentiveConfigUpdatedEvent, CreatorIncentivePaidEvent,
-    CreatorStats, DataKey, MarketState, Pool, PredifiContract, PredifiContractArgs,
+    calculate_protocol_fee, DataKey, MarketState, Pool, PredifiContract, PredifiContractArgs,
     PredifiContractClient, PredifiError, RoundingMode, SafeMath, DEFAULT_CREATOR_MIN_PARTICIPANTS,
 };
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatorStats {
+    pub pools_rewarded: u32,
+    pub total_incentive_earned: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatorIncentiveConfigUpdatedEvent {
+    pub admin: Address,
+    pub incentive_bps: u32,
+    pub min_participants: u32,
+}
+
+impl CreatorIncentiveConfigUpdatedEvent {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish((soroban_sdk::Symbol::new(env, "creator_incentive_config_updated"),), self.clone());
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreatorIncentivePaidEvent {
+    pub pool_id: u64,
+    pub creator: Address,
+    pub amount: i128,
+    pub participants_count: u32,
+}
+
+impl CreatorIncentivePaidEvent {
+    pub fn publish(&self, env: &Env) {
+        env.events().publish((soroban_sdk::Symbol::new(env, "creator_incentive_paid"),), self.clone());
+    }
+}
 
 #[contractimpl]
 impl PredifiContract {
