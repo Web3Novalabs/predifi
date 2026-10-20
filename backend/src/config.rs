@@ -29,6 +29,9 @@ const DEFAULT_POOL_NEGATIVE_CACHE_TTL_SECS: u64 = 5;
 const DEFAULT_SECRET_KEY: &str = "predifi-dev-secret-do-not-use-in-production-32";
 const DEFAULT_APP_ENV: &str = "development";
 const DEFAULT_INDEXER_MAX_BATCH_SIZE: usize = crate::constants::DEFAULT_INDEXER_MAX_BATCH_SIZE;
+const DEFAULT_WS_PING_INTERVAL_SECS: u64 = 30;
+const DEFAULT_WS_MAX_MISSED_PONGS: u32 = 3;
+const DEFAULT_WS_MAX_SUBSCRIBER_LAG: u64 = 100;
 
 /// Origins allowed by default when `CORS_ALLOWED_ORIGINS` is not set.
 pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
@@ -142,6 +145,15 @@ pub struct Config {
     /// In production, this should be configured to restrict WebSocket connections to trusted domains.
     /// Uses the same validation logic as CORS origins.
     pub allowed_ws_origins: Vec<String>,
+    /// Interval in seconds between WebSocket ping keepalive frames (default `30`).
+    /// Read from `PREDIFI_WS_PING_INTERVAL_SECS`.
+    pub ws_ping_interval_secs: u64,
+    /// Maximum number of consecutive unacknowledged pings before disconnecting a WebSocket client (default `3`).
+    /// Read from `PREDIFI_WS_MAX_MISSED_PONGS`.
+    pub ws_max_missed_pongs: u32,
+    /// Maximum number of missed broadcast messages allowed before disconnecting a slow subscriber (default `100`).
+    /// Read from `PREDIFI_WS_MAX_SUBSCRIBER_LAG`.
+    pub ws_max_subscriber_lag: u64,
 
     // ── Email delivery (#1929) ────────────────────────────────────────────
     /// SMTP server hostname for outbound email delivery.  `None` disables
@@ -165,7 +177,7 @@ impl Config {
         Self::from_map(&vars)
     }
 
-    fn from_map(vars: &HashMap<String, String>) -> Result<Self, ConfigError> {
+    pub(crate) fn from_map(vars: &HashMap<String, String>) -> Result<Self, ConfigError> {
         let host = get_string(vars, "PREDIFI_APP_HOST", DEFAULT_HOST);
         let port = get_u16(vars, "PREDIFI_APP_PORT", DEFAULT_PORT)?;
         let database_url = get_string(vars, "PREDIFI_DATABASE_URL", DEFAULT_DATABASE_URL);
@@ -251,6 +263,21 @@ impl Config {
 
         // Parse WebSocket allowed origins (optional, defaults to empty for permissive mode)
         let allowed_ws_origins = parse_ws_origins(vars)?;
+        let ws_ping_interval_secs = get_u64(
+            vars,
+            "PREDIFI_WS_PING_INTERVAL_SECS",
+            DEFAULT_WS_PING_INTERVAL_SECS,
+        )?;
+        let ws_max_missed_pongs = get_u32(
+            vars,
+            "PREDIFI_WS_MAX_MISSED_PONGS",
+            DEFAULT_WS_MAX_MISSED_PONGS,
+        )?;
+        let ws_max_subscriber_lag = get_u64(
+            vars,
+            "PREDIFI_WS_MAX_SUBSCRIBER_LAG",
+            DEFAULT_WS_MAX_SUBSCRIBER_LAG,
+        )?;
 
         let app_env = get_string(vars, "PREDIFI_APP_ENV", DEFAULT_APP_ENV);
 
@@ -300,6 +327,9 @@ impl Config {
             indexer_max_batch_size,
             app_env,
             allowed_ws_origins,
+            ws_ping_interval_secs,
+            ws_max_missed_pongs,
+            ws_max_subscriber_lag,
             smtp_host,
             smtp_port,
             smtp_username,
@@ -489,6 +519,26 @@ impl Config {
             });
         }
 
+        // ── WebSocket keepalive and subscriber lag ───────────────────────────
+        if self.ws_ping_interval_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_WS_PING_INTERVAL_SECS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.ws_max_missed_pongs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_WS_MAX_MISSED_PONGS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.ws_max_subscriber_lag == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_WS_MAX_SUBSCRIBER_LAG",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+
         // ── Indexer ──────────────────────────────────────────────────────────
         if self.indexer_max_batch_size == 0 {
             return Err(ConfigError::InvalidValue {
@@ -587,6 +637,9 @@ impl Config {
             indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
             app_env: String::from(DEFAULT_APP_ENV),
             allowed_ws_origins: Vec::new(), // Empty for permissive mode in tests
+            ws_ping_interval_secs: DEFAULT_WS_PING_INTERVAL_SECS,
+            ws_max_missed_pongs: DEFAULT_WS_MAX_MISSED_PONGS,
+            ws_max_subscriber_lag: DEFAULT_WS_MAX_SUBSCRIBER_LAG,
             smtp_host: None,
             smtp_port: 587,
             smtp_username: None,

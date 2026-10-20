@@ -67,6 +67,8 @@ pub struct Metrics {
     /// Events that were not delivered, labelled by `reason`
     /// (`"lagged"`, `"oversize"`, `"filtered"`).
     pub ws_events_dropped_total: CounterVec,
+    /// Number of slow WebSocket subscribers dropped due to excessive lag.
+    pub ws_dropped_subscribers_total: prometheus::Counter,
     /// Number of events packed into each outbound batch frame.
     pub ws_batch_size: Histogram,
 
@@ -266,6 +268,11 @@ impl Metrics {
             &["reason"],
         )?;
 
+        let ws_dropped_subscribers_total = prometheus::Counter::with_opts(Opts::new(
+            "app_ws_dropped_subscribers_total",
+            "Total number of slow WebSocket subscribers dropped due to lag.",
+        ))?;
+
         let ws_batch_size = Histogram::with_opts(
             HistogramOpts::new(
                 "app_ws_batch_size",
@@ -350,6 +357,7 @@ impl Metrics {
         registry.register(Box::new(ws_messages_sent_total.clone()))?;
         registry.register(Box::new(ws_bytes_sent_total.clone()))?;
         registry.register(Box::new(ws_events_dropped_total.clone()))?;
+        registry.register(Box::new(ws_dropped_subscribers_total.clone()))?;
         registry.register(Box::new(ws_batch_size.clone()))?;
         registry.register(Box::new(active_pools.clone()))?;
         registry.register(Box::new(resolved_pools.clone()))?;
@@ -384,6 +392,7 @@ impl Metrics {
             ws_messages_sent_total,
             ws_bytes_sent_total,
             ws_events_dropped_total,
+            ws_dropped_subscribers_total,
             ws_batch_size,
             active_pools,
             resolved_pools,
@@ -515,6 +524,11 @@ impl Metrics {
         self.ws_events_dropped_total
             .with_label_values(&[reason])
             .inc_by(count as f64);
+    }
+
+    /// Record a slow WebSocket subscriber dropped due to excessive lag.
+    pub fn record_ws_dropped_subscriber(&self) {
+        self.ws_dropped_subscribers_total.inc();
     }
 
     /// Encode all registered metrics into the Prometheus text exposition format.
