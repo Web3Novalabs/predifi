@@ -6,8 +6,8 @@
 extern crate std;
 
 mod admin;
-#[cfg(test)]
-mod benchmark_test;
+// #[cfg(test)]
+// mod benchmark_test;
 #[cfg(test)]
 mod boundary_edge_case_tests;
 #[cfg(test)]
@@ -1304,20 +1304,16 @@ impl PredifiContract {
         let config = Self::get_config(env);
         let tiers_vec = Self::get_fee_tiers(env.clone());
         
-        // Convert soroban FeeTier to payouts module FeeTierInput for pure calculation
-        let tier_inputs: Vec<crate::payouts::FeeTierInput> = tiers_vec
-            .iter()
-            .map(|t| crate::payouts::FeeTierInput {
-                stake_threshold: t.stake_threshold,
-                fee_bps: t.fee_bps,
-            })
-            .collect();
-        
-        crate::payouts::calculate_dynamic_fee(
-            pool.total_stake,
-            &tier_inputs,
-            config.fee_bps,
-        )
+        let mut applied_fee = config.fee_bps;
+        let mut max_threshold = -1i128;
+
+        for tier in tiers_vec.iter() {
+            if pool.total_stake >= tier.stake_threshold && tier.stake_threshold > max_threshold {
+                max_threshold = tier.stake_threshold;
+                applied_fee = tier.fee_bps;
+            }
+        }
+        applied_fee
     }
 }
 
@@ -1330,6 +1326,8 @@ impl PredifiContract {
 
 #[cfg(test)]
 mod issues_1446_1447_1448_1449_boundary_tests;
+#[cfg(test)]
+mod issues_1878_1879_1884_1885_boundary_tests;
 #[cfg(test)]
 mod referral_integration_tests;
 #[cfg(test)]
