@@ -1530,7 +1530,7 @@ impl PredifiContract {
     /// ```text
     /// ┌──────────────────────────────────────────────────────────────────────────────┐
     /// │ Claim Attempt Flow                                                           │
-    /// │ ├────────────────────────────────────────────────────────────────────────────┤ │
+    /// ├──────────────────────────────────────────────────────────────────────────────┤
     /// │ 1. Check claimed sentinel (DataKey::Claimed(user, pool_id))                │ │
     /// │    • Has claimed? → Emit SuspiciousDoubleClaimEvent → Err(AlreadyClaimed)  │ │
     /// │    • Not claimed? → Continue to validation                                 │ │
