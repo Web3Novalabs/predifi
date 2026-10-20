@@ -182,6 +182,7 @@ impl JobQueue {
             .lock()
             .expect("pending lock")
             .push_back(job);
+        self.update_depth_metrics();
         true
     }
 
@@ -205,6 +206,10 @@ impl JobQueue {
         }
         for job in skipped {
             pending.push_back(job);
+        }
+        drop(pending);
+        if found.is_some() {
+            self.update_depth_metrics();
         }
         found
     }
@@ -273,6 +278,14 @@ impl JobQueue {
         }
     }
 
+    fn update_depth_metrics(&self) {
+        if let Some(metrics) = crate::metrics::global() {
+            let pending_len = self.inner.pending.lock().expect("pending lock").len();
+            let dlq_len = self.inner.dlq.lock().expect("dlq lock").len();
+            metrics.record_worker_queue_depth(pending_len, dlq_len);
+        }
+    }
+
     fn push_dlq(&self, entry: DeadLetterEntry) {
         let mut dlq = self.inner.dlq.lock().expect("dlq lock");
         if dlq.len() >= DLQ_CAPACITY {
@@ -282,6 +295,8 @@ impl JobQueue {
         self.inner
             .jobs_dead_lettered
             .fetch_add(1, Ordering::Relaxed);
+        drop(dlq);
+        self.update_depth_metrics();
     }
 
     /// Snapshot of DLQ contents (for ops / replay tooling).
@@ -481,6 +496,7 @@ mod tests {
         };
         q.record_failure(job.clone(), "boom");
         assert_eq!(q.dead_letters().len(), 0); // first failure → retry
+        std::thread::sleep(std::time::Duration::from_millis(10));
         let mut retried = q.dequeue_ready().expect("pending retry");
         retried.attempts = 1;
         q.record_failure(retried, "boom again");
@@ -582,5 +598,36 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(q.dead_letters().len(), 1);
         assert!(!q.already_processed("perm-fail"));
+    }
+
+    #[test]
+    fn dead_letter_records_last_error_and_updates_metric() {
+        let metrics = Arc::new(crate::metrics::Metrics::new().unwrap());
+        crate::metrics::install_global(metrics.clone());
+
+        let q = JobQueue::new(RetryPolicy {
+            max_attempts: 1,
+            base_delay_ms: 1,
+            max_delay_ms: 1,
+        });
+
+        let job = Job {
+            id: "dlq-test-job".into(),
+            kind: "pool_created".into(),
+            payload: "{\"test\":1}".into(),
+            attempts: 0,
+            ledger: Some(100),
+        };
+
+        q.record_failure(job, "fatal unrecoverable error");
+
+        let dead_letters = q.dead_letters();
+        assert_eq!(dead_letters.len(), 1);
+        assert_eq!(dead_letters[0].job.id, "dlq-test-job");
+        assert_eq!(dead_letters[0].last_error, "fatal unrecoverable error");
+        assert_eq!(q.health().dlq_depth, 1);
+        assert_eq!(q.health().jobs_dead_lettered, 1);
+
+        assert_eq!(metrics.worker_dlq_depth.get() as usize, 1);
     }
 }

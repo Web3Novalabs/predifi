@@ -247,9 +247,9 @@ impl PaginationBuilder {
     /// });
     /// // with_rank = [("Alice", 11), ("Bob", 12)]
     /// ```
-    pub fn apply_rank_fn<T, F>(self, rows: Vec<T>, mut transform: F) -> Vec<T>
+    pub fn apply_rank_fn<T, R, F>(self, rows: Vec<T>, mut transform: F) -> Vec<R>
     where
-        F: FnMut(usize, T) -> T,
+        F: FnMut(usize, T) -> R,
     {
         rows.into_iter()
             .enumerate()
@@ -347,7 +347,7 @@ mod tests {
         let filter = CategoryFilter::from(Some("crypto"));
         assert_eq!(filter.as_ref(), Some(&"crypto".to_string()));
 
-        let filter: CategoryFilter = None.into();
+        let filter: CategoryFilter = Option::<&str>::None.into();
         assert!(filter.is_none());
     }
 

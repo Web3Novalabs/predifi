@@ -2553,6 +2553,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "stellar-xdr",
  "sysinfo",
  "testcontainers",
  "testcontainers-modules",

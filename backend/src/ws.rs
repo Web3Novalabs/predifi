@@ -792,7 +792,22 @@ pub async fn ws_handler(
         compress = options.compress,
         subject = ?claims.as_ref().map(|claims| crate::request_logger::redact_address(&claims.sub))
     );
-    ws.on_upgrade(move |socket| handle_socket(socket, bus, subscription, options).instrument(span))
+    let ping_interval = Duration::from_secs(config.ws_ping_interval_secs);
+    let max_missed_pongs = config.ws_max_missed_pongs;
+    let max_subscriber_lag = config.ws_max_subscriber_lag;
+
+    ws.on_upgrade(move |socket| {
+        handle_socket(
+            socket,
+            bus,
+            subscription,
+            options,
+            ping_interval,
+            max_missed_pongs,
+            max_subscriber_lag,
+        )
+        .instrument(span)
+    })
 }
 
 async fn handle_socket(
@@ -800,6 +815,9 @@ async fn handle_socket(
     bus: EventBus,
     subscription: Subscription,
     options: DeliveryOptions,
+    ping_interval: Duration,
+    max_missed_pongs: u32,
+    max_subscriber_lag: u64,
 ) {
     let mut rx = bus.subscribe();
     let (_guard, mut shutdown_rx) =
@@ -812,6 +830,9 @@ async fn handle_socket(
         metrics: bus.metrics.clone(),
         pending: Vec::new(),
         pending_bytes: 0,
+        ping_interval,
+        max_missed_pongs,
+        max_subscriber_lag,
     };
     session.run(&mut rx, &mut shutdown_rx).await;
 
@@ -857,6 +878,12 @@ struct SocketSession<'a> {
     pending: Vec<Arc<BusEvent>>,
     /// Payload bytes in `pending`, to keep batches under [`MAX_MESSAGE_SIZE`].
     pending_bytes: usize,
+    /// Keepalive ping interval.
+    ping_interval: Duration,
+    /// Maximum missed consecutive pongs before closing.
+    max_missed_pongs: u32,
+    /// Maximum missed lagged events before closing slow subscriber.
+    max_subscriber_lag: u64,
 }
 
 impl SocketSession<'_> {
@@ -868,6 +895,10 @@ impl SocketSession<'_> {
         let mut rate_limiter = WsRateLimiter::new(RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS);
         // Deadline for flushing `pending`; only armed while it is non-empty.
         let mut flush_at: Option<tokio::time::Instant> = None;
+        let mut ping_ticker = tokio::time::interval(self.ping_interval);
+        ping_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Missed pongs counter for keepalive timeout detection.
+        let mut missed_pongs: u32 = 0;
 
         loop {
             let flush_timer = async {
@@ -887,6 +918,21 @@ impl SocketSession<'_> {
                     let _ = self.socket.send(Message::Close(None)).await;
                     break;
                 }
+                _ = ping_ticker.tick() => {
+                    if missed_pongs >= self.max_missed_pongs {
+                        tracing::warn!(
+                            missed_pongs,
+                            max_missed_pongs = self.max_missed_pongs,
+                            "WebSocket connection keepalive timeout (missed pongs exceeded), closing"
+                        );
+                        let _ = self.socket.send(Message::Close(None)).await;
+                        break;
+                    }
+                    missed_pongs += 1;
+                    if self.socket.send(Message::Ping(Vec::new())).await.is_err() {
+                        break;
+                    }
+                }
                 _ = flush_timer => {
                     flush_at = None;
                     if self.flush().await.is_err() {
@@ -900,6 +946,18 @@ impl SocketSession<'_> {
                             tracing::warn!(missed, "websocket client lagged behind event bus");
                             if let Some(metrics) = &self.metrics {
                                 metrics.record_ws_dropped("lagged", missed);
+                            }
+                            if missed >= self.max_subscriber_lag {
+                                tracing::warn!(
+                                    missed,
+                                    max_subscriber_lag = self.max_subscriber_lag,
+                                    "websocket client exceeded maximum lag threshold, dropping slow subscriber"
+                                );
+                                if let Some(metrics) = &self.metrics {
+                                    metrics.record_ws_dropped_subscriber();
+                                }
+                                let _ = self.socket.send(Message::Close(None)).await;
+                                break;
                             }
                             let notice = serde_json::json!({ "type": "lagged", "missed": missed });
                             if self.send_frame("control", notice.to_string()).await.is_err() {
@@ -972,7 +1030,10 @@ impl SocketSession<'_> {
                             let _ = self.socket.send(Message::Pong(payload.clone())).await;
                             continue;
                         }
-                        Message::Pong(_) => continue,
+                        Message::Pong(_) => {
+                            missed_pongs = 0;
+                            continue;
+                        }
                         Message::Close(_) => break,
                     };
 
@@ -1432,5 +1493,53 @@ mod tests {
         headers.insert("x-forwarded-for", "10.0.0.1, 10.0.0.2".parse().unwrap());
         headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
         assert_eq!(client_ip(&headers), "10.0.0.1");
+    }
+
+    #[tokio::test]
+    async fn slow_subscriber_dropped_when_lag_exceeds_threshold() {
+        let metrics = Arc::new(crate::metrics::Metrics::new().unwrap());
+        let bus = EventBus::new().with_metrics(metrics.clone());
+        let mut rx = bus.subscribe();
+
+        // Broadcast buffer is 4096. Publish more than 4096 events to trigger Lagged error.
+        for i in 0..4150 {
+            bus.send(&serde_json::json!({
+                "type": "prediction_placed",
+                "pool_id": i,
+                "user_address": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            }));
+        }
+
+        // Test Lagged error occurs
+        let recv_err = rx.recv().await;
+        match recv_err {
+            Err(broadcast::error::RecvError::Lagged(missed)) => {
+                assert!(missed > 0);
+                assert!(missed >= 50);
+            }
+            other => panic!("expected Lagged error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ws_keepalive_and_lag_configuration_defaults() {
+        let vars = std::collections::HashMap::new();
+        let config = Config::from_map(&vars).expect("valid config");
+        assert_eq!(config.ws_ping_interval_secs, 30);
+        assert_eq!(config.ws_max_missed_pongs, 3);
+        assert_eq!(config.ws_max_subscriber_lag, 100);
+
+        let custom_vars = std::collections::HashMap::from([
+            (
+                "PREDIFI_WS_PING_INTERVAL_SECS".to_string(),
+                "15".to_string(),
+            ),
+            ("PREDIFI_WS_MAX_MISSED_PONGS".to_string(), "5".to_string()),
+            ("PREDIFI_WS_MAX_SUBSCRIBER_LAG".to_string(), "200".to_string()),
+        ]);
+        let custom_config = Config::from_map(&custom_vars).expect("valid custom config");
+        assert_eq!(custom_config.ws_ping_interval_secs, 15);
+        assert_eq!(custom_config.ws_max_missed_pongs, 5);
+        assert_eq!(custom_config.ws_max_subscriber_lag, 200);
     }
 }
