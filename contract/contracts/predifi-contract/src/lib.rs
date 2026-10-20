@@ -42,8 +42,8 @@ mod stress_test_high_volume;
 mod test_utils;
 #[cfg(test)]
 mod pause_unpause_boundary_tests;
-// #[cfg(test)]
-// mod max_pools_stress_tests;
+#[cfg(test)]
+mod max_pools_stress_tests;
 #[cfg(test)]
 mod update_pool_description_boundary_tests;
 #[cfg(test)]
