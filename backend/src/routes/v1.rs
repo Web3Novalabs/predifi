@@ -36,8 +36,34 @@ pub struct FeeInfo {
     pub referral_fee_bps: u32,
 }
 
-/// `GET /api/v1/health` component-level health check (see [`crate::health`]).
-pub async fn health(State(state): State<AppState>) -> axum::response::Response {
+/// `GET /api/v1/health` — liveness probe.
+///
+/// Performs no I/O: it answers "is this process alive?" and nothing else. A
+/// response is itself the proof of life, so this endpoint never fails.
+///
+/// Dependency status lives in the two sibling endpoints: readiness in
+/// `GET /api/v1/health/ready`, full diagnostics in
+/// `GET /api/v1/health/components`.
+pub async fn health() -> Json<serde_json::Value> {
+    Json(crate::health::liveness("v1"))
+}
+
+/// `GET /api/v1/health/ready` — readiness probe.
+///
+/// Reports the status of every dependency that gates traffic on this
+/// instance and answers 503 while a required one is down.
+pub async fn health_ready(State(state): State<AppState>) -> axum::response::Response {
+    crate::health::check_readiness(&state.config, state.db.as_ref(), &state.redis, &state.cache)
+        .await
+        .into_response_with_version("v1")
+}
+
+/// `GET /api/v1/health/components` — full component diagnostics.
+///
+/// Probes every dependency (database, Redis, Stellar RPC, disk, price cache)
+/// and reports each one individually. Unlike the readiness probe, this is a
+/// diagnostic sweep rather than a traffic gate.
+pub async fn health_components(State(state): State<AppState>) -> axum::response::Response {
     crate::health::check_all(&state.config, state.db.as_ref(), &state.redis, &state.cache)
         .await
         .into_response_with_version("v1")
@@ -1434,6 +1460,8 @@ pub fn router(
         Router::new()
             .route("/", get(index))
             .route("/health", get(health))
+            .route("/health/ready", get(health_ready))
+            .route("/health/components", get(health_components))
             .route("/fees", get(get_fees))
             .route("/prices", get(crate::price_cache::get_prices))
             .with_state(state.clone()),

@@ -67,6 +67,10 @@ pub mod error_codes {
     pub const RATE_LIMIT_EXCEEDED: &str = "RATE_LIMIT_EXCEEDED";
     pub const UNAUTHORIZED: &str = "UNAUTHORIZED";
     pub const FORBIDDEN: &str = "FORBIDDEN";
+    /// A refresh token that was explicitly revoked, as opposed to one that
+    /// merely expired. Both are 401s, but only an expiry should prompt a
+    /// re-login rather than a silent retry (#1739).
+    pub const TOKEN_REVOKED: &str = "TOKEN_REVOKED";
 }
 
 impl<T: Serialize> ApiResponse<T> {

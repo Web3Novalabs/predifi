@@ -114,7 +114,7 @@ PrediFi implements an in-memory token bucket sliding window rate limiter (`gover
 
 | Tier | Capacity (Burst) | Window / Period | Max Sustained Rate | Applied Routes |
 |------|------------------|-----------------|--------------------|----------------|
-| **Light** | 120 tokens | 60 seconds | 2.0 req/s | `GET /`, `GET /health`, `GET /api/v1/fees`, `GET /api/v1/prices` |
+| **Light** | 120 tokens | 60 seconds | 2.0 req/s | `GET /`, `GET /api/v1/health`, `GET /api/v1/health/ready`, `GET /api/v1/fees`, `GET /api/v1/prices` |
 | **Read** | 60 tokens | 60 seconds | 1.0 req/s | `GET /api/v1/pools`, `GET /api/v1/pools/{id}`, `GET /api/v1/stats`, `GET /api/v1/leaderboard`, `GET /api/v1/tags`, `GET /api/v1/referrals/*`, `GET /api/v1/markets/{id}/predictions` |
 | **User** | 30 tokens | 60 seconds | 0.5 req/s | `GET /api/v1/users/{address}/history`, `GET /api/v1/users/{address}/predictions`, `GET /api/v1/users/{address}/profile`, `GET /api/v1/users/{address}/interests`, `GET /api/v1/notifications/{address}` |
 | **Write** | 20 tokens | 60 seconds | 0.33 req/s | `POST /api/v1/indexer/*`, `PATCH /api/v1/pools/{id}/tags` |
@@ -343,60 +343,125 @@ if __name__ == "__main__":
 
 ### Health & System Diagnostics
 
+Three probes, each answering a different question. Use **liveness** to decide
+whether to restart the process, **readiness** to decide whether to route
+traffic to it, and **components** to find out what is broken.
+
 #### `GET /health`
-Liveness and comprehensive dependency check. Queries Postgres with `SELECT 1`, performs HTTP `getHealth` on Stellar RPC with exponential backoff, checks Redis connectivity, and validates `PriceCache`.
+Liveness probe. Performs **no I/O** — the fact that a response came back is
+the proof that the process is alive. Always returns HTTP 200 while the process
+is running, including while a dependency is down. Use `/health/ready` to ask
+about dependencies.
 
 - **Tag**: `health`
-- **Rate Limit**: Light tier (120 req / 60s)
+- **Rate Limit**: None (root route)
+- **Auth**: None
+
+##### Response (200 OK)
+```json
+{
+  "status": "alive",
+  "service": "predifi-backend",
+  "version": "0.1.0",
+  "checked_at": "2026-10-21T12:00:00Z"
+}
+```
+
+#### `GET /health/ready`
+Readiness probe. Queries Postgres with `SELECT 1`, checks Redis connectivity,
+and validates the `PriceCache`, then reports the status of each dependency
+individually. Returns HTTP 503 while a **required** dependency is down.
+
+Required dependencies are the database and the price cache. Redis is required
+only when `PREDIFI_REDIS_REQUIRED=true` — otherwise cached reads fall back to
+the database and Redis problems are reported but do not gate traffic.
+
+- **Tag**: `health`
+- **Rate Limit**: None (root route)
+- **Auth**: None
+
+##### Response (200 OK - Ready)
+```json
+{
+  "status": "ready",
+  "ready": true,
+  "service": "predifi-backend",
+  "version": "0.1.0",
+  "checked_at": "2026-10-21T12:00:00Z",
+  "duration_ms": 3,
+  "components": {
+    "database":    { "status": "healthy", "critical": true, "latency_ms": 2 },
+    "redis":       { "status": "degraded", "critical": false, "message": "Redis is not configured; serving uncached reads from the database" },
+    "price_cache": { "status": "healthy", "critical": true, "details": { "assets": 3 } }
+  },
+  "dependencies": { "db": "ok", "redis": "not_configured", "price_cache": "ok" },
+  "errors":       { "db": null, "redis": null, "price_cache": null }
+}
+```
+
+##### Response (503 Service Unavailable - Not Ready)
+```json
+{
+  "status": "not_ready",
+  "ready": false,
+  "service": "predifi-backend",
+  "version": "0.1.0",
+  "checked_at": "2026-10-21T12:00:00Z",
+  "duration_ms": 3002,
+  "components": {
+    "database":    { "status": "unhealthy", "critical": true, "message": "database ping failed: connection refused" },
+    "redis":       { "status": "degraded", "critical": false, "message": "Redis is not configured; serving uncached reads from the database" },
+    "price_cache": { "status": "healthy", "critical": true, "details": { "assets": 3 } }
+  },
+  "dependencies": { "db": "unreachable", "redis": "not_configured", "price_cache": "ok" },
+  "errors":       { "db": "database ping failed: connection refused", "redis": null, "price_cache": null }
+}
+```
+
+#### `GET /health/components`
+Full component diagnostics. Probes every dependency concurrently — Postgres
+with `SELECT 1`, HTTP `getHealth` on Stellar RPC with exponential backoff,
+Redis connectivity, disk free space, and the `PriceCache` — and reports each
+as `healthy`, `degraded` or `unhealthy`. Returns HTTP 503 only when a
+component is `unhealthy`; a `degraded` instance still serves traffic.
+
+- **Tag**: `health`
+- **Rate Limit**: None (root route)
 - **Auth**: None
 
 ##### Response (200 OK - Healthy)
 ```json
 {
-  "status": "healthy",
-  "service": "predifi-api",
-  "version": "1.0.0",
-  "dependencies": {
-    "db": "ok",
-    "rpc": "ok",
-    "redis": "ok",
-    "price_cache": "ok"
+  "status": "ok",
+  "health": "healthy",
+  "service": "predifi-backend",
+  "version": "0.1.0",
+  "checked_at": "2026-10-21T12:00:00Z",
+  "duration_ms": 41,
+  "components": {
+    "database":    { "status": "healthy",  "critical": true,  "latency_ms": 2 },
+    "redis":       { "status": "degraded", "critical": false, "message": "Redis is not configured; serving uncached reads from the database" },
+    "stellar_rpc": { "status": "healthy",  "critical": true,  "latency_ms": 38 },
+    "disk":        { "status": "healthy",  "critical": false },
+    "price_cache": { "status": "healthy",  "critical": true,  "details": { "assets": 3 } }
   },
-  "errors": {
-    "db": null,
-    "rpc": null,
-    "redis": null,
-    "price_cache": null
-  }
-}
-```
-
-##### Response (503 Service Unavailable - Degraded)
-```json
-{
-  "status": "unhealthy",
-  "service": "predifi-api",
-  "version": "1.0.0",
-  "dependencies": {
-    "db": "unreachable",
-    "rpc": "ok",
-    "redis": "ok",
-    "price_cache": "ok"
-  },
-  "errors": {
-    "db": "connection to server at 'postgres:5432' failed: Connection refused",
-    "rpc": null,
-    "redis": null,
-    "price_cache": null
-  }
+  "dependencies": { "db": "ok", "rpc": "ok", "redis": "not_configured", "price_cache": "ok", "disk": "ok" },
+  "errors":       { "db": null, "rpc": null, "redis": null, "price_cache": null, "disk": null }
 }
 ```
 
 #### `GET /live`
-Kubernetes liveness probe. Returns HTTP 200 as long as the HTTP listener is operational.
+Alias for `/health`. Kubernetes liveness probe. Returns HTTP 200 as long as the HTTP listener is operational.
 
 #### `GET /ready`
-Kubernetes readiness probe. Returns HTTP 200 when ready to accept traffic.
+Alias for `/health/ready`. Kubernetes readiness probe. Returns HTTP 200 when ready to accept traffic.
+
+#### `GET /api/v1/health`, `GET /api/v1/health/ready`, `GET /api/v1/health/components`
+The same three probes, namespaced under the versioned API.
+
+- **Tag**: `health`
+- **Rate Limit**: Light tier (120 req / 60s)
+- **Auth**: None
 
 #### `GET /metrics`
 Prometheus metrics scrape target exporting request counters, latencies, active connections, and cache hit ratios.

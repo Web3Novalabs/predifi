@@ -1,8 +1,19 @@
-//! Component-level health checks (#1946).
+//! Liveness, readiness, and component-level health checks (#1946, #1722).
 //!
-//! `GET /health` and `GET /api/v1/health` both run [`check_all`], which probes
-//! every dependency concurrently and reports each as `healthy`, `degraded`
-//! or `unhealthy`:
+//! Three probes, each answering a different question:
+//!
+//! | Probe | Path | I/O | Answers |
+//! |---|---|---|---|
+//! | Liveness | `/health`, `/api/v1/health` | none | "is this process alive?" |
+//! | Readiness | `/health/ready`, `/api/v1/health/ready` | database, Redis, price cache | "should this instance receive traffic?" |
+//! | Components | `/health/components`, `/api/v1/health/components` | every dependency | "what exactly is wrong?" |
+//!
+//! Liveness ([`liveness`]) performs no I/O and always answers 200: the fact
+//! that a response came back is itself the proof that the process is alive.
+//! Readiness ([`check_readiness`]) probes the dependencies that gate traffic
+//! and answers 503 while a required one is down. The component sweep
+//! ([`check_all`]) probes every dependency concurrently and reports each as
+//! `healthy`, `degraded` or `unhealthy`:
 //!
 //! | Component | `healthy` | `degraded` | `unhealthy` |
 //! |---|---|---|---|
@@ -183,8 +194,8 @@ impl HealthReport {
         }
     }
 
-    /// Render the JSON body. `version` is the crate version for `/health`
-    /// and `"v1"` for `/api/v1/health`.
+    /// Render the JSON body. `version` is the crate version for
+    /// `/health/components` and `"v1"` for `/api/v1/health/components`.
     pub fn to_json(&self, version: &str) -> serde_json::Value {
         let legacy = |name: &str| self.components.get(name).map(|c| c.legacy);
         let error = |name: &str| self.components.get(name).and_then(|c| c.legacy_error());
@@ -216,6 +227,158 @@ impl HealthReport {
     /// Render the report as an HTTP response.
     pub fn into_response_with_version(self, version: &str) -> Response {
         (self.http_status(), Json(self.to_json(version))).into_response()
+    }
+}
+
+// ── Liveness and readiness ─────────────────────────────────────────────────
+
+/// Liveness probe body.
+///
+/// Liveness answers exactly one question: *is this process still able to
+/// respond to requests?* It therefore performs no I/O at all and can never
+/// fail — the fact that a response came back is itself the proof of life.
+///
+/// Whether the dependencies are reachable is a different question, answered
+/// by [`check_readiness`]. Keeping the two apart matters: failing liveness
+/// while a dependency is down would restart a process that is perfectly able
+/// to serve traffic.
+pub fn liveness(version: &str) -> serde_json::Value {
+    json!({
+        "status": "alive",
+        "service": "predifi-backend",
+        "version": version,
+        "checked_at": chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    })
+}
+
+/// Readiness of the instance: whether it should be receiving traffic.
+#[derive(Debug, Clone)]
+pub struct ReadinessReport {
+    /// Whether every required dependency is reachable.
+    pub ready: bool,
+    /// Per-dependency status, keyed by dependency name.
+    pub components: BTreeMap<&'static str, ComponentHealth>,
+    /// RFC 3339 timestamp of the check.
+    pub checked_at: chrono::DateTime<chrono::Utc>,
+    /// Total time spent probing the dependencies.
+    pub duration: Duration,
+}
+
+impl ReadinessReport {
+    /// HTTP status for the report: 503 while a required dependency is down.
+    pub fn http_status(&self) -> StatusCode {
+        if self.ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+    }
+
+    /// Render the JSON body.
+    pub fn to_json(&self, version: &str) -> serde_json::Value {
+        let legacy = |name: &str| self.components.get(name).map(|c| c.legacy);
+        let error = |name: &str| self.components.get(name).and_then(|c| c.legacy_error());
+        json!({
+            "status": if self.ready { "ready" } else { "not_ready" },
+            "ready": self.ready,
+            "service": "predifi-backend",
+            "version": version,
+            "checked_at": self.checked_at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+            "duration_ms": self.duration.as_millis() as u64,
+            "components": self.components,
+            "dependencies": {
+                "db": legacy("database"),
+                "redis": legacy("redis"),
+                "price_cache": legacy("price_cache"),
+            },
+            "errors": {
+                "db": error("database"),
+                "redis": error("redis"),
+                "price_cache": error("price_cache"),
+            },
+        })
+    }
+
+    /// Render the report as an HTTP response.
+    pub fn into_response_with_version(self, version: &str) -> Response {
+        (self.http_status(), Json(self.to_json(version))).into_response()
+    }
+}
+
+/// Whether the probed dependencies allow this instance to serve traffic.
+///
+/// Split out from [`check_readiness`] so the verdict can be exercised
+/// without a live database.
+fn readiness_verdict(
+    components: &BTreeMap<&'static str, ComponentHealth>,
+    redis_required: bool,
+) -> bool {
+    components.iter().all(|(name, component)| {
+        let required = match *name {
+            "database" | "price_cache" => true,
+            "redis" => redis_required,
+            _ => false,
+        };
+        if !required {
+            // Optional dependency: reported, but never gates traffic.
+            return true;
+        }
+        component.legacy != "not_configured" && component.status != HealthStatus::Unhealthy
+    })
+}
+
+/// Probe the dependencies that decide whether this instance may serve traffic.
+///
+/// Readiness is deliberately narrower than the diagnostic sweep in
+/// [`check_all`]:
+///
+/// - the **database** and the **price cache** are always required — without
+///   either one the instance cannot answer the requests it exists for;
+/// - **Redis** is required only when `PREDIFI_REDIS_REQUIRED` is set, because
+///   cached reads fall back to the database when it is optional;
+/// - the Stellar RPC and the disk are reported by [`check_all`] but do not
+///   gate traffic here.
+///
+/// A required dependency that is *not configured* counts as *not ready*: an
+/// instance with no database pool cannot serve database-backed reads, even
+/// though the diagnostic sweep reports it as healthy-but-unconfigured.
+pub async fn check_readiness(
+    config: &Config,
+    db: Option<&sqlx::PgPool>,
+    redis: &RedisCache,
+    cache: &PriceCache,
+) -> ReadinessReport {
+    let start = Instant::now();
+    let (database, redis) = tokio::join!(
+        check_database(db),
+        check_redis(redis, config.redis_required),
+    );
+    // The price cache is an in-memory snapshot, so it is read directly rather
+    // than probed concurrently with the networked dependencies.
+    let price_cache = check_price_cache(cache);
+
+    let components = BTreeMap::from([
+        ("database", database),
+        ("redis", redis),
+        ("price_cache", price_cache),
+    ]);
+
+    let ready = readiness_verdict(&components, config.redis_required);
+
+    if !ready {
+        let failing: Vec<&str> = components
+            .iter()
+            .filter(|(_, c)| c.status != HealthStatus::Healthy)
+            .map(|(name, _)| *name)
+            .collect();
+        tracing::warn!(components = ?failing, "instance is not ready to serve traffic");
+    }
+
+    ReadinessReport {
+        ready,
+        components,
+        checked_at: chrono::Utc::now(),
+        duration: start.elapsed(),
     }
 }
 
@@ -657,5 +820,115 @@ mod tests {
         let health = check_price_cache(&PriceCache::new());
         assert_eq!(health.status, HealthStatus::Unhealthy);
         assert_eq!(health.legacy, "not_ready");
+    }
+
+    // ── Liveness and readiness ─────────────────────────────────────────────
+
+    /// Liveness must answer 200 regardless of dependency state, and must not
+    /// report dependency status at all.
+    #[test]
+    fn liveness_never_reports_dependencies() {
+        let body = liveness("v1");
+        assert_eq!(body["status"], "alive");
+        assert_eq!(body["version"], "v1");
+        assert!(
+            body.get("dependencies").is_none(),
+            "liveness must not include dependency status: {body}"
+        );
+        assert!(
+            body.get("components").is_none(),
+            "liveness must not include component status: {body}"
+        );
+    }
+
+    fn readiness_components(
+        database: ComponentHealth,
+        redis: ComponentHealth,
+        price_cache: ComponentHealth,
+    ) -> BTreeMap<&'static str, ComponentHealth> {
+        BTreeMap::from([
+            ("database", database),
+            ("redis", redis),
+            ("price_cache", price_cache),
+        ])
+    }
+
+    /// A missing database pool makes the instance not ready, even though the
+    /// diagnostic sweep calls an unconfigured database healthy.
+    #[test]
+    fn readiness_fails_when_the_database_is_not_configured() {
+        let components = readiness_components(
+            check_database_unconfigured(),
+            ComponentHealth::new(HealthStatus::Degraded, false, "not_configured"),
+            ComponentHealth::new(HealthStatus::Healthy, true, "ok"),
+        );
+        assert!(!readiness_verdict(&components, false));
+    }
+
+    /// Redis only gates traffic when the deployment says it is required.
+    #[test]
+    fn readiness_ignores_redis_when_it_is_optional() {
+        let components = readiness_components(
+            ComponentHealth::new(HealthStatus::Healthy, true, "ok"),
+            ComponentHealth::new(HealthStatus::Unhealthy, false, "unreachable"),
+            ComponentHealth::new(HealthStatus::Healthy, true, "ok"),
+        );
+        assert!(
+            readiness_verdict(&components, false),
+            "an optional Redis must not block traffic"
+        );
+        assert!(
+            !readiness_verdict(&components, true),
+            "a required Redis must block traffic"
+        );
+    }
+
+    /// An empty price cache means the instance cannot serve prices yet.
+    #[test]
+    fn readiness_fails_on_an_empty_price_cache() {
+        let components = readiness_components(
+            ComponentHealth::new(HealthStatus::Healthy, true, "ok"),
+            ComponentHealth::new(HealthStatus::Healthy, false, "ok"),
+            ComponentHealth::new(HealthStatus::Unhealthy, true, "not_ready"),
+        );
+        assert!(!readiness_verdict(&components, false));
+    }
+
+    /// Everything reachable means ready.
+    #[test]
+    fn readiness_succeeds_when_every_required_dependency_is_up() {
+        let components = readiness_components(
+            ComponentHealth::new(HealthStatus::Healthy, true, "ok"),
+            ComponentHealth::new(HealthStatus::Healthy, true, "ok"),
+            ComponentHealth::new(HealthStatus::Healthy, true, "ok"),
+        );
+        assert!(readiness_verdict(&components, true));
+    }
+
+    /// The readiness body carries the per-dependency status and the verdict.
+    #[test]
+    fn readiness_json_reports_per_dependency_status() {
+        let report = ReadinessReport {
+            ready: false,
+            components: readiness_components(
+                check_database_unconfigured(),
+                ComponentHealth::new(HealthStatus::Healthy, false, "ok"),
+                ComponentHealth::new(HealthStatus::Healthy, true, "ok"),
+            ),
+            checked_at: chrono::Utc::now(),
+            duration: Duration::from_millis(7),
+        };
+
+        assert_eq!(report.http_status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let body = report.to_json("v1");
+        assert_eq!(body["status"], "not_ready");
+        assert_eq!(body["ready"], false);
+        assert_eq!(body["version"], "v1");
+        assert_eq!(body["dependencies"]["db"], "not_configured");
+        assert_eq!(body["dependencies"]["redis"], "ok");
+        assert_eq!(body["dependencies"]["price_cache"], "ok");
+        assert_eq!(body["components"]["database"]["status"], "healthy");
+        assert_eq!(body["duration_ms"], 7u64);
     }
 }

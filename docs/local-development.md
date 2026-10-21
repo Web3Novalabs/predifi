@@ -113,7 +113,8 @@ stack without manual restarts:
 - **PostgreSQL** — `pg_isready`
 - **Redis** — `redis-cli ping`
 - **Stellar** — HTTP probe on port `8000`
-- **Backend** — HTTP probe on `/health`
+- **Backend** — HTTP probe on `/health/ready` (readiness: the container is only
+  reported healthy once the database and price cache are usable)
 - **Loki** — HTTP probe on `/ready`
 - **Promtail** — waits for Loki, then HTTP probe on `/ready`
 - **Grafana** — waits for Loki, then HTTP probe on `/api/health`

@@ -76,8 +76,26 @@ pub fn build_cors(config: &Config) -> CorsLayer {
         ])
 }
 
-/// Health-check handler (see [`health`]).
-async fn health(State(state): State<routes::v1::AppState>) -> axum::response::Response {
+/// Liveness probe (see [`health`]).
+///
+/// Performs no I/O and always answers 200 while the process is running.
+/// Dependency status is reported by `/health/ready`.
+async fn health() -> Json<serde_json::Value> {
+    Json(health::liveness(env!("CARGO_PKG_VERSION")))
+}
+
+/// Readiness probe (see [`health`]).
+///
+/// Reports the status of every dependency that gates traffic on this instance
+/// and answers 503 while a required one is down.
+async fn health_ready(State(state): State<routes::v1::AppState>) -> axum::response::Response {
+    health::check_readiness(&state.config, state.db.as_ref(), &state.redis, &state.cache)
+        .await
+        .into_response_with_version(env!("CARGO_PKG_VERSION"))
+}
+
+/// Full component diagnostics (see [`health`]).
+async fn health_components(State(state): State<routes::v1::AppState>) -> axum::response::Response {
     health::check_all(&state.config, state.db.as_ref(), &state.redis, &state.cache)
         .await
         .into_response_with_version(env!("CARGO_PKG_VERSION"))
@@ -134,6 +152,8 @@ pub fn build_router(
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/health/ready", get(health_ready))
+        .route("/health/components", get(health_components))
         .route("/metrics", get(metrics))
         .with_state(state)
         .nest(
@@ -183,6 +203,8 @@ pub fn build_router_with_db(
     Router::new()
         .route("/", get(root))
         .route("/health", get(health))
+        .route("/health/ready", get(health_ready))
+        .route("/health/components", get(health_components))
         .route("/metrics", get(metrics))
         .with_state(state)
         .nest(
