@@ -1580,6 +1580,16 @@ async fn refresh_tokens_handler(
             "token store unavailable",
         )
         .into_response(),
+        // A revoked token is rejected with its own error code so clients can
+        // tell "this token was revoked" apart from "this token expired"
+        // (#1739). Both are 401s, but only the latter should prompt a
+        // re-login rather than a silent retry.
+        Err(crate::jwt::JwtVerifyError::TokenRevoked) => ApiResponse::<()>::error(
+            StatusCode::UNAUTHORIZED,
+            error_codes::TOKEN_REVOKED,
+            "refresh token has been revoked",
+        )
+        .into_response(),
         Err(error) => ApiResponse::<()>::error(
             StatusCode::UNAUTHORIZED,
             error_codes::UNAUTHORIZED,
@@ -1600,6 +1610,44 @@ struct RefreshTokenResponse {
     refresh_token: String,
     token_type: String,
     expires_in: u64,
+}
+
+/// Tests for the refresh endpoint's revocation check (#1739): a revoked
+/// refresh token must be rejected with `TOKEN_REVOKED`, while an expired one
+/// keeps the generic `UNAUTHORIZED` code.
+#[cfg(test)]
+mod refresh_revocation_tests {
+    use super::*;
+    use crate::jwt::JwtVerifyError;
+
+    /// Map a `JwtVerifyError` to the `(status, error_code)` pair the handler
+    /// emits, mirroring the match arms in `refresh_tokens_handler`.
+    fn classify(error: JwtVerifyError) -> (axum::http::StatusCode, &'static str) {
+        use axum::http::StatusCode;
+        match error {
+            JwtVerifyError::TokenStoreUnavailable => {
+                (StatusCode::SERVICE_UNAVAILABLE, error_codes::SERVICE_UNAVAILABLE)
+            }
+            JwtVerifyError::TokenRevoked => (StatusCode::UNAUTHORIZED, error_codes::TOKEN_REVOKED),
+            _ => (StatusCode::UNAUTHORIZED, error_codes::UNAUTHORIZED),
+        }
+    }
+
+    #[test]
+    fn revoked_refresh_token_is_rejected_with_distinct_code() {
+        let (status, code) = classify(JwtVerifyError::TokenRevoked);
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(code, error_codes::TOKEN_REVOKED);
+        assert_ne!(code, error_codes::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn expired_refresh_token_uses_generic_unauthorized_code() {
+        let (status, code) = classify(JwtVerifyError::Expired);
+        assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(code, error_codes::UNAUTHORIZED);
+        assert_ne!(code, error_codes::TOKEN_REVOKED);
+    }
 }
 async fn get_fees(State(state): State<AppState>) -> Json<FeeInfo> {
     Json(FeeInfo {

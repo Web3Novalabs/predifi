@@ -142,11 +142,31 @@ pub fn is_transient_error(err: &sqlx::Error) -> bool {
 /// `db_connect_max_delay_ms`) are all validated at startup by
 /// [`crate::config::Config::validate`].
 pub async fn create_pool(config: &Config) -> Result<PgPool, PoolCreationError> {
+    let statement_timeout_ms = config.db_statement_timeout_secs.saturating_mul(1_000);
+
+    info!(
+        max_connections = config.db_max_connections,
+        min_connections = config.db_min_connections,
+        acquire_timeout_secs = config.db_acquire_timeout_secs,
+        idle_timeout_secs = config.db_idle_timeout_secs,
+        statement_timeout_secs = config.db_statement_timeout_secs,
+        "configuring database pool"
+    );
+
     let connect = || async {
         let future = PgPoolOptions::new()
             .max_connections(config.db_max_connections)
             .min_connections(config.db_min_connections)
             .acquire_timeout(Duration::from_secs(config.db_acquire_timeout_secs))
+            .idle_timeout(Duration::from_secs(config.db_idle_timeout_secs))
+            .after_connect(move |conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query(&format!("SET statement_timeout = {}", statement_timeout_ms))
+                        .execute(conn)
+                        .await?;
+                    Ok(())
+                })
+            })
             .connect(&config.database_url);
 
         match tokio::time::timeout(Duration::from_secs(config.db_connect_timeout_secs), future)
@@ -284,6 +304,19 @@ mod tests {
         let config = crate::config::Config::default_for_test();
         assert!(config.db_connect_timeout_secs > 0, "connect timeout must be > 0");
         assert!(config.db_acquire_timeout_secs > 0, "acquire timeout must be > 0");
+    }
+
+    #[test]
+    fn config_pool_timeouts_have_positive_defaults() {
+        let config = crate::config::Config::default_for_test();
+        assert!(
+            config.db_statement_timeout_secs > 0,
+            "statement timeout must be > 0"
+        );
+        assert!(
+            config.db_idle_timeout_secs > 0,
+            "idle timeout must be > 0"
+        );
     }
 
     #[test]
