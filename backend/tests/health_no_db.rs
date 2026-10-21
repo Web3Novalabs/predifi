@@ -36,7 +36,7 @@ async fn health_reports_db_not_configured_without_pool_and_still_responds() {
     );
 
     let response = router
-        .oneshot(get("/health"))
+        .oneshot(get("/health/components"))
         .await
         .expect("request failed");
 
@@ -50,5 +50,63 @@ async fn health_reports_db_not_configured_without_pool_and_still_responds() {
     assert!(
         body.contains("\"db\":\"not_configured\""),
         "body should report db as not_configured, got: {body}"
+    );
+}
+
+/// `/health` is a liveness probe: it answers 200 without touching any
+/// dependency, so a missing database must not turn it into a failure.
+#[tokio::test]
+async fn health_is_liveness_and_stays_200_without_a_pool() {
+    let router = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        ws::EventBus::new(),
+    );
+
+    let response = router
+        .oneshot(get("/health"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"alive\""),
+        "body should report the process as alive, got: {body}"
+    );
+    assert!(
+        !body.contains("\"dependencies\""),
+        "liveness must not probe dependencies, got: {body}"
+    );
+}
+
+/// `/health/ready` is the readiness probe: without a database pool the
+/// instance cannot serve traffic, so it must answer 503.
+#[tokio::test]
+async fn health_ready_reports_not_ready_without_a_pool() {
+    let router = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        ws::EventBus::new(),
+    );
+
+    let response = router
+        .oneshot(get("/health/ready"))
+        .await
+        .expect("request failed");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "readiness must fail while the database is missing"
+    );
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"ready\":false") && body.contains("\"db\":\"not_configured\""),
+        "body should report the instance as not ready with the db status, got: {body}"
     );
 }

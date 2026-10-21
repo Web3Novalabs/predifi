@@ -46,75 +46,51 @@ fn build_cors(config: &Config) -> CorsLayer {
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-async fn live() -> axum::response::Response {
-    use axum::http::StatusCode;
-    (
-        StatusCode::OK,
-        Json(json!({ "status": "alive", "service": "predifi-backend" })),
-    )
-        .into_response()
+/// `GET /live` — liveness probe, kept as an alias for `/health`.
+///
+/// Performs no I/O: the fact that a response came back is the proof that the
+/// process is alive. Dependency problems are a readiness concern and are
+/// reported by `/health/ready`.
+async fn live() -> Json<serde_json::Value> {
+    health().await
 }
 
-async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
+/// `GET /health` — liveness probe.
+///
+/// Performs no I/O and always answers 200 while the process is running. Use
+/// `/health/ready` to ask whether the dependencies are reachable and
+/// `/health/components` for a full diagnostic sweep.
+async fn health() -> Json<serde_json::Value> {
+    Json(crate::health::liveness(env!("CARGO_PKG_VERSION")))
+}
+
+/// `GET /health/ready` — readiness probe.
+///
+/// Reports the status of every dependency that gates traffic on this instance
+/// and answers 503 while a required one is down.
+async fn health_ready(
+    State(state): State<crate::routes::v1::AppState>,
+) -> axum::response::Response {
+    crate::health::check_readiness(&state.config, state.db.as_ref(), &state.redis, &state.cache)
+        .await
+        .into_response_with_version(env!("CARGO_PKG_VERSION"))
+}
+
+/// `GET /health/components` — full component diagnostics.
+///
+/// Probes every dependency (database, Redis, Stellar RPC, disk, price cache)
+/// and reports each one individually.
+async fn health_components(
+    State(state): State<crate::routes::v1::AppState>,
+) -> axum::response::Response {
     crate::health::check_all(&state.config, state.db.as_ref(), &state.redis, &state.cache)
         .await
         .into_response_with_version(env!("CARGO_PKG_VERSION"))
 }
 
+/// `GET /ready` — readiness probe, kept as an alias for `/health/ready`.
 async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
-    use axum::http::StatusCode;
-
-    let mut ready = true;
-    let mut db_status = "ok";
-    let mut db_error: Option<String> = None;
-
-    if let Some(db) = &state.db {
-        if sqlx::query("SELECT 1").execute(db).await.is_err() {
-            db_status = "unreachable";
-            db_error = Some("database ping failed".to_string());
-            ready = false;
-        }
-    } else {
-        db_status = "not_configured";
-        db_error = Some("database pool is not configured".to_string());
-        ready = false;
-    }
-
-    let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
-        (
-            "not_configured",
-            Some("Redis is not configured".to_string()),
-        )
-    } else if !state.redis.ping().await {
-        ("unreachable", Some("Redis ping failed".to_string()))
-    } else {
-        ("ok", None)
-    };
-    if redis_status != "ok" {
-        ready = false;
-    }
-
-    let (price_cache_status, price_cache_error): (&str, Option<String>) =
-        if state.cache.snapshot().is_empty() {
-            ("not_ready", Some("price cache is empty".to_string()))
-        } else {
-            ("ok", None)
-        };
-    if price_cache_status != "ok" {
-        ready = false;
-    }
-
-    let body = json!({
-        "status": if ready { "ready" } else { "not_ready" },
-        "dependencies": { "db": db_status, "redis": redis_status, "price_cache": price_cache_status },
-        "errors":       { "db": db_error, "redis": redis_error,   "price_cache": price_cache_error  }
-    });
-
-    if ready {
-        (StatusCode::OK, Json(body)).into_response()
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
-    }
+    health_ready(State(state)).await
 }
 
 async fn root() -> Json<serde_json::Value> {
@@ -188,6 +164,8 @@ pub fn build_router_with_rate_limit(
         .route("/", get(root))
         .route("/live", get(live))
         .route("/health", get(health))
+        .route("/health/ready", get(health_ready))
+        .route("/health/components", get(health_components))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics_handler))
         .with_state(state)
@@ -235,6 +213,8 @@ fn build_router_with_db(
         .route("/", get(root))
         .route("/live", get(live))
         .route("/health", get(health))
+        .route("/health/ready", get(health_ready))
+        .route("/health/components", get(health_components))
         .route("/ready", get(ready))
         .route("/metrics", get(metrics_handler))
         .with_state(state)

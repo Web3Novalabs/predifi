@@ -153,7 +153,10 @@ services:
       stellar:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health >/dev/null || exit 1"]
+      # Readiness probe: dependency-aware, so the container is only reported
+      # healthy once the database and price cache are actually usable.
+      # (`/health` is the dependency-free liveness probe.)
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health/ready >/dev/null || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5
