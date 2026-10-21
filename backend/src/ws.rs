@@ -56,7 +56,7 @@ use std::time::{Duration, Instant};
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
     http::{HeaderMap, StatusCode},
@@ -839,6 +839,18 @@ async fn handle_socket(
     let _ = socket.send(Message::Close(None)).await;
 }
 
+/// WebSocket close code 1001 (going away), sent when the server shuts down so
+/// clients know the disconnect is intentional and should reconnect.
+const GOING_AWAY_CODE: u16 = 1001;
+
+/// Build the going-away Close frame sent to every connection on shutdown.
+fn going_away_close() -> Message {
+    Message::Close(Some(CloseFrame {
+        code: GOING_AWAY_CODE,
+        reason: "server shutting down".into(),
+    }))
+}
+
 /// Per-connection message rate limiter using a sliding window.
 struct WsRateLimiter {
     window_size: std::time::Duration,
@@ -910,12 +922,12 @@ impl SocketSession<'_> {
 
             tokio::select! {
                 // Server-initiated graceful shutdown: flush what is buffered,
-                // then send a Close frame so the client sees a clean
-                // disconnect instead of the TCP connection simply dropping.
+                // then send a going-away Close frame so the client learns why
+                // the connection is ending and knows to reconnect elsewhere.
                 _ = shutdown_rx.recv() => {
                     tracing::info!("server is shutting down; closing websocket connection");
                     let _ = self.flush().await;
-                    let _ = self.socket.send(Message::Close(None)).await;
+                    let _ = self.socket.send(going_away_close()).await;
                     break;
                 }
                 _ = ping_ticker.tick() => {
@@ -1485,6 +1497,18 @@ mod tests {
         }
         assert_eq!(metrics.ws_connections_active.get(), 0.0);
         assert_eq!(metrics.ws_disconnections_total.get(), 1.0);
+    }
+
+    #[test]
+    fn going_away_close_carries_code_and_reason() {
+        match going_away_close() {
+            Message::Close(Some(frame)) => {
+                assert_eq!(frame.code, GOING_AWAY_CODE);
+                assert_eq!(frame.code, 1001);
+                assert_eq!(frame.reason.as_ref(), "server shutting down");
+            }
+            other => panic!("expected a Close frame, got {other:?}"),
+        }
     }
 
     #[test]

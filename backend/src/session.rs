@@ -99,6 +99,8 @@ struct SessionStoreInner {
     config: SessionConfig,
     state: Mutex<SessionState>,
     activity: Mutex<VecDeque<SessionActivity>>,
+    /// Set of revoked token `jti` values.
+    revoked_tokens: Mutex<std::collections::HashSet<String>>,
 }
 
 #[derive(Default)]
@@ -124,6 +126,7 @@ impl SessionStore {
                 config,
                 state: Mutex::new(SessionState::default()),
                 activity: Mutex::new(VecDeque::new()),
+                revoked_tokens: Mutex::new(std::collections::HashSet::new()),
             }),
         }
     }
@@ -367,6 +370,28 @@ impl SessionStore {
             .get(user_address)
             .map(|q| q.len())
             .unwrap_or(0)
+    }
+
+    /// Whether a token identified by its `jti` has been revoked.
+    ///
+    /// This is a pure lookup against the revocation store and performs no
+    /// signature or expiry validation, so callers should verify the token
+    /// first and then consult this helper (e.g. on the refresh path).
+    pub fn is_token_revoked(&self, jti: &str) -> bool {
+        self.inner
+            .revoked_tokens
+            .lock()
+            .expect("revoked tokens")
+            .contains(jti)
+    }
+
+    /// Record a token `jti` as revoked. Idempotent.
+    pub fn revoke_token(&self, jti: &str) {
+        self.inner
+            .revoked_tokens
+            .lock()
+            .expect("revoked tokens")
+            .insert(jti.to_string());
     }
 
     /// Recent activity log (newest last).
@@ -631,6 +656,18 @@ mod tests {
         let s = store.create_session("GUSER", None);
         assert!(store.logout(&s.session_id));
         assert!(store.validate_and_touch(&s.session_id).is_none());
+    }
+
+    #[test]
+    fn revoked_token_is_reported_by_lookup() {
+        let store = SessionStore::default();
+        assert!(!store.is_token_revoked("jti-1"));
+        store.revoke_token("jti-1");
+        assert!(store.is_token_revoked("jti-1"));
+        assert!(!store.is_token_revoked("jti-2"));
+        // Revocation is idempotent.
+        store.revoke_token("jti-1");
+        assert!(store.is_token_revoked("jti-1"));
     }
 
     #[test]

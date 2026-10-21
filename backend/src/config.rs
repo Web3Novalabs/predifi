@@ -7,6 +7,8 @@ const DEFAULT_DATABASE_URL: &str = "postgres://postgres:postgres@localhost:5432/
 const DEFAULT_DB_MAX_CONNECTIONS: u32 = 10;
 const DEFAULT_DB_MIN_CONNECTIONS: u32 = 1;
 const DEFAULT_DB_ACQUIRE_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_DB_STATEMENT_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_DB_IDLE_TIMEOUT_SECS: u64 = 600;
 const DEFAULT_DB_CONNECT_MAX_ATTEMPTS: u32 = 5;
 const DEFAULT_DB_CONNECT_BASE_DELAY_MS: u64 = 200;
 const DEFAULT_DB_CONNECT_MAX_DELAY_MS: u64 = 5_000;
@@ -60,7 +62,25 @@ pub struct Config {
     /// Minimum number of idle connections kept alive in the pool (default `1`).
     pub db_min_connections: u32,
     /// Seconds to wait when acquiring a connection from the pool (default `30`).
+    ///
+    /// Read from `PREDIFI_DB_ACQUIRE_TIMEOUT_SECS`. Bounds how long a caller
+    /// waits for a free slot in an already-open pool before failing, so a
+    /// saturated pool surfaces as a fast error rather than a hung request.
     pub db_acquire_timeout_secs: u64,
+    /// Per-statement timeout in seconds applied to every query issued through
+    /// the pool (default `30`).
+    ///
+    /// Read from `PREDIFI_DB_STATEMENT_TIMEOUT_SECS`. Without an explicit
+    /// statement timeout a single slow query can hold a pooled connection
+    /// indefinitely and exhaust the pool under load.
+    pub db_statement_timeout_secs: u64,
+    /// Seconds an idle pooled connection may remain open before it is closed
+    /// and replaced (default `600`).
+    ///
+    /// Read from `PREDIFI_DB_IDLE_TIMEOUT_SECS`. Keeps stale connections from
+    /// accumulating behind load balancers or firewalls that silently drop
+    /// idle TCP sessions.
+    pub db_idle_timeout_secs: u64,
     /// Max startup attempts when connecting to Postgres (default `5`).
     pub db_connect_max_attempts: u32,
     /// Initial backoff delay in ms between startup connection attempts (default `200`).
@@ -196,6 +216,16 @@ impl Config {
             "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
             DEFAULT_DB_ACQUIRE_TIMEOUT_SECS,
         )?;
+        let db_statement_timeout_secs = get_u64(
+            vars,
+            "PREDIFI_DB_STATEMENT_TIMEOUT_SECS",
+            DEFAULT_DB_STATEMENT_TIMEOUT_SECS,
+        )?;
+        let db_idle_timeout_secs = get_u64(
+            vars,
+            "PREDIFI_DB_IDLE_TIMEOUT_SECS",
+            DEFAULT_DB_IDLE_TIMEOUT_SECS,
+        )?;
         let db_connect_max_attempts = get_u32(
             vars,
             "PREDIFI_DB_CONNECT_MAX_ATTEMPTS",
@@ -305,6 +335,8 @@ impl Config {
             db_max_connections,
             db_min_connections,
             db_acquire_timeout_secs,
+            db_statement_timeout_secs,
+            db_idle_timeout_secs,
             db_connect_max_attempts,
             db_connect_base_delay_ms,
             db_connect_max_delay_ms,
@@ -403,6 +435,18 @@ impl Config {
         if self.db_acquire_timeout_secs == 0 {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.db_statement_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_STATEMENT_TIMEOUT_SECS",
+                reason: String::from("must be greater than zero"),
+            });
+        }
+        if self.db_idle_timeout_secs == 0 {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_IDLE_TIMEOUT_SECS",
                 reason: String::from("must be greater than zero"),
             });
         }
@@ -615,6 +659,8 @@ impl Config {
             db_max_connections: 1,
             db_min_connections: 1,
             db_acquire_timeout_secs: 1,
+            db_statement_timeout_secs: 1,
+            db_idle_timeout_secs: 60,
             db_connect_max_attempts: 1,
             db_connect_base_delay_ms: 0,
             db_connect_max_delay_ms: 0,
@@ -1124,6 +1170,11 @@ mod tests {
             config.db_acquire_timeout_secs,
             DEFAULT_DB_ACQUIRE_TIMEOUT_SECS
         );
+        assert_eq!(
+            config.db_statement_timeout_secs,
+            DEFAULT_DB_STATEMENT_TIMEOUT_SECS
+        );
+        assert_eq!(config.db_idle_timeout_secs, DEFAULT_DB_IDLE_TIMEOUT_SECS);
         assert_eq!(config.log_level, DEFAULT_LOG_LEVEL);
         assert_eq!(config.treasury_fee_bps, DEFAULT_TREASURY_FEE_BPS);
         assert_eq!(config.referral_fee_bps, DEFAULT_REFERRAL_FEE_BPS);
@@ -1591,6 +1642,101 @@ mod tests {
         assert!(matches!(
             Config::from_map(&vars),
             Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_reads_db_statement_timeout_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_STATEMENT_TIMEOUT_SECS"),
+            String::from("15"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.db_statement_timeout_secs, 15);
+    }
+
+    #[test]
+    fn config_rejects_non_numeric_db_statement_timeout() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_STATEMENT_TIMEOUT_SECS"),
+            String::from("slow"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_DB_STATEMENT_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_rejects_zero_db_statement_timeout() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_STATEMENT_TIMEOUT_SECS"),
+            String::from("0"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_STATEMENT_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_reads_db_idle_timeout_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_IDLE_TIMEOUT_SECS"),
+            String::from("120"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.db_idle_timeout_secs, 120);
+    }
+
+    #[test]
+    fn config_rejects_non_numeric_db_idle_timeout() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_IDLE_TIMEOUT_SECS"),
+            String::from("idle"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidNumber {
+                key: "PREDIFI_DB_IDLE_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_rejects_zero_db_idle_timeout() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_IDLE_TIMEOUT_SECS"),
+            String::from("0"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_DB_IDLE_TIMEOUT_SECS",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn config_rejects_zero_db_acquire_timeout() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_DB_ACQUIRE_TIMEOUT_SECS"),
+            String::from("0"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_ACQUIRE_TIMEOUT_SECS",
                 ..
             })

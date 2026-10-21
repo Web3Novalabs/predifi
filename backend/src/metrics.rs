@@ -1037,4 +1037,117 @@ mod tests {
         assert_eq!(metrics.worker_queue_depth.get(), 12.0);
         assert_eq!(metrics.worker_dlq_depth.get(), 3.0);
     }
+
+    /// Every metric name defined in this module, as it appears in the
+    /// Prometheus text exposition output.
+    ///
+    /// Keep this list in sync with the fields of [`Metrics`] and the
+    /// registrations in [`Metrics::new`]. A metric that is defined but never
+    /// registered (or never seeded) silently reports nothing, which is only
+    /// noticed when a dashboard panel is empty.
+    const DEFINED_METRIC_NAMES: &[&str] = &[
+        // HTTP
+        "app_http_requests_total",
+        "app_http_request_duration_seconds",
+        "app_http_500_errors_total",
+        // Price cache
+        "app_price_cache_fetch_total",
+        "app_price_cache_assets",
+        "app_price_cache_fetch_duration_seconds",
+        // Application / runtime
+        "app_up",
+        "app_build_info",
+        "app_memory_used_bytes",
+        "app_memory_total_bytes",
+        // Database
+        "app_db_query_duration_seconds",
+        "app_db_queries_total",
+        // Redis
+        "app_redis_operation_duration_seconds",
+        "app_redis_operations_total",
+        "app_redis_cache_lookups_total",
+        // WebSocket
+        "app_ws_connections_active",
+        "app_ws_connections_total",
+        "app_ws_disconnections_total",
+        "app_ws_messages_sent_total",
+        "app_ws_bytes_sent_total",
+        "app_ws_events_dropped_total",
+        "app_ws_dropped_subscribers_total",
+        "app_ws_batch_size",
+        // Pool state
+        "app_active_pools",
+        "app_resolved_pools",
+        "app_cancelled_pools",
+        // Prediction volume
+        "app_predictions_total",
+        "app_prediction_volume_stroops_total",
+        "app_predictions_window",
+        "app_prediction_volume_window_stroops",
+        // Worker queue
+        "app_worker_queue_depth",
+        "app_worker_dlq_depth",
+    ];
+
+    /// Scrape the metrics endpoint after exercising the main code paths and
+    /// assert that every metric defined in this module appears in the output.
+    #[test]
+    fn scrape_contains_every_defined_metric() {
+        let metrics = Metrics::new().expect("Metrics::new() must succeed");
+
+        // Exercise the main code paths so labelled vectors are seeded and
+        // therefore emitted by the registry.
+        metrics
+            .http_requests_total
+            .with_label_values(&["GET", "/health", "200"])
+            .inc();
+        metrics
+            .http_request_duration_seconds
+            .with_label_values(&["GET", "/health", "200"])
+            .observe(0.002);
+        metrics.http_server_errors_total.inc();
+        metrics.record_price_cache_fetch("ok", 12, 0.25);
+        metrics.record_db_query("get_pool", "ok", 0.001);
+        metrics.record_redis_op("get", "ok", 0.0005);
+        metrics.record_cache_lookup("pools", "hit");
+        metrics.ws_connect();
+        metrics.ws_disconnect();
+        metrics.record_ws_frame("batch", "deflate", 256);
+        metrics.record_ws_dropped("lagged", 1);
+        metrics.record_ws_dropped_subscriber();
+        metrics.ws_batch_size.observe(4.0);
+        metrics.set_pool_counts(5, 2, 1);
+        metrics.record_prediction(1_000_000);
+        for (window, _) in PREDICTION_WINDOWS {
+            metrics.set_prediction_window(window, 1, 1_000_000);
+        }
+        metrics.record_worker_queue_depth(3, 0);
+
+        let text = metrics
+            .gather_text()
+            .expect("gather_text() must not return an error");
+
+        // Collect the metric names actually present in the scrape. Sample
+        // lines look like `name{labels} value` or `name value`; comments
+        // (`# HELP` / `# TYPE`) are skipped.
+        let scraped: Vec<&str> = text
+            .lines()
+            .filter(|line| !line.starts_with('#') && !line.trim().is_empty())
+            .filter_map(|line| {
+                let end = line.find(|c: char| c == '{' || c.is_whitespace())?;
+                Some(&line[..end])
+            })
+            .collect();
+
+        let missing: Vec<&str> = DEFINED_METRIC_NAMES
+            .iter()
+            .copied()
+            .filter(|name| !scraped.contains(name))
+            .collect();
+
+        assert!(
+            missing.is_empty(),
+            "defined metrics missing from scrape: {missing:?}"
+        );
+    }
 }

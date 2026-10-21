@@ -102,6 +102,8 @@ pub enum JwtVerifyError {
     KeyVersionMismatch,
     /// The token has been revoked (logout, rotation, or user-wide revoke).
     Revoked,
+    /// The token has been explicitly revoked and must not be exchanged.
+    TokenRevoked,
     /// Refresh-token rotation requires a reachable token store (Redis).
     TokenStoreUnavailable,
     /// The token could not be decoded.
@@ -118,6 +120,7 @@ impl std::fmt::Display for JwtVerifyError {
             Self::WrongTokenType => write!(f, "JWT token type is not valid for this endpoint"),
             Self::KeyVersionMismatch => write!(f, "JWT was issued under a different key version"),
             Self::Revoked => write!(f, "JWT has been revoked"),
+            Self::TokenRevoked => write!(f, "JWT has been revoked and cannot be refreshed"),
             Self::TokenStoreUnavailable => {
                 write!(f, "token store unavailable; cannot rotate refresh tokens")
             }
@@ -127,6 +130,29 @@ impl std::fmt::Display for JwtVerifyError {
 }
 
 impl std::error::Error for JwtVerifyError {}
+
+/// Stable error code returned when a token has expired.
+pub const TOKEN_EXPIRED_CODE: &str = "TOKEN_EXPIRED";
+/// Stable error code returned when a token has been revoked.
+pub const TOKEN_REVOKED_CODE: &str = "TOKEN_REVOKED";
+
+/// Map a [`JwtVerifyError`] to a stable, client-facing error code string.
+///
+/// Callers use this to distinguish a revoked token (`TOKEN_REVOKED`) from an
+/// expired one (`TOKEN_EXPIRED`) without matching on the error enum directly.
+pub fn jwt_error_code(error: &JwtVerifyError) -> &'static str {
+    match error {
+        JwtVerifyError::Expired => TOKEN_EXPIRED_CODE,
+        JwtVerifyError::Revoked | JwtVerifyError::TokenRevoked => TOKEN_REVOKED_CODE,
+        JwtVerifyError::InvalidSecret(_) => "INVALID_SECRET",
+        JwtVerifyError::InvalidFormat(_) => "INVALID_FORMAT",
+        JwtVerifyError::InvalidSignature => "INVALID_SIGNATURE",
+        JwtVerifyError::WrongTokenType => "WRONG_TOKEN_TYPE",
+        JwtVerifyError::KeyVersionMismatch => "KEY_VERSION_MISMATCH",
+        JwtVerifyError::TokenStoreUnavailable => "TOKEN_STORE_UNAVAILABLE",
+        JwtVerifyError::Decode(_) => "DECODE_ERROR",
+    }
+}
 
 /// Claims extracted from a verified PrediFi JWT.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -615,5 +641,38 @@ mod tests {
     fn error_display_invalid_base64url() {
         let msg = JwtFormatError::InvalidBase64Url { index: 0 }.to_string();
         assert!(msg.contains("base64url"));
+    }
+
+    #[test]
+    fn jwt_error_code_distinguishes_revoked_from_expired() {
+        assert_eq!(
+            jwt_error_code(&JwtVerifyError::TokenRevoked),
+            TOKEN_REVOKED_CODE
+        );
+        assert_eq!(
+            jwt_error_code(&JwtVerifyError::Revoked),
+            TOKEN_REVOKED_CODE
+        );
+        assert_eq!(jwt_error_code(&JwtVerifyError::Expired), TOKEN_EXPIRED_CODE);
+        assert_ne!(TOKEN_REVOKED_CODE, TOKEN_EXPIRED_CODE);
+    }
+
+    #[test]
+    fn revoked_token_yields_revoked_code() {
+        let error = JwtVerifyError::TokenRevoked;
+        assert_eq!(jwt_error_code(&error), "TOKEN_REVOKED");
+    }
+
+    #[test]
+    fn expired_token_yields_expired_code() {
+        let expired_claims = claims("GABC123", 1, "refresh", 0);
+        let token = encode(
+            &Header::new(Algorithm::HS256),
+            &expired_claims,
+            &EncodingKey::from_secret(TEST_SECRET.as_bytes()),
+        )
+        .expect("signed expired token");
+        let error = verify_jwt_token(&token, TEST_SECRET).expect_err("expired token");
+        assert_eq!(jwt_error_code(&error), "TOKEN_EXPIRED");
     }
 }
