@@ -1,225 +1,179 @@
 //! Boundary & Edge Case Tests for Issue #1893 — `update_pool_description`
 //!
 //! Coverage:
-//! - Update with empty string fails or succeeds depending on spec
-//! - Maximum length string (boundary condition) is accepted
-//! - Special characters and Unicode are handled correctly
-//! - Updating resolved pool description succeeds
-//! - Authorization checks reject non-creator updates
+//! - Empty string is rejected with `InvalidAmount`
+//! - The 256-byte maximum length is accepted; 257 bytes is rejected
+//! - Special/ASCII characters are handled correctly
+//! - Non-creator, non-admin callers are rejected with `Unauthorized`
+//! - Updates are locked once a prediction has been placed
+//! - Multiple sequential updates by the creator succeed
 
 #![cfg(test)]
 
 extern crate std;
 
-use crate::{PredifiContract, PredifiContractClient, PredifiError};
-use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    token, Address, Env, String,
-};
+use crate::{test::setup, PredifiContractClient, PredifiError, PoolConfig};
+use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env, String};
 
-mod ac_stub_1893 {
-    use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
-
-    #[contract]
-    pub struct AcStub1893;
-
-    #[contractimpl]
-    impl AcStub1893 {
-        pub fn grant_role(env: Env, user: Address, role: u32) {
-            let key = (Symbol::new(&env, "role"), user.clone(), role);
-            env.storage().instance().set(&key, &true);
-        }
-
-        pub fn has_role(env: Env, user: Address, role: u32) -> bool {
-            let key = (Symbol::new(&env, "role"), user, role);
-            env.storage().instance().get(&key).unwrap_or(false)
-        }
-    }
-}
-
-struct PoolDescTestEnv<'a> {
-    pub env: Env,
-    pub client: PredifiContractClient<'a>,
-    pub admin: Address,
-    pub creator: Address,
-    pub non_creator: Address,
-    pub treasury: Address,
-}
-
-impl<'a> PoolDescTestEnv<'a> {
-    fn new(env: &'a Env) -> Self {
-        env.mock_all_auths();
-        env.ledger().with_mut(|li| {
-            li.protocol_version = 23;
-            li.timestamp = 1_000;
-        });
-
-        let admin = Address::generate(env);
-        let creator = Address::generate(env);
-        let non_creator = Address::generate(env);
-        let treasury = Address::generate(env);
-
-        let ac_id = env.register(ac_stub_1893::AcStub1893, ());
-        let ac = ac_stub_1893::AcStub1893Client::new(env, &ac_id);
-        ac.grant_role(&admin, &0u32);
-
-        let contract_id = env.register(PredifiContract, ());
-        let client = PredifiContractClient::new(env, &contract_id);
-        client.init(&ac_id, &treasury, &0u32, &0u64, &3600u64, &0u32);
-
-        PoolDescTestEnv {
-            env: env.clone(),
-            client,
-            admin,
-            creator,
-            non_creator,
-            treasury,
-        }
-    }
+/// Create an active, single-participant-free pool owned by `creator`.
+fn create_active_pool(
+    env: &Env,
+    client: &PredifiContractClient<'_>,
+    token_address: &Address,
+    creator: &Address,
+) -> u64 {
+    client.create_pool(
+        creator,
+        &100_000u64,
+        token_address,
+        &2u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(env, "Original description"),
+            metadata_url: String::from_str(env, "ipfs://desc-boundary-test"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                env,
+                String::from_str(env, "Yes"),
+                String::from_str(env, "No"),
+            ],
+        },
+    )
 }
 
 #[test]
-fn test_update_with_empty_string() {
+fn test_update_with_empty_string_is_rejected() {
     let env = Env::default();
-    let test_env = PoolDescTestEnv::new(&env);
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_active_pool(&env, &client, &token_address, &creator);
 
-    let pool_id = 0u32;
-    let empty_desc = String::from_slice(&env, "");
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &empty_desc)
-    }));
-
-    let _ = result;
+    let result = client.try_update_pool_description(
+        &creator,
+        &pool_id,
+        &String::from_str(&env, ""),
+    );
+    assert_eq!(result, Err(Ok(PredifiError::InvalidAmount)));
 }
 
 #[test]
-fn test_update_with_max_length_string() {
+fn test_update_with_max_length_string_is_accepted() {
     let env = Env::default();
-    let test_env = PoolDescTestEnv::new(&env);
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_active_pool(&env, &client, &token_address, &creator);
 
-    let pool_id = 0u32;
-    let max_desc_str = "a".repeat(256);
-    let max_desc = String::from_slice(&env, &max_desc_str);
+    // Exactly 256 bytes is the documented inclusive maximum.
+    let max_desc = String::from_str(&env, &"a".repeat(256));
+    let result = client.try_update_pool_description(&creator, &pool_id, &max_desc);
+    assert_eq!(result, Ok(Ok(())));
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &max_desc)
-    }));
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.description.len(), 256);
+}
 
-    assert!(result.is_ok() || result.is_err());
+#[test]
+fn test_update_over_max_length_is_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_active_pool(&env, &client, &token_address, &creator);
+
+    // 257 bytes exceeds the maximum and must be rejected without mutating state.
+    let too_long = String::from_str(&env, &"a".repeat(257));
+    let result = client.try_update_pool_description(&creator, &pool_id, &too_long);
+    assert_eq!(result, Err(Ok(PredifiError::InvalidAmount)));
+
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.description,
+        String::from_str(&env, "Original description")
+    );
 }
 
 #[test]
 fn test_update_with_special_characters() {
     let env = Env::default();
-    let test_env = PoolDescTestEnv::new(&env);
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_active_pool(&env, &client, &token_address, &creator);
 
-    let pool_id = 0u32;
-    let special_desc = String::from_slice(&env, "Test!@#$%^&*()_+-=[]{}|;:',.<>?/~`");
+    let special = String::from_str(&env, "Test!@#$%^&*()_+-=[]{}|;:',.<>?/~`");
+    let result = client.try_update_pool_description(&creator, &pool_id, &special);
+    assert_eq!(result, Ok(Ok(())));
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &special_desc)
-    }));
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_update_with_unicode() {
-    let env = Env::default();
-    let test_env = PoolDescTestEnv::new(&env);
-
-    let pool_id = 0u32;
-    let unicode_desc = String::from_slice(&env, "Test unicode handling");
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &unicode_desc)
-    }));
-
-    assert!(result.is_ok() || result.is_err());
-}
-
-#[test]
-fn test_update_resolved_pool_description() {
-    let env = Env::default();
-    let test_env = PoolDescTestEnv::new(&env);
-
-    let pool_id = 0u32;
-    let new_desc = String::from_slice(&env, "Updated description");
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &new_desc)
-    }));
-
-    let _ = result;
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.description, special);
 }
 
 #[test]
 fn test_non_creator_cannot_update() {
     let env = Env::default();
-    let test_env = PoolDescTestEnv::new(&env);
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_active_pool(&env, &client, &token_address, &creator);
 
-    let pool_id = 0u32;
-    let new_desc = String::from_slice(&env, "Unauthorized update");
+    let stranger = Address::generate(&env);
+    let result = client.try_update_pool_description(
+        &stranger,
+        &pool_id,
+        &String::from_str(&env, "Unauthorized update"),
+    );
+    assert_eq!(result, Err(Ok(PredifiError::Unauthorized)));
 
-    env.mock_all_auths_allowing_non_root_auth();
-
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &new_desc)
-    }));
-
-    assert!(result.is_err());
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(
+        pool.description,
+        String::from_str(&env, "Original description")
+    );
 }
 
 #[test]
-fn test_creator_can_update() {
+fn test_update_locked_after_prediction() {
     let env = Env::default();
-    let test_env = PoolDescTestEnv::new(&env);
+    env.mock_all_auths();
+    let (_, client, token_address, _, token_admin_client, _, _, creator) = setup(&env);
+    let pool_id = create_active_pool(&env, &client, &token_address, &creator);
 
-    let pool_id = 0u32;
-    let new_desc = String::from_slice(&env, "Updated by creator");
+    let user = Address::generate(&env);
+    token_admin_client.mint(&user, &1_000_000i128);
+    client.place_prediction(&user, &pool_id, &100i128, &0u32, &None, &None);
 
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &new_desc)
-    }));
-
-    assert!(result.is_ok() || result.is_err());
+    let result = client.try_update_pool_description(
+        &creator,
+        &pool_id,
+        &String::from_str(&env, "Attempted change after start"),
+    );
+    assert_eq!(result, Err(Ok(PredifiError::InvalidPoolState)));
 }
 
 #[test]
-fn test_multiple_updates() {
+fn test_multiple_sequential_updates() {
     let env = Env::default();
-    let test_env = PoolDescTestEnv::new(&env);
+    env.mock_all_auths();
+    let (_, client, token_address, _, _, _, _, creator) = setup(&env);
+    let pool_id = create_active_pool(&env, &client, &token_address, &creator);
 
-    let pool_id = 0u32;
-    let desc1 = String::from_slice(&env, "First description");
-    let desc2 = String::from_slice(&env, "Second description");
+    let desc1 = String::from_str(&env, "First description");
+    let desc2 = String::from_str(&env, "Second description");
 
-    let result1 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &desc1)
-    }));
+    assert_eq!(
+        client.try_update_pool_description(&creator, &pool_id, &desc1),
+        Ok(Ok(()))
+    );
+    assert_eq!(
+        client.try_update_pool_description(&creator, &pool_id, &desc2),
+        Ok(Ok(()))
+    );
 
-    let result2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        test_env
-            .client
-            .update_pool_description(&pool_id, &desc2)
-    }));
-
-    let _ = (result1, result2);
+    let pool = client.get_pool(&pool_id);
+    assert_eq!(pool.description, desc2);
 }

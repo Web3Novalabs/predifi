@@ -1,155 +1,156 @@
+//! Pause / unpause integration tests for `predifi-contract`.
+//!
+//! Exercises the contract-level pause flag through the real
+//! [`PredifiContractClient`] entry points and asserts that state-changing
+//! operations are rejected with the typed `ContractPaused` error while the
+//! contract is paused.
+
 #![cfg(test)]
 
-use predifi_contract::{Contract, ContractState, AdminAction};
-use predifi_errors::PrediFiError;
+mod common;
 
-#[test]
-fn test_pause_contract_by_admin() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    contract.pause("admin".to_string()).expect("Should pause");
-    assert_eq!(contract.is_paused(), true);
-}
+use common::{event_count, setup, test_env};
+use predifi_contract::{PredifiError, PoolConfig};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env, String};
 
-#[test]
-fn test_pause_already_paused_contract_returns_error() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    contract.pause("admin".to_string()).expect("Should pause first time");
-    let result = contract.pause("admin".to_string());
-    assert_eq!(result, Err(PrediFiError::AlreadyPaused));
-}
-
-#[test]
-fn test_unpause_paused_contract_by_admin() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    contract.pause("admin".to_string()).expect("Should pause");
-    contract.unpause("admin".to_string()).expect("Should unpause");
-    assert_eq!(contract.is_paused(), false);
-}
-
-#[test]
-fn test_unpause_already_unpaused_contract_returns_error() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let result = contract.unpause("admin".to_string());
-    assert_eq!(result, Err(PrediFiError::NotPaused));
-}
-
-#[test]
-fn test_pause_by_non_admin_returns_unauthorized() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let result = contract.pause("user".to_string());
-    assert_eq!(result, Err(PrediFiError::Unauthorized));
-}
-
-#[test]
-fn test_unpause_by_non_admin_returns_unauthorized() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    contract.pause("admin".to_string()).expect("Should pause");
-    let result = contract.unpause("user".to_string());
-    assert_eq!(result, Err(PrediFiError::Unauthorized));
-}
-
-#[test]
-fn test_operations_fail_when_contract_paused() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    contract.pause("admin".to_string()).expect("Should pause");
-
-    // Test that predictions fail
-    let predict_result = contract.place_prediction("user".to_string(), 100, "UP".to_string());
-    assert_eq!(predict_result, Err(PrediFiError::ContractPaused));
-
-    // Test that refunds fail
-    let refund_result = contract.request_refund("user".to_string(), 1);
-    assert_eq!(refund_result, Err(PrediFiError::ContractPaused));
-
-    // Test that pool creation fails
-    let pool_result = contract.create_pool("pool".to_string(), 100, 1000, 50);
-    assert_eq!(pool_result, Err(PrediFiError::ContractPaused));
-}
-
-#[test]
-fn test_operations_succeed_when_contract_unpaused() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    contract.pause("admin".to_string()).expect("Should pause");
-    contract.unpause("admin".to_string()).expect("Should unpause");
-
-    // Test that predictions work
-    let predict_result = contract.place_prediction("user".to_string(), 100, "UP".to_string());
-    assert!(predict_result.is_ok());
-}
-
-#[test]
-fn test_multiple_pause_unpause_cycles() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-
-    for _ in 0..5 {
-        contract.pause("admin".to_string()).expect("Should pause");
-        assert_eq!(contract.is_paused(), true);
-
-        contract.unpause("admin".to_string()).expect("Should unpause");
-        assert_eq!(contract.is_paused(), false);
+/// A minimal but valid pool configuration accepted by `create_pool`.
+fn valid_config(env: &Env) -> PoolConfig {
+    PoolConfig {
+        start_time: 0,
+        description: String::from_str(env, "Pause test pool"),
+        metadata_url: String::from_str(env, ""),
+        min_stake: 1,
+        max_stake: 0,
+        min_total_stake: 1,
+        max_total_stake: 0,
+        initial_liquidity: 0,
+        required_resolutions: 1,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            env,
+            String::from_str(env, "Yes"),
+            String::from_str(env, "No"),
+        ],
     }
 }
 
 #[test]
-fn test_pause_state_consistency_after_failed_operation() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    contract.pause("admin".to_string()).expect("Should pause");
+fn pause_sets_flag_and_unpause_clears_it() {
+    let env = test_env();
+    let h = setup(&env);
 
-    // Try an operation that fails due to pause
-    let _ = contract.place_prediction("user".to_string(), 100, "UP".to_string());
+    assert!(!h.client.is_contract_paused());
 
-    // Verify contract is still paused
-    assert_eq!(contract.is_paused(), true);
+    h.client.pause(&h.admin);
+    assert!(h.client.is_contract_paused());
+
+    h.client.unpause(&h.admin);
+    assert!(!h.client.is_contract_paused());
 }
 
 #[test]
-fn test_pause_status_query() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    assert_eq!(contract.is_paused(), false);
+fn pause_emits_alert_and_pause_events() {
+    let env = test_env();
+    let h = setup(&env);
 
-    contract.pause("admin".to_string()).expect("Should pause");
-    assert_eq!(contract.is_paused(), true);
-    assert_eq!(contract.get_pause_status(), ContractState::Paused);
+    h.client.pause(&h.admin);
 
-    contract.unpause("admin".to_string()).expect("Should unpause");
-    assert_eq!(contract.is_paused(), false);
-    assert_eq!(contract.get_pause_status(), ContractState::Active);
+    assert_eq!(event_count(&env, "contract_paused_alert"), 1);
+    assert_eq!(event_count(&env, "pause"), 1);
 }
 
 #[test]
-fn test_pause_with_active_predictions() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
+fn unpause_emits_unpause_event() {
+    let env = test_env();
+    let h = setup(&env);
 
-    // Place some predictions
-    contract.place_prediction("user1".to_string(), 100, "UP".to_string()).expect("Should place");
-    contract.place_prediction("user2".to_string(), 50, "DOWN".to_string()).expect("Should place");
+    h.client.pause(&h.admin);
+    h.client.unpause(&h.admin);
 
-    // Pause the contract
-    contract.pause("admin".to_string()).expect("Should pause");
-
-    // Verify pause doesn't affect existing prediction data
-    let predictions = contract.get_active_predictions();
-    assert_eq!(predictions.len(), 2);
-
-    // But new predictions should fail
-    let result = contract.place_prediction("user3".to_string(), 75, "UP".to_string());
-    assert_eq!(result, Err(PrediFiError::ContractPaused));
+    assert_eq!(event_count(&env, "unpause"), 1);
 }
 
 #[test]
-fn test_pause_emergency_stop_scenario() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
+fn pause_blocks_create_pool() {
+    let env = test_env();
+    let h = setup(&env);
 
-    // Simulate emergency: pause immediately
-    contract.pause("admin".to_string()).expect("Should pause");
-    assert_eq!(contract.is_paused(), true);
+    h.client.pause(&h.admin);
 
-    // All operations blocked
-    assert!(contract.place_prediction("user".to_string(), 100, "UP".to_string()).is_err());
-    assert!(contract.create_pool("pool".to_string(), 100, 1000, 50).is_err());
-    assert!(contract.request_refund("user".to_string(), 1).is_err());
+    let end_time = env.ledger().timestamp() + 3_600;
+    let result = h.client.try_create_pool(
+        &h.creator,
+        &end_time,
+        &h.token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &valid_config(&env),
+    );
 
-    // Resume operations
-    contract.unpause("admin".to_string()).expect("Should unpause");
-    assert!(contract.place_prediction("user".to_string(), 100, "UP".to_string()).is_ok());
+    assert_eq!(result.unwrap_err().unwrap(), PredifiError::ContractPaused);
+}
+
+#[test]
+fn unpause_restores_create_pool() {
+    let env = test_env();
+    let h = setup(&env);
+
+    h.client.pause(&h.admin);
+    h.client.unpause(&h.admin);
+
+    let end_time = env.ledger().timestamp() + 3_600;
+    let pool_id = h.client.create_pool(
+        &h.creator,
+        &end_time,
+        &h.token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &valid_config(&env),
+    );
+
+    assert_eq!(pool_id, 0);
+}
+
+#[test]
+fn double_pause_is_rejected() {
+    let env = test_env();
+    let h = setup(&env);
+
+    h.client.pause(&h.admin);
+
+    assert!(h.client.try_pause(&h.admin).is_err());
+    assert!(h.client.is_contract_paused());
+}
+
+#[test]
+fn unpause_when_not_paused_is_rejected() {
+    let env = test_env();
+    let h = setup(&env);
+
+    assert!(h.client.try_unpause(&h.admin).is_err());
+    assert!(!h.client.is_contract_paused());
+}
+
+#[test]
+fn non_admin_cannot_pause() {
+    let env = test_env();
+    let h = setup(&env);
+
+    let stranger = Address::generate(&env);
+
+    assert!(h.client.try_pause(&stranger).is_err());
+    assert!(!h.client.is_contract_paused());
+}
+
+#[test]
+fn non_admin_cannot_unpause() {
+    let env = test_env();
+    let h = setup(&env);
+
+    h.client.pause(&h.admin);
+    let stranger = Address::generate(&env);
+
+    assert!(h.client.try_unpause(&stranger).is_err());
+    assert!(h.client.is_contract_paused());
 }

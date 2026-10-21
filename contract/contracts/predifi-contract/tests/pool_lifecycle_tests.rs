@@ -1,263 +1,243 @@
+//! Pool lifecycle integration tests for `predifi-contract`.
+//!
+//! Exercises the full `create_pool -> close_staking -> mark_pool_ready ->
+//! resolve_pool` flow through the real [`PredifiContractClient`] entry points
+//! and asserts the resulting `MarketState` transitions plus the typed errors
+//! returned on invalid ordering.
+
 #![cfg(test)]
 
-use predifi_contract::{Contract, Pool, PoolState, PoolLifecycle};
-use predifi_errors::PrediFiError;
+mod common;
 
-#[test]
-fn test_mark_pool_ready_transitions_state() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("LIFE/USD".to_string(), 1000000, 100000, 100).expect("Should create");
+use common::{event_count, setup, test_env, ROLE_OPERATOR};
+use predifi_contract::{MarketState, PoolConfig, PredifiError, UNRESOLVED_OUTCOME};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env, String};
 
-    assert_eq!(pool.get_state(), PoolState::Created);
+/// A minimal valid pool configuration with exactly two outcomes.
+fn config(env: &Env, required_resolutions: u32) -> PoolConfig {
+    PoolConfig {
+        start_time: 0,
+        description: String::from_str(env, "Lifecycle pool"),
+        metadata_url: String::from_str(env, ""),
+        min_stake: 1,
+        max_stake: 0,
+        min_total_stake: 1,
+        max_total_stake: 0,
+        initial_liquidity: 0,
+        required_resolutions,
+        private: false,
+        whitelist_key: None,
+        outcome_descriptions: vec![
+            env,
+            String::from_str(env, "Yes"),
+            String::from_str(env, "No"),
+        ],
+    }
+}
 
-    pool.mark_ready().expect("Should mark ready");
-    assert_eq!(pool.get_state(), PoolState::Ready);
+fn create_pool(env: &Env, h: &common::Harness<'_>, end_time: u64) -> u64 {
+    h.client.create_pool(
+        &h.creator,
+        &end_time,
+        &h.token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &config(env, 1),
+    )
 }
 
 #[test]
-fn test_mark_already_ready_pool_returns_error() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("READY/USD".to_string(), 1000000, 100000, 100).expect("Should create");
+fn create_pool_initial_state_is_active() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    pool.mark_ready().expect("Should mark ready first time");
-
-    let result = pool.mark_ready();
-    assert_eq!(result, Err(PrediFiError::PoolAlreadyReady));
+    let pool = h.client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Active);
+    assert_eq!(pool.outcome, UNRESOLVED_OUTCOME);
+    assert_eq!(pool.options_count, 2);
+    assert_eq!(pool.total_stake, 0);
 }
 
 #[test]
-fn test_close_staking_on_ready_pool() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("STAKE/USD".to_string(), 2000000, 200000, 100).expect("Should create");
+fn close_staking_before_end_time_is_rejected() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    pool.mark_ready().expect("Should mark ready");
-    assert_eq!(pool.get_state(), PoolState::Ready);
-
-    pool.close_staking().expect("Should close staking");
-    assert_eq!(pool.get_state(), PoolState::StakingClosed);
+    let result = h.client.try_close_staking(&pool_id);
+    assert_eq!(result.unwrap_err().unwrap(), PredifiError::StakingStillOpen);
 }
 
 #[test]
-fn test_close_staking_on_not_ready_pool_returns_error() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("NOTREADY/USD".to_string(), 1000000, 100000, 100).expect("Should create");
+fn close_staking_after_end_time_succeeds_and_emits_event() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    // Try to close staking without marking ready
-    let result = pool.close_staking();
-    assert_eq!(result, Err(PrediFiError::PoolNotReady));
+    h.set_time(end_time + 1);
+    h.client.close_staking(&pool_id);
+
+    assert_eq!(event_count(&env, "staking_closed"), 1);
 }
 
 #[test]
-fn test_double_close_staking_returns_error() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("DOUBLE/USD".to_string(), 1000000, 100000, 100).expect("Should create");
+fn close_staking_is_idempotent() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    pool.mark_ready().expect("Should mark ready");
-    pool.close_staking().expect("Should close staking first time");
+    h.set_time(end_time + 1);
 
-    let result = pool.close_staking();
-    assert_eq!(result, Err(PrediFiError::StakingAlreadyClosed));
+    // First call closes staking and emits the event once.
+    h.client.close_staking(&pool_id);
+    assert_eq!(event_count(&env, "staking_closed"), 1);
+
+    // The second call is idempotent: it succeeds but emits no further event.
+    h.client.close_staking(&pool_id);
+    assert_eq!(event_count(&env, "staking_closed"), 0);
 }
 
 #[test]
-fn test_state_transition_ordering_violations() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("ORDER/USD".to_string(), 1000000, 100000, 100).expect("Should create");
+fn mark_pool_ready_requires_staking_closed() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    // Try to close staking before marking ready
-    let result = pool.close_staking();
-    assert_eq!(result, Err(PrediFiError::PoolNotReady));
-
-    // Try to resolve without closing staking
-    let resolve_result = pool.resolve("UP".to_string());
-    assert_eq!(resolve_result, Err(PrediFiError::PoolNotClosed));
+    h.set_time(end_time + 1);
+    let result = h.client.try_mark_pool_ready(&pool_id);
+    assert_eq!(result.unwrap_err().unwrap(), PredifiError::StakingStillOpen);
 }
 
 #[test]
-fn test_timestamp_boundary_conditions() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let current_time = contract.get_current_timestamp();
+fn mark_pool_ready_after_delay_emits_event() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    // Create pool with timestamp in past (should still work)
-    let past_time = current_time - 3600; // 1 hour ago
-    let mut pool = contract.create_pool_with_timestamp(
-        "TIME/USD".to_string(),
-        1000000,
-        100000,
-        100,
-        past_time,
-    ).expect("Should create");
+    h.set_time(end_time + 1);
+    h.client.close_staking(&pool_id);
+    h.client.mark_pool_ready(&pool_id);
 
-    pool.mark_ready().expect("Should mark ready");
-    pool.close_staking().expect("Should close staking");
-    pool.resolve("UP".to_string()).expect("Should resolve");
+    assert_eq!(event_count(&env, "pool_ready"), 1);
 }
 
 #[test]
-fn test_pool_lifecycle_sequence() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("SEQ/USD".to_string(), 1000000, 100000, 100).expect("Should create");
+fn resolve_pool_requires_operator_role() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    // Verify state progression
-    assert_eq!(pool.get_state(), PoolState::Created);
+    h.set_time(end_time + 1);
+    let stranger = Address::generate(&env);
 
-    pool.mark_ready().expect("Should mark ready");
-    assert_eq!(pool.get_state(), PoolState::Ready);
-
-    pool.close_staking().expect("Should close staking");
-    assert_eq!(pool.get_state(), PoolState::StakingClosed);
-
-    pool.resolve("DOWN".to_string()).expect("Should resolve");
-    assert_eq!(pool.get_state(), PoolState::Resolved);
+    let result = h.client.try_resolve_pool(&stranger, &pool_id, &1u32);
+    assert_eq!(result.unwrap_err().unwrap(), PredifiError::Unauthorized);
 }
 
 #[test]
-fn test_pool_creation_with_boundary_timestamps() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
+fn resolve_pool_out_of_range_outcome_is_rejected() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    // Minimum timestamp (0)
-    let pool1 = contract.create_pool_with_timestamp(
-        "MIN/USD".to_string(),
-        1000000,
-        100000,
-        100,
-        0,
+    h.set_time(end_time + 1);
+    let result = h.client.try_resolve_pool(&h.operator, &pool_id, &2u32);
+    assert_eq!(result.unwrap_err().unwrap(), PredifiError::InvalidOutcome);
+}
+
+#[test]
+fn resolve_pool_transitions_to_resolved() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
+
+    h.set_time(end_time + 1);
+    h.client.close_staking(&pool_id);
+    h.client.mark_pool_ready(&pool_id);
+    h.client.resolve_pool(&h.operator, &pool_id, &1u32);
+
+    // Events reflect the most recent invocation (`resolve_pool`), so they must
+    // be inspected before any further client call.
+    assert_eq!(event_count(&env, "pool_resolved"), 1);
+
+    let pool = h.client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 1);
+}
+
+#[test]
+fn resolving_an_already_resolved_pool_is_rejected() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
+
+    h.set_time(end_time + 1);
+    h.client.resolve_pool(&h.operator, &pool_id, &0u32);
+
+    let result = h.client.try_resolve_pool(&h.operator, &pool_id, &1u32);
+    assert_eq!(
+        result.unwrap_err().unwrap(),
+        PredifiError::InvalidPoolState
     );
-    assert!(pool1.is_ok());
+}
 
-    // Maximum u64 timestamp
-    let pool2 = contract.create_pool_with_timestamp(
-        "MAX/USD".to_string(),
-        1000000,
-        100000,
-        100,
-        u64::MAX,
+#[test]
+fn duplicate_vote_is_rejected_when_quorum_not_yet_reached() {
+    let env = test_env();
+    let h = setup(&env);
+
+    // Grant a second operator so `required_resolutions = 2` is permitted.
+    let second_operator = Address::generate(&env);
+    h.ac.grant_role(&second_operator, &ROLE_OPERATOR);
+
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = h.client.create_pool(
+        &h.creator,
+        &end_time,
+        &h.token_address,
+        &2u32,
+        &symbol_short!("Crypto"),
+        &config(&env, 2),
     );
-    assert!(pool2.is_ok());
+
+    h.set_time(end_time + 1);
+    // First vote is recorded but quorum (2) is not yet reached.
+    h.client.resolve_pool(&h.operator, &pool_id, &1u32);
+
+    let pool = h.client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Active);
+
+    // The same operator may not vote twice.
+    let result = h.client.try_resolve_pool(&h.operator, &pool_id, &1u32);
+    assert_eq!(result.unwrap_err().unwrap(), PredifiError::OracleAlreadyVoted);
 }
 
 #[test]
-fn test_staking_enabled_in_ready_state() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("ENABLE/USD".to_string(), 1000000, 100000, 100).expect("Should create");
+fn full_lifecycle_sequence() {
+    let env = test_env();
+    let h = setup(&env);
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
 
-    pool.mark_ready().expect("Should mark ready");
+    assert_eq!(h.client.get_pool(&pool_id).state, MarketState::Active);
 
-    // Should be able to place predictions in Ready state
-    let stake_result = contract.place_prediction("user1".to_string(), 100, "UP".to_string());
-    assert!(stake_result.is_ok());
-}
+    h.set_time(end_time + 1);
+    h.client.close_staking(&pool_id);
+    h.client.mark_pool_ready(&pool_id);
+    h.client.resolve_pool(&h.operator, &pool_id, &0u32);
 
-#[test]
-fn test_staking_disabled_after_close() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("DISABLE/USD".to_string(), 1000000, 100000, 100).expect("Should create");
-
-    pool.mark_ready().expect("Should mark ready");
-    pool.close_staking().expect("Should close staking");
-
-    // Should NOT be able to place predictions after staking closed
-    let stake_result = contract.place_prediction("user2".to_string(), 100, "DOWN".to_string());
-    assert_eq!(stake_result, Err(PrediFiError::StakingClosed));
-}
-
-#[test]
-fn test_multiple_pools_independent_states() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-
-    let mut pool1 = contract.create_pool("POOL1/USD".to_string(), 1000000, 100000, 100).expect("Should create");
-    let mut pool2 = contract.create_pool("POOL2/USD".to_string(), 1000000, 100000, 100).expect("Should create");
-
-    // Transition pool1
-    pool1.mark_ready().expect("Should mark ready");
-    pool1.close_staking().expect("Should close staking");
-
-    // pool2 should still be in Created state
-    assert_eq!(pool2.get_state(), PoolState::Created);
-
-    // pool2 can independently transition
-    pool2.mark_ready().expect("Should mark ready");
-    assert_eq!(pool2.get_state(), PoolState::Ready);
-}
-
-#[test]
-fn test_mark_ready_with_predictions_existing() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("PRED/USD".to_string(), 1000000, 100000, 100).expect("Should create");
-
-    // Place predictions before marking ready
-    contract.place_prediction("user1".to_string(), 500, "UP".to_string()).expect("Should place");
-    contract.place_prediction("user2".to_string(), 300, "DOWN".to_string()).expect("Should place");
-
-    // Should still be able to mark ready
-    pool.mark_ready().expect("Should mark ready with existing predictions");
-    assert_eq!(pool.get_state(), PoolState::Ready);
-}
-
-#[test]
-fn test_close_staking_snapshot_state() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("SNAP/USD".to_string(), 1000000, 100000, 100).expect("Should create");
-
-    pool.mark_ready().expect("Should mark ready");
-
-    let total_staked_before = pool.get_total_staked();
-
-    pool.close_staking().expect("Should close staking");
-
-    let total_staked_after = pool.get_total_staked();
-
-    // Total staked should be immutable after close
-    assert_eq!(total_staked_before, total_staked_after);
-}
-
-#[test]
-fn test_resolve_requires_closed_staking() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("RESOLVE/USD".to_string(), 1000000, 100000, 100).expect("Should create");
-
-    pool.mark_ready().expect("Should mark ready");
-
-    // Try to resolve without closing staking
-    let result = pool.resolve("UP".to_string());
-    assert_eq!(result, Err(PrediFiError::PoolNotClosed));
-
-    // Now close staking
-    pool.close_staking().expect("Should close staking");
-
-    // Should be able to resolve
-    let resolve_result = pool.resolve("UP".to_string());
-    assert!(resolve_result.is_ok());
-}
-
-#[test]
-fn test_pool_state_persistence_across_operations() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("PERSIST/USD".to_string(), 1000000, 100000, 100).expect("Should create");
-
-    // Perform multiple operations
-    contract.place_prediction("user1".to_string(), 100, "UP".to_string()).expect("Should place");
-    pool.mark_ready().expect("Should mark ready");
-    contract.place_prediction("user2".to_string(), 50, "DOWN".to_string()).expect("Should place");
-    pool.close_staking().expect("Should close staking");
-
-    // Verify state is persistent
-    assert_eq!(pool.get_state(), PoolState::StakingClosed);
-
-    // Resolve
-    pool.resolve("UP".to_string()).expect("Should resolve");
-    assert_eq!(pool.get_state(), PoolState::Resolved);
-}
-
-#[test]
-fn test_invalid_outcome_on_resolve() {
-    let mut contract = Contract::new(Admin::new("admin".to_string()));
-    let mut pool = contract.create_pool("OUTCOME/USD".to_string(), 1000000, 100000, 100).expect("Should create");
-
-    pool.mark_ready().expect("Should mark ready");
-    pool.close_staking().expect("Should close staking");
-
-    // Try to resolve with invalid outcome
-    let result = pool.resolve("SIDEWAYS".to_string());
-    assert_eq!(result, Err(PrediFiError::InvalidOutcome));
+    let pool = h.client.get_pool(&pool_id);
+    assert_eq!(pool.state, MarketState::Resolved);
+    assert_eq!(pool.outcome, 0);
 }
