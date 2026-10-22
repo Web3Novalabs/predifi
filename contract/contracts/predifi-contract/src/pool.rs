@@ -387,7 +387,22 @@ impl PredifiContract {
     ///
     /// # Examples
     ///
+    /// Create a new prediction pool.
+    ///
+    /// Creates a pool with the specified configuration, returning its unique pool ID.
     /// See the full examples in the main documentation above.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `InvalidData` if `options_count` < 2 or other validation fails.
+    /// - `InvalidTimestamp` if `end_time` is in the past or exceeds maximum pool duration.
+    /// - `TokenNotWhitelisted` if the betting token is not on the whitelist.
+    /// - `InvalidAmount` if `initial_liquidity` is invalid.
+    /// - `InitialLiquidityBelowSafetyMargin` if liquidity is too low relative to `max_total_stake`.
+    /// - `InvalidFeeBps` if the pool fee (if any) exceeds 10,000.
+    /// - `RequiredResolutionsExceedOperators` if `required_resolutions` is too high for operator count.
+    /// - `OutcomeDescriptionTooLong` if any outcome description exceeds 512 bytes.
+    /// - `OutcomeDescriptionEmpty` if any outcome description is empty or too short.
     #[allow(clippy::too_many_arguments)]
     pub fn create_pool(
         env: Env,
