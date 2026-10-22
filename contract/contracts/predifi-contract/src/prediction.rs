@@ -915,7 +915,25 @@ impl PredifiContract {
     /// * If validation fails **before** reentrancy guard is entered, no guard cleanup is needed.
     /// * If validation fails **after** reentrancy guard is entered, `exit_reentrancy_guard` is
     ///   called before returning the error.
+    /// Place a prediction on a pool's outcome.
+    ///
     /// * This ensures the guard is always released, even on error paths.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `PoolNotFound` if the pool ID does not exist.
+    /// - `InvalidPoolState` if the pool is not `Active` or staking is closed.
+    /// - `InvalidAmount` if `amount` is not strictly positive (must be > 0).
+    /// - `InsufficientStake` if `amount` is below the global minimum stake.
+    /// - `StakeBelowMinimum` if `amount` is below the pool's per-prediction minimum.
+    /// - `StakeAboveMaximum` if `amount` exceeds the pool's per-prediction maximum.
+    /// - `InvalidOutcome` if the outcome index is out of bounds.
+    /// - `MaxTotalStakeExceeded` if this prediction would exceed the pool's total stake cap.
+    /// - `MaxPredictionsExceeded` if the user has already reached their per-pool limit.
+    /// - `RateLimitOrSuspiciousActivity` if the user is rate-limited or flagged for suspicious activity.
+    /// - `InsufficientBalance` if the user lacks sufficient token balance.
+    /// - `TokenNotWhitelisted` if the pool's token is no longer whitelisted.
+    /// - `PoolDisputed` if the pool has been flagged as disputed.
     #[allow(clippy::needless_borrows_for_generic_args)]
     pub fn place_prediction(
         env: Env,
@@ -1673,6 +1691,15 @@ impl PredifiContract {
     /// | `AlreadyClaimed` | User already claimed winnings | Check claim status before retrying |
     /// | `InvalidTimestamp` | Claim window expired | Check claim deadline |
     #[allow(clippy::needless_borrows_for_generic_args)]
+    /// Claim winnings from a resolved pool where the user predicted the correct outcome.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `PoolNotFound` if the pool ID does not exist.
+    /// - `InvalidPoolState` if the pool is not `Resolved`.
+    /// - `AlreadyClaimed` if the user has already claimed for this pool.
+    /// - `TimeConstraintError` if the pool's claim window has expired.
+    /// - `InsufficientBalance` if the user has no prediction on this pool or predicted the wrong outcome.
     pub fn claim_winnings(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env)?;
         user.require_auth();
@@ -1693,6 +1720,10 @@ impl PredifiContract {
     ///
     /// # Returns
     /// `Map<u64, i128>` — claimed amount per pool (0 for non-winners / already claimed)
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - Individual pools that are not resolved or whose claim window has expired return 0.
     pub fn batch_claim_winnings(
         env: Env,
         user: Address,
@@ -1919,6 +1950,14 @@ impl PredifiContract {
     /// | INV-6 | Re-entrancy protection | Guard entered before all checks |
     /// | INV-7 | Positive amounts | `prediction.amount > 0` validated |
     #[allow(clippy::needless_borrows_for_generic_args)]
+    /// Claim a refund from a cancelled pool.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `PoolNotFound` if the pool ID does not exist.
+    /// - `InvalidPoolState` if the pool is not `Canceled`.
+    /// - `AlreadyClaimed` if the user has already claimed their refund for this pool.
+    /// - `InsufficientBalance` if the user has no prediction on this pool.
     pub fn claim_refund(env: Env, user: Address, pool_id: u64) -> Result<i128, PredifiError> {
         Self::require_not_paused(&env)?;
         user.require_auth();

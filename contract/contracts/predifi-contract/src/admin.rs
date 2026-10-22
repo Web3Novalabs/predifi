@@ -128,6 +128,11 @@ impl PredifiContract {
     // ── Public interface ──────────────────────────────────────────────────────
 
     /// Initialize the contract. Idempotent — safe to call multiple times.
+    ///
+    /// # Errors
+    /// - `AlreadyInitializedOrConfigNotSet` if the contract has already been initialized.
+    /// - `InvalidData` if `resolution_delay` exceeds `MAX_RESOLUTION_DELAY` (30 days).
+    /// - `InvalidFeeBps` if `fee_bps` is greater than 10,000 (100%).
     pub fn init(
         env: Env,
         access_control: Address,
@@ -195,6 +200,10 @@ impl PredifiContract {
     ///
     /// While paused, administrative checks continue to work, but
     /// state-changing operations guarded by the pause flag are rejected.
+    /// Pause all state-mutating operations in the contract.
+    ///
+    /// # Errors
+    /// Panics with `Unauthorized` if the caller lacks the Admin role (role 0).
     pub fn pause(env: Env, admin: Address) {
         admin.require_auth();
         if Self::require_admin_role(&env, &admin, "pause").is_err() {
@@ -223,6 +232,10 @@ impl PredifiContract {
     /// # Effects
     /// - Clears the paused state.
     /// - Emits `UnpauseEvent`.
+    /// Resume contract execution after a pause.
+    ///
+    /// # Errors
+    /// Panics with `Unauthorized` if the caller lacks the Admin role (role 0).
     pub fn unpause(env: Env, admin: Address) {
         admin.require_auth();
         if Self::require_admin_role(&env, &admin, "unpause").is_err() {
@@ -289,6 +302,13 @@ impl PredifiContract {
     /// PRE:  admin has role 0; no pending fee proposal exists.
     /// POST: A [`PendingFeeChange`] is stored with
     ///       `effective_at = now + FEE_CHANGE_TIMELOCK_SECONDS`.
+    /// Propose a fee change subject to a 7-day timelock.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
+    /// - `InvalidFeeBps` if `fee_bps` exceeds 10,000 (100%).
+    /// - `FeeChangePending` if another fee proposal is already awaiting application.
     pub fn set_fee_bps(env: Env, admin: Address, fee_bps: u32) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         admin.require_auth();
@@ -333,6 +353,13 @@ impl PredifiContract {
     ///
     /// PRE:  a [`PendingFeeChange`] exists and `now >= effective_at`.
     /// POST: `Config.fee_bps` is updated; the pending proposal is removed.
+    /// Apply a pending fee change once its timelock has expired.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
+    /// - `NoFeeChangePending` if no fee proposal is currently pending.
+    /// - `TimelockNotExpired` if the 7-day timelock has not yet elapsed.
     pub fn apply_fee_bps(env: Env, admin: Address) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         admin.require_auth();
@@ -373,6 +400,11 @@ impl PredifiContract {
     ///
     /// PRE:  a [`PendingFeeChange`] exists.
     /// POST: the pending proposal is removed; `Config.fee_bps` is unmodified.
+    /// Cancel a pending fee change proposal.
+    ///
+    /// # Errors
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
+    /// - `NoFeeChangePending` if no fee proposal is currently pending.
     pub fn cancel_fee_proposal(env: Env, admin: Address) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         admin.require_auth();
@@ -442,6 +474,12 @@ impl PredifiContract {
     }
 
     /// Set resolution delay in seconds. Caller must have Admin role (0).
+    /// Set the maximum time allowed between pool end and resolution.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
+    /// - `InvalidData` if `delay` exceeds `MAX_RESOLUTION_DELAY` (30 days in seconds).
     pub fn set_resolution_delay(env: Env, admin: Address, delay: u64) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         admin.require_auth();
@@ -524,6 +562,12 @@ impl PredifiContract {
     /// # Arguments
     /// * `admin`  - Address with Admin role (0).
     /// * `amount` - New minimum stake in base token units. Must be > 0.
+    /// Set the global minimum stake amount for any prediction.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
+    /// - `InvalidAmount` if `amount` is not strictly positive (must be > 0).
     pub fn set_min_stake(env: Env, admin: Address, amount: i128) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         admin.require_auth();
@@ -544,6 +588,12 @@ impl PredifiContract {
     }
 
     /// Add a token to the allowed betting whitelist. Caller must have Admin role (0).
+    /// Add a token to the list of allowed betting currencies.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
+    /// - `InvalidAddressOrToken` if the token address is invalid or the token is not callable.
     pub fn add_token_to_whitelist(
         env: Env,
         admin: Address,
@@ -580,6 +630,12 @@ impl PredifiContract {
     }
 
     /// Remove a token from the allowed betting whitelist. Caller must have Admin role (0).
+    /// Remove a token from the allowed betting currencies list.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
+    /// - `InvalidAddressOrToken` if the token address is invalid or not found in the whitelist.
     pub fn remove_token_from_whitelist(
         env: Env,
         admin: Address,
@@ -763,6 +819,11 @@ impl PredifiContract {
     }
 
     /// Upgrade the contract Wasm code. Only callable by Admin (role 0).
+    /// Upgrade the contract to new Wasm code.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
     pub fn upgrade_contract(
         env: Env,
         admin: Address,
@@ -809,6 +870,10 @@ impl PredifiContract {
     /// `state: MarketState` field. Existing pools stored with the old schema are
     /// automatically handled by Soroban's XDR codec — the removed fields are simply
     /// ignored on read, so no explicit data rewrite is required.
+    /// Execute post-upgrade state migration after a contract upgrade.
+    ///
+    /// # Errors
+    /// - `Unauthorized` if the caller lacks the Admin role (role 0).
     pub fn migrate_state(env: Env, admin: Address) -> Result<(), PredifiError> {
         Self::require_not_paused(&env)?;
         admin.require_auth();
@@ -1276,6 +1341,10 @@ impl PredifiContract {
     /// # Events
     /// Emits `StorageTtlRenewedEvent` so off-chain monitors can track
     /// renewal activity and verify keeper health.
+    /// Renew the storage TTL for a pool's persistent data.
+    ///
+    /// # Errors
+    /// - `PoolNotFound` if the specified pool ID does not exist.
     pub fn renew_storage_ttl(env: Env, pool_id: u64) -> Result<(), PredifiError> {
         let pool_key = DataKey::Pool(pool_id);
 

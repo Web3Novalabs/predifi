@@ -1,4 +1,19 @@
-//! Boundary & Edge Case Tests for issues #1438, #1441, #1444, #1445.
+//! # Boundary & Edge Case Tests for Pool Creation, Fee Changes, and Emergency Cancellation
+//!
+//! This module exercises boundary conditions and edge cases for four critical contract
+//! entry points: pool creation, refund claims from cancelled pools, emergency pool
+//! cancellation with multisig quorum verification, and admin fee configuration with
+//! timelocked governance.
+//!
+//! **Original issues covered (for provenance):**
+//! - **#1438**: `create_pool` boundary validation (zero duration, max timestamps, descriptions,
+//!   invalid tokens, fee tracking, error path rollback)
+//! - **#1441**: `claim_refund` behavior on cancelled pools (accumulation, double-claim prevention,
+//!   pool state validation, timing behavior)
+//! - **#1444**: `emergency_cancel_pool` multisig quorum logic (N-1 vs N approvals, duplicate
+//!   detection, state transitions, unauthorized rejection, rollback verification)
+//! - **#1445**: `set_fee_bps` boundaries and state machine (0/10000/overflow limits, rapid
+//!   changes, active-pool impact, pending proposal state transitions)
 //!
 //! | Issue  | Function                | Coverage highlights                                                    |
 //! |--------|-------------------------|--------------------------------------------------------------------------|
@@ -10,7 +25,7 @@
 //! | #1444  | `emergency_cancel_pool` | quorum boundary (N-1 vs N), duplicate approval, approval after already  |
 //! |        |                         | cancelled/resolved, unauthorized approver, state rollback verification  |
 //! | #1445  | `set_fee_bps`           | fee_bps 0/10000/10001/u32::MAX, rapid successive changes, fee change    |
-//! |        |                         | while pools are active, pending fee change state transitions           |
+//! |        |                         | while pools are active, pending fee change state transitions|
 
 #![cfg(test)]
 

@@ -1,23 +1,25 @@
-//! Boundary & edge-case coverage for issues #1446, #1447, #1448 and #1449.
+//! # Boundary & Edge Case Tests for Batch Claim Winnings, Stake Limits, and Token Whitelist
 //!
-//! Each of these four entry points already had some coverage before this
-//! module; what follows deliberately targets the scenarios that were *not*
-//! reachable from the existing suites:
+//! This module exercises boundary conditions and edge cases for four entry points:
+//! batch claiming of winnings, dynamic stake limit configuration, token whitelist
+//! management for betting participation, and whitelist removal with active pool protection.
 //!
-//! * **#1446 `batch_claim_winnings`** — partial-failure handling. The existing
-//!   tests cover empty / duplicate / unknown ids, but never a batch where one
-//!   pool genuinely pays and another genuinely does not.
-//! * **#1447 `set_stake_limits`** — limit changes *while predictions are
-//!   active*, and whether a prediction placed under the old limits survives.
-//! * **#1448 `add_token_to_whitelist`** — list-level de-duplication, bulk
-//!   admission, decimals-independence, and pool creation with a freshly
-//!   admitted token.
-//! * **#1449 `remove_token_from_whitelist`** — delisting a token that backs a
-//!   live pool, emptying the whitelist, and back-to-back removals.
+//! Each of these four entry points already had some coverage before this module; what
+//! follows deliberately targets the scenarios that were *not* reachable from the existing
+//! suites. The test harness is self-contained with an access-control stub and test context
+//! so these tests do not depend on the shared `test::setup` fixture and cannot be
+//! perturbed by changes to it.
 //!
-//! The harness mirrors `claim_winnings_boundary_tests.rs` (self-contained
-//! access-control stub + `Ctx`) so these tests do not depend on the shared
-//! `test::setup` fixture and cannot be perturbed by changes to it.
+//! **Original issues covered (for provenance):**
+//! - **#1446 `batch_claim_winnings`** — partial-failure handling. The existing tests cover
+//!   empty / duplicate / unknown ids, but never a batch where one pool genuinely pays
+//!   and another genuinely does not.
+//! - **#1447 `set_stake_limits`** — limit changes *while predictions are active*, and
+//!   whether a prediction placed under the old limits survives.
+//! - **#1448 `add_token_to_whitelist`** — list-level de-duplication, bulk admission,
+//!   decimals-independence, and pool creation with a freshly admitted token.
+//! - **#1449 `remove_token_from_whitelist`** — delisting a token that backs a live pool,
+//!   emptying the whitelist, and back-to-back removals.
 
 #![cfg(test)]
 

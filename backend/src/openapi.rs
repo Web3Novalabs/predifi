@@ -347,6 +347,19 @@ pub struct ReadinessResponse {
     pub errors: ReadinessErrors,
 }
 
+/// OpenAPI schema for rate limit error responses (HTTP 429).
+///
+/// Includes a `Retry-After` HTTP response header (in seconds) that tells clients
+/// when they can safely retry their request. The header value is computed from the
+/// active rate limit tier's window duration.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct RateLimitErrorResponse {
+    /// Always `"error"`.
+    pub status: String,
+    /// Human-readable rate limit message.
+    pub error: String,
+}
+
 /// OpenAPI schema for a generic error response body.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ErrorResponse {
@@ -523,6 +536,7 @@ pub struct IndexerOkResponse {
         ReadinessDependencies,
         ReadinessErrors,
         ReadinessResponse,
+        RateLimitErrorResponse,
         ErrorResponse,
         ErrorDetailDoc,
         PoolCreatedPayloadDoc,
@@ -608,6 +622,7 @@ async fn api_v1_health_ready() {}
     ),
     responses(
         (status = 200, description = "Paginated pool list", body = PoolListResponse),
+        (status = 429, description = "Rate limit exceeded. See Retry-After header for seconds to wait", body = RateLimitErrorResponse),
         (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
@@ -620,6 +635,7 @@ async fn api_get_pools() {}
     responses(
         (status = 200, description = "Pool details with live odds", body = ApiPoolDetailsResponse),
         (status = 404, description = "Pool not found", body = ErrorResponse),
+        (status = 429, description = "Rate limit exceeded. See Retry-After header for seconds to wait", body = RateLimitErrorResponse),
         (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
@@ -663,6 +679,7 @@ async fn api_get_prices() {}
     ),
     responses(
         (status = 200, description = "User leaderboard", body = ApiLeaderboardResponse),
+        (status = 429, description = "Rate limit exceeded. See Retry-After header for seconds to wait", body = RateLimitErrorResponse),
         (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
