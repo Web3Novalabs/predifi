@@ -158,15 +158,39 @@ impl RateLimitErrorPayload {
 }
 
 /// Build the HTTP 429 response used by the tower-governor rate limiter.
+///
+/// Includes a `Retry-After` header (in seconds) computed from the rate limit window,
+/// telling clients when they can safely retry. If no retry duration is provided,
+/// defaults to the rate limit period.
 pub fn rate_limit_error_response() -> Response {
-    (
+    rate_limit_error_response_with_retry_after(None)
+}
+
+/// Build the HTTP 429 response with an explicit `Retry-After` duration.
+///
+/// # Arguments
+/// - `retry_after_secs`: Number of seconds clients should wait before retrying.
+///   If `None`, a default value based on the active rate limit tier is used.
+pub fn rate_limit_error_response_with_retry_after(retry_after_secs: Option<u64>) -> Response {
+    let retry_after = retry_after_secs.unwrap_or(60); // default 60-second window
+
+    let mut response = (
         StatusCode::TOO_MANY_REQUESTS,
         Json(RateLimitErrorPayload {
             status: "error",
             error: RateLimitErrorPayload::MESSAGE.to_string(),
         }),
     )
-        .into_response()
+        .into_response();
+
+    // Attach the Retry-After header as per RFC 7231
+    if let Ok(header_value) = axum::http::HeaderValue::from_str(&retry_after.to_string()) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::RETRY_AFTER, header_value);
+    }
+
+    response
 }
 
 #[cfg(test)]

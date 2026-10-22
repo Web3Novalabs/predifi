@@ -1,6 +1,6 @@
 //! Per-route rate limiting helpers for the backend API.
 //!
-//! The server applies one of four tiers defined in [`crate::constants`] to each
+//! The server applies one of six tiers defined in [`crate::constants`] to each
 //! route group:
 //!
 //! - `Light` — cheap, stateless endpoints such as `/fees`, `/prices`, and
@@ -14,6 +14,9 @@
 //! - `Write` — mutating or indexer-ingest routes under `/indexer/*`; these are
 //!   the strictest user-facing write paths and protect backend ingestion from
 //!   abusive bursts.
+//! - `Token` — authentication endpoints such as `/auth/refresh`; stricter limits
+//!   to prevent brute-force attacks on token operations.
+//! - `WebSocket` — WebSocket message inbound limits; stricter to prevent abuse.
 //!
 //! Each route group in `routes/v1.rs` wraps its sub-router with the matching
 //! tier from [`RateLimitTier`]. In test builds the layer is disabled so parallel
@@ -23,8 +26,12 @@
 //! headers (`X-Forwarded-For`, `X-Real-IP`) when the backend sits behind a load
 //! balancer or reverse proxy.
 //!
+//! ## HTTP 429 Responses with Retry-After Header
+//!
 //! When a client exceeds its configured burst window, the server replies with
-//! HTTP 429 and the standardized JSON body returned by [`crate::response`]:
+//! HTTP 429 and includes a `Retry-After` header (in seconds) computed from the
+//! active rate limit tier's window duration. This tells clients when they can
+//! safely retry without encountering another 429. The response body is:
 //!
 //! ```json
 //! {
@@ -32,8 +39,19 @@
 //!   "error": "Too many requests"
 //! }
 //! ```
-//! 
-//! This body comes from [`crate::response::rate_limit_error_response`].
+//!
+//! The body comes from [`crate::response::rate_limit_error_response`], which
+//! automatically attaches the `Retry-After` header. Clients should parse this
+//! header and respect it to avoid further rate limit violations.
+//!
+//! **Example response:**
+//! ```text
+//! HTTP/1.1 429 Too Many Requests
+//! Retry-After: 60
+//! Content-Type: application/json
+//!
+//! {"status": "error", "error": "Too many requests"}
+//! ```
 
 use tower_governor::key_extractor::SmartIpKeyExtractor;
 
@@ -65,6 +83,12 @@ impl RateLimitTier {
             RateLimitTier::Token => (RATE_LIMIT_TOKEN_BURST, RATE_LIMIT_TOKEN_PERIOD_SECS),
             RateLimitTier::WebSocket => (RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS),
         }
+    }
+
+    /// Return the window duration for this tier in seconds.
+    /// Used to compute the `Retry-After` response header on 429.
+    pub fn period_secs(self) -> u64 {
+        self.burst_and_period().1
     }
 }
 
