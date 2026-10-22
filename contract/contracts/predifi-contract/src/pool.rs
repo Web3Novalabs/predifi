@@ -1740,6 +1740,15 @@ impl PredifiContract {
     ///
     /// This configuration is suitable for admin-controlled test pools or single-operator
     /// markets where the operator is the sole authority for resolution.
+    /// Resolve a pool with the specified outcome and record the result on-chain.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `PoolNotFound` if the pool ID does not exist.
+    /// - `InvalidPoolState` if the pool is not in `Active` state.
+    /// - `InvalidOutcome` if the outcome index is out of bounds for the pool's options.
+    /// - `Unauthorized` if the caller lacks the Operator role (role 1) or sufficient approvals for resolution.
+    /// - `ResolutionDelayNotMet` if the pool's resolution window has not yet opened.
     pub fn resolve_pool(
         env: Env,
         operator: Address,
@@ -2053,6 +2062,13 @@ impl PredifiContract {
     /// - `PoolNotResolved` error (code 22) is returned if trying to cancel an already resolved pool.
     /// PRE: pool.state = Active, caller has role 0/1 OR (caller == pool.creator AND total_stake <= initial_liquidity)
     /// POST: pool.state = Canceled, state transition valid (INV-2)
+    /// Cancel a pool, allowing stakeholders to claim refunds.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `PoolNotFound` if the pool ID does not exist.
+    /// - `InvalidPoolState` if the pool is already cancelled or resolved.
+    /// - `Unauthorized` if the caller lacks the Operator role (role 1).
     pub fn cancel_pool(
         env: Env,
         operator: Address,
@@ -2143,6 +2159,14 @@ impl PredifiContract {
     /// - `EmergencyCancelAlreadyApproved` if the caller has already approved.
     /// - `EmergencyCancelPending` is *not* returned — pending state is
     ///   visible via `get_emergency_cancel_approvals`.
+    /// Propose emergency cancellation of a pool via multisig approval.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `PoolNotFound` if the pool ID does not exist.
+    /// - `InvalidPoolState` if the pool is already cancelled or resolved.
+    /// - `Unauthorized` if the caller lacks the Operator role (role 1).
+    /// - `EmergencyCancelAlreadyApproved` if the caller has already approved this proposal.
     pub fn emergency_cancel_pool(
         env: Env,
         approver: Address,
@@ -2250,6 +2274,16 @@ impl PredifiContract {
     /// Update the stake limits for an active pool. Caller must have Operator role (1).
     /// PRE: pool.state = Active, operator has role 1
     /// POST: pool.min_stake and pool.max_stake updated
+    /// Update per-prediction stake limits for an active pool.
+    ///
+    /// # Errors
+    /// - `ContractPaused` if the contract is paused.
+    /// - `PoolNotFound` if the pool ID does not exist.
+    /// - `InvalidPoolState` if the pool is not in `Active` state.
+    /// - `Unauthorized` if the caller lacks the Operator role (role 1).
+    /// - `StakeBelowMinimum` if `new_min_stake` is not strictly positive.
+    /// - `InvalidAmount` if `new_min_stake` > `new_max_stake` (when max is set).
+    /// - `StakeAboveMaximum` if the new limits violate pool constraints.
     pub fn set_stake_limits(
         env: Env,
         operator: Address,
