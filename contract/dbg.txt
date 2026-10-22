@@ -1,0 +1,99 @@
+﻿cargo : [1m[93mwarning[0m[1m[97m: unused import: `BytesN`[0m
+At line:15 char:4058
++ ... pgrep\bin'; cargo test -p predifi-contract --test pool_lifecycle_test ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([1m[93mwarnin...t: `BytesN`[0m:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  [1m[96m--> [0mcontracts\predifi-contract\src\lib.rs:54:14
+   [1m[96m|[0m
+[1m[96m54[0m [1m[96m|[0m     Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
+   [1m[96m|[0m              [1m[93m^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::events::Events::publish`: use the 
+#[contractevent] macro on a contract event type[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\creator_incentive.rs:68:22
+   [1m[96m|[0m
+[1m[96m68[0m [1m[96m|[0m         env.events().publish((soroban_sdk::Symbol::new(env, 
+"creator_incentive_config_updated"),), self.clone());
+   [1m[96m|[0m                      [1m[93m^^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::events::Events::publish`: use the 
+#[contractevent] macro on a contract event type[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\creator_incentive.rs:83:22
+   [1m[96m|[0m
+[1m[96m83[0m [1m[96m|[0m         env.events().publish((soroban_sdk::Symbol::new(env, 
+"creator_incentive_paid"),), self.clone());
+   [1m[96m|[0m                      [1m[93m^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: variable does not need to be mutable[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\pool.rs:771:13
+    [1m[96m|[0m
+[1m[96m771[0m [1m[96m|[0m         let mut pool: Pool = env
+    [1m[96m|[0m             [1m[96m----[0m[1m[93m^^^^[0m
+    [1m[96m|[0m             [1m[96m|[0m
+    [1m[96m|[0m             [1m[96mhelp: remove this `mut`[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: associated constant `MIN_CONFIDENCE_RATIO_BPS` is never used[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\oracle.rs:213:11
+    [1m[96m|[0m
+[1m[96m 23[0m [1m[96m|[0m impl PredifiContract {
+    [1m[96m|[0m [1m[96m--------------------[0m [1m[96massociated constant in this implementation[0m
+[1m[96m...[0m
+[1m[96m213[0m [1m[96m|[0m     const MIN_CONFIDENCE_RATIO_BPS: u32 = 500; // 5%
+    [1m[96m|[0m           [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: function `calculate_payout_pool` is never used[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\payouts.rs:75:8
+   [1m[96m|[0m
+[1m[96m75[0m [1m[96m|[0m pub fn calculate_payout_pool(total_stake: i128, fee_bps: i128) -> Result<i128, 
+PrediFiError> {
+   [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m: `predifi-contract` (lib) generated 6 warnings (run `cargo fix --lib -p predifi-contract` to 
+apply 2 suggestions)
+[1m[92m   Compiling[0m predifi-contract v0.0.0 
+(C:\Users\USA\Documents\wavyboy\predifi\contract\contracts\predifi-contract)
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::register_stellar_asset_contract`: use 
+[Env::register_stellar_asset_contract_v2][0m
+   [1m[96m--> [0mcontracts\predifi-contract\tests\common\mod.rs:138:29
+    [1m[96m|[0m
+[1m[96m138[0m [1m[96m|[0m     let token_address = env.register_stellar_asset_contract(token_admin_addr);
+    [1m[96m|[0m                             [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[93mwarning[0m: `predifi-contract` (test "pool_lifecycle_tests") generated 1 warning
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`test` 
+profile [unoptimized + debuginfo]]8;;\ target(s) in 16.80s
+[1m[92m     Running[0m tests\pool_lifecycle_tests.rs (target\debug\deps\pool_lifecycle_tests-a61c406bbd65c6fd.exe)
+
+running 1 test
+DEBUG n1=0 n2=1 n3=0
+
+thread 'close_staking_is_idempotent' (43156) panicked at 
+contracts\predifi-contract\tests\pool_lifecycle_tests.rs:103:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+Writing test snapshot file for test "close_staking_is_idempotent" to 
+"test_snapshots\\close_staking_is_idempotent.1.json".
+test close_staking_is_idempotent ... FAILED
+
+failures:
+
+failures:
+    close_staking_is_idempotent
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 11 filtered out; finished in 0.08s
+
+[1m[91merror[0m: test failed, to rerun pass `-p predifi-contract --test pool_lifecycle_tests`
