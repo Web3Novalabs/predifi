@@ -3,7 +3,7 @@
 #![cfg(test)]
 
 use crate::test::ROLE_ADMIN;
-use crate::PoolConfig;
+use crate::{MarketState, PoolConfig};
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
@@ -102,12 +102,8 @@ fn test_pool_lifecycle_with_fee_and_treasury_withdrawal() {
 
     env.ledger().with_mut(|li| li.timestamp = 1_000);
 
-    let ac_id = env.register(
-        crate::test::dummy_access_control::DummyAccessControl,
-        (),
-    );
-    let ac_client =
-        crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let ac_id = env.register(crate::test::dummy_access_control::DummyAccessControl, ());
+    let ac_client = crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
 
     let contract_id = env.register(crate::PredifiContract, ());
     let client = crate::PredifiContractClient::new(&env, &contract_id);
@@ -200,8 +196,16 @@ fn test_full_lifecycle_three_outcome_pool_proportional_payout() {
 
     env.ledger().with_mut(|li| li.timestamp = 1_000);
 
-    let (_ac_client, client, token_address, token, token_admin_client, _treasury, operator, creator) =
-        crate::test::setup(&env);
+    let (
+        _ac_client,
+        client,
+        token_address,
+        token,
+        token_admin_client,
+        _treasury,
+        operator,
+        creator,
+    ) = crate::test::setup(&env);
 
     let bettor_a = Address::generate(&env);
     let bettor_b = Address::generate(&env);
@@ -282,8 +286,16 @@ fn test_full_lifecycle_pool_cancellation_refund() {
 
     env.ledger().with_mut(|li| li.timestamp = 1_000);
 
-    let (ac_client, client, token_address, token, token_admin_client, _treasury, _operator, creator) =
-        crate::test::setup(&env);
+    let (
+        ac_client,
+        client,
+        token_address,
+        token,
+        token_admin_client,
+        _treasury,
+        _operator,
+        creator,
+    ) = crate::test::setup(&env);
 
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &crate::test::ROLE_ADMIN);
@@ -328,7 +340,11 @@ fn test_full_lifecycle_pool_cancellation_refund() {
 
     // Admin cancels the pool before resolution.
     env.ledger().with_mut(|li| li.timestamp = 5_001);
-    client.cancel_pool(&admin, &pool_id, &String::from_str(&env, "cancelled for test"));
+    client.cancel_pool(
+        &admin,
+        &pool_id,
+        &String::from_str(&env, "cancelled for test"),
+    );
 
     // Both bettors claim refunds equal to their original stakes.
     let refund_a = client.claim_winnings(&bettor_a, &pool_id);
@@ -353,8 +369,7 @@ fn test_full_lifecycle_with_multiple_users_and_treasury_withdrawal() {
     env.ledger().with_mut(|li| li.timestamp = 1_000);
 
     let ac_id = env.register(crate::test::dummy_access_control::DummyAccessControl, ());
-    let ac_client =
-        crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let ac_client = crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
 
     let contract_id = env.register(crate::PredifiContract, ());
     let client = crate::PredifiContractClient::new(&env, &contract_id);
@@ -458,4 +473,148 @@ fn test_full_lifecycle_with_multiple_users_and_treasury_withdrawal() {
 
     assert_eq!(token.balance(&treasury), 30);
     assert_eq!(token.balance(&client.address), 0);
+}
+
+/// Full lifecycle with odd stakes, a 2.5% fee and a three-outcome pool,
+/// asserting token balances and pool state after every step.
+///
+/// Pool: 701 + 333 on outcome 0 (wins), 587 on outcome 1, 129 on outcome 2.
+/// - total stake 1_750, fee = floor(1_750 * 250 / 10_000) = 43, payout pool 1_707
+/// - bettor_a: floor(701 * 1_707 / 1_034) = 1_157
+/// - bettor_b: floor(333 * 1_707 / 1_034) = 549
+///
+/// The two floored claims leave 1 unit of dust, so the contract ends up holding
+/// fee + dust = 44; the treasury can take the 43 fee but not more than is held.
+#[test]
+fn test_lifecycle_odd_amounts_balances_and_state_at_every_step() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let ac_id = env.register(crate::test::dummy_access_control::DummyAccessControl, ());
+    let ac_client = crate::test::dummy_access_control::DummyAccessControlClient::new(&env, &ac_id);
+    let contract_id = env.register(crate::PredifiContract, ());
+    let client = crate::PredifiContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let operator = Address::generate(&env);
+    let creator = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    ac_client.grant_role(&operator, &crate::test::ROLE_OPERATOR);
+
+    let token_contract = env
+        .register_stellar_asset_contract_v2(Address::generate(&env))
+        .address();
+    let token = token::Client::new(&env, &token_contract);
+    let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+
+    // 1. init (2.5% fee): nothing held, no pools yet.
+    client.init(&ac_id, &treasury, &250u32, &0u64, &3600u64, &0u32);
+    client.add_token_to_whitelist(&admin, &token_contract);
+    assert_eq!(token.balance(&client.address), 0);
+    assert_eq!(client.get_active_pools_count(), 0);
+
+    // 2. create_pool: active and indexed, still no funds held.
+    let end_time = 5_000u64;
+    let pool_id = client.create_pool(
+        &creator,
+        &end_time,
+        &token_contract,
+        &3u32,
+        &symbol_short!("Tech"),
+        &PoolConfig {
+            start_time: 0,
+            description: String::from_str(&env, "Odd amounts lifecycle"),
+            metadata_url: String::from_str(&env, "ipfs://odd-amounts"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0i128,
+            min_total_stake: 1i128,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: vec![
+                &env,
+                String::from_str(&env, "A"),
+                String::from_str(&env, "B"),
+                String::from_str(&env, "C"),
+            ],
+        },
+    );
+    assert_eq!(client.get_pool(&pool_id).state, MarketState::Active);
+    assert_eq!(client.get_active_pools_count(), 1);
+    assert_eq!(token.balance(&client.address), 0);
+
+    // 3. place_prediction (multiple users): each stake moves from bettor to
+    // contract and the pool total tracks it.
+    let bettor_a = Address::generate(&env);
+    let bettor_b = Address::generate(&env);
+    let bettor_c = Address::generate(&env);
+    let bettor_d = Address::generate(&env);
+    let bets = [
+        (&bettor_a, 701i128, 0u32),
+        (&bettor_b, 333i128, 0u32),
+        (&bettor_c, 587i128, 1u32),
+        (&bettor_d, 129i128, 2u32),
+    ];
+
+    let mut pooled = 0i128;
+    for (bettor, amount, outcome) in bets {
+        token_admin_client.mint(bettor, &(amount + 100));
+        client.place_prediction(bettor, &pool_id, &amount, &outcome, &None, &None);
+        pooled += amount;
+        assert_eq!(token.balance(bettor), 100);
+        assert_eq!(token.balance(&client.address), pooled);
+        assert_eq!(client.get_pool(&pool_id).total_stake, pooled);
+    }
+    assert_eq!(pooled, 1_750);
+    assert_eq!(client.get_pool_participants_count(&pool_id), 4);
+    let outcome_stakes = client.get_pool_outcome_stakes(&pool_id);
+    assert_eq!(outcome_stakes, vec![&env, 1_034i128, 587i128, 129i128]);
+
+    // 4. close_staking and mark_pool_ready after the end time move no funds.
+    env.ledger().with_mut(|li| li.timestamp = end_time + 1);
+    client.close_staking(&pool_id);
+    assert_eq!(token.balance(&client.address), 1_750);
+    client.mark_pool_ready(&pool_id);
+    assert_eq!(token.balance(&client.address), 1_750);
+
+    // 5. resolve_pool: outcome 0 wins; the pool leaves the active set but
+    // nothing is paid out until claimed.
+    client.resolve_pool(&operator, &pool_id, &0u32);
+    assert_eq!(client.get_pool(&pool_id).state, MarketState::Resolved);
+    assert_eq!(client.get_active_pools_count(), 0);
+    assert_eq!(token.balance(&client.address), 1_750);
+
+    // 6. claim_winnings: winners are paid their floored share, losers get 0,
+    // and the contract balance drops by exactly what was paid.
+    assert_eq!(client.claim_winnings(&bettor_a, &pool_id), 1_157);
+    assert_eq!(token.balance(&bettor_a), 100 + 1_157);
+    assert_eq!(token.balance(&client.address), 1_750 - 1_157);
+
+    assert_eq!(client.claim_winnings(&bettor_b, &pool_id), 549);
+    assert_eq!(token.balance(&bettor_b), 100 + 549);
+    assert_eq!(token.balance(&client.address), 1_750 - 1_157 - 549);
+
+    assert_eq!(client.claim_winnings(&bettor_c, &pool_id), 0);
+    assert_eq!(client.claim_winnings(&bettor_d, &pool_id), 0);
+    assert_eq!(token.balance(&bettor_c), 100);
+    assert_eq!(token.balance(&bettor_d), 100);
+
+    // Fee (43) + rounding dust (1) is all that is left.
+    assert_eq!(token.balance(&client.address), 44);
+
+    // 7. withdraw_treasury: cannot take more than the contract holds, can take
+    // the fee, and the dust stays behind.
+    assert_eq!(
+        client.try_withdraw_treasury(&admin, &token_contract, &45i128, &treasury),
+        Err(Ok(crate::PredifiError::InsufficientBalance))
+    );
+    assert_eq!(token.balance(&client.address), 44);
+
+    client.withdraw_treasury(&admin, &token_contract, &43i128, &treasury);
+    assert_eq!(token.balance(&treasury), 43);
+    assert_eq!(token.balance(&client.address), 1);
 }

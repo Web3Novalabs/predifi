@@ -27,6 +27,8 @@ mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
 #[cfg(test)]
+mod safe_math_proptests;
+#[cfg(test)]
 mod access_control_audit_tests;
 #[cfg(test)]
 mod storage_test;
@@ -40,8 +42,8 @@ mod stress_test_high_volume;
 mod test_utils;
 #[cfg(test)]
 mod pause_unpause_boundary_tests;
-// #[cfg(test)]
-// mod max_pools_stress_tests;
+#[cfg(test)]
+mod max_pools_stress_tests;
 #[cfg(test)]
 mod update_pool_description_boundary_tests;
 #[cfg(test)]
@@ -1330,6 +1332,8 @@ mod pool_and_fee_boundary_tests;
 mod claim_and_whitelist_boundary_tests;
 #[cfg(test)]
 mod issues_1878_1879_1884_1885_boundary_tests;
+#[cfg(test)]
+mod lifecycle_integration_tests;
 #[cfg(test)]
 mod referral_integration_tests;
 #[cfg(test)]
