@@ -1325,7 +1325,9 @@ impl PredifiContract {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
-mod issues_1446_1447_1448_1449_boundary_tests;
+mod pool_and_fee_boundary_tests;
+#[cfg(test)]
+mod claim_and_whitelist_boundary_tests;
 #[cfg(test)]
 mod issues_1878_1879_1884_1885_boundary_tests;
 #[cfg(test)]
