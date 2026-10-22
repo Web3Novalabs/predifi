@@ -12,9 +12,10 @@
 //! ```
 
 use sqlx::PgPool;
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, instrument, warn, Span};
 
 use crate::config::Config;
+use crate::tracing_context;
 
 /// Result of a single pool sync operation.
 #[derive(Debug)]
@@ -33,9 +34,12 @@ pub struct PoolSyncResult {
 /// RPC helper. Returns `None` if the pool is not found on-chain.
 ///
 /// This calls `get_pool_outcome_stakes` on the predifi contract and sums
-/// all outcome stakes to compute the total.
+/// all outcome stakes to compute the total. The request ID (correlation ID)
+/// from the current tracing context is propagated to the outbound RPC call
+/// so slow or failed RPC requests can be traced back to their originating
+/// HTTP request.
 #[instrument(skip(config), name = "sync.fetch_contract_total_stake",
-    fields(pool_id = pool_id))]
+    fields(pool_id = pool_id, correlation_id = ""))]
 async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64> {
     // Build the Soroban RPC request — we call `get_pool_outcome_stakes(pool_id)`.
     // The response is a map of outcome_index → stake_amount; we sum the values.
@@ -49,8 +53,24 @@ async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64
         }
     });
 
+    // Propagate the current request/correlation ID to the outbound RPC call.
+    // This allows slow or failed RPC requests to be traced back to the inbound
+    // HTTP request that triggered them.
+    let correlation_id = tracing_context::current_correlation_id();
+    if let Some(ref corr_id) = correlation_id {
+        Span::current().record("correlation_id", corr_id);
+    }
+
     let client = reqwest::Client::new();
-    let response = client.post(&rpc_url).json(&payload).send().await.ok()?;
+    let mut request = client.post(&rpc_url).json(&payload);
+
+    // Attach the correlation ID as a header if present so the RPC server
+    // can include it in its logs.
+    if let Some(corr_id) = correlation_id {
+        request = request.header(tracing_context::CORRELATION_ID_HEADER, corr_id);
+    }
+
+    let response = request.send().await.ok()?;
 
     let body: serde_json::Value = response.json().await.ok()?;
     parse_total_stake_from_rpc(&body)
