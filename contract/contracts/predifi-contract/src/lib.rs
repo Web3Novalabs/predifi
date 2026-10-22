@@ -251,6 +251,20 @@ pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1;
 //
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Error codes for the PrediFi contract.
+///
+/// # ⚠️ Append-Only Policy
+///
+/// The numeric codes assigned to each variant are **frozen** and read off-chain by
+/// the backend indexer and frontend. **DO NOT** reorder variants or insert new ones
+/// in the middle of the enum, as this will silently renumber all subsequent variants
+/// and break error handling in deployed systems.
+///
+/// When adding a new error variant:
+/// 1. **Always append at the end** of this enum.
+/// 2. Assign a unique numeric code that does not conflict with existing codes.
+/// 3. Update the golden file at `tests/error_codes_golden.txt`.
+/// 4. The test `error_codes_test.rs` will verify the codes.
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {

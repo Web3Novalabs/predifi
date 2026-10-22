@@ -1,0 +1,63 @@
+# PrediFi Error Code Golden File
+#
+# This file freezes the numeric codes assigned to each error variant.
+# DO NOT modify existing entries — error codes are read off-chain by the
+# backend indexer and frontend, and changing them silently breaks error
+# handling in deployed systems.
+#
+# When adding a new error variant:
+# 1. Append the entry at the end of this file.
+# 2. Assign a unique code that does not conflict with existing codes.
+# 3. DO NOT insert the variant in the middle of the enum.
+#
+# Format: VariantName = numeric_code
+
+AlreadyInitializedOrConfigNotSet = 2
+Unauthorized = 10
+PoolNotFound = 20
+PoolNotResolved = 22
+InvalidPoolState = 24
+InvalidOutcome = 25
+AlreadyClaimed = 60
+PoolCanceled = 70
+ResolutionDelayNotMet = 81
+TokenNotWhitelisted = 91
+InvalidAmount = 42
+InsufficientBalance = 44
+OracleNotInitialized = 100
+PriceFeedNotFound = 101
+PriceDataInvalid = 102
+PriceStale = 113
+PriceConditionNotSet = 103
+MaxTotalStakeExceeded = 104
+ResolutionConflict = 105
+OracleAlreadyVoted = 106
+StakeBelowMinimum = 107
+StakeAboveMaximum = 108
+InsufficientStake = 45
+MaxPredictionsExceeded = 111
+InvalidFeeBps = 93
+MetadataUrlInvalid = 109
+ArithmeticError = 110
+RequiredResolutionsExceedOperators = 200
+RateLimitOrSuspiciousActivity = 190
+InvalidPagination = 92
+InvalidData = 90
+InvalidTimestamp = 80
+PoolDisputed = 27
+InvalidTargetPrice = 201
+StakingStillOpen = 82
+TimeConstraintError = 84
+OutcomeDescriptionTooLong = 130
+OutcomeDescriptionEmpty = 131
+DeadlineInPast = 132
+InitialLiquidityBelowSafetyMargin = 133
+EmergencyCancelPending = 134
+EmergencyCancelAlreadyApproved = 135
+ContractPaused = 83
+InvalidAddressOrToken = 94
+FeeChangePending = 95
+NoFeeChangePending = 96
+TimelockNotExpired = 97
+MinParticipantsNotMet = 210
+CreatorIncentiveAlreadyPaid = 211
