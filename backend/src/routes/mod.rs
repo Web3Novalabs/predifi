@@ -284,4 +284,79 @@ mod tests {
             "should return an error envelope; got: {body}"
         );
     }
+
+    fn post_json(path: &str, body: &str) -> Request<axum::body::Body> {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_owned()))
+            .expect("failed to build request")
+    }
+
+    // ── POST /v1/waitlist (#2101) ────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn waitlist_invalid_email_returns_400() {
+        for email in ["", "nope", "a@b", "a b@c.com"] {
+            let body = format!(r#"{{"name":"Ada","email":"{email}"}}"#);
+            let response = build_router_without_db()
+                .oneshot(post_json("/v1/waitlist", &body))
+                .await
+                .expect("request failed");
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "email {email:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn waitlist_blank_name_returns_400() {
+        let response = build_router_without_db()
+            .oneshot(post_json(
+                "/v1/waitlist",
+                r#"{"name":"   ","email":"ada@example.com"}"#,
+            ))
+            .await
+            .expect("request failed");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn waitlist_missing_field_is_rejected() {
+        let response = build_router_without_db()
+            .oneshot(post_json("/v1/waitlist", r#"{"email":"ada@example.com"}"#))
+            .await
+            .expect("request failed");
+        assert!(response.status().is_client_error());
+    }
+
+    /// Validation runs before the DB check, and a valid request with no DB must
+    /// not claim success (503, never 200).
+    #[tokio::test]
+    async fn waitlist_valid_request_without_db_returns_503() {
+        let response = build_router_without_db()
+            .oneshot(post_json(
+                "/v1/waitlist",
+                r#"{"name":"Ada","email":"Ada@Example.com"}"#,
+            ))
+            .await
+            .expect("request failed");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_string(response.into_body()).await;
+        assert!(body.contains("database not available"), "got: {body}");
+    }
+
+    /// With a (lazy, unreachable) pool wired in, a valid request must reach the
+    /// insert rather than short-circuit.
+    #[tokio::test]
+    async fn waitlist_valid_request_with_lazy_db_attempts_insert() {
+        let response = build_router_with_lazy_db()
+            .oneshot(post_json(
+                "/v1/waitlist",
+                r#"{"name":"Ada","email":"ada@example.com"}"#,
+            ))
+            .await
+            .expect("request failed");
+        let body = body_string(response.into_body()).await;
+        assert!(!body.contains("database not available"), "got: {body}");
+    }
 }

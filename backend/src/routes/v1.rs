@@ -1530,6 +1530,7 @@ pub fn router(
             .route("/indexer/prediction-placed", post(ingest_prediction_placed))
             .route("/indexer/claim", post(ingest_claim_handler))
             .route("/pools/:id/tags", patch(update_pool_tags_handler))
+            .route("/waitlist", post(join_waitlist_handler))
             .with_state(state.clone()),
         RateLimitTier::Write,
     );
@@ -2117,6 +2118,55 @@ pub async fn upsert_user_email_handler(
             "email_enabled": enabled,
         }))
         .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
+// ── Waitlist (#2101) ─────────────────────────────────────────────────────────
+
+/// `POST /api/v1/waitlist` — join the pre-launch waitlist.
+///
+/// Body: `{ "name": "Ada", "email": "ada@example.com" }`
+///
+/// Returns 200 whether the email is new or already on the list, so the
+/// response cannot be used to find out who has signed up. Rate-limited in the
+/// Write tier.
+pub async fn join_waitlist_handler(
+    State(state): State<AppState>,
+    Json(body): Json<crate::waitlist::WaitlistRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let email = crate::waitlist::normalize_email(&body.email);
+    if !crate::waitlist::is_valid_email(&email) {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            "a valid email address is required",
+        )
+        .into_response();
+    }
+    if !crate::waitlist::is_valid_name(&body.name) {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            "a name of 1 to 100 characters is required",
+        )
+        .into_response();
+    }
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::waitlist::add_to_waitlist(db, body.name.trim(), &email).await {
+        Ok(()) => ApiResponse::success(json!({ "status": "ok" })).into_response(),
         Err(e) => internal_error_response(e),
     }
 }

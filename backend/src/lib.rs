@@ -35,6 +35,7 @@ pub mod tags;
 pub mod telemetry;
 pub mod tracing_context;
 pub mod validated_types;
+pub mod waitlist;
 pub mod worker;
 pub mod ws;
 
