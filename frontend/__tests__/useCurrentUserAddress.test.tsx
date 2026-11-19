@@ -1,7 +1,7 @@
 import { renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { useCurrentUserAddress } from "@/hooks/useCurrentUserAddress";
-import { WalletContext } from "@/context/WalletContext";
+import { useCurrentUserAddress } from "@/lib/hooks/useCurrentUserAddress";
+import { WalletContext } from "@/lib/context/WalletContext";
 
 const CONNECTED_ADDRESS = "0x1234567890abcdef1234567890abcdef12345678";
 
