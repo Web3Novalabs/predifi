@@ -18,6 +18,7 @@ const DEFAULT_STELLAR_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 const DEFAULT_TREASURY_FEE_BPS: u32 = 300;
 const DEFAULT_REFERRAL_FEE_BPS: u32 = 5000;
 const DEFAULT_REDIS_URL: &str = "redis://localhost:6379";
+const DEFAULT_TRUST_PROXY_HEADERS: bool = false;
 
 /// Origins allowed by default when `CORS_ALLOWED_ORIGINS` is not set.
 pub const DEFAULT_CORS_ORIGINS: &[&str] = &[
@@ -78,6 +79,13 @@ pub struct Config {
     pub sentry_dsn: Option<String>,
     /// Redis connection URL (default `redis://localhost:6379`).
     pub redis_url: String,
+    /// Whether to trust X-Forwarded-For and X-Real-IP headers for client IP identification.
+    ///
+    /// Set to `true` only if the server is behind a trusted reverse proxy that
+    /// strips and rewrites these headers. When enabled, uses the right-most IP
+    /// from X-Forwarded-For (added by the trusted proxy) or X-Real-IP. When
+    /// disabled (default), uses the peer socket address for rate limiting.
+    pub trust_proxy_headers: bool,
     /// Validated list of origins permitted by the CORS policy.
     ///
     /// Loaded from the `PREDIFI_CORS_ALLOWED_ORIGINS` environment variable as a
@@ -158,6 +166,7 @@ impl Config {
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
         let sentry_dsn = vars.get("PREDIFI_SENTRY_DSN").cloned();
         let redis_url = get_string(vars, "PREDIFI_REDIS_URL", DEFAULT_REDIS_URL);
+        let trust_proxy_headers = get_bool(vars, "PREDIFI_TRUST_PROXY_HEADERS", DEFAULT_TRUST_PROXY_HEADERS)?;
 
         // Parse and strictly validate CORS origins.
         let cors_allowed_origins = parse_cors_origins(vars)?;
@@ -192,6 +201,7 @@ impl Config {
             stellar_rpc_url,
             sentry_dsn,
             redis_url,
+            trust_proxy_headers,
             cors_allowed_origins,
         })
     }
@@ -228,6 +238,7 @@ impl Config {
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
+            trust_proxy_headers: DEFAULT_TRUST_PROXY_HEADERS,
             cors_allowed_origins: DEFAULT_CORS_ORIGINS.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -474,6 +485,27 @@ fn get_u64(
         Some(value) => value
             .parse::<u64>()
             .map_err(|err| to_number_error(key, value, err)),
+        None => Ok(default),
+    }
+}
+
+fn get_bool(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+    default: bool,
+) -> Result<bool, ConfigError> {
+    match vars.get(key) {
+        Some(value) => match value.to_lowercase().as_str() {
+            "true" | "1" | "yes" => Ok(true),
+            "false" | "0" | "no" => Ok(false),
+            _ => Err(ConfigError::InvalidValue {
+                key,
+                reason: format!(
+                    "must be 'true', 'false', '1', '0', 'yes', or 'no', got '{}'",
+                    value
+                ),
+            }),
+        },
         None => Ok(default),
     }
 }

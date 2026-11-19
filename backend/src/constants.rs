@@ -50,6 +50,21 @@ pub const RATE_LIMIT_BURST_SIZE: u32 = 100;
 /// while short enough to quickly mitigate attacks.
 pub const RATE_LIMIT_PERIOD_SECS: u64 = 900;
 
+/// Maximum number of concurrent WebSocket connection attempts per IP address.
+///
+/// Once this limit is reached, additional connection attempts from the same IP
+/// are rejected with HTTP 429 (Too Many Requests). This prevents a single
+/// attacker from exhausting the global `MAX_ACTIVE_CONNECTIONS` cap and
+/// locking out legitimate users.
+///
+/// ## Rationale
+///
+/// WebSocket connections are long-lived and resource-intensive. A malicious
+/// actor can open many connections with different headers (if headers are
+/// trusted) or from a single IP to deplete available connection slots.
+/// This per-IP limit ensures fair distribution of resources.
+pub const MAX_CONNECT_ATTEMPTS_PER_IP: u32 = 10;
+
 // ── Pagination ────────────────────────────────────────────────────────────────
 
 /// Default number of items returned per page when no `limit` is supplied.

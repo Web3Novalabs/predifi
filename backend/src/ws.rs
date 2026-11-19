@@ -5,6 +5,7 @@
 //! prediction is indexed; the WS handler at `GET /ws` forwards each message
 //! to the client until the connection closes.
 
+use std::net::SocketAddr;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -13,8 +14,9 @@ use std::sync::{
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        ConnectInfo, State,
     },
+    http::StatusCode,
     response::IntoResponse,
 };
 use serde::Serialize;
@@ -75,13 +77,57 @@ impl EventBus {
     }
 }
 
-/// Axum handler — upgrades the HTTP connection to WebSocket and streams events.
-pub async fn ws_handler(ws: WebSocketUpgrade, State(bus): State<EventBus>) -> impl IntoResponse {
-    let span = info_span!("websocket.connect");
-    ws.on_upgrade(move |socket| handle_socket(socket, bus).instrument(span))
+/// Extract the client IP address from the request.
+///
+/// By default, uses the peer socket address. If proxy headers are trusted,
+/// reads X-Forwarded-For (using the right-most IP added by the trusted proxy)
+/// or X-Real-IP. This prevents a client from spoofing their IP unless headers
+/// are explicitly trusted (e.g., behind a reverse proxy).
+pub fn get_client_ip(
+    ConnectInfo(addr): &ConnectInfo<SocketAddr>,
+    trust_proxy_headers: bool,
+    headers: &axum::http::HeaderMap,
+) -> String {
+    if trust_proxy_headers {
+        // Check X-Forwarded-For first (right-most IP added by trusted proxy)
+        if let Some(forwarded) = headers.get("x-forwarded-for") {
+            if let Ok(forwarded_str) = forwarded.to_str() {
+                // X-Forwarded-For is comma-separated; take the right-most (last) one
+                if let Some(ip) = forwarded_str.rsplit(',').next() {
+                    return ip.trim().to_string();
+                }
+            }
+        }
+
+        // Fall back to X-Real-IP
+        if let Some(real_ip) = headers.get("x-real-ip") {
+            if let Ok(real_ip_str) = real_ip.to_str() {
+                return real_ip_str.to_string();
+            }
+        }
+    }
+
+    // Default: use peer socket address
+    addr.ip().to_string()
 }
 
-async fn handle_socket(mut socket: WebSocket, bus: EventBus) {
+/// Axum handler — upgrades the HTTP connection to WebSocket and streams events.
+pub async fn ws_handler(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    ws: WebSocketUpgrade,
+    State(bus): State<EventBus>,
+    State(config): State<Arc<crate::config::Config>>,
+) -> impl IntoResponse {
+    let span = info_span!("websocket.connect");
+    ws.on_upgrade(move |socket| handle_socket(socket, bus, addr, config).instrument(span))
+}
+
+async fn handle_socket(
+    mut socket: WebSocket,
+    bus: EventBus,
+    addr: SocketAddr,
+    config: Arc<crate::config::Config>,
+) {
     let mut rx = bus.subscribe();
 
     let count = bus.active_connections.fetch_add(1, Ordering::Relaxed) + 1;
