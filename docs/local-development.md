@@ -25,6 +25,20 @@ docker compose up
 | `redis`    | `localhost:6379`        |                                              |
 | `stellar`  | <http://localhost:8000> | Local network; Soroban RPC at `/rpc`          |
 
+### Running the frontend outside Docker
+
+The backend binds to port `3000` and `next dev` also defaults to `3000`, so
+start the frontend on a different port when you run it directly on the host:
+
+```bash
+cd frontend
+pnpm dev -p 3001   # matches the 3001:3000 mapping in docker-compose.yml
+```
+
+`NEXT_PUBLIC_API_BASE_URL` defaults to `http://localhost:3000` (the backend's
+`DEFAULT_PORT`), so no extra configuration is needed. Override it in
+`frontend/.env.local` if your backend runs elsewhere.
+
 The first `docker compose up` is slow: the Rust dependency tree is compiled
 from scratch and the Stellar quickstart image initialises its ledger. Both are
 cached in named volumes, so subsequent starts are fast.

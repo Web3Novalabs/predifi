@@ -1,8 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Button, Input } from "@/components/ui";
+import { Button, CopyButton, Input, useToastActions } from "@/components/ui";
 import { ShieldCheck } from "lucide-react";
+import { useWallet } from "@/lib/context/WalletContext";
+
+/** Shorten a Stellar address for display: `GABCDE…WXYZ`. */
+export function truncateAddress(address: string): string {
+  return address.length <= 12
+    ? address
+    : `${address.slice(0, 6)}…${address.slice(-4)}`;
+}
 
 interface PasswordValues {
   current: string;
@@ -25,6 +33,8 @@ function validate(values: PasswordValues): PasswordErrors {
 }
 
 export function SecuritySettings() {
+  const { address, connect, disconnect, isConnecting } = useWallet();
+  const { addToast } = useToastActions();
   const [values, setValues] = useState<PasswordValues>({
     current: "",
     next: "",
@@ -32,6 +42,15 @@ export function SecuritySettings() {
   });
   const [errors, setErrors] = useState<PasswordErrors>({});
   const [saved, setSaved] = useState(false);
+
+  function handleDisconnect() {
+    disconnect();
+    addToast({
+      variant: "success",
+      title: "Wallet disconnected",
+      description: "Your wallet has been disconnected.",
+    });
+  }
 
   function handleChange(field: keyof PasswordValues, value: string) {
     setValues((prev) => ({ ...prev, [field]: value }));
@@ -59,14 +78,52 @@ export function SecuritySettings() {
 
       {/* Wallet info */}
       <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-800/40 px-4 py-3">
-        <ShieldCheck className="h-5 w-5 text-primary shrink-0" />
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-white">Connected wallet</p>
-          <p className="text-xs text-zinc-500 truncate">0x0000…0000</p>
-        </div>
-        <Button variant="tertiary" size="small" className="ml-auto shrink-0">
-          Disconnect
-        </Button>
+        <ShieldCheck className="h-5 w-5 text-primary shrink-0" aria-hidden="true" />
+        {address ? (
+          <>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white">Connected wallet</p>
+              <div className="flex items-center gap-2 text-xs text-zinc-500">
+                <span title={address} data-testid="wallet-address">
+                  {truncateAddress(address)}
+                </span>
+                <CopyButton
+                  text={address}
+                  size="xs"
+                  aria-label="Copy wallet address"
+                  copyOptions={{ successDescription: "Wallet address copied to clipboard" }}
+                />
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="tertiary"
+              size="small"
+              className="ml-auto shrink-0"
+              onClick={handleDisconnect}
+            >
+              Disconnect
+            </Button>
+          </>
+        ) : (
+          <>
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white">No wallet connected</p>
+              <p className="text-xs text-zinc-500">
+                Connect a wallet to manage your connection.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="small"
+              className="ml-auto shrink-0"
+              disabled={isConnecting}
+              onClick={() => void connect()}
+            >
+              {isConnecting ? "Connecting…" : "Connect wallet"}
+            </Button>
+          </>
+        )}
       </div>
 
       {/* Change password */}

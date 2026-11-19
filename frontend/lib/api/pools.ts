@@ -18,7 +18,7 @@ import type { components } from "@/types/api";
  * the local backend default so the dashboard works out of the box in dev.
  */
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000";
 
 /** WebSocket base derived from the HTTP API base. */
 export function wsBaseUrl(): string {
