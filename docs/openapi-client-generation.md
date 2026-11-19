@@ -61,6 +61,34 @@ Frontend CI installs Rust and Node dependencies, generates API types, and runs
 OpenAPI schema change that breaks the pool client therefore fails frontend
 typechecking.
 
+### Why frontend CI needs a Rust toolchain
+
+The "Lint, Type Check & Unit Tests" job in `.github/workflows/frontend-ci.yml`
+installs Rust even though it never builds the backend server. That is not a
+leftover: `pnpm generate:api` runs `cargo run --bin predifi-openapi` to export
+the spec from `backend/src/openapi.rs`, because `SPEC` is not set in CI.
+Without Cargo on the runner the "Generate API types" step fails with
+`spawnSync cargo ENOENT`.
+
+To keep that cheap, the job caches the Cargo registry and `backend/target`
+under a `frontend-cargo-<hash of backend/Cargo.lock>` key, separate from the
+backend workflow's cache. A warm run only recompiles the crates whose sources
+changed in the PR.
+
+If you ever want frontend CI to stop compiling Rust, switch the step to the
+committed spec instead:
+
+```yaml
+- name: Generate API types
+  run: pnpm generate:api
+  env:
+    SPEC: ../backend/openapi.json
+```
+
+and then drop the toolchain and cache steps. The trade-off is that a backend
+schema change only reaches the frontend typecheck once `backend/openapi.json`
+is regenerated — which the backend workflow's `--check` step already enforces.
+
 Use generated types directly in client code:
 
 ```ts
