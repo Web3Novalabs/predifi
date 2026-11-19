@@ -97,7 +97,29 @@ async fn root() -> Json<serde_json::Value> {
     Json(json!({ "message": "Welcome to the PrediFi backend", "api": "/api/v1" }))
 }
 
-async fn metrics_handler(State(state): State<crate::routes::v1::AppState>) -> impl IntoResponse {
+async fn metrics_handler(
+    State(state): State<crate::routes::v1::AppState>,
+    headers: http::HeaderMap,
+) -> impl IntoResponse {
+    // When PREDIFI_METRICS_TOKEN is set, require a matching Bearer token.
+    // Comparison is constant-time to prevent timing attacks.
+    if let Some(expected) = &state.config.metrics_token {
+        let authorized = headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|token| constant_time_eq(token.as_bytes(), expected.as_bytes()))
+            .unwrap_or(false);
+
+        if !authorized {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                [(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                String::from("unauthorized"),
+            );
+        }
+    }
+
     match state.metrics.gather_text() {
         Ok(body) => (
             axum::http::StatusCode::OK,
@@ -112,7 +134,14 @@ async fn metrics_handler(State(state): State<crate::routes::v1::AppState>) -> im
     }
 }
 
-// ── Router builders ───────────────────────────────────────────────────────────
+/// Constant-time byte comparison to prevent timing attacks when validating
+/// bearer tokens.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
 
 /// Build the full router without a DB pool (for tests / rate-limit tests).
 ///

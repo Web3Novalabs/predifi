@@ -176,6 +176,15 @@ pub struct Config {
     pub ws_max_subscriber_lag: u64,
 
     // ── Email delivery (#1929) ────────────────────────────────────────────
+    /// Bearer token required to access `GET /metrics`.
+    ///
+    /// Read from `PREDIFI_METRICS_TOKEN`.  When `None` (the variable is unset
+    /// or empty), the endpoint is open — safe for local development where
+    /// Grafana/Prometheus scrape without credentials.  In production, set this
+    /// to a long random string and pass it in the Prometheus `bearer_token`
+    /// scrape config.  Comparison is constant-time to prevent timing attacks.
+    pub metrics_token: Option<String>,
+
     /// SMTP server hostname for outbound email delivery.  `None` disables
     /// email notifications.  Read from `PREDIFI_SMTP_HOST`.
     pub smtp_host: Option<String>,
@@ -311,6 +320,9 @@ impl Config {
 
         let app_env = get_string(vars, "PREDIFI_APP_ENV", DEFAULT_APP_ENV);
 
+        // ── Metrics token (#2086) ─────────────────────────────────────────────
+        let metrics_token = vars.get("PREDIFI_METRICS_TOKEN").cloned().filter(|s| !s.is_empty());
+
         // ── Email (#1929) ─────────────────────────────────────────────────────
         let smtp_host = vars.get("PREDIFI_SMTP_HOST").cloned().filter(|s| !s.is_empty());
         let smtp_port = get_u16(vars, "PREDIFI_SMTP_PORT", 587)?;
@@ -367,6 +379,7 @@ impl Config {
             smtp_username,
             smtp_password,
             smtp_from,
+            metrics_token,
         };
 
         config.validate()?;
@@ -691,6 +704,7 @@ impl Config {
             smtp_username: None,
             smtp_password: None,
             smtp_from: String::from("noreply@predifi.app"),
+            metrics_token: None,
         }
     }
 }
