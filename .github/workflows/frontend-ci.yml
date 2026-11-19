@@ -61,7 +61,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # This job does compile Rust (Issue #2109). `pnpm generate:api` runs
       # `frontend/scripts/generate-api-types.mjs`, which — unless `SPEC` is set
@@ -210,7 +210,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
