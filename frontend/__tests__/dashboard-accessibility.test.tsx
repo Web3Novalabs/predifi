@@ -1,19 +1,28 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { SWRConfig } from "swr";
 import { PredictionList } from "@/components/dashboard/PredictionList";
 
 jest.mock("@/components/ui/copy-button", () => ({
   CopyButton: () => <button type="button" aria-label="Copy prediction ID" />,
 }));
 
+jest.mock("@/lib/hooks/useCurrentUserAddress", () => ({
+  useCurrentUserAddress: () => undefined,
+}));
+
 describe("PredictionList accessibility", () => {
   it("exposes selected tabs and supports arrow-key navigation", () => {
-    render(<PredictionList />);
+    render(
+      <SWRConfig value={{ provider: () => new Map() }}>
+        <PredictionList />
+      </SWRConfig>,
+    );
 
     const activeTab = screen.getByRole("tab", { name: /Active Prediction/ });
     const pastTab = screen.getByRole("tab", { name: "Past Predictions" });
     expect(activeTab).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel")).toHaveAccessibleName(
-      "Active Prediction 6",
+      "Active Prediction 0",
     );
 
     fireEvent.keyDown(activeTab, { key: "ArrowRight" });
