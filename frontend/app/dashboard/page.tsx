@@ -35,8 +35,8 @@ import { DashboardMetrics } from "@/components/dashboard/DashboardMetrics";
  */
 const BalanceSection = dynamic(
   () =>
-    import("@/components/dashboard/BalanceSection").then(
-      (mod) => mod.BalanceSection,
+    import("@/components/dashboard/BalanceSectionContainer").then(
+      (mod) => mod.BalanceSectionContainer,
     ),
   {
     loading: () => (
