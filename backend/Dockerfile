@@ -4,7 +4,7 @@
 # Multi-stage build optimized for production deployment.
 # Uses layer caching to speed up rebuilds when only source code changes.
 
-FROM rust:1.85-bookworm@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS builder
+FROM rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 AS builder
 WORKDIR /app
 
 # Install build dependencies
@@ -17,17 +17,24 @@ RUN apt-get update && \
 # Copy dependency manifests first for better layer caching
 COPY Cargo.toml Cargo.lock ./
 
-# Create a dummy main.rs to build dependencies separately
-RUN mkdir -p src && \
+# Create dummy target files to build dependencies separately.
+RUN mkdir -p src/bin && \
     echo "fn main() {}" > src/main.rs && \
+    echo "fn main() {}" > src/bin/seed.rs && \
+    echo "fn main() {}" > src/bin/openapi_export.rs && \
+    echo "fn main() {}" > src/bin/migration_check.rs && \
+    touch src/lib.rs && \
     cargo build --release && \
     rm -rf src
 
-# Copy actual source code
+# Copy application sources and compile-time SQLx inputs.
 COPY src ./src
+COPY migrations ./migrations
+COPY .sqlx ./.sqlx
 
-# Build the application with optimizations
-RUN cargo build --release --locked && \
+# Refresh source mtimes so Cargo doesn't reuse the newer dummy-target artifacts.
+RUN find src -type f -exec touch {} + && \
+    cargo build --release --locked && \
     strip /app/target/release/predifi-backend
 
 # ── Runtime Stage ────────────────────────────────────────────────────────────

@@ -34,6 +34,7 @@ type ApiPool = components["schemas"]["PoolListResponse"]["pools"][number] & {
 type ApiPoolDetail = components["schemas"]["PoolWithOddsDoc"];
 type RuntimePoolDetail = Omit<ApiPoolDetail, "end_time"> & {
   end_time: string | number;
+  tags?: string[];
 };
 
 /** A single prediction-market pool, with backend timestamps normalized to Unix seconds. */
@@ -248,6 +249,8 @@ function isPoolDetail(obj: unknown): obj is RuntimePoolDetail {
     typeof pool.creator === "string" &&
     typeof pool.token === "string" &&
     (pool.result == null || typeof pool.result === "string") &&
+    (pool.tags == null ||
+      (Array.isArray(pool.tags) && pool.tags.every((tag) => typeof tag === "string"))) &&
     Array.isArray(pool.odds) &&
     pool.odds.every(isOutcomeOdds) &&
     Array.isArray(pool.outcome_descriptions) &&
@@ -296,6 +299,7 @@ export async function fetchPoolDetail(url: string, timeout?: number): Promise<Po
       typeof pool.end_time === "string"
         ? Math.floor(new Date(pool.end_time).getTime() / 1000)
         : pool.end_time,
+    tags: pool.tags ?? [],
     odds: pool.odds ?? [],
   };
 }

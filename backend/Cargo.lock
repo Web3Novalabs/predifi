@@ -2546,7 +2546,6 @@ dependencies = [
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "predifi-errors",
  "prometheus",
  "redis",
  "reqwest",
@@ -2566,13 +2565,6 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "uuid",
-]
-
-[[package]]
-name = "predifi-errors"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
 ]
 
 [[package]]
