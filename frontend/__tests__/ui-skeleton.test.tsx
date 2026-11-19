@@ -1,54 +1,59 @@
-import { render, screen } from "@testing-library/jest-dom";
-import { render as rtlRender } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { Skeleton, SkeletonText, SkeletonCircle } from "@/components/ui/skeleton";
 
 describe("Skeleton", () => {
   it("renders", () => {
-    rtlRender(<Skeleton data-testid="skeleton" />);
-    expect(screen.getByTestId("skeleton")).toBeInTheDocument();
+    render(
+      <div role="status" aria-label="Loading content">
+        <Skeleton />
+      </div>,
+    );
+    expect(
+      screen.getByRole("status", { name: "Loading content" }).firstElementChild,
+    ).toBeInTheDocument();
   });
 
   it("accepts a className", () => {
-    rtlRender(<Skeleton data-testid="skeleton" className="custom-class" />);
-    expect(screen.getByTestId("skeleton")).toHaveClass("custom-class");
+    const { container } = render(<Skeleton className="custom-class" />);
+    expect(container.firstChild).toHaveClass("custom-class");
   });
 
-  it("exposes an accessible busy state", () => {
-    rtlRender(<Skeleton data-testid="skeleton" />);
-    expect(screen.getByTestId("skeleton")).toHaveAttribute("aria-busy", "true");
+  it("is hidden from assistive technology because it is decorative", () => {
+    const { container } = render(<Skeleton />);
+    expect(container.firstChild).toHaveAttribute("aria-hidden", "true");
   });
 });
 
 describe("SkeletonText", () => {
   it("renders", () => {
-    rtlRender(<SkeletonText data-testid="skeleton-text" />);
-    expect(screen.getByTestId("skeleton-text")).toBeInTheDocument();
+    const { container } = render(<SkeletonText />);
+    expect(container.firstChild).toBeInTheDocument();
   });
 
   it("accepts a className", () => {
-    rtlRender(<SkeletonText data-testid="skeleton-text" className="custom-class" />);
-    expect(screen.getByTestId("skeleton-text")).toHaveClass("custom-class");
+    const { container } = render(<SkeletonText className="custom-class" />);
+    expect(container.firstChild).toHaveClass("custom-class");
   });
 
-  it("exposes an accessible busy state", () => {
-    rtlRender(<SkeletonText data-testid="skeleton-text" />);
-    expect(screen.getByTestId("skeleton-text")).toHaveAttribute("aria-busy", "true");
+  it("hides its decorative lines from assistive technology", () => {
+    const { container } = render(<SkeletonText />);
+    expect(container.querySelectorAll('[aria-hidden="true"]')).toHaveLength(3);
   });
 });
 
 describe("SkeletonCircle", () => {
   it("renders", () => {
-    rtlRender(<SkeletonCircle data-testid="skeleton-circle" />);
-    expect(screen.getByTestId("skeleton-circle")).toBeInTheDocument();
+    const { container } = render(<SkeletonCircle />);
+    expect(container.firstChild).toBeInTheDocument();
   });
 
   it("accepts a className", () => {
-    rtlRender(<SkeletonCircle data-testid="skeleton-circle" className="custom-class" />);
-    expect(screen.getByTestId("skeleton-circle")).toHaveClass("custom-class");
+    const { container } = render(<SkeletonCircle className="custom-class" />);
+    expect(container.firstChild).toHaveClass("custom-class");
   });
 
-  it("exposes an accessible busy state", () => {
-    rtlRender(<SkeletonCircle data-testid="skeleton-circle" />);
-    expect(screen.getByTestId("skeleton-circle")).toHaveAttribute("aria-busy", "true");
+  it("is hidden from assistive technology because it is decorative", () => {
+    const { container } = render(<SkeletonCircle />);
+    expect(container.firstChild).toHaveAttribute("aria-hidden", "true");
   });
 });
