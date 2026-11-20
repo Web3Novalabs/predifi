@@ -966,6 +966,36 @@ pub struct PredictionPlacedPayload {
     pub amount: i64,
 }
 
+/// Validate the self-contained fields of a prediction event.
+fn validate_prediction_payload(payload: &PredictionPlacedPayload) -> Result<(), &'static str> {
+    BoundedI64::<1, { i64::MAX }>::new(payload.amount)
+        .map_err(|_| "amount must be greater than zero")?;
+    if payload.outcome < 0 {
+        return Err("outcome must not be negative");
+    }
+    Ok(())
+}
+
+/// Outcome-range failure modes, mapped to HTTP responses by the handler.
+#[derive(Debug, PartialEq)]
+enum OutcomeRangeError {
+    UnknownPool,
+    OutOfRange,
+}
+
+/// Check an outcome against the pool's option count. `None` means the pool is
+/// not known to the database.
+fn validate_outcome_against_pool(
+    options_count: Option<i32>,
+    outcome: i32,
+) -> Result<(), OutcomeRangeError> {
+    match options_count {
+        None => Err(OutcomeRangeError::UnknownPool),
+        Some(count) if outcome >= count => Err(OutcomeRangeError::OutOfRange),
+        Some(_) => Ok(()),
+    }
+}
+
 /// `POST /api/v1/indexer/prediction-placed` — ingest a decoded prediction event and update DB state.
 pub async fn ingest_prediction_placed(
     State(state): State<AppState>,
@@ -973,6 +1003,11 @@ pub async fn ingest_prediction_placed(
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    if let Err(message) = validate_prediction_payload(&payload) {
+        return ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, message)
+            .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -982,6 +1017,38 @@ pub async fn ingest_prediction_placed(
         )
         .into_response();
     };
+
+    let pool_id = payload.pool_id as i64;
+    let options_count: Option<i32> = match sqlx::query_scalar(
+        "SELECT options_count FROM pools WHERE pool_id = $1",
+    )
+    .bind(pool_id)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(count) => count,
+        Err(e) => return internal_error_response(e),
+    };
+
+    match validate_outcome_against_pool(options_count, payload.outcome) {
+        Ok(()) => {}
+        Err(OutcomeRangeError::UnknownPool) => {
+            return ApiResponse::<()>::error(
+                StatusCode::NOT_FOUND,
+                error_codes::NOT_FOUND,
+                "pool not found",
+            )
+            .into_response();
+        }
+        Err(OutcomeRangeError::OutOfRange) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                "outcome is outside the pool's options",
+            )
+            .into_response();
+        }
+    }
 
     let event = PredictionPlacedEvent {
         pool_id: payload.pool_id,
@@ -1009,6 +1076,100 @@ pub async fn ingest_prediction_placed(
             ApiResponse::success(response).into_response()
         }
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod prediction_ingest_validation_tests {
+    use super::*;
+    use axum::{extract::Json, http::StatusCode};
+    use std::sync::Arc;
+
+    fn valid_address() -> StellarAddress {
+        use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+        let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend_from_slice(&[0xAB; 32]);
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        StellarAddress::new(base32_encode(&bytes)).expect("valid test address")
+    }
+
+    fn test_state() -> AppState {
+        AppState {
+            config: Arc::new(Config::default_for_test()),
+            cache: PriceCache::new(),
+            pool_cache: PoolCache::with_negative_ttl(std::time::Duration::from_secs(60)),
+            redis: RedisCache::disabled(),
+            db: None,
+            metrics: Arc::new(crate::metrics::Metrics::new().expect("metrics")),
+            event_bus: crate::ws::EventBus::new(),
+        }
+    }
+
+    async fn call_handler(amount: i64, outcome: i32) -> (StatusCode, String) {
+        let response = ingest_prediction_placed(
+            State(test_state()),
+            Json(PredictionPlacedPayload {
+                pool_id: 1,
+                user_address: valid_address(),
+                outcome,
+                amount,
+            }),
+        )
+        .await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn rejects_zero_and_negative_amounts() {
+        for amount in [0, -1] {
+            let (status, body) = call_handler(amount, 0).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert!(body.contains(error_codes::INVALID_INPUT));
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_negative_outcome() {
+        let (status, body) = call_handler(100, -1).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains(error_codes::INVALID_INPUT));
+    }
+
+    #[tokio::test]
+    async fn valid_payload_passes_validation() {
+        let payload = PredictionPlacedPayload {
+            pool_id: 1,
+            user_address: valid_address(),
+            outcome: 1,
+            amount: 100,
+        };
+        assert_eq!(validate_prediction_payload(&payload), Ok(()));
+        assert_eq!(validate_outcome_against_pool(Some(2), 1), Ok(()));
+        // With no DB configured the handler reaches the DB check and returns
+        // 503, which proves the payload was not rejected as invalid input.
+        let (status, _) = call_handler(100, 1).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn rejects_outcome_at_or_above_options_count() {
+        assert_eq!(
+            validate_outcome_against_pool(Some(2), 2),
+            Err(OutcomeRangeError::OutOfRange)
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_pool() {
+        assert_eq!(
+            validate_outcome_against_pool(None, 0),
+            Err(OutcomeRangeError::UnknownPool)
+        );
     }
 }
 
@@ -1393,6 +1554,15 @@ pub async fn ingest_claim_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    if BoundedI64::<0, { i64::MAX }>::new(payload.amount_paid).is_err() {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            "amount_paid must not be negative",
+        )
+        .into_response();
+    }
+
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1414,6 +1584,71 @@ pub async fn ingest_claim_handler(
             ApiResponse::success(json!({ "status": "ok", "rows_updated": rows })).into_response()
         }
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod claim_ingest_validation_tests {
+    use super::*;
+    use axum::{extract::Json, http::StatusCode};
+    use std::sync::Arc;
+
+    fn valid_address() -> StellarAddress {
+        use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+        let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend_from_slice(&[0xAB; 32]);
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        StellarAddress::new(base32_encode(&bytes)).expect("valid test address")
+    }
+
+    async fn call_handler(amount_paid: i64) -> (StatusCode, String) {
+        let state = AppState {
+            config: Arc::new(Config::default_for_test()),
+            cache: PriceCache::new(),
+            pool_cache: PoolCache::with_negative_ttl(std::time::Duration::from_secs(60)),
+            redis: RedisCache::disabled(),
+            db: None,
+            metrics: Arc::new(crate::metrics::Metrics::new().expect("metrics")),
+            event_bus: crate::ws::EventBus::new(),
+        };
+        let response = ingest_claim_handler(
+            State(state),
+            Json(ClaimPayload {
+                pool_id: 1,
+                user_address: valid_address(),
+                amount_paid,
+            }),
+        )
+        .await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn rejects_negative_amount_paid() {
+        let (status, body) = call_handler(-1).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains(error_codes::INVALID_INPUT));
+    }
+
+    #[tokio::test]
+    async fn accepts_zero_amount_paid() {
+        // No DB is configured in this test, so a valid payload reaches the
+        // database check and returns 503 rather than a validation error.
+        let (status, body) = call_handler(0).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!body.contains(error_codes::INVALID_INPUT));
+    }
+
+    #[tokio::test]
+    async fn accepts_positive_amount_paid() {
+        let (status, body) = call_handler(2_500_000).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!body.contains(error_codes::INVALID_INPUT));
     }
 }
 
@@ -2192,8 +2427,32 @@ mod pools_pagination_tests {
 
 // ── User email registration (#1929) ──────────────────────────────────────────
 
-/// `GET /api/v1/users/:address/email` — retrieve the registered email and
-/// opt-in state for a user.
+/// Mask an email address for public responses: keep only the first character
+/// of the local part, so `user@example.com` becomes `u***@example.com`.
+fn mask_email(email: &str) -> String {
+    let Some((local, domain)) = email.split_once('@') else {
+        return "***".to_string();
+    };
+    let first = local.chars().next().map(|c| c.to_string()).unwrap_or_default();
+    format!("{first}***@{domain}")
+}
+
+/// Build the public email-preferences response. The full address is never
+/// exposed here; an authenticated owner check is required before that can
+/// change.
+fn user_email_response(address: &str, email: &str, enabled: bool) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    ApiResponse::success(json!({
+        "address": address,
+        "email": mask_email(email),
+        "email_enabled": enabled,
+        "has_email": true,
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/users/:address/email` — retrieve the masked registered email
+/// and opt-in state for a user.
 pub async fn get_user_email_handler(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
@@ -2211,12 +2470,7 @@ pub async fn get_user_email_handler(
     };
 
     match crate::notifications::get_user_email(db, address.as_str()).await {
-        Ok(Some((email, enabled))) => ApiResponse::success(json!({
-            "address": address,
-            "email": email,
-            "email_enabled": enabled,
-        }))
-        .into_response(),
+        Ok(Some((email, enabled))) => user_email_response(address.as_str(), &email, enabled),
         Ok(None) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
@@ -2301,7 +2555,29 @@ pub async fn upsert_user_email_handler(
 
 #[cfg(test)]
 mod email_validation_tests {
-    use super::normalize_email;
+    use super::{mask_email, normalize_email, user_email_response};
+
+    #[tokio::test]
+    async fn public_email_response_never_contains_unmasked_address() {
+        let response = user_email_response(
+            "GBZXN7PIRZGNMHGA728JAGEL2OC4AHFAXE2XZ2VY5UZWFEXU272K5635",
+            "user@example.com",
+            true,
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains("u***@example.com"));
+        assert!(!body.contains("user@example.com"));
+        assert!(body.contains("has_email"));
+    }
+
+    #[test]
+    fn masks_email_local_part() {
+        assert_eq!(mask_email("user@example.com"), "u***@example.com");
+        assert_eq!(mask_email("a@sub.example.co.uk"), "a***@sub.example.co.uk");
+    }
 
     #[test]
     fn rejects_malformed_and_oversized_addresses() {

@@ -54,6 +54,7 @@ export function NotificationSettings() {
   );
 
   const [emailInput, setEmailInput] = useState("");
+  const [maskedEmail, setMaskedEmail] = useState("");
   const [emailEnabled, setEmailEnabled] = useState(true);
   const [emailSaving, setEmailSaving] = useState(false);
   const [emailSaved, setEmailSaved] = useState(false);
@@ -62,7 +63,10 @@ export function NotificationSettings() {
   // Initialise fields once data loads
   useEffect(() => {
     if (emailPrefs) {
-      setEmailInput(emailPrefs.email);
+      // The public GET endpoint only returns a masked address. Show it as a
+      // placeholder instead of pre-filling the editable input, otherwise saving
+      // would overwrite the stored email with the masked value.
+      setMaskedEmail(emailPrefs.has_email ? emailPrefs.email : "");
       setEmailEnabled(emailPrefs.email_enabled);
     }
   }, [emailPrefs]);
@@ -159,7 +163,7 @@ export function NotificationSettings() {
                 type="email"
                 value={emailInput}
                 onChange={(e) => setEmailInput(e.target.value)}
-                placeholder="you@example.com"
+                placeholder={maskedEmail || "you@example.com"}
                 className="w-full rounded-md bg-zinc-800 border border-zinc-700 px-3 py-2 text-sm text-white placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-[#37B7C3]/50"
               />
             </div>
