@@ -1554,6 +1554,15 @@ pub async fn ingest_claim_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    if BoundedI64::<0, { i64::MAX }>::new(payload.amount_paid).is_err() {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            "amount_paid must not be negative",
+        )
+        .into_response();
+    }
+
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1575,6 +1584,71 @@ pub async fn ingest_claim_handler(
             ApiResponse::success(json!({ "status": "ok", "rows_updated": rows })).into_response()
         }
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod claim_ingest_validation_tests {
+    use super::*;
+    use axum::{extract::Json, http::StatusCode};
+    use std::sync::Arc;
+
+    fn valid_address() -> StellarAddress {
+        use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+        let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend_from_slice(&[0xAB; 32]);
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        StellarAddress::new(base32_encode(&bytes)).expect("valid test address")
+    }
+
+    async fn call_handler(amount_paid: i64) -> (StatusCode, String) {
+        let state = AppState {
+            config: Arc::new(Config::default_for_test()),
+            cache: PriceCache::new(),
+            pool_cache: PoolCache::with_negative_ttl(std::time::Duration::from_secs(60)),
+            redis: RedisCache::disabled(),
+            db: None,
+            metrics: Arc::new(crate::metrics::Metrics::new().expect("metrics")),
+            event_bus: crate::ws::EventBus::new(),
+        };
+        let response = ingest_claim_handler(
+            State(state),
+            Json(ClaimPayload {
+                pool_id: 1,
+                user_address: valid_address(),
+                amount_paid,
+            }),
+        )
+        .await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn rejects_negative_amount_paid() {
+        let (status, body) = call_handler(-1).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains(error_codes::INVALID_INPUT));
+    }
+
+    #[tokio::test]
+    async fn accepts_zero_amount_paid() {
+        // No DB is configured in this test, so a valid payload reaches the
+        // database check and returns 503 rather than a validation error.
+        let (status, body) = call_handler(0).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!body.contains(error_codes::INVALID_INPUT));
+    }
+
+    #[tokio::test]
+    async fn accepts_positive_amount_paid() {
+        let (status, body) = call_handler(2_500_000).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!body.contains(error_codes::INVALID_INPUT));
     }
 }
 
