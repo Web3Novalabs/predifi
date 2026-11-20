@@ -1,5 +1,5 @@
 import { renderHook, act } from '@testing-library/react';
-import { useContainerSize } from '../hooks/useContainerSize';
+import { useContainerSize } from '../lib/hooks/useContainerSize';
 
 // jsdom does not implement ResizeObserver, so provide a minimal mock that
 // lets tests manually trigger the observer callback.
@@ -26,8 +26,7 @@ class MockResizeObserver implements ResizeObserver {
 }
 
 beforeAll(() => {
-  // @ts-expect-error assigning mock to global for jsdom environment
-  global.ResizeObserver = MockResizeObserver;
+  (globalThis as { ResizeObserver: unknown }).ResizeObserver = MockResizeObserver;
 });
 
 afterEach(() => {
