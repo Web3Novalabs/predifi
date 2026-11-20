@@ -141,7 +141,7 @@ pub async fn get_active_pools(
 
 /// Fetch pools matching optional category and status filters with a sort order.
 ///
-/// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"` (default).  
+/// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"` (default).
 /// `status` accepts `"active"`, `"closed"`, or `"settled"` (defaults to `"active"`).
 ///
 /// # Security
