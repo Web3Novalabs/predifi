@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
+use subtle::ConstantTimeEq;
+
 use crate::config::Config;
 use crate::db::PoolCreatedEvent;
 use crate::db::PredictionPlacedEvent;
@@ -148,8 +150,8 @@ pub struct SetLogLevelResponse {
 ///
 /// Restricted to callers that present a valid admin API key in the
 /// `x-admin-api-key` header.  The key must match the `PREDIFI_ADMIN_API_KEY`
-/// environment variable.  Returns 401 when the header is absent or does not
-/// match.
+/// value loaded into [`Config`] at startup. Returns 401 when the header is
+/// absent or does not match. Comparison is constant-time.
 ///
 /// The new level is applied immediately and remains in effect until the next
 /// change or a process restart (which reverts to the configured default).
@@ -161,16 +163,17 @@ pub async fn set_log_level(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let admin_key = std::env::var("PREDIFI_ADMIN_API_KEY").ok();
-
     let provided = headers
         .get("x-admin-api-key")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+        .filter(|s| !s.is_empty());
 
-    let authenticated = match (&admin_key, provided) {
-        (Some(expected), Some(provided)) if expected == &provided => true,
+    let authenticated = match (&state.config.admin_api_key, provided) {
+        (Some(expected), Some(provided)) => bool::from(
+            expected
+                .as_bytes()
+                .ct_eq(provided.as_bytes()),
+        ),
         _ => false,
     };
 
