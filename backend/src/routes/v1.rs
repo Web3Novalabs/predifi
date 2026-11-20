@@ -1095,12 +1095,28 @@ pub async fn get_creator_stats_handler(
 /// `POST /api/v1/pools/:id/pay-creator-incentive` — pay out a pool creator's
 /// incentive share once the pool has reached its participation threshold.
 /// Idempotent: a second call after payout is a no-op.
+///
+/// Internal callers only (#2069): payouts are triggered by the indexer, so the
+/// `x-indexer-key` header is required; the admin credential (`x-admin-api-key`)
+/// is also accepted for operational recovery. Rate-limited in the Write tier.
 pub async fn pay_creator_incentive_handler(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(pool_id): Path<i64>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let authenticated = has_admin_credential(&headers)
+        || has_indexer_credential(&headers, state.config.indexer_api_key.as_deref());
+    if !authenticated {
+        return ApiResponse::<()>::error(
+            StatusCode::UNAUTHORIZED,
+            error_codes::UNAUTHORIZED,
+            "internal credentials required",
+        )
+        .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1593,13 +1609,26 @@ pub fn router(
         RateLimitTier::User,
     );
 
-    // Write tier — indexer ingest (typically internal, strictest limit).
+    // Write tier — internal writes (strictest limit). All indexer ingest routes
+    // share a single auth middleware; see `require_indexer_key` (#2062).
+    let indexer = Router::new()
+        .route("/indexer/pool-created", post(ingest_pool_created))
+        .route("/indexer/prediction-placed", post(ingest_prediction_placed))
+        .route("/indexer/claim", post(ingest_claim_handler))
+        .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_indexer_key,
+        ));
+
     let write = with_rate_limit(
         Router::new()
-            .route("/indexer/pool-created", post(ingest_pool_created))
-            .route("/indexer/prediction-placed", post(ingest_prediction_placed))
-            .route("/indexer/claim", post(ingest_claim_handler))
+            .merge(indexer)
             .route("/pools/:id/tags", patch(update_pool_tags_handler))
+            .route(
+                "/pools/:id/pay-creator-incentive",
+                post(pay_creator_incentive_handler),
+            )
             .route("/waitlist", post(join_waitlist_handler))
             .with_state(state.clone()),
         RateLimitTier::Write,
@@ -1611,10 +1640,6 @@ pub fn router(
     // server at startup.
     Router::new()
         .route("/creators/:address/stats", get(get_creator_stats_handler))
-        .route(
-            "/pools/:id/pay-creator-incentive",
-            post(pay_creator_incentive_handler),
-        )
         .route(
             "/pool-templates",
             get(list_pool_templates_handler).post(create_pool_template_handler),
