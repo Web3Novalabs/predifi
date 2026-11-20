@@ -31,12 +31,29 @@ const INITIAL_RECONNECT_DELAY_SECS: u64 = 1;
 const MAX_RECONNECT_DELAY_SECS: u64 = 60;
 /// Maximum number of events to request per `getEvents` page.
 const PAGE_LIMIT: u64 = 100;
+/// Number of ledgers to replay when initializing from the current RPC tip.
+const START_LEDGER_BUFFER: u64 = 100;
 
 // ── RPC response types ────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct RpcResponse {
-    result: Option<GetEventsResult>,
+struct RpcResponse<T> {
+    result: Option<T>,
+    #[serde(default)]
+    error: Option<RpcError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RpcError {
+    code: i64,
+    message: String,
+    #[serde(default)]
+    data: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LatestLedgerResult {
+    sequence: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,6 +64,56 @@ struct GetEventsResult {
     /// Opaque paging token returned by the RPC when more events are available.
     /// Present only when the result set was truncated; absent on the last page.
     cursor: Option<String>,
+}
+
+fn rpc_response_result<T>(rpc: RpcResponse<T>, empty_result_message: &str) -> Result<T, String> {
+    match (rpc.result, rpc.error) {
+        (Some(result), _) => Ok(result),
+        (None, Some(error)) => {
+            let detail = error
+                .data
+                .map(|data| format!(" ({data})"))
+                .unwrap_or_default();
+            Err(format!(
+                "RPC error {}: {}{}",
+                error.code, error.message, detail
+            ))
+        }
+        (None, None) => Err(empty_result_message.to_string()),
+    }
+}
+
+fn is_start_ledger_out_of_range(error: &str) -> bool {
+    let normalized = error
+        .to_ascii_lowercase()
+        .replace('_', " ")
+        .replace('-', " ");
+    normalized.contains("out of range")
+        || (normalized.contains("outside") && normalized.contains("ledger"))
+        || normalized.contains("oldest ledger")
+}
+
+fn select_start_ledger(
+    stored_cursor: Option<u64>,
+    configured_start: Option<u64>,
+    latest_ledger: Option<u64>,
+) -> Option<u64> {
+    stored_cursor
+        .or(configured_start)
+        .or_else(|| latest_ledger.map(recent_start_ledger))
+}
+
+fn recent_start_ledger(latest_ledger: u64) -> u64 {
+    latest_ledger.saturating_sub(START_LEDGER_BUFFER).max(1)
+}
+
+fn recovery_start_ledger(current_cursor: u64, latest_ledger: u64) -> u64 {
+    let latest_ledger = latest_ledger.max(1);
+    if latest_ledger == current_cursor {
+        latest_ledger.saturating_sub(1).max(1)
+    } else {
+        latest_ledger
+    }
 }
 
 /// A single event returned by the Stellar RPC `getEvents` call.
@@ -149,8 +216,27 @@ async fn fetch_events(
         .await
         .map_err(|e| e.to_string())?;
 
-    let rpc: RpcResponse = resp.json().await.map_err(|e| e.to_string())?;
-    rpc.result.ok_or_else(|| "empty RPC result".to_string())
+    let rpc: RpcResponse<GetEventsResult> = resp.json().await.map_err(|e| e.to_string())?;
+    rpc_response_result(rpc, "empty RPC result")
+}
+
+async fn get_latest_ledger(client: &reqwest::Client, rpc_url: &str) -> Result<u64, String> {
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getLatestLedger",
+        "params": {},
+    });
+
+    let resp = client
+        .post(rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let rpc: RpcResponse<LatestLedgerResult> = resp.json().await.map_err(|e| e.to_string())?;
+    rpc_response_result(rpc, "empty getLatestLedger RPC result").map(|result| result.sequence)
 }
 
 // ── Worker entry point ────────────────────────────────────────────────────────
@@ -194,11 +280,7 @@ fn reconnect_delay_secs(consecutive_failures: u32) -> u64 {
         .min(MAX_RECONNECT_DELAY_SECS)
 }
 
-/// The main polling loop for the Stellar event listener.
-///
-/// Exposed as `pub` so [`crate::server::run_with_signal`] can invoke it
-/// inside a [`crate::tracing_context::spawn_worker`] closure, which roots the
-/// entire listener under a named OTel span without double-spawning.
+/// Run the listener using its default start-ledger selection.
 pub async fn run_worker(
     rpc_url: String,
     db: PgPool,
@@ -207,14 +289,70 @@ pub async fn run_worker(
     timeout: Duration,
     max_batch_size: usize,
 ) {
+    run_worker_with_start_ledger(
+        rpc_url,
+        db,
+        event_bus,
+        redis,
+        timeout,
+        max_batch_size,
+        None,
+    )
+    .await;
+}
+
+/// The main polling loop for the Stellar event listener.
+///
+/// Exposed so [`crate::server::run_with_signal`] can pass the configured
+/// initial cursor while rooting the listener under a named worker span.
+pub(crate) async fn run_worker_with_start_ledger(
+    rpc_url: String,
+    db: PgPool,
+    event_bus: crate::ws::EventBus,
+    redis: RedisCache,
+    timeout: Duration,
+    max_batch_size: usize,
+    configured_start_ledger: Option<u64>,
+) {
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
         .expect("valid reqwest client");
     let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
 
-    // Resume from the last persisted ledger, or start from ledger 1.
-    let mut cursor: u64 = load_cursor(&db).await.unwrap_or(1);
+    let stored_cursor = load_cursor(&db).await;
+    let mut cursor = match select_start_ledger(stored_cursor, configured_start_ledger, None) {
+        Some(cursor) => cursor,
+        None => {
+            let mut consecutive_failures = 0;
+            loop {
+                match get_latest_ledger(&client, &rpc_url).await {
+                    Ok(latest_ledger) => {
+                        let cursor = recent_start_ledger(latest_ledger);
+                        info!(
+                            latest_ledger,
+                            cursor,
+                            buffer_ledgers = START_LEDGER_BUFFER,
+                            "initializing stellar listener near latest ledger"
+                        );
+                        break cursor;
+                    }
+                    Err(error) => {
+                        consecutive_failures += 1;
+                        let delay = reconnect_delay_secs(consecutive_failures);
+                        error!(
+                            error = %error,
+                            consecutive_failures,
+                            delay_secs = delay,
+                            "failed to get latest stellar ledger for listener initialization"
+                        );
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
+                    }
+                }
+            }
+        }
+    };
+    save_cursor(&db, cursor).await;
     let mut consecutive_failures: u32 = 0;
     let batch_size = max_batch_size.max(1);
     info!(cursor, batch_size, "stellar listener starting");
@@ -298,6 +436,35 @@ pub async fn run_worker(
                 }
             }
             Err(e) => {
+                if is_start_ledger_out_of_range(&e) {
+                    error!(
+                        error = %e,
+                        cursor,
+                        configured_start_ledger = ?configured_start_ledger,
+                        "Stellar RPC rejected startLedger as out of range; set PREDIFI_LISTENER_START_LEDGER to a ledger retained by the RPC (stored cursor takes precedence); resetting to a recent ledger"
+                    );
+                    match get_latest_ledger(&client, &rpc_url).await {
+                        Ok(latest_ledger) => {
+                            let recent_cursor = recovery_start_ledger(cursor, latest_ledger);
+                            warn!(
+                                previous_cursor = cursor,
+                                cursor = recent_cursor,
+                                latest_ledger,
+                                "resetting stellar listener cursor to recover from out-of-range startLedger"
+                            );
+                            cursor = recent_cursor;
+                            save_cursor(&db, cursor).await;
+                            consecutive_failures = 0;
+                            continue;
+                        }
+                        Err(latest_error) => {
+                            error!(
+                                error = %latest_error,
+                                "failed to get latest stellar ledger while recovering from out-of-range startLedger"
+                            );
+                        }
+                    }
+                }
                 consecutive_failures += 1;
                 let delay = reconnect_delay_secs(consecutive_failures);
                 error!(
@@ -673,6 +840,45 @@ mod tests {
         Arc,
     };
 
+    #[test]
+    fn start_ledger_selection_prefers_stored_cursor() {
+        assert_eq!(
+            select_start_ledger(Some(42), Some(100), Some(1_000)),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn start_ledger_selection_uses_configured_start_without_stored_cursor() {
+        assert_eq!(select_start_ledger(None, Some(250), Some(1_000)), Some(250));
+    }
+
+    #[test]
+    fn start_ledger_selection_uses_recent_rpc_ledger_as_fallback() {
+        assert_eq!(
+            select_start_ledger(None, None, Some(1_000)),
+            Some(1_000 - START_LEDGER_BUFFER)
+        );
+        assert_eq!(select_start_ledger(None, None, Some(1)), Some(1));
+    }
+
+    #[test]
+    fn start_ledger_out_of_range_errors_are_identified() {
+        assert!(is_start_ledger_out_of_range(
+            r#"RPC error -32602: Invalid params ({"name":"out_of_range"})"#
+        ));
+        assert!(is_start_ledger_out_of_range(
+            "startLedger 1 is older than oldest ledger 123"
+        ));
+        assert!(!is_start_ledger_out_of_range("RPC server unavailable"));
+    }
+
+    #[test]
+    fn start_ledger_out_of_range_recovery_moves_cursor_to_the_latest_available_ledger() {
+        assert_eq!(recovery_start_ledger(42, 1_000), 1_000);
+        assert_eq!(recovery_start_ledger(1_000, 1_000), 999);
+    }
+
     // ── reconnect loop behaviour ──────────────────────────────────────────────
 
     /// A connection drop (fetch_events returning Err) must increment
@@ -870,7 +1076,7 @@ mod tests {
             }
         }"#;
 
-        let resp: RpcResponse = serde_json::from_str(json).unwrap();
+        let resp: RpcResponse<GetEventsResult> = serde_json::from_str(json).unwrap();
         let result = resp.result.unwrap();
         assert_eq!(result.latest_ledger, 42);
         assert_eq!(result.events.len(), 1);
@@ -888,7 +1094,7 @@ mod tests {
             }
         }"#;
 
-        let resp: RpcResponse = serde_json::from_str(json).unwrap();
+        let resp: RpcResponse<GetEventsResult> = serde_json::from_str(json).unwrap();
         let result = resp.result.unwrap();
         assert_eq!(result.latest_ledger, 100);
         assert!(result.events.is_empty());
