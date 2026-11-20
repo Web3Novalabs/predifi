@@ -9,6 +9,7 @@ export {
   PredictionTableSkeleton,
   StatsSkeleton,
 } from "./skeletons";
+export { ComingSoon, type ComingSoonProps } from "./coming-soon";
 export { SkipLink } from "./skip-link";
 export { VisuallyHidden } from "./visually-hidden";
 export { LiveRegionProvider, useAnnounce } from "./live-region";
