@@ -152,6 +152,10 @@ pub struct Config {
     pub jwt_key_version: u64,
     /// Maximum number of Stellar events processed per indexer batch (default `500`).
     pub indexer_max_batch_size: usize,
+    /// Shared secret required by the `x-indexer-key` header on indexer ingest routes.
+    ///
+    /// Read from `PREDIFI_INDEXER_API_KEY`; required when `PREDIFI_APP_ENV=production`.
+    pub indexer_api_key: Option<String>,
     /// Deployment environment name (e.g. `"production"`, `"staging"`, `"development"`).
     ///
     /// Read from `PREDIFI_APP_ENV`. When set to `"production"`, additional
@@ -299,6 +303,10 @@ impl Config {
             "PREDIFI_INDEXER_MAX_BATCH_SIZE",
             DEFAULT_INDEXER_MAX_BATCH_SIZE,
         )?;
+        let indexer_api_key = vars
+            .get("PREDIFI_INDEXER_API_KEY")
+            .cloned()
+            .filter(|s| !s.is_empty());
 
         // Parse WebSocket allowed origins (optional, defaults to empty for permissive mode)
         let allowed_ws_origins = parse_ws_origins(vars)?;
@@ -369,6 +377,7 @@ impl Config {
             secret_key,
             jwt_key_version,
             indexer_max_batch_size,
+            indexer_api_key,
             app_env,
             allowed_ws_origins,
             ws_ping_interval_secs,
@@ -389,6 +398,12 @@ impl Config {
             return Err(ConfigError::MissingRequired {
                 key: "PREDIFI_DATABASE_URL",
                 description: "PostgreSQL connection string used by the backend",
+            });
+        }
+        if config.is_production() && !vars.contains_key("PREDIFI_INDEXER_API_KEY") {
+            return Err(ConfigError::MissingRequired {
+                key: "PREDIFI_INDEXER_API_KEY",
+                description: "shared secret required on indexer ingest endpoints",
             });
         }
         Ok(config)
@@ -694,6 +709,7 @@ impl Config {
             secret_key: String::from(DEFAULT_SECRET_KEY),
             jwt_key_version: 0,
             indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
+            indexer_api_key: None,
             app_env: String::from(DEFAULT_APP_ENV),
             allowed_ws_origins: Vec::new(), // Empty for permissive mode in tests
             ws_ping_interval_secs: DEFAULT_WS_PING_INTERVAL_SECS,
@@ -2249,6 +2265,36 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn from_map_requires_indexer_api_key_in_production() {
+        let mut vars: HashMap<String, String> = HashMap::new();
+        vars.insert("PREDIFI_APP_ENV".into(), "production".into());
+        vars.insert(
+            "PREDIFI_DATABASE_URL".into(),
+            "postgres://localhost/predifi".into(),
+        );
+        vars.insert(
+            "PREDIFI_SECRET_KEY".into(),
+            "a-very-strong-production-secret-key-at-least-32-bytes".into(),
+        );
+        vars.insert(
+            "PREDIFI_WS_ALLOWED_ORIGINS".into(),
+            "https://app.predifi.com".into(),
+        );
+
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::MissingRequired {
+                key: "PREDIFI_INDEXER_API_KEY",
+                ..
+            })
+        ));
+
+        vars.insert("PREDIFI_INDEXER_API_KEY".into(), "indexer-secret".into());
+        let config = Config::from_map(&vars).expect("production config with indexer key");
+        assert_eq!(config.indexer_api_key.as_deref(), Some("indexer-secret"));
     }
 
     // -- production dev secret rejection --

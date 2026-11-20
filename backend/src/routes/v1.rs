@@ -2294,3 +2294,133 @@ pub async fn join_waitlist_handler(
         Err(e) => internal_error_response(e),
     }
 }
+
+#[cfg(test)]
+mod internal_auth_tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(
+                HeaderName::from_bytes(name.as_bytes()).expect("valid header name"),
+                HeaderValue::from_str(value).expect("valid header value"),
+            );
+        }
+        map
+    }
+
+    fn test_state(indexer_key: Option<&str>) -> AppState {
+        let mut config = Config::default_for_test();
+        config.indexer_api_key = indexer_key.map(str::to_string);
+        AppState {
+            config: Arc::new(config),
+            cache: PriceCache::new(),
+            pool_cache: PoolCache::new(),
+            redis: RedisCache::disabled(),
+            db: None,
+            metrics: Arc::new(
+                crate::metrics::Metrics::new().expect("metrics registry must initialize"),
+            ),
+            event_bus: crate::ws::EventBus::new(),
+        }
+    }
+
+    #[test]
+    fn admin_credential_rejects_missing_and_wrong_key() {
+        assert!(!has_admin_credential_with_key(&HeaderMap::new(), Some("secret")));
+        assert!(!has_admin_credential_with_key(
+            &headers(&[("x-admin-api-key", "wrong")]),
+            Some("secret")
+        ));
+    }
+
+    #[test]
+    fn admin_credential_accepts_key_regardless_of_creator_body() {
+        // #2068: the creator in the body is no longer an authorization factor.
+        let creator = "GBX0000000000000000000000000000000000000000000000000000000000000000";
+        let mut supplied = headers(&[("x-admin-api-key", "secret")]);
+        supplied.insert("x-creator", HeaderValue::from_str(creator).unwrap());
+        assert!(has_admin_credential_with_key(&supplied, Some("secret")));
+    }
+
+    #[test]
+    fn payout_accepts_admin_or_indexer_credential() {
+        // #2069: the indexer normally triggers payouts; admin key works too.
+        let state = test_state(Some("indexer-secret"));
+        let authenticated = |map: &HeaderMap| {
+            has_admin_credential_with_key(map, Some("admin-secret"))
+                || has_indexer_credential(map, state.config.indexer_api_key.as_deref())
+        };
+        assert!(!authenticated(&HeaderMap::new()));
+        assert!(!authenticated(&headers(&[("x-admin-api-key", "wrong")])));
+        assert!(authenticated(&headers(&[("x-admin-api-key", "admin-secret")])));
+        assert!(authenticated(&headers(&[("x-indexer-key", "indexer-secret")])));
+    }
+
+    fn ingest_router(indexer_key: Option<&str>) -> Router {
+        let state = test_state(indexer_key);
+        Router::new()
+            .route("/ingest", axum::routing::post(|| async { "ok" }))
+            .with_state(state.clone())
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                require_indexer_key,
+            ))
+    }
+
+    fn post_request(path: &str, pairs: &[(&str, &str)]) -> Request<axum::body::Body> {
+        let mut builder = Request::builder().method("POST").uri(path);
+        for (name, value) in pairs {
+            builder = builder.header(*name, *value);
+        }
+        builder
+            .body(axum::body::Body::empty())
+            .expect("valid request")
+    }
+
+    #[tokio::test]
+    async fn indexer_middleware_rejects_missing_and_wrong_keys() {
+        let router = ingest_router(Some("indexer-secret"));
+        assert_eq!(
+            router.clone().oneshot(post_request("/ingest", &[])).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            router
+                .oneshot(post_request("/ingest", &[("x-indexer-key", "wrong")]))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    #[tokio::test]
+    async fn indexer_middleware_accepts_correct_key_or_bearer_token() {
+        let router = ingest_router(Some("indexer-secret"));
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(post_request("/ingest", &[("x-indexer-key", "indexer-secret")]))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            router
+                .oneshot(post_request(
+                    "/ingest",
+                    &[("authorization", "Bearer indexer-secret")]
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+}
