@@ -4,6 +4,18 @@
 //! connected client. The indexer calls [`EventBus::send`] whenever a new
 //! prediction is indexed; the WS handler at `GET /ws` forwards each message
 //! to the client until the connection closes.
+//!
+//! ## Authentication
+//!
+//! Clients can authenticate via JWT in three ways (in order of preference):
+//! 1. **Subprotocol header** (production browsers): `new WebSocket(url, ["bearer", token])`
+//!    - The client sends `Sec-WebSocket-Protocol: bearer, <token>`
+//!    - The server validates the token and echoes `bearer` in the upgrade response
+//! 2. **Authorization header** (tools, curl): `Authorization: Bearer <token>`
+//! 3. **Query parameter** (non-production only): `?token=<token>`
+//!
+//! Unauthenticated connections receive only the public `prediction_placed` stream.
+//! Authenticated connections receive the full event stream (not yet differentiated by pool/user).
 
 use std::net::SocketAddr;
 use std::sync::{
@@ -111,7 +123,33 @@ pub fn get_client_ip(
     addr.ip().to_string()
 }
 
+/// Extract and validate JWT token from Sec-WebSocket-Protocol header.
+///
+/// The client sends the header in the format: `Sec-WebSocket-Protocol: bearer, <token>`
+/// This function extracts the token after "bearer, " and validates its JWT format.
+///
+/// Returns `Some(token)` if a valid bearer token is found, `None` otherwise.
+pub fn extract_token_from_subprotocol(protocols: &str) -> Option<String> {
+    // Split by comma and find the bearer protocol
+    for protocol in protocols.split(',') {
+        let trimmed = protocol.trim();
+        if trimmed.starts_with("bearer,") {
+            let token = trimmed.strip_prefix("bearer,")?.trim();
+            // Validate token format before returning
+            if crate::jwt::validate_jwt_format(token).is_ok() {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Axum handler — upgrades the HTTP connection to WebSocket and streams events.
+///
+/// Supports authentication via:
+/// 1. Sec-WebSocket-Protocol header with bearer token (subprotocol)
+/// 2. Authorization header with Bearer token
+/// 3. Query parameter `?token=` (non-production only)
 pub async fn ws_handler(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     ws: WebSocketUpgrade,

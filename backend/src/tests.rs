@@ -1622,3 +1622,74 @@ async fn client_ip_trims_x_forwarded_for_whitespace() {
         "should trim whitespace from X-Forwarded-For IPs"
     );
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WebSocket Subprotocol JWT Authentication Tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Test that a valid JWT token is extracted from Sec-WebSocket-Protocol header.
+#[tokio::test]
+async fn extract_token_from_subprotocol_with_valid_token() {
+    const VALID_TOKEN: &str =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+
+    let protocols = format!("bearer, {}", VALID_TOKEN);
+    let token = crate::ws::extract_token_from_subprotocol(&protocols);
+
+    assert_eq!(token, Some(VALID_TOKEN.to_string()), "should extract valid token");
+}
+
+/// Test that token is extracted even with multiple protocols listed.
+#[tokio::test]
+async fn extract_token_from_subprotocol_with_multiple_protocols() {
+    const VALID_TOKEN: &str =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+
+    let protocols = format!("chat, bearer, {}", VALID_TOKEN);
+    let token = crate::ws::extract_token_from_subprotocol(&protocols);
+
+    assert_eq!(token, Some(VALID_TOKEN.to_string()), "should extract bearer token from multiple protocols");
+}
+
+/// Test that subprotocol extraction returns None when no bearer token is present.
+#[tokio::test]
+async fn extract_token_from_subprotocol_without_bearer() {
+    let protocols = "chat, other-protocol";
+    let token = crate::ws::extract_token_from_subprotocol(protocols);
+
+    assert_eq!(token, None, "should return None when bearer protocol is absent");
+}
+
+/// Test that extraction returns None when token format is invalid.
+#[tokio::test]
+async fn extract_token_from_subprotocol_with_invalid_token_format() {
+    let protocols = "bearer, not-a-valid-jwt-token";
+    let token = crate::ws::extract_token_from_subprotocol(protocols);
+
+    assert_eq!(
+        token, None,
+        "should return None when token fails JWT format validation"
+    );
+}
+
+/// Test that token is extracted with extra whitespace.
+#[tokio::test]
+async fn extract_token_from_subprotocol_with_whitespace() {
+    const VALID_TOKEN: &str =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+
+    let protocols = format!("  bearer  ,  {}  ", VALID_TOKEN);
+    let token = crate::ws::extract_token_from_subprotocol(&protocols);
+
+    assert_eq!(token, Some(VALID_TOKEN.to_string()), "should trim whitespace correctly");
+}
+
+/// Test that empty bearer token is rejected.
+#[tokio::test]
+async fn extract_token_from_subprotocol_with_empty_token() {
+    let protocols = "bearer, ";
+    let token = crate::ws::extract_token_from_subprotocol(protocols);
+
+    assert_eq!(token, None, "should reject empty bearer token");
+}
