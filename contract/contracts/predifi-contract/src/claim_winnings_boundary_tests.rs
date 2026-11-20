@@ -1021,12 +1021,12 @@ fn test_all_same_outcome_with_fee_payout_reduced_proportionally() {
         "total payout must equal payout_pool"
     );
 
-    // Treasury keeps the fee; contract should hold only the residual.
+    // Protocol fees accrue in the contract and are swept to the configured
+    // treasury later via `withdraw_treasury`; they are not paid out per claim.
     let contract_balance = token.balance(&contract_id);
-    // Due to integer rounding the contract may hold 0 or 1 stroop.
-    assert!(
-        contract_balance <= 1,
-        "contract should hold at most 1 stroop residual, got {contract_balance}"
+    assert_eq!(
+        contract_balance, 200,
+        "contract should retain the 200 stroop protocol fee until treasury withdrawal"
     );
     let _ = total_stake; // suppress unused warning
 }

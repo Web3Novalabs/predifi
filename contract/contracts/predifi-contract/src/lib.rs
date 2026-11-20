@@ -1349,6 +1349,8 @@ mod pool_and_fee_boundary_tests;
 #[cfg(test)]
 mod claim_and_whitelist_boundary_tests;
 #[cfg(test)]
+mod claim_winnings_boundary_tests;
+#[cfg(test)]
 mod issues_1878_1879_1884_1885_boundary_tests;
 #[cfg(test)]
 mod lifecycle_integration_tests;
