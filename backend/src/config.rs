@@ -189,6 +189,10 @@ pub struct Config {
     /// `x-admin-api-key` header. Loaded once from `PREDIFI_ADMIN_API_KEY`.
     pub admin_api_key: Option<String>,
 
+    /// Whether forwarded client-IP headers (`X-Forwarded-For`, `X-Real-IP`,
+    /// `Forwarded`) may be trusted for rate limiting (default `false`).
+    pub trust_proxy_headers: bool,
+
     /// SMTP server hostname for outbound email delivery.  `None` disables
     /// email notifications.  Read from `PREDIFI_SMTP_HOST`.
     pub smtp_host: Option<String>,
@@ -330,6 +334,7 @@ impl Config {
             .get("PREDIFI_ADMIN_API_KEY")
             .cloned()
             .filter(|s| !s.is_empty());
+        let trust_proxy_headers = get_bool(vars, "PREDIFI_TRUST_PROXY_HEADERS", false)?;
 
         // ── Email (#1929) ─────────────────────────────────────────────────────
         let smtp_host = vars.get("PREDIFI_SMTP_HOST").cloned().filter(|s| !s.is_empty());
@@ -389,6 +394,7 @@ impl Config {
             smtp_from,
             metrics_token,
             admin_api_key,
+            trust_proxy_headers,
         };
 
         config.validate()?;
@@ -731,6 +737,7 @@ impl Config {
             smtp_from: String::from("noreply@predifi.app"),
             metrics_token: None,
             admin_api_key: None,
+            trust_proxy_headers: false,
         }
     }
 }

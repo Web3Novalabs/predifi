@@ -1481,6 +1481,8 @@ pub fn router(
         event_bus,
     };
 
+    let trust_proxy_headers = state.config.trust_proxy_headers;
+
     // Admin tier — authenticated administrative operations (no public rate limit).
     let admin = Router::new()
         .route("/admin/log-level", patch(set_log_level))
@@ -1497,6 +1499,7 @@ pub fn router(
             .route("/prices", get(crate::price_cache::get_prices))
             .with_state(state.clone()),
         RateLimitTier::Light,
+        trust_proxy_headers,
     );
 
     // Token tier — refresh rotation and WebSocket handshake (10 req / 60 s).
@@ -1506,6 +1509,7 @@ pub fn router(
             .route("/ws", get(crate::ws::ws_handler))
             .with_state(state.clone()),
         RateLimitTier::Token,
+        trust_proxy_headers,
     );
 
     // Read tier — public, database-backed read endpoints.
@@ -1525,6 +1529,7 @@ pub fn router(
             .route("/markets/:id/predictions", get(get_market_predictions))
             .with_state(state.clone()),
         RateLimitTier::Read,
+        trust_proxy_headers,
     );
 
     // User tier — per-user history and predictions.
@@ -1552,6 +1557,7 @@ pub fn router(
             )
             .with_state(state.clone()),
         RateLimitTier::User,
+        trust_proxy_headers,
     );
 
     // Write tier — indexer ingest (typically internal, strictest limit).
@@ -1564,6 +1570,7 @@ pub fn router(
             .route("/waitlist", post(join_waitlist_handler))
             .with_state(state.clone()),
         RateLimitTier::Write,
+        trust_proxy_headers,
     );
 
     // Routes without a rate-limit tier of their own. Anything already served by

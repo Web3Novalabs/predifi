@@ -53,7 +53,7 @@
 //! {"status": "error", "error": "Too many requests"}
 //! ```
 
-use tower_governor::key_extractor::SmartIpKeyExtractor;
+use tower_governor::key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor};
 
 /// Rate-limit tier — maps to a `(burst_size, period_secs)` pair.
 #[derive(Clone, Copy, Debug)]
@@ -94,31 +94,66 @@ impl RateLimitTier {
 
 /// Wrap `router` with a `GovernorLayer` configured for `tier`.
 ///
+/// When `trust_proxy_headers` is false (the default), requests are keyed by the
+/// TCP peer IP. Forwarded headers are used only when explicitly trusted via
+/// `PREDIFI_TRUST_PROXY_HEADERS` (#2072).
+///
 /// In `#[cfg(test)]` builds this is a no-op — the router is returned as-is so
 /// parallel unit tests do not rate-limit each other.
 #[cfg(not(test))]
-pub fn with_rate_limit(router: axum::Router, tier: RateLimitTier) -> axum::Router {
+pub fn with_rate_limit(
+    router: axum::Router,
+    tier: RateLimitTier,
+    trust_proxy_headers: bool,
+) -> axum::Router {
+    rate_limited_router(router, tier, trust_proxy_headers)
+}
+
+#[cfg(test)]
+pub fn with_rate_limit(
+    router: axum::Router,
+    _tier: RateLimitTier,
+    _trust_proxy_headers: bool,
+) -> axum::Router {
+    router
+}
+
+/// Build a rate-limited router; also available to tests that need to exercise
+/// the real governor layer in isolation.
+pub(crate) fn rate_limited_router(
+    router: axum::Router,
+    tier: RateLimitTier,
+    trust_proxy_headers: bool,
+) -> axum::Router {
     use std::sync::Arc;
     use tower_governor::governor::GovernorConfigBuilder;
 
     let (burst_size, period_secs) = tier.burst_and_period();
+    let period = std::time::Duration::from_secs(period_secs);
 
-    let config = Arc::new(
-        GovernorConfigBuilder::default()
-            .period(std::time::Duration::from_secs(period_secs))
-            .burst_size(burst_size)
-            .key_extractor(SmartIpKeyExtractor)
-            .error_handler(|_| crate::response::rate_limit_error_response())
-            .finish()
-            .expect("invalid governor config"),
-    );
-
-    router.layer(tower_governor::GovernorLayer { config })
-}
-
-#[cfg(test)]
-pub fn with_rate_limit(router: axum::Router, _tier: RateLimitTier) -> axum::Router {
-    router
+    if trust_proxy_headers {
+        let config = Arc::new(
+            GovernorConfigBuilder::default()
+                .period(period)
+                .burst_size(burst_size)
+                .key_extractor(SmartIpKeyExtractor)
+                .error_handler(|_| crate::response::rate_limit_error_response())
+                .finish()
+                .expect("invalid governor config"),
+        );
+        router.layer(tower_governor::GovernorLayer { config })
+    } else {
+        let config = Arc::new(
+            GovernorConfigBuilder::default()
+                .period(period)
+                .burst_size(burst_size)
+                .key_extractor(PeerIpKeyExtractor)
+                .error_handler(|_| crate::response::rate_limit_error_response())
+                .finish()
+                .expect("invalid governor config"),
+        );
+        router.layer(tower_governor::GovernorLayer { config })
+    }
 }
 
 #[cfg(test)]
@@ -155,6 +190,48 @@ mod tests {
 
         let (b, p) = RateLimitTier::WebSocket.burst_and_period();
         assert_eq!((b, p), (RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS));
+    }
+
+    #[tokio::test]
+    async fn rotating_forwarded_header_does_not_reset_bucket_when_proxy_headers_untrusted() {
+        use axum::{extract::ConnectInfo, routing::get, Router};
+        use tower::ServiceExt;
+
+        let app = rate_limited_router(
+            Router::new().route("/ping", get(|| async { "pong" })),
+            RateLimitTier::Token,
+            false, // PREDIFI_TRUST_PROXY_HEADERS is off
+        );
+
+        let mut statuses = Vec::new();
+        for i in 0..=10 {
+            let request = axum::http::Request::builder()
+                .method("GET")
+                .uri("/ping")
+                .header("x-forwarded-for", format!("10.0.0.{i}"))
+                // `oneshot` bypasses `into_make_service_with_connect_info`, so
+                // simulate the socket peer address supplied by axum::serve.
+                .extension(ConnectInfo(
+                    "127.0.0.1:1234"
+                        .parse::<std::net::SocketAddr>()
+                        .expect("valid socket address"),
+                ))
+                .body(axum::body::Body::empty())
+                .expect("request builds");
+            statuses.push(app.clone().oneshot(request).await.expect("request").status());
+        }
+
+        assert!(
+            statuses[..10]
+                .iter()
+                .all(|status| *status == axum::http::StatusCode::OK),
+            "first ten requests should pass: {statuses:?}"
+        );
+        assert_eq!(
+            statuses[10],
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "rotating X-Forwarded-For must not reset the peer-IP bucket: {statuses:?}"
+        );
     }
 
     #[test]
