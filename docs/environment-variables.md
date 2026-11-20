@@ -11,4 +11,5 @@ Copy `backend/.env.example` to `backend/.env` and fill in placeholders.
 | `PREDIFI_SECRET_KEY` | string | dev placeholder | No | JWT signing (32+ bytes) |
 | `PREDIFI_JWT_KEY_VERSION` | u32 | `0` | No | Bump to invalidate tokens |
 | `PREDIFI_INDEXER_MAX_BATCH_SIZE` | u32 | `500` | No | Stellar event batch size |
+| `PREDIFI_INDEXER_API_KEY` | string | unset | Only in production | Shared secret required via `x-indexer-key` (or `Authorization: Bearer`) on `/api/v1/indexer/*` ingest routes and accepted for payout endpoints |
 | `PREDIFI_SENTRY_DSN` | string | unset | No | Error reporting |
