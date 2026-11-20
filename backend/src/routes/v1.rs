@@ -2079,6 +2079,33 @@ pub async fn get_user_email_handler(
     }
 }
 
+/// Maximum length of an email address, per RFC 5321.
+const MAX_EMAIL_LENGTH: usize = 254;
+
+/// Validate an email address with the same parser the SMTP worker uses, cap
+/// its length, and lowercase the domain before it is persisted.
+///
+/// Returns the normalized address, or `None` when the input cannot be
+/// delivered as a `lettre::Address` (see #2067).
+fn normalize_email(raw: &str) -> Option<String> {
+    use std::str::FromStr;
+
+    let candidate = raw.trim();
+    if candidate.is_empty() || candidate.len() > MAX_EMAIL_LENGTH {
+        return None;
+    }
+
+    let parsed = lettre::Address::from_str(candidate).ok()?;
+    let domain = parsed.domain();
+    // A bare single-label domain (e.g. `a@b`) cannot be delivered by SMTP.
+    // Bracketed IP literals are accepted as-is.
+    if !domain.starts_with('[') && !domain.contains('.') {
+        return None;
+    }
+
+    Some(format!("{}@{}", parsed.user(), domain.to_lowercase()))
+}
+
 /// `PUT /api/v1/users/:address/email` — register or update a user's email address.
 ///
 /// Body: `{ "email": "user@example.com", "email_enabled": true }`
@@ -2099,19 +2126,21 @@ pub async fn upsert_user_email_handler(
         .into_response();
     };
 
-    let email = body.email.trim();
-    if email.is_empty() || !email.contains('@') {
-        return ApiResponse::<()>::error(
-            StatusCode::BAD_REQUEST,
-            error_codes::INVALID_INPUT,
-            "a valid email address is required",
-        )
-        .into_response();
-    }
+    let email = match normalize_email(&body.email) {
+        Some(email) => email,
+        None => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                "a valid email address is required",
+            )
+            .into_response();
+        }
+    };
 
     let enabled = body.email_enabled.unwrap_or(true);
 
-    match crate::notifications::upsert_user_email(db, address.as_str(), email, enabled).await {
+    match crate::notifications::upsert_user_email(db, address.as_str(), &email, enabled).await {
         Ok(()) => ApiResponse::success(json!({
             "address": address,
             "email": email,
@@ -2119,6 +2148,31 @@ pub async fn upsert_user_email_handler(
         }))
         .into_response(),
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod email_validation_tests {
+    use super::normalize_email;
+
+    #[test]
+    fn rejects_malformed_and_oversized_addresses() {
+        let long = format!("{}@example.com", "a".repeat(300));
+        for invalid in ["@", "a@", "a@b", "a b@c.d", long.as_str(), ""] {
+            assert_eq!(normalize_email(invalid), None, "accepted {invalid:?}");
+        }
+    }
+
+    #[test]
+    fn accepts_valid_address_and_lowercases_domain() {
+        assert_eq!(
+            normalize_email("User@Example.COM"),
+            Some("User@example.com".to_string())
+        );
+        assert_eq!(
+            normalize_email("  user+tag@example.co.uk  "),
+            Some("user+tag@example.co.uk".to_string())
+        );
     }
 }
 
