@@ -37,6 +37,62 @@ async fn body_string(body: axum::body::Body) -> String {
     String::from_utf8(bytes.to_vec()).expect("body is not valid utf-8")
 }
 
+/// Admin log-level: a request without the API key must be rejected (#2070).
+#[tokio::test]
+async fn admin_log_level_missing_key_returns_401() {
+    let mut config = Config::default_for_test();
+    config.admin_api_key = Some("a-32-byte-long-admin-api-key!!".to_string());
+    let router = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    );
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/v1/admin/log-level")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(r#"{"level":"info"}"#))
+                .expect("failed to build request"),
+        )
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Admin log-level: a wrong API key must be rejected even when it shares a
+/// long prefix with the real key (#2070).
+#[tokio::test]
+async fn admin_log_level_wrong_key_returns_401() {
+    let mut config = Config::default_for_test();
+    config.admin_api_key = Some("a-32-byte-long-admin-api-key!!".to_string());
+    let router = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    );
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/v1/admin/log-level")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-admin-api-key", "a-32-byte-long-admin-api-key!X")
+                .body(axum::body::Body::from(r#"{"level":"info"}"#))
+                .expect("failed to build request"),
+        )
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
 /// GET / must return HTTP 200.
 #[tokio::test]
 async fn root_returns_200() {

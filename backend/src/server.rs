@@ -136,7 +136,7 @@ async fn metrics_handler(
 
 /// Constant-time byte comparison to prevent timing attacks when validating
 /// bearer tokens.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
