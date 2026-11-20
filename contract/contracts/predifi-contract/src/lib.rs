@@ -1351,5 +1351,11 @@ mod lifecycle_integration_tests;
 #[cfg(test)]
 mod referral_integration_tests;
 #[cfg(test)]
+mod resolve_pool_boundary_tests;
+#[cfg(test)]
+mod place_prediction_boundary_tests;
+#[cfg(test)]
+mod issues_1880_1886_1887_1888_boundary_tests;
+#[cfg(test)]
 mod test;
 
