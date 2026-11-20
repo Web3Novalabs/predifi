@@ -20,7 +20,7 @@ mod tests {
     #[test]
     fn price_cache_multiple_oracle_sources() {
         let mut prices = HashMap::new();
-        
+
         // Simulate prices from multiple oracle sources
         prices.insert("BTC/USD".to_string(), 60000.0); // CoinGecko
         prices.insert("ETH/USD".to_string(), 3500.0);  // Pyth
@@ -40,10 +40,10 @@ mod tests {
     #[test]
     fn price_cache_fallback_oracle_sources() {
         let mut prices = HashMap::new();
-        
+
         // Primary source: BTC from CoinGecko
         prices.insert("BTC/USD".to_string(), 60000.0);
-        
+
         let cache = PriceCache::new();
         cache.update(prices);
 
@@ -54,7 +54,7 @@ mod tests {
         // Fallback scenario: if primary fails, use secondary
         let mut fallback_prices = HashMap::new();
         fallback_prices.insert("BTC/USD".to_string(), 59500.0);
-        
+
         cache.update(fallback_prices);
         let snapshot = cache.snapshot();
         assert_eq!(snapshot.get("BTC/USD"), Some(&59500.0));

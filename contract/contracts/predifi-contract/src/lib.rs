@@ -1351,5 +1351,9 @@ mod lifecycle_integration_tests;
 #[cfg(test)]
 mod referral_integration_tests;
 #[cfg(test)]
+mod fee_tier_transition_tests;
+#[cfg(test)]
+mod cancel_pool_boundary_tests;
+#[cfg(test)]
 mod test;
 
