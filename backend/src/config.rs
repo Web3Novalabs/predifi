@@ -115,6 +115,12 @@ pub struct Config {
     pub referral_fee_bps: u32,
     /// Stellar Soroban RPC endpoint URL (default: testnet).
     pub stellar_rpc_url: String,
+    /// Optional initial ledger for the Stellar listener on a fresh database.
+    ///
+    /// Read from `PREDIFI_LISTENER_START_LEDGER`. A stored listener cursor
+    /// takes precedence; when this is unset, the listener starts near the
+    /// latest ledger reported by the RPC.
+    pub listener_start_ledger: Option<u64>,
     /// Optional Sentry DSN for error reporting. `None` disables Sentry.
     pub sentry_dsn: Option<String>,
     /// Redis connection URL (default `redis://localhost:6379`).
@@ -281,6 +287,7 @@ impl Config {
         let treasury_fee_bps = get_u32(vars, "PREDIFI_TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "PREDIFI_REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
+        let listener_start_ledger = get_optional_u64(vars, "PREDIFI_LISTENER_START_LEDGER")?;
         let sentry_dsn = vars.get("PREDIFI_SENTRY_DSN").cloned();
         let redis_url = get_string(vars, "PREDIFI_REDIS_URL", DEFAULT_REDIS_URL);
         let redis_required = get_bool(vars, "PREDIFI_REDIS_REQUIRED", DEFAULT_REDIS_REQUIRED)?;
@@ -361,6 +368,7 @@ impl Config {
             treasury_fee_bps,
             referral_fee_bps,
             stellar_rpc_url,
+            listener_start_ledger,
             sentry_dsn,
             redis_url,
             redis_required,
@@ -431,6 +439,13 @@ impl Config {
             &["http://", "https://"],
         )?;
         validate_url_has_host(&self.stellar_rpc_url, "PREDIFI_STELLAR_RPC_URL")?;
+
+        if self.listener_start_ledger == Some(0) {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_LISTENER_START_LEDGER",
+                reason: String::from("must be greater than zero"),
+            });
+        }
 
         // ── Database pool ────────────────────────────────────────────────────
         if self.db_max_connections == 0 {
@@ -686,6 +701,7 @@ impl Config {
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
+            listener_start_ledger: None,
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
             redis_required: DEFAULT_REDIS_REQUIRED,
@@ -984,6 +1000,23 @@ fn get_u64(
             .parse::<u64>()
             .map_err(|err| to_number_error(key, value, err)),
         None => Ok(default),
+    }
+}
+
+fn get_optional_u64(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+) -> Result<Option<u64>, ConfigError> {
+    match vars
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|err| to_number_error(key, value, err)),
+        None => Ok(None),
     }
 }
 
@@ -1587,6 +1620,16 @@ mod tests {
     }
 
     #[test]
+    fn config_reads_listener_start_ledger_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_LISTENER_START_LEDGER"),
+            String::from("12345"),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.listener_start_ledger, Some(12_345));
+    }
+
+    #[test]
     fn config_reads_redis_url_from_env() {
         let vars = HashMap::from([(
             String::from("PREDIFI_REDIS_URL"),
@@ -2019,6 +2062,21 @@ mod tests {
         Config::default_for_test()
             .validate()
             .expect("default test config must be valid");
+    }
+
+    #[test]
+    fn config_rejects_zero_listener_start_ledger() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_LISTENER_START_LEDGER"),
+            String::from("0"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_LISTENER_START_LEDGER",
+                ..
+            })
+        ));
     }
 
     // ── New validations ───────────────────────────────────────────────────────

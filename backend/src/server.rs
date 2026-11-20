@@ -361,18 +361,20 @@ where
     let listener_redis = redis.clone();
     let listener_rpc_timeout = Duration::from_secs(config.rpc_timeout_secs);
     let listener_batch_size = config.indexer_max_batch_size;
+    let listener_start_ledger = config.listener_start_ledger;
 
     // spawn_worker roots the listener under a named OTel span so all Stellar
     // sync traces are correlated in the trace backend.
     let listener_handle: JoinHandle<()> =
         crate::tracing_context::spawn_worker("stellar_listener", async move {
-            crate::worker::stellar_listener::run_worker(
+            crate::worker::stellar_listener::run_worker_with_start_ledger(
                 listener_rpc_url,
                 listener_pool,
                 listener_event_bus,
                 listener_redis,
                 listener_rpc_timeout,
                 listener_batch_size,
+                listener_start_ledger,
             )
             .await;
         });
