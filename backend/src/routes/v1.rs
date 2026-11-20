@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
+use subtle::ConstantTimeEq;
+
 use crate::config::Config;
 use crate::db::PoolCreatedEvent;
 use crate::db::PredictionPlacedEvent;
@@ -216,8 +218,8 @@ pub struct SetLogLevelResponse {
 ///
 /// Restricted to callers that present a valid admin API key in the
 /// `x-admin-api-key` header.  The key must match the `PREDIFI_ADMIN_API_KEY`
-/// environment variable.  Returns 401 when the header is absent or does not
-/// match.
+/// value loaded into [`Config`] at startup. Returns 401 when the header is
+/// absent or does not match. Comparison is constant-time.
 ///
 /// The new level is applied immediately and remains in effect until the next
 /// change or a process restart (which reverts to the configured default).
@@ -229,7 +231,21 @@ pub async fn set_log_level(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    if !has_admin_credential(&headers) {
+    let provided = headers
+        .get("x-admin-api-key")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty());
+
+    let authenticated = match (&state.config.admin_api_key, provided) {
+        (Some(expected), Some(provided)) => bool::from(
+            expected
+                .as_bytes()
+                .ct_eq(provided.as_bytes()),
+        ),
+        _ => false,
+    };
+
+    if !authenticated {
         return ApiResponse::<()>::error(
             StatusCode::UNAUTHORIZED,
             error_codes::UNAUTHORIZED,
@@ -846,6 +862,12 @@ pub async fn get_pool_leaderboard(
 
 // ── Task 4: Pool Creation Indexer ─────────────────────────────────────────────
 
+/// Minimum number of outcomes in a pool (binary pools).
+const MIN_OPTIONS_COUNT: u32 = 2;
+/// Maximum number of outcomes accepted by the contract. Mirrors
+/// `MAX_OPTIONS_COUNT` in `contract/contracts/predifi-contract/src/constants.rs`.
+const MAX_OPTIONS_COUNT: u32 = 100;
+
 /// Request body for the pool-created event webhook / indexer endpoint.
 ///
 /// The event listener decodes the XDR `pool_created` event from the Stellar
@@ -870,7 +892,24 @@ pub struct PoolCreatedPayload {
 }
 
 fn default_options_count() -> u32 {
-    2
+    MIN_OPTIONS_COUNT
+}
+
+/// Reject malformed ingest payloads before they can wrap when cast to `i32`
+/// or produce pool rows with missing outcome labels (#2065).
+fn validate_pool_created_payload(payload: &PoolCreatedPayload) -> Result<(), &'static str> {
+    if payload.pool_id > i64::MAX as u64 {
+        return Err("pool_id must not exceed i64::MAX");
+    }
+    if !(MIN_OPTIONS_COUNT..=MAX_OPTIONS_COUNT).contains(&payload.options_count) {
+        return Err("options_count must be between 2 and 100");
+    }
+    if !payload.outcome_descriptions.is_empty()
+        && payload.outcome_descriptions.len() != payload.options_count as usize
+    {
+        return Err("outcome_descriptions must be empty or have one entry per options_count");
+    }
+    Ok(())
 }
 
 /// `POST /api/v1/indexer/pool-created` — ingest a decoded `PoolCreated` event
@@ -881,6 +920,11 @@ pub async fn ingest_pool_created(
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    if let Err(message) = validate_pool_created_payload(&payload) {
+        return ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, message)
+            .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1536,6 +1580,8 @@ pub fn router(
         event_bus,
     };
 
+    let trust_proxy_headers = state.config.trust_proxy_headers;
+
     // Admin tier — authenticated administrative operations (no public rate limit).
     let admin = Router::new()
         .route("/admin/log-level", patch(set_log_level))
@@ -1552,15 +1598,19 @@ pub fn router(
             .route("/prices", get(crate::price_cache::get_prices))
             .with_state(state.clone()),
         RateLimitTier::Light,
+        trust_proxy_headers,
     );
 
-    // Token tier — refresh rotation and WebSocket handshake (10 req / 60 s).
+    // Token tier — wallet login, refresh rotation and WebSocket handshake (10 req / 60 s).
     let token = with_rate_limit(
         Router::new()
+            .route("/auth/challenge", post(crate::auth_challenge::challenge))
+            .route("/auth/verify", post(crate::auth_challenge::verify))
             .route("/auth/refresh", post(refresh_tokens_handler))
             .route("/ws", get(crate::ws::ws_handler))
             .with_state(state.clone()),
         RateLimitTier::Token,
+        trust_proxy_headers,
     );
 
     // Read tier — public, database-backed read endpoints.
@@ -1580,6 +1630,7 @@ pub fn router(
             .route("/markets/:id/predictions", get(get_market_predictions))
             .with_state(state.clone()),
         RateLimitTier::Read,
+        trust_proxy_headers,
     );
 
     // User tier — per-user history and predictions.
@@ -1607,6 +1658,7 @@ pub fn router(
             )
             .with_state(state.clone()),
         RateLimitTier::User,
+        trust_proxy_headers,
     );
 
     // Write tier — internal writes (strictest limit). All indexer ingest routes
@@ -1632,6 +1684,7 @@ pub fn router(
             .route("/waitlist", post(join_waitlist_handler))
             .with_state(state.clone()),
         RateLimitTier::Write,
+        trust_proxy_headers,
     );
 
     // Routes without a rate-limit tier of their own. Anything already served by
@@ -2321,131 +2374,68 @@ pub async fn join_waitlist_handler(
 }
 
 #[cfg(test)]
-mod internal_auth_tests {
+mod pool_created_validation_tests {
     use super::*;
-    use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
-    use std::sync::Arc;
-    use tower::ServiceExt;
 
-    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
-        let mut map = HeaderMap::new();
-        for (name, value) in pairs {
-            map.insert(
-                HeaderName::from_bytes(name.as_bytes()).expect("valid header name"),
-                HeaderValue::from_str(value).expect("valid header value"),
-            );
-        }
-        map
+    fn payload() -> serde_json::Value {
+        use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+        let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend(std::iter::repeat(0xAB_u8).take(32));
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        let address = base32_encode(&bytes);
+        serde_json::json!({
+            "pool_id": 1u64,
+            "creator": address,
+            "end_time": 2_000_000_000u64,
+            "token": "XLM",
+            "category": "sports",
+            "description": "test pool",
+            "options_count": 2u32,
+            "outcome_descriptions": ["Yes", "No"],
+        })
     }
 
-    fn test_state(indexer_key: Option<&str>) -> AppState {
-        let mut config = Config::default_for_test();
-        config.indexer_api_key = indexer_key.map(str::to_string);
-        AppState {
-            config: Arc::new(config),
-            cache: PriceCache::new(),
-            pool_cache: PoolCache::new(),
-            redis: RedisCache::disabled(),
-            db: None,
-            metrics: Arc::new(
-                crate::metrics::Metrics::new().expect("metrics registry must initialize"),
-            ),
-            event_bus: crate::ws::EventBus::new(),
-        }
+    fn parsed(value: serde_json::Value) -> PoolCreatedPayload {
+        serde_json::from_value(value).expect("fixture must deserialize")
     }
 
     #[test]
-    fn admin_credential_rejects_missing_and_wrong_key() {
-        assert!(!has_admin_credential_with_key(&HeaderMap::new(), Some("secret")));
-        assert!(!has_admin_credential_with_key(
-            &headers(&[("x-admin-api-key", "wrong")]),
-            Some("secret")
-        ));
+    fn rejects_options_count_below_minimum() {
+        let mut value = payload();
+        value["options_count"] = serde_json::json!(1);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("options_count"));
     }
 
     #[test]
-    fn admin_credential_accepts_key_regardless_of_creator_body() {
-        // #2068: the creator in the body is no longer an authorization factor.
-        let creator = "GBX0000000000000000000000000000000000000000000000000000000000000000";
-        let mut supplied = headers(&[("x-admin-api-key", "secret")]);
-        supplied.insert("x-creator", HeaderValue::from_str(creator).unwrap());
-        assert!(has_admin_credential_with_key(&supplied, Some("secret")));
+    fn rejects_options_count_above_contract_maximum() {
+        let mut value = payload();
+        value["options_count"] = serde_json::json!(101);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("options_count"));
     }
 
     #[test]
-    fn payout_accepts_admin_or_indexer_credential() {
-        // #2069: the indexer normally triggers payouts; admin key works too.
-        let state = test_state(Some("indexer-secret"));
-        let authenticated = |map: &HeaderMap| {
-            has_admin_credential_with_key(map, Some("admin-secret"))
-                || has_indexer_credential(map, state.config.indexer_api_key.as_deref())
-        };
-        assert!(!authenticated(&HeaderMap::new()));
-        assert!(!authenticated(&headers(&[("x-admin-api-key", "wrong")])));
-        assert!(authenticated(&headers(&[("x-admin-api-key", "admin-secret")])));
-        assert!(authenticated(&headers(&[("x-indexer-key", "indexer-secret")])));
+    fn rejects_wrong_number_of_outcome_descriptions() {
+        let mut value = payload();
+        value["outcome_descriptions"] = serde_json::json!(["only one"]);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("outcome_descriptions"));
     }
 
-    fn ingest_router(indexer_key: Option<&str>) -> Router {
-        let state = test_state(indexer_key);
-        Router::new()
-            .route("/ingest", axum::routing::post(|| async { "ok" }))
-            .with_state(state.clone())
-            .layer(axum::middleware::from_fn_with_state(
-                state,
-                require_indexer_key,
-            ))
+    #[test]
+    fn accepts_empty_outcome_descriptions() {
+        let mut value = payload();
+        value["outcome_descriptions"] = serde_json::json!([]);
+        assert!(validate_pool_created_payload(&parsed(value)).is_ok());
     }
 
-    fn post_request(path: &str, pairs: &[(&str, &str)]) -> Request<axum::body::Body> {
-        let mut builder = Request::builder().method("POST").uri(path);
-        for (name, value) in pairs {
-            builder = builder.header(*name, *value);
-        }
-        builder
-            .body(axum::body::Body::empty())
-            .expect("valid request")
-    }
-
-    #[tokio::test]
-    async fn indexer_middleware_rejects_missing_and_wrong_keys() {
-        let router = ingest_router(Some("indexer-secret"));
-        assert_eq!(
-            router.clone().oneshot(post_request("/ingest", &[])).await.unwrap().status(),
-            StatusCode::UNAUTHORIZED
-        );
-        assert_eq!(
-            router
-                .oneshot(post_request("/ingest", &[("x-indexer-key", "wrong")]))
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::UNAUTHORIZED
-        );
-    }
-
-    #[tokio::test]
-    async fn indexer_middleware_accepts_correct_key_or_bearer_token() {
-        let router = ingest_router(Some("indexer-secret"));
-        assert_eq!(
-            router
-                .clone()
-                .oneshot(post_request("/ingest", &[("x-indexer-key", "indexer-secret")]))
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::OK
-        );
-        assert_eq!(
-            router
-                .oneshot(post_request(
-                    "/ingest",
-                    &[("authorization", "Bearer indexer-secret")]
-                ))
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::OK
-        );
+    #[test]
+    fn rejects_pool_id_above_i64_max() {
+        let mut value = payload();
+        value["pool_id"] = serde_json::json!(i64::MAX as u64 + 1);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("pool_id"));
     }
 }

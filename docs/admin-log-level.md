@@ -60,7 +60,11 @@ being silently treated as a module name.
 ## Authentication
 
 The endpoint requires an `x-admin-api-key` header whose value matches the
-`PREDIFI_ADMIN_API_KEY` environment variable.
+`PREDIFI_ADMIN_API_KEY` value loaded into the backend `Config` once at
+startup (it is no longer read from the environment per request). The header
+value is compared in constant time. Startup logs a warning if the key is
+missing or shorter than 32 bytes; in that case every admin request is
+rejected with 401.
 
 ```bash
 curl -X PATCH http://localhost:3000/api/v1/admin/log-level \

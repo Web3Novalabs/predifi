@@ -189,6 +189,14 @@ pub struct Config {
     /// scrape config.  Comparison is constant-time to prevent timing attacks.
     pub metrics_token: Option<String>,
 
+    /// Shared secret accepted by `PATCH /api/v1/admin/log-level` in the
+    /// `x-admin-api-key` header. Loaded once from `PREDIFI_ADMIN_API_KEY`.
+    pub admin_api_key: Option<String>,
+
+    /// Whether forwarded client-IP headers (`X-Forwarded-For`, `X-Real-IP`,
+    /// `Forwarded`) may be trusted for rate limiting (default `false`).
+    pub trust_proxy_headers: bool,
+
     /// SMTP server hostname for outbound email delivery.  `None` disables
     /// email notifications.  Read from `PREDIFI_SMTP_HOST`.
     pub smtp_host: Option<String>,
@@ -330,6 +338,11 @@ impl Config {
 
         // ── Metrics token (#2086) ─────────────────────────────────────────────
         let metrics_token = vars.get("PREDIFI_METRICS_TOKEN").cloned().filter(|s| !s.is_empty());
+        let admin_api_key = vars
+            .get("PREDIFI_ADMIN_API_KEY")
+            .cloned()
+            .filter(|s| !s.is_empty());
+        let trust_proxy_headers = get_bool(vars, "PREDIFI_TRUST_PROXY_HEADERS", false)?;
 
         // ── Email (#1929) ─────────────────────────────────────────────────────
         let smtp_host = vars.get("PREDIFI_SMTP_HOST").cloned().filter(|s| !s.is_empty());
@@ -389,6 +402,8 @@ impl Config {
             smtp_password,
             smtp_from,
             metrics_token,
+            admin_api_key,
+            trust_proxy_headers,
         };
 
         config.validate()?;
@@ -627,6 +642,22 @@ impl Config {
             });
         }
 
+        // ── Admin API key (#2070) ────────────────────────────────────────────
+        // A missing or weak key leaves the admin log-level endpoint unusable
+        // (or trivially guessable). Report it once at startup in every
+        // environment; the endpoint still fails closed with 401.
+        let weak_admin_key = match &self.admin_api_key {
+            None => true,
+            Some(key) => key.len() < 32,
+        };
+        if weak_admin_key {
+            tracing::warn!(
+                production = self.is_production(),
+                "PREDIFI_ADMIN_API_KEY is missing or shorter than 32 bytes; \
+                 the admin log-level endpoint will reject all requests"
+            );
+        }
+
         // ── Email / SMTP (#1929) ────────────────────────────────────────────
         if self.smtp_port == 0 {
             return Err(ConfigError::InvalidValue {
@@ -721,6 +752,8 @@ impl Config {
             smtp_password: None,
             smtp_from: String::from("noreply@predifi.app"),
             metrics_token: None,
+            admin_api_key: None,
+            trust_proxy_headers: false,
         }
     }
 }
