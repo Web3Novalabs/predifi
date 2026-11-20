@@ -27,6 +27,74 @@ fn internal_error_response(err: impl std::fmt::Display) -> axum::response::Respo
     crate::errors::AppError::Internal(err.to_string()).into_response()
 }
 
+/// Middleware applied once to the indexer sub-router (#2062). Fails closed when
+/// no key is configured.
+async fn require_indexer_key(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    if has_indexer_credential(&headers, state.config.indexer_api_key.as_deref()) {
+        next.run(request).await
+    } else {
+        ApiResponse::<()>::error(
+            axum::http::StatusCode::UNAUTHORIZED,
+            error_codes::UNAUTHORIZED,
+            "invalid or missing indexer credentials",
+        )
+        .into_response()
+    }
+}
+
+/// Compare a request header with a configured shared secret in constant time.
+fn header_matches_secret(
+    headers: &axum::http::HeaderMap,
+    name: &str,
+    expected: Option<&str>,
+) -> bool {
+    let Some(expected) = expected.filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(|provided| {
+            crate::server::constant_time_eq(provided.as_bytes(), expected.as_bytes())
+        })
+        .unwrap_or(false)
+}
+
+/// Admin credential shared with `PATCH /api/v1/admin/log-level` (#2068, #2069).
+fn has_admin_credential_with_key(headers: &axum::http::HeaderMap, expected: Option<&str>) -> bool {
+    header_matches_secret(headers, "x-admin-api-key", expected)
+}
+
+fn has_admin_credential(headers: &axum::http::HeaderMap) -> bool {
+    let expected = std::env::var("PREDIFI_ADMIN_API_KEY").ok();
+    has_admin_credential_with_key(headers, expected.as_deref())
+}
+
+/// Indexer ingest credential (#2062). Accepts `x-indexer-key` or a Bearer token.
+fn has_indexer_credential(headers: &axum::http::HeaderMap, expected: Option<&str>) -> bool {
+    if header_matches_secret(headers, "x-indexer-key", expected) {
+        return true;
+    }
+    let Some(expected) = expected.filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|provided| {
+            crate::server::constant_time_eq(provided.as_bytes(), expected.as_bytes())
+        })
+        .unwrap_or(false)
+}
+
 /// Struct representing fee information, matching the contract structure.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FeeInfo {
@@ -154,27 +222,14 @@ pub struct SetLogLevelResponse {
 /// The new level is applied immediately and remains in effect until the next
 /// change or a process restart (which reverts to the configured default).
 pub async fn set_log_level(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     headers: axum::http::HeaderMap,
     Json(body): Json<SetLogLevelRequest>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let admin_key = std::env::var("PREDIFI_ADMIN_API_KEY").ok();
-
-    let provided = headers
-        .get("x-admin-api-key")
-        .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
-    let authenticated = match (&admin_key, provided) {
-        (Some(expected), Some(provided)) if expected == &provided => true,
-        _ => false,
-    };
-
-    if !authenticated {
+    if !has_admin_credential(&headers) {
         return ApiResponse::<()>::error(
             StatusCode::UNAUTHORIZED,
             error_codes::UNAUTHORIZED,
@@ -1204,19 +1259,34 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
 /// Request body for `PATCH /api/v1/pools/:id/tags`.
 #[derive(Debug, Deserialize)]
 pub struct UpdatePoolTagsRequest {
-    /// Must match the pool's on-chain creator — only the creator may retag a pool.
+    /// Legacy field, retained for request compatibility. It is no longer used
+    /// for authorization: pool creators are public and can be copied by anyone.
     pub creator: StellarAddress,
     pub tags: Vec<String>,
 }
 
-/// `PATCH /api/v1/pools/:id/tags` — creator-only: replace a pool's tag set.
+/// `PATCH /api/v1/pools/:id/tags` — admin-only: replace a pool's tag set.
+///
+/// Requires the `x-admin-api-key` header (the same credential as
+/// `/admin/log-level`). Until wallet-based sessions exist, the `creator` in
+/// the body is not trusted as proof of identity.
 pub async fn update_pool_tags_handler(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(pool_id): Path<i64>,
     Json(body): Json<UpdatePoolTagsRequest>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    if !has_admin_credential(&headers) {
+        return ApiResponse::<()>::error(
+            StatusCode::UNAUTHORIZED,
+            error_codes::UNAUTHORIZED,
+            "invalid or missing admin credentials",
+        )
+        .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1227,7 +1297,7 @@ pub async fn update_pool_tags_handler(
         .into_response();
     };
 
-    match crate::tags::update_pool_tags(db, pool_id, body.creator.as_str(), &body.tags).await {
+    match crate::tags::update_pool_tags(db, pool_id, &body.tags).await {
         Ok(true) => {
             state.pool_cache.invalidate(pool_id);
             state.redis.invalidate_pools_cache().await;
@@ -1236,7 +1306,7 @@ pub async fn update_pool_tags_handler(
         Ok(false) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
-            "pool not found, or caller is not the creator",
+            "pool not found",
         )
         .into_response(),
         Err(e) => internal_error_response(e),
