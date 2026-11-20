@@ -48,6 +48,10 @@ mod max_pools_stress_tests;
 mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
+#[cfg(test)]
+mod fee_tiers_test;
+#[cfg(test)]
+mod edge_case_tests;
 mod treasury;
 mod creator_incentive;
 
