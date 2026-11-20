@@ -359,4 +359,69 @@ mod tests {
         let body = body_string(response.into_body()).await;
         assert!(!body.contains("database not available"), "got: {body}");
     }
+
+    // ── PATCH /v1/pools/:id/tags: admin-only (#2068) ─────────────────────────
+
+    /// Retagging a pool requires the admin key. Without `x-admin-api-key` the
+    /// request must be rejected even when the body names the (public) creator.
+    #[tokio::test]
+    async fn pool_tags_update_without_admin_key_returns_401() {
+        let request = Request::builder()
+            .method("PATCH")
+            .uri("/v1/pools/1/tags")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                r#"{"creator":"GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H","tags":["hidden"]}"#,
+            ))
+            .expect("failed to build request");
+
+        let response = build_router_without_db()
+            .oneshot(request)
+            .await
+            .expect("request failed");
+
+        let status = response.status();
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "PATCH tags without admin key must be 401, got {status}"
+        );
+    }
+
+    /// A correct `x-admin-api-key` passes authentication for any `creator`
+    /// value (the field is ignored). The router has no DB, so the handler
+    /// reaches the database check and returns 503 instead of 401.
+    #[tokio::test]
+    async fn pool_tags_update_with_admin_key_passes_auth_for_any_creator() {
+        let key = "test-admin-key-2068";
+        std::env::set_var("PREDIFI_ADMIN_API_KEY", key);
+
+        for creator in [
+            "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H",
+            "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ] {
+            let request = Request::builder()
+                .method("PATCH")
+                .uri("/v1/pools/1/tags")
+                .header("content-type", "application/json")
+                .header("x-admin-api-key", key)
+                .body(axum::body::Body::from(
+                    serde_json::json!({ "creator": creator, "tags": ["featured"] }).to_string(),
+                ))
+                .expect("failed to build request");
+
+            let response = build_router_without_db()
+                .oneshot(request)
+                .await
+                .expect("request failed");
+
+            let status = response.status();
+            assert_eq!(
+                status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "PATCH tags with admin key must pass auth (503 without DB), got {status}"
+            );
+        }
+        std::env::remove_var("PREDIFI_ADMIN_API_KEY");
+    }
 }

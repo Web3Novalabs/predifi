@@ -153,23 +153,21 @@ pub async fn list_distinct_tags(pool: &PgPool) -> Result<Vec<String>, sqlx::Erro
     Ok(rows.into_iter().map(|(tag,)| tag).collect())
 }
 
-/// Replace the tag set for `pool_id`, scoped to `creator` so only the pool's
-/// creator can edit its tags. Returns `false` if no matching row was updated
-/// (pool not found, or `creator` doesn't own it).
-/// Replaces a pool's tags when `creator` owns the pool.
+/// Replace the tag set for `pool_id`.
 ///
-/// Returns `true` when a row was updated and `false` when the pool is missing
-/// or owned by another creator; database failures are returned unchanged.
+/// Authorization is the caller's job: the route is admin-only until
+/// wallet-based sessions exist (#2068).
+///
+/// Returns `true` when a row was updated and `false` when the pool is missing;
+/// database failures are returned unchanged.
 pub async fn update_pool_tags(
     pool: &PgPool,
     pool_id: i64,
-    creator: &str,
     tags: &[String],
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("UPDATE pools SET tags = $1 WHERE pool_id = $2 AND creator = $3")
+    let result = sqlx::query("UPDATE pools SET tags = $1 WHERE pool_id = $2")
         .bind(tags)
         .bind(pool_id)
-        .bind(creator)
         .execute(pool)
         .await?;
 

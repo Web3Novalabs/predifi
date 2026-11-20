@@ -1202,21 +1202,48 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
 }
 
 /// Request body for `PATCH /api/v1/pools/:id/tags`.
+///
+/// Any `creator` field sent by the client is ignored (serde skips unknown
+/// fields): the creator address is public, so it is not an authorization input.
 #[derive(Debug, Deserialize)]
 pub struct UpdatePoolTagsRequest {
-    /// Must match the pool's on-chain creator — only the creator may retag a pool.
-    pub creator: StellarAddress,
     pub tags: Vec<String>,
 }
 
-/// `PATCH /api/v1/pools/:id/tags` — creator-only: replace a pool's tag set.
+/// `PATCH /api/v1/pools/:id/tags` — admin-only for now: replace a pool's tag set.
+///
+/// Requires the `x-admin-api-key` header to match `PREDIFI_ADMIN_API_KEY`
+/// (compared in constant time). Returns 401 otherwise. This stays admin-only
+/// until wallet-based sessions exist (#2068).
 pub async fn update_pool_tags_handler(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(pool_id): Path<i64>,
     Json(body): Json<UpdatePoolTagsRequest>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let admin_key = std::env::var("PREDIFI_ADMIN_API_KEY")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let provided = headers
+        .get("x-admin-api-key")
+        .and_then(|v| v.to_str().ok());
+    let authenticated = match (admin_key, provided) {
+        (Some(expected), Some(provided)) => {
+            crate::server::constant_time_eq(provided.as_bytes(), expected.as_bytes())
+        }
+        _ => false,
+    };
+    if !authenticated {
+        return ApiResponse::<()>::error(
+            StatusCode::UNAUTHORIZED,
+            error_codes::UNAUTHORIZED,
+            "invalid or missing admin credentials",
+        )
+        .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1227,7 +1254,7 @@ pub async fn update_pool_tags_handler(
         .into_response();
     };
 
-    match crate::tags::update_pool_tags(db, pool_id, body.creator.as_str(), &body.tags).await {
+    match crate::tags::update_pool_tags(db, pool_id, &body.tags).await {
         Ok(true) => {
             state.pool_cache.invalidate(pool_id);
             state.redis.invalidate_pools_cache().await;
@@ -1236,7 +1263,7 @@ pub async fn update_pool_tags_handler(
         Ok(false) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
-            "pool not found, or caller is not the creator",
+            "pool not found",
         )
         .into_response(),
         Err(e) => internal_error_response(e),
