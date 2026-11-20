@@ -361,6 +361,7 @@ where
     let listener_redis = redis.clone();
     let listener_rpc_timeout = Duration::from_secs(config.rpc_timeout_secs);
     let listener_batch_size = config.indexer_max_batch_size;
+    let listener_contract_id = config.predifi_contract_id.clone();
 
     // spawn_worker roots the listener under a named OTel span so all Stellar
     // sync traces are correlated in the trace backend.
@@ -373,6 +374,7 @@ where
                 listener_redis,
                 listener_rpc_timeout,
                 listener_batch_size,
+                listener_contract_id,
             )
             .await;
         });

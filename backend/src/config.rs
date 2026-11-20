@@ -115,6 +115,11 @@ pub struct Config {
     pub referral_fee_bps: u32,
     /// Stellar Soroban RPC endpoint URL (default: testnet).
     pub stellar_rpc_url: String,
+    /// Stellar contract whose events are accepted by the listener.
+    ///
+    /// Read from `PREDIFI_CONTRACT_ID`. The listener is disabled when it is
+    /// absent outside production.
+    pub predifi_contract_id: Option<String>,
     /// Optional Sentry DSN for error reporting. `None` disables Sentry.
     pub sentry_dsn: Option<String>,
     /// Redis connection URL (default `redis://localhost:6379`).
@@ -281,6 +286,10 @@ impl Config {
         let treasury_fee_bps = get_u32(vars, "PREDIFI_TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "PREDIFI_REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
+        let predifi_contract_id = vars
+            .get("PREDIFI_CONTRACT_ID")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         let sentry_dsn = vars.get("PREDIFI_SENTRY_DSN").cloned();
         let redis_url = get_string(vars, "PREDIFI_REDIS_URL", DEFAULT_REDIS_URL);
         let redis_required = get_bool(vars, "PREDIFI_REDIS_REQUIRED", DEFAULT_REDIS_REQUIRED)?;
@@ -361,6 +370,7 @@ impl Config {
             treasury_fee_bps,
             referral_fee_bps,
             stellar_rpc_url,
+            predifi_contract_id,
             sentry_dsn,
             redis_url,
             redis_required,
@@ -389,6 +399,12 @@ impl Config {
             return Err(ConfigError::MissingRequired {
                 key: "PREDIFI_DATABASE_URL",
                 description: "PostgreSQL connection string used by the backend",
+            });
+        }
+        if config.is_production() && config.predifi_contract_id.is_none() {
+            return Err(ConfigError::MissingRequired {
+                key: "PREDIFI_CONTRACT_ID",
+                description: "Stellar contract ID whose events the listener processes",
             });
         }
         Ok(config)
@@ -686,6 +702,7 @@ impl Config {
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
+            predifi_contract_id: None,
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
             redis_required: DEFAULT_REDIS_REQUIRED,
@@ -1587,6 +1604,16 @@ mod tests {
     }
 
     #[test]
+    fn config_reads_predifi_contract_id_from_env() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_CONTRACT_ID"),
+            String::from(" CABC123 "),
+        )]);
+        let config = Config::from_map(&vars).unwrap();
+        assert_eq!(config.predifi_contract_id.as_deref(), Some("CABC123"));
+    }
+
+    #[test]
     fn config_reads_redis_url_from_env() {
         let vars = HashMap::from([(
             String::from("PREDIFI_REDIS_URL"),
@@ -2452,5 +2479,33 @@ mod tests {
             ),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn config_requires_predifi_contract_id_in_production() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_APP_ENV"), String::from("production")),
+            (
+                String::from("PREDIFI_DATABASE_URL"),
+                String::from("postgres://postgres@localhost/predifi"),
+            ),
+            (
+                String::from("PREDIFI_SECRET_KEY"),
+                String::from("a-very-strong-production-secret-key-at-least-32-bytes"),
+            ),
+            (
+                String::from("PREDIFI_WS_ALLOWED_ORIGINS"),
+                String::from("https://app.predifi.com"),
+            ),
+        ]);
+        let error = Config::from_map(&vars)
+            .expect_err("production without a PrediFi contract ID must fail");
+        assert!(matches!(
+            error,
+            ConfigError::MissingRequired {
+                key: "PREDIFI_CONTRACT_ID",
+                ..
+            }
+        ));
     }
 }

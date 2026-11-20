@@ -132,6 +132,7 @@ services:
       PREDIFI_DATABASE_URL: postgres://postgres:postgres@postgres:5432/predifi
       PREDIFI_REDIS_URL: redis://redis:6379
       PREDIFI_STELLAR_RPC_URL: http://stellar:8000/rpc
+      PREDIFI_CONTRACT_ID: ${PREDIFI_CONTRACT_ID:-}
       PREDIFI_SECRET_KEY: predifi-dev-secret-do-not-use-in-production-32
       CORS_ALLOWED_ORIGINS: http://localhost:3001
     ports:
