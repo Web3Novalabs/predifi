@@ -1502,9 +1502,11 @@ pub fn router(
         trust_proxy_headers,
     );
 
-    // Token tier — refresh rotation and WebSocket handshake (10 req / 60 s).
+    // Token tier — wallet login, refresh rotation and WebSocket handshake (10 req / 60 s).
     let token = with_rate_limit(
         Router::new()
+            .route("/auth/challenge", post(crate::auth_challenge::challenge))
+            .route("/auth/verify", post(crate::auth_challenge::verify))
             .route("/auth/refresh", post(refresh_tokens_handler))
             .route("/ws", get(crate::ws::ws_handler))
             .with_state(state.clone()),
