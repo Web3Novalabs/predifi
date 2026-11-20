@@ -2427,8 +2427,32 @@ mod pools_pagination_tests {
 
 // ── User email registration (#1929) ──────────────────────────────────────────
 
-/// `GET /api/v1/users/:address/email` — retrieve the registered email and
-/// opt-in state for a user.
+/// Mask an email address for public responses: keep only the first character
+/// of the local part, so `user@example.com` becomes `u***@example.com`.
+fn mask_email(email: &str) -> String {
+    let Some((local, domain)) = email.split_once('@') else {
+        return "***".to_string();
+    };
+    let first = local.chars().next().map(|c| c.to_string()).unwrap_or_default();
+    format!("{first}***@{domain}")
+}
+
+/// Build the public email-preferences response. The full address is never
+/// exposed here; an authenticated owner check is required before that can
+/// change.
+fn user_email_response(address: &str, email: &str, enabled: bool) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    ApiResponse::success(json!({
+        "address": address,
+        "email": mask_email(email),
+        "email_enabled": enabled,
+        "has_email": true,
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/users/:address/email` — retrieve the masked registered email
+/// and opt-in state for a user.
 pub async fn get_user_email_handler(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
@@ -2446,12 +2470,7 @@ pub async fn get_user_email_handler(
     };
 
     match crate::notifications::get_user_email(db, address.as_str()).await {
-        Ok(Some((email, enabled))) => ApiResponse::success(json!({
-            "address": address,
-            "email": email,
-            "email_enabled": enabled,
-        }))
-        .into_response(),
+        Ok(Some((email, enabled))) => user_email_response(address.as_str(), &email, enabled),
         Ok(None) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
@@ -2536,7 +2555,29 @@ pub async fn upsert_user_email_handler(
 
 #[cfg(test)]
 mod email_validation_tests {
-    use super::normalize_email;
+    use super::{mask_email, normalize_email, user_email_response};
+
+    #[tokio::test]
+    async fn public_email_response_never_contains_unmasked_address() {
+        let response = user_email_response(
+            "GBZXN7PIRZGNMHGA728JAGEL2OC4AHFAXE2XZ2VY5UZWFEXU272K5635",
+            "user@example.com",
+            true,
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains("u***@example.com"));
+        assert!(!body.contains("user@example.com"));
+        assert!(body.contains("has_email"));
+    }
+
+    #[test]
+    fn masks_email_local_part() {
+        assert_eq!(mask_email("user@example.com"), "u***@example.com");
+        assert_eq!(mask_email("a@sub.example.co.uk"), "a***@sub.example.co.uk");
+    }
 
     #[test]
     fn rejects_malformed_and_oversized_addresses() {
