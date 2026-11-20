@@ -1,7 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import {
+  BUTTON_VARIANTS,
+  Button,
+  buttonVariants,
+} from "@/components/ui/button";
 
 describe("Button", () => {
   it("renders its children", () => {
@@ -36,13 +41,13 @@ describe("Button", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
-  it.each(Object.keys(buttonVariants.variants.variant))(
+  it.each(BUTTON_VARIANTS)(
     "applies the %s variant class",
     (variant) => {
-      render(<Button variant={variant as never}>Click me</Button>);
+      render(<Button variant={variant}>Click me</Button>);
 
       const button = screen.getByRole("button", { name: "Click me" });
-      const expected = buttonVariants({ variant: variant as never });
+      const expected = cn(buttonVariants({ variant }));
 
       for (const className of expected.split(" ")) {
         expect(button).toHaveClass(className);
