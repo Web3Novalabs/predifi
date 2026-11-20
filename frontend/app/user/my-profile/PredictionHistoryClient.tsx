@@ -8,7 +8,6 @@ import { formatChartValue } from "@/lib/stakeFilters";
 import { useCurrentUserAddress } from "@/lib/hooks/useCurrentUserAddress";
 import { useProfile } from "@/lib/hooks/useProfile";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
-import { PerformanceCharts } from "@/components/profile/PerformanceCharts";
 import { ShareButton, CopyButton, Skeleton } from "@/components/ui";
 import type { ClaimStatus } from "@/lib/api/profile";
 import type { PerformanceChartsProps } from "@/components/profile/PerformanceCharts";

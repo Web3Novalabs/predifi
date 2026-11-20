@@ -29,6 +29,8 @@ const POLL_INTERVAL_SECS: u64 = 5;
 const STATE_KEY: &str = "stellar_listener_latest_ledger";
 const INITIAL_RECONNECT_DELAY_SECS: u64 = 1;
 const MAX_RECONNECT_DELAY_SECS: u64 = 60;
+/// Maximum number of events to request per `getEvents` page.
+const PAGE_LIMIT: u64 = 100;
 
 // ── RPC response types ────────────────────────────────────────────────────────
 
@@ -42,6 +44,9 @@ struct GetEventsResult {
     events: Vec<StellarEvent>,
     #[serde(rename = "latestLedger")]
     latest_ledger: u64,
+    /// Opaque paging token returned by the RPC when more events are available.
+    /// Present only when the result set was truncated; absent on the last page.
+    cursor: Option<String>,
 }
 
 /// A single event returned by the Stellar RPC `getEvents` call.
@@ -97,25 +102,44 @@ async fn save_cursor(pool: &PgPool, ledger: u64) {
 
 // ── RPC call ──────────────────────────────────────────────────────────────────
 
-/// Fetch a batch of Stellar contract events starting from `start_ledger`.
+/// Fetch one page of Stellar contract events.
 ///
-/// Each call is wrapped in its own OTel span so RPC latency and failures are
-/// visible in the trace backend.
+/// Pass `paging_cursor = None` on the first call; subsequent calls should
+/// pass the `cursor` field from the previous page's result.  When `paging_cursor`
+/// is `Some`, `start_ledger` is ignored by the RPC and the cursor takes
+/// precedence — the field is still included so the span attributes remain useful.
 #[instrument(skip(client), name = "stellar_listener.fetch_events",
     fields(rpc_url = %rpc_url, start_ledger = start_ledger))]
 async fn fetch_events(
     client: &reqwest::Client,
     rpc_url: &str,
     start_ledger: u64,
+    paging_cursor: Option<&str>,
 ) -> Result<GetEventsResult, String> {
+    let pagination = serde_json::json!({
+        "limit": PAGE_LIMIT,
+        "cursor": paging_cursor,
+    });
+
+    let params = if let Some(cur) = paging_cursor {
+        serde_json::json!({
+            "cursor": cur,
+            "pagination": pagination,
+            "filters": []
+        })
+    } else {
+        serde_json::json!({
+            "startLedger": start_ledger,
+            "pagination": pagination,
+            "filters": []
+        })
+    };
+
     let body = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "getEvents",
-        "params": {
-            "startLedger": start_ledger,
-            "filters": []
-        }
+        "params": params,
     });
 
     let resp = client
@@ -200,8 +224,8 @@ pub async fn run_worker(
             ticker.tick().await;
         }
 
-        match fetch_events(&client, &rpc_url, cursor).await {
-            Ok(result) => {
+        match fetch_events(&client, &rpc_url, cursor, None).await {
+            Ok(first_page) => {
                 if consecutive_failures > 0 {
                     info!(
                         previous_failures = consecutive_failures,
@@ -210,7 +234,41 @@ pub async fn run_worker(
                 }
                 consecutive_failures = 0;
 
-                let count = result.events.len();
+                let mut latest_ledger = first_page.latest_ledger;
+                let mut paging_cursor = first_page.cursor.clone();
+                let mut all_events = first_page.events;
+
+                // Keep fetching pages until the RPC returns fewer events than
+                // PAGE_LIMIT, which signals we have reached the end of the
+                // available range.
+                while paging_cursor.is_some()
+                    && all_events.len() as u64 % PAGE_LIMIT == 0
+                    && !all_events.is_empty()
+                {
+                    match fetch_events(
+                        &client,
+                        &rpc_url,
+                        cursor,
+                        paging_cursor.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(next_page) => {
+                            latest_ledger = next_page.latest_ledger;
+                            paging_cursor = next_page.cursor.clone();
+                            all_events.extend(next_page.events);
+                        }
+                        Err(e) => {
+                            error!(
+                                error = %e,
+                                "failed to fetch next events page; processing events collected so far"
+                            );
+                            paging_cursor = None;
+                        }
+                    }
+                }
+
+                let count = all_events.len();
                 if count > 0 {
                     if count > batch_size {
                         warn!(
@@ -222,18 +280,18 @@ pub async fn run_worker(
 
                     info!(
                         ledger_start = cursor,
-                        latest_ledger = result.latest_ledger,
+                        latest_ledger,
                         events = count,
                         batch_size,
                         "stellar events received"
                     );
 
-                    for chunk in result.events.chunks(batch_size) {
+                    for chunk in all_events.chunks(batch_size) {
                         process_event_batch(&db, &redis, &event_bus, chunk, batch_size).await;
                     }
                 }
 
-                let new_cursor = result.latest_ledger + 1;
+                let new_cursor = latest_ledger + 1;
                 if new_cursor > cursor {
                     cursor = new_cursor;
                     save_cursor(&db, cursor).await;
@@ -885,5 +943,154 @@ mod tests {
         assert_eq!(chunks.len(), 3);
         assert_eq!(chunks[0], &[0, 1]);
         assert_eq!(chunks[2], &[4]);
+    }
+
+    // ── Pagination tests ──────────────────────────────────────────────────────
+
+    /// Build a minimal `GetEventsResult` JSON payload for a mock RPC.
+    fn make_events_page(ids: &[&str], next_cursor: Option<&str>, latest_ledger: u64) -> String {
+        let events_json: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                format!(
+                    r#"{{"type":"contract","ledger":10,"contractId":"CA","id":"{}"}}"#,
+                    id
+                )
+            })
+            .collect();
+        let cursor_field = match next_cursor {
+            Some(c) => format!(r#","cursor":"{}""#, c),
+            None => String::new(),
+        };
+        format!(
+            r#"{{"jsonrpc":"2.0","id":1,"result":{{"events":[{}],"latestLedger":{}{}}}}}"#,
+            events_json.join(","),
+            latest_ledger,
+            cursor_field
+        )
+    }
+
+    /// fetch_events threads the paging cursor from one call to the next so
+    /// events on pages beyond the first are not silently dropped.
+    ///
+    /// The mock RPC returns a full PAGE_LIMIT page on the first request
+    /// (cursor present) and a short page on the second (no cursor), signalling
+    /// end-of-range.  Both pages must be collected before the ledger cursor
+    /// advances.
+    #[tokio::test]
+    async fn pagination_collects_all_pages_before_advancing_cursor() {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+            sync::{oneshot, Mutex},
+        };
+
+        // Build the two response bodies up front.
+        let page1_ids: Vec<String> = (0..PAGE_LIMIT).map(|i| format!("evt-p1-{}", i)).collect();
+        let page1_id_refs: Vec<&str> = page1_ids.iter().map(String::as_str).collect();
+        let page1_body =
+            make_events_page(&page1_id_refs, Some("cursor-after-page1"), 50);
+
+        let page2_body = make_events_page(&["evt-p2-0", "evt-p2-1"], None, 55);
+
+        // Shared call counter so the mock can serve different pages.
+        let call_count = Arc::new(Mutex::new(0u32));
+        let call_count_srv = call_count.clone();
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock listener");
+        let addr = listener.local_addr().expect("local addr");
+        let url = format!("http://{}", addr);
+
+        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+
+        let p1 = page1_body.clone();
+        let p2 = page2_body.clone();
+        let srv = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut shutdown_rx => break,
+                    result = listener.accept() => {
+                        if let Ok((mut socket, _)) = result {
+                            let mut count = call_count_srv.lock().await;
+                            *count += 1;
+                            let body = if *count == 1 { p1.clone() } else { p2.clone() };
+                            drop(count);
+                            tokio::spawn(async move {
+                                let mut buf = [0u8; 4096];
+                                let _ = socket.read(&mut buf).await;
+                                let response = format!(
+                                    "HTTP/1.1 200 OK\r\n\
+                                     Content-Type: application/json\r\n\
+                                     Content-Length: {}\r\n\
+                                     Connection: close\r\n\
+                                     \r\n\
+                                     {}",
+                                    body.len(),
+                                    body
+                                );
+                                let _ = socket.write_all(response.as_bytes()).await;
+                                let _ = socket.shutdown().await;
+                            });
+                        }
+                    }
+                }
+            }
+        });
+
+        let client = reqwest::Client::new();
+
+        // First page
+        let first = fetch_events(&client, &url, 1, None)
+            .await
+            .expect("first page should succeed");
+        assert_eq!(
+            first.events.len() as u64,
+            PAGE_LIMIT,
+            "first page must carry PAGE_LIMIT events"
+        );
+        assert!(
+            first.cursor.is_some(),
+            "first page must include a continuation cursor"
+        );
+
+        // Second page, using the cursor from the first
+        let second = fetch_events(&client, &url, 1, first.cursor.as_deref())
+            .await
+            .expect("second page should succeed");
+        assert_eq!(second.events.len(), 2, "second page must carry 2 events");
+        assert!(
+            second.cursor.is_none(),
+            "second page must have no cursor (last page)"
+        );
+
+        // Combined event IDs must include events from both pages
+        let total: Vec<String> = first
+            .events
+            .iter()
+            .chain(second.events.iter())
+            .map(|e| e.id.clone())
+            .collect();
+        assert_eq!(
+            total.len() as u64,
+            PAGE_LIMIT + 2,
+            "all events from both pages must be collected"
+        );
+        assert!(
+            total.iter().any(|id| id.starts_with("evt-p2-")),
+            "second-page events must be present in the combined list"
+        );
+
+        // The ledger cursor should only advance after the last page
+        let final_ledger = second.latest_ledger;
+        assert_eq!(
+            final_ledger + 1,
+            56,
+            "cursor must advance to latestLedger+1 from the last page"
+        );
+
+        let _ = shutdown_tx.send(());
+        let _ = srv.await;
     }
 }
