@@ -153,10 +153,16 @@ token_client.transfer(&env.current_contract_address(), &user, &refund_amount);
 
 ## Verification Script Usage
 
-The verification script (`REENTRANCY_VERIFICATION_SCRIPT.sh`) performs automated checks:
+> **Note:** The original `REENTRANCY_VERIFICATION_SCRIPT.sh` has been removed. It
+> targeted the legacy Cairo layout (`src/prediction.rs`), which no longer exists —
+> the claim logic now lives in the Soroban contract at
+> `contract/contracts/predifi-contract/src/pool.rs`. The report below is kept for
+> historical reference.
+
+The verification script performed automated checks:
 
 ```bash
-./REENTRANCY_VERIFICATION_SCRIPT.sh
+# Removed — see note above.
 ```
 
 **Output**:
@@ -207,8 +213,9 @@ Detailed technical analysis including:
 - State update verification
 - Protection mechanism summary
 
-### 2. REENTRANCY_VERIFICATION_SCRIPT.sh
-Automated verification script that checks:
+### 2. REENTRANCY_VERIFICATION_SCRIPT.sh (removed)
+Automated verification script (since removed — it targeted the legacy Cairo
+`prediction.rs` layout). It checked:
 - Reentrancy guard implementation
 - CEI pattern compliance
 - Double-claim prevention
