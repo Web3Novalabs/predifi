@@ -794,6 +794,12 @@ pub async fn get_pool_leaderboard(
 
 // ── Task 4: Pool Creation Indexer ─────────────────────────────────────────────
 
+/// Minimum number of outcomes in a pool (binary pools).
+const MIN_OPTIONS_COUNT: u32 = 2;
+/// Maximum number of outcomes accepted by the contract. Mirrors
+/// `MAX_OPTIONS_COUNT` in `contract/contracts/predifi-contract/src/constants.rs`.
+const MAX_OPTIONS_COUNT: u32 = 100;
+
 /// Request body for the pool-created event webhook / indexer endpoint.
 ///
 /// The event listener decodes the XDR `pool_created` event from the Stellar
@@ -818,7 +824,24 @@ pub struct PoolCreatedPayload {
 }
 
 fn default_options_count() -> u32 {
-    2
+    MIN_OPTIONS_COUNT
+}
+
+/// Reject malformed ingest payloads before they can wrap when cast to `i32`
+/// or produce pool rows with missing outcome labels (#2065).
+fn validate_pool_created_payload(payload: &PoolCreatedPayload) -> Result<(), &'static str> {
+    if payload.pool_id > i64::MAX as u64 {
+        return Err("pool_id must not exceed i64::MAX");
+    }
+    if !(MIN_OPTIONS_COUNT..=MAX_OPTIONS_COUNT).contains(&payload.options_count) {
+        return Err("options_count must be between 2 and 100");
+    }
+    if !payload.outcome_descriptions.is_empty()
+        && payload.outcome_descriptions.len() != payload.options_count as usize
+    {
+        return Err("outcome_descriptions must be empty or have one entry per options_count");
+    }
+    Ok(())
 }
 
 /// `POST /api/v1/indexer/pool-created` — ingest a decoded `PoolCreated` event
@@ -829,6 +852,11 @@ pub async fn ingest_pool_created(
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    if let Err(message) = validate_pool_created_payload(&payload) {
+        return ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, message)
+            .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -2171,5 +2199,72 @@ pub async fn join_waitlist_handler(
     match crate::waitlist::add_to_waitlist(db, body.name.trim(), &email).await {
         Ok(()) => ApiResponse::success(json!({ "status": "ok" })).into_response(),
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod pool_created_validation_tests {
+    use super::*;
+
+    fn payload() -> serde_json::Value {
+        use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+        let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend(std::iter::repeat(0xAB_u8).take(32));
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        let address = base32_encode(&bytes);
+        serde_json::json!({
+            "pool_id": 1u64,
+            "creator": address,
+            "end_time": 2_000_000_000u64,
+            "token": "XLM",
+            "category": "sports",
+            "description": "test pool",
+            "options_count": 2u32,
+            "outcome_descriptions": ["Yes", "No"],
+        })
+    }
+
+    fn parsed(value: serde_json::Value) -> PoolCreatedPayload {
+        serde_json::from_value(value).expect("fixture must deserialize")
+    }
+
+    #[test]
+    fn rejects_options_count_below_minimum() {
+        let mut value = payload();
+        value["options_count"] = serde_json::json!(1);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("options_count"));
+    }
+
+    #[test]
+    fn rejects_options_count_above_contract_maximum() {
+        let mut value = payload();
+        value["options_count"] = serde_json::json!(101);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("options_count"));
+    }
+
+    #[test]
+    fn rejects_wrong_number_of_outcome_descriptions() {
+        let mut value = payload();
+        value["outcome_descriptions"] = serde_json::json!(["only one"]);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("outcome_descriptions"));
+    }
+
+    #[test]
+    fn accepts_empty_outcome_descriptions() {
+        let mut value = payload();
+        value["outcome_descriptions"] = serde_json::json!([]);
+        assert!(validate_pool_created_payload(&parsed(value)).is_ok());
+    }
+
+    #[test]
+    fn rejects_pool_id_above_i64_max() {
+        let mut value = payload();
+        value["pool_id"] = serde_json::json!(i64::MAX as u64 + 1);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("pool_id"));
     }
 }
