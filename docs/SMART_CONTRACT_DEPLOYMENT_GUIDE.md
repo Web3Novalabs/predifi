@@ -15,7 +15,7 @@
 4. [Wallet Setup & Key Management](#wallet-setup--key-management)
 5. [Contract Compilation & WASM Optimization](#contract-compilation--wasm-optimization)
 6. [Step-by-Step Deployment Commands](#step-by-step-deployment-commands)
-   - [Automated Deployment (`corrected_deploy.sh`)](#automated-deployment-corrected_deploysh)
+   - [Automated Deployment (`scripts/deploy.sh`)](#automated-deployment-scriptsdeploysh)
    - [Manual Step-by-Step CLI Deployment](#manual-step-by-step-cli-deployment)
 7. [Contract Initialization Parameters](#contract-initialization-parameters)
 8. [Token Whitelisting](#token-whitelisting)
@@ -195,16 +195,16 @@ Ensure file sizes remain under the 400 KB limit for Soroban deployments.
 
 ## Step-by-Step Deployment Commands
 
-### Automated Deployment (`corrected_deploy.sh`)
+### Automated Deployment (`scripts/deploy.sh`)
 
 The repository includes a turnkey script that compiles, optimizes, deploys, and initializes both contracts with all 6 required parameters:
 
 ```bash
 cd contract
-chmod +x corrected_deploy.sh
+chmod +x scripts/deploy.sh
 
 # Deploy to Testnet using account 'deployer'
-./corrected_deploy.sh testnet deployer
+./scripts/deploy.sh testnet deployer
 
 # Deploy to Mainnet with customized parameters
 TREASURY_ADDRESS="GB..." \
@@ -212,10 +212,10 @@ FEE_BPS=100 \
 RESOLUTION_DELAY=3600 \
 MIN_POOL_DURATION=3600 \
 MAX_PREDICTIONS_PER_USER=10 \
-./corrected_deploy.sh mainnet deployer-mainnet
+./scripts/deploy.sh mainnet deployer-mainnet
 ```
 
-The script outputs a JSON summary file named `deployed_contracts_<network>_corrected.json`.
+The script outputs a JSON summary file named `deployed_contracts_<network>.json`.
 
 ---
 
@@ -589,4 +589,4 @@ stellar contract invoke \
 ---
 
 **Document Maintained By**: Web3Novalabs Core Engineering  
-**Source Code References**: [corrected_deploy.sh](file:///Users/victor/Desktop/Pvsaint/predifi/contract/corrected_deploy.sh), [admin.rs](file:///Users/victor/Desktop/Pvsaint/predifi/contract/contracts/predifi-contract/src/admin.rs), [access-control](file:///Users/victor/Desktop/Pvsaint/predifi/contract/contracts/access-control/src/lib.rs)
+**Source Code References**: [scripts/deploy.sh](../contract/scripts/deploy.sh), [admin.rs](../contract/contracts/predifi-contract/src/admin.rs), [access-control](../contract/contracts/access-control/src/lib.rs)

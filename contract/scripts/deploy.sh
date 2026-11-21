@@ -18,23 +18,29 @@ SOURCE=$2
 if [[ -z "$NETWORK" || -z "$SOURCE" ]]; then
     echo "❌ Error: Missing arguments."
     echo "Usage: $0 <network> <source_account>"
+    echo "Example: $0 testnet default"
+    echo ""
+    echo "Optional environment variables:"
+    echo "  TREASURY_ADDRESS    - Treasury address (defaults to admin address)"
+    echo "  FEE_BPS             - Protocol fee in basis points (default: 100)"
+    echo "  RESOLUTION_DELAY    - Resolution delay in seconds (default: 3600)"
+    echo "  MIN_POOL_DURATION   - Minimum pool duration in seconds (default: 3600)"
+    echo "  MAX_PREDICTIONS_PER_USER - Max predictions per user (default: 10)"
     exit 1
 fi
 
 # Detect CLI command (stellar preferred, fallback to soroban)
 if command -v stellar &> /dev/null; then
     CLI="stellar"
+    echo "🚀 Using: Stellar CLI"
 elif command -v soroban &> /dev/null; then
     CLI="soroban"
+    echo "🚀 Using: Soroban CLI"
 else
     echo "❌ Error: Neither 'stellar' nor 'soroban' CLI found in PATH."
     echo "Please install it: cargo install stellar-cli"
     exit 1
 fi
-
-echo "🚀 Using CLI: $CLI"
-echo "🌐 Network: $NETWORK"
-echo "👤 Source Account: $SOURCE"
 
 # Detect wasm-opt (required for Step 2 optimization pass)
 if ! command -v wasm-opt &> /dev/null; then
@@ -53,50 +59,83 @@ PROJECT_ROOT="$(cd "$SCRIPTS_DIR/.." && pwd)"
 WASM_DIR="$PROJECT_ROOT/target/wasm32-unknown-unknown/release"
 OUTPUT_FILE="$SCRIPTS_DIR/deployed_contracts_$NETWORK.json"
 
-# Default parameters (can be overridden by environment variables)
-# TREASURY_ADDRESS will default to admin address if not set
-# FEE_BPS default to 100 (1%)
-FEE_BPS=${FEE_BPS:-100}
+# Define WASM file paths
+AC_WASM="$WASM_DIR/access_control.wasm"
+PD_WASM="$WASM_DIR/predifi_contract.wasm"
 
-# 1. Build Contracts
+# Default parameters (can be overridden by environment variables)
+ADMIN_ADDRESS=$($CLI keys address "$SOURCE" --network "$NETWORK")
+TREASURY_ADDRESS=${TREASURY_ADDRESS:-$ADMIN_ADDRESS}
+FEE_BPS=${FEE_BPS:-100}
+RESOLUTION_DELAY=${RESOLUTION_DELAY:-3600}
+MIN_POOL_DURATION=${MIN_POOL_DURATION:-3600}
+MAX_PREDICTIONS_PER_USER=${MAX_PREDICTIONS_PER_USER:-10}
+
+echo "🌐 Network: $NETWORK"
+echo "👤 Source Account: $SOURCE"
+echo "🔑 Admin Address: $ADMIN_ADDRESS"
+echo "💰 Treasury Address: $TREASURY_ADDRESS"
+echo "📊 Fee: ${FEE_BPS} bps (${FEE_BPS}%)"
+echo "⏰ Resolution Delay: ${RESOLUTION_DELAY} seconds"
+echo "⏱️ Min Pool Duration: ${MIN_POOL_DURATION} seconds"
+echo "🎯 Max Predictions/User: ${MAX_PREDICTIONS_PER_USER}"
+
+# --- 1. Build Contracts ---
+echo ""
 echo "--- 📦 Step 1: Building Contracts ---"
 cd "$PROJECT_ROOT"
-cargo build --target wasm32-unknown-unknown --release
 
-# 2. Run explicit wasm-opt -O3 for smaller deployment footprints (Soroban/Rust best practice)
-echo "--- ⚡ Step 2: wasm-opt -O3 Optimization ---"
-wasm-opt -O3 -o "${AC_WASM}.opt.wasm" "$AC_WASM" || { echo "❌ wasm-opt failed for access_control"; exit 1; }
-wasm-opt -O3 -o "${PD_WASM}.opt.wasm" "$PD_WASM" || { echo "❌ wasm-opt failed for predifi_contract"; exit 1; }
+if [[ ! -f "$AC_WASM" ]] || [[ ! -f "$PD_WASM" ]]; then
+    echo "Building contracts from source..."
+    cargo build --target wasm32-unknown-unknown --release
 
-AC_WASM_OPT="${AC_WASM}.opt.wasm"
-PD_WASM_OPT="${PD_WASM}.opt.wasm"
+    if [[ $? -ne 0 ]]; then
+        echo "❌ Build failed. Check Rust/Cargo installation."
+        exit 1
+    fi
+else
+    echo "Using existing WASM files."
+fi
 
-# 3. Additional Stellar CLI optimization (combines well with -O3)
-echo "--- ✨ Step 3: Stellar CLI Optimization ---"
-$CLI contract optimize --wasm "$AC_WASM_OPT"
-$CLI contract optimize --wasm "$PD_WASM_OPT"
+# --- 2. Optimize WASM Files ---
+echo ""
+echo "--- ⚡ Step 2: WASM Optimization ---"
 
-AC_WASM_FINAL="$WASM_DIR/access_control.optimized.wasm"
-PD_WASM_FINAL="$WASM_DIR/predifi_contract.optimized.wasm"
+AC_WASM_OPT="$WASM_DIR/access_control_optimized.wasm"
+PD_WASM_OPT="$WASM_DIR/predifi_contract_optimized.wasm"
 
+echo "Optimizing AccessControl contract..."
+wasm-opt -Oz --enable-bulk-memory "$AC_WASM" -o "$AC_WASM_OPT"
 
-# 5. Get Admin Address
-ADMIN_ADDRESS=$($CLI keys address "$SOURCE")
-echo "🔑 Admin/Deployer Address: $ADMIN_ADDRESS"
+echo "Optimizing PrediFi contract..."
+wasm-opt -Oz --enable-bulk-memory "$PD_WASM" -o "$PD_WASM_OPT"
 
-TREASURY_ADDRESS=${TREASURY_ADDRESS:-$ADMIN_ADDRESS}
+# Optional: Additional Stellar CLI optimization
+echo "Running Stellar CLI optimization..."
+$CLI contract optimize --wasm "$AC_WASM_OPT" 2>/dev/null || echo "Warning: Stellar optimization failed, continuing anyway..."
+$CLI contract optimize --wasm "$PD_WASM_OPT" 2>/dev/null || echo "Warning: Stellar optimization failed, continuing anyway..."
 
-# 5. Deploy & Initialize AccessControl
-echo "--- 🛡️ Step 4: Deploying AccessControl ---"
+# --- 3. Deploy AccessControl Contract ---
+echo ""
+echo "--- 🛡️ Step 3: Deploying AccessControl Contract ---"
+
 AC_ID=$($CLI contract deploy \
-    --wasm "$AC_WASM_FINAL" \
+    --wasm "$AC_WASM_OPT" \
     --source "$SOURCE" \
     --network "$NETWORK")
 
+if [[ -z "$AC_ID" ]]; then
+    echo "❌ Failed to deploy AccessControl contract"
+    exit 1
+fi
 
-echo "✅ AccessControl ID: $AC_ID"
+echo "✅ AccessControl Contract ID: $AC_ID"
 
-echo "⚙️ Initializing AccessControl with admin $ADMIN_ADDRESS..."
+# --- 4. Initialize AccessControl ---
+echo ""
+echo "--- ⚙️ Step 4: Initializing AccessControl ---"
+
+echo "Setting admin to: $ADMIN_ADDRESS"
 $CLI contract invoke \
     --id "$AC_ID" \
     --source "$SOURCE" \
@@ -105,20 +144,39 @@ $CLI contract invoke \
     init \
     --admin "$ADMIN_ADDRESS"
 
-# 6. Deploy & Initialize PredifiContract
-echo "--- ⚖️ Step 5: Deploying PredifiContract ---"
+if [[ $? -eq 0 ]]; then
+    echo "✅ AccessControl initialized successfully"
+else
+    echo "❌ Failed to initialize AccessControl"
+    exit 1
+fi
+
+# --- 5. Deploy PrediFi Contract ---
+echo ""
+echo "--- ⚖️ Step 5: Deploying PrediFi Contract ---"
+
 PD_ID=$($CLI contract deploy \
-    --wasm "$PD_WASM_FINAL" \
+    --wasm "$PD_WASM_OPT" \
     --source "$SOURCE" \
     --network "$NETWORK")
 
+if [[ -z "$PD_ID" ]]; then
+    echo "❌ Failed to deploy PrediFi contract"
+    exit 1
+fi
 
-echo "✅ PredifiContract ID: $PD_ID"
+echo "✅ PrediFi Contract ID: $PD_ID"
 
-echo "⚙️ Initializing PredifiContract..."
-echo "   - Access Control: $AC_ID"
-echo "   - Treasury: $TREASURY_ADDRESS"
-echo "   - Fee (BPS): $FEE_BPS"
+# --- 6. Initialize PrediFi Contract (WITH ALL REQUIRED PARAMETERS) ---
+echo ""
+echo "--- ⚙️ Step 6: Initializing PrediFi Contract ---"
+echo "Initialization Parameters:"
+echo "  • Access Control: $AC_ID"
+echo "  • Treasury: $TREASURY_ADDRESS"
+echo "  • Fee BPS: $FEE_BPS"
+echo "  • Resolution Delay: $RESOLUTION_DELAY seconds"
+echo "  • Min Pool Duration: $MIN_POOL_DURATION seconds"
+echo "  • Max Predictions/User: $MAX_PREDICTIONS_PER_USER"
 
 $CLI contract invoke \
     --id "$PD_ID" \
@@ -128,16 +186,34 @@ $CLI contract invoke \
     init \
     --access_control "$AC_ID" \
     --treasury "$TREASURY_ADDRESS" \
-    --fee_bps "$FEE_BPS"
+    --fee_bps "$FEE_BPS" \
+    --resolution_delay "$RESOLUTION_DELAY" \
+    --min_pool_duration "$MIN_POOL_DURATION" \
+    --max_predictions_per_user "$MAX_PREDICTIONS_PER_USER"
 
-# 8. Store Deployment IDs
-echo "--- 💾 Step 6: Saving Deployment Info ---"
+if [[ $? -eq 0 ]]; then
+    echo "✅ PrediFi contract initialized successfully"
+else
+    echo "❌ Failed to initialize PrediFi contract"
+    echo "Check that all parameters are within valid ranges:"
+    echo "  - fee_bps: 0-10000 (0-100%)"
+    echo "  - resolution_delay: > 0"
+    echo "  - min_pool_duration: > 0"
+    echo "  - max_predictions_per_user: 0 = no limit, > 0 = limit"
+    exit 1
+fi
+
+# --- 7. Save Deployment Information ---
+echo ""
+echo "--- 💾 Step 7: Saving Deployment Information ---"
+
 cat <<EOF > "$OUTPUT_FILE"
 {
   "network": "$NETWORK",
   "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "cli_used": "$CLI",
   "source_account": "$SOURCE",
+  "admin_address": "$ADMIN_ADDRESS",
   "contracts": {
     "access_control": {
       "id": "$AC_ID",
@@ -146,11 +222,52 @@ cat <<EOF > "$OUTPUT_FILE"
     "predifi_contract": {
       "id": "$PD_ID",
       "treasury": "$TREASURY_ADDRESS",
-      "fee_bps": $FEE_BPS
+      "fee_bps": $FEE_BPS,
+      "resolution_delay": $RESOLUTION_DELAY,
+      "min_pool_duration": $MIN_POOL_DURATION,
+      "max_predictions_per_user": $MAX_PREDICTIONS_PER_USER
     }
   }
 }
 EOF
 
-echo "🎉 Deployment complete for $NETWORK!"
-echo "📄 Contract IDs saved to: $OUTPUT_FILE"
+echo "✅ Deployment information saved to: $OUTPUT_FILE"
+
+# --- 8. Verification ---
+echo ""
+echo "--- 🔍 Step 8: Verification ---"
+
+echo "Verifying contract initialization..."
+echo "Checking treasury address..."
+
+TREASURY_CHECK=$($CLI contract read \
+    --id "$PD_ID" \
+    --network "$NETWORK" \
+    -- \
+    get_treasury 2>/dev/null || echo "")
+
+if [[ "$TREASURY_CHECK" == "$TREASURY_ADDRESS" ]]; then
+    echo "✅ Treasury address verified: $TREASURY_CHECK"
+else
+    echo "⚠️ Treasury verification failed. Expected: $TREASURY_ADDRESS, Got: $TREASURY_CHECK"
+fi
+
+echo ""
+echo "🎉 Deployment Complete!"
+echo ""
+echo "📋 Summary:"
+echo "  Network: $NETWORK"
+echo "  AccessControl ID: $AC_ID"
+echo "  PrediFi Contract ID: $PD_ID"
+echo "  Treasury: $TREASURY_ADDRESS"
+echo "  Fee: ${FEE_BPS} bps"
+echo ""
+echo "📄 Contract details saved to: $OUTPUT_FILE"
+echo ""
+echo "📝 Next Steps:"
+echo "  1. Whitelist tokens: ./scripts/whitelist_tokens.sh"
+echo "  2. Assign operator roles: ./scripts/assign_roles.sh"
+echo "  3. Initialize oracle: ./scripts/init_oracle.sh"
+echo "  4. Test pool creation"
+echo ""
+echo "⚠️ IMPORTANT: Backup your contract IDs and secret keys securely!"
