@@ -52,6 +52,8 @@ mod withdraw_treasury_boundary_tests;
 mod fee_tiers_test;
 #[cfg(test)]
 mod edge_case_tests;
+#[cfg(test)]
+mod batch_claim_winnings_boundary_tests;
 mod treasury;
 mod creator_incentive;
 
