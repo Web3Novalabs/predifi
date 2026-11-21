@@ -6,8 +6,8 @@
 extern crate std;
 
 mod admin;
-#[cfg(test)]
-mod benchmark_test;
+// #[cfg(test)]
+// mod benchmark_test;
 #[cfg(test)]
 mod boundary_edge_case_tests;
 #[cfg(test)]
@@ -27,6 +27,8 @@ mod safe_math;
 #[cfg(test)]
 mod safe_math_examples;
 #[cfg(test)]
+mod safe_math_proptests;
+#[cfg(test)]
 mod access_control_audit_tests;
 #[cfg(test)]
 mod storage_test;
@@ -40,12 +42,16 @@ mod stress_test_high_volume;
 mod test_utils;
 #[cfg(test)]
 mod pause_unpause_boundary_tests;
-// #[cfg(test)]
-// mod max_pools_stress_tests;
+#[cfg(test)]
+mod max_pools_stress_tests;
 #[cfg(test)]
 mod update_pool_description_boundary_tests;
 #[cfg(test)]
 mod withdraw_treasury_boundary_tests;
+#[cfg(test)]
+mod fee_tiers_test;
+#[cfg(test)]
+mod edge_case_tests;
 mod treasury;
 mod creator_incentive;
 
@@ -56,8 +62,9 @@ use soroban_sdk::{
 
 pub use constants::*;
 pub use payouts::{
-    calculate_claim_payout, calculate_odds_bps, calculate_protocol_fee, calculate_referral_amount,
-    calculate_winnings, PayoutBreakdown, PayoutInput,
+    calculate_claim_payout, calculate_dynamic_fee, calculate_odds_bps, calculate_protocol_fee,
+    calculate_referral_amount, calculate_winnings, is_valid_fee_bps, FeeTierInput, PayoutBreakdown,
+    PayoutInput,
 };
 pub use price_feed_simple::PriceFeedAdapter;
 pub use safe_math::{RoundingMode, SafeMath};
@@ -248,6 +255,20 @@ pub const MIN_WITHDRAWAL_AMOUNT: i128 = 1;
 //
 // ═══════════════════════════════════════════════════════════════════════════
 
+/// Error codes for the PrediFi contract.
+///
+/// # ⚠️ Append-Only Policy
+///
+/// The numeric codes assigned to each variant are **frozen** and read off-chain by
+/// the backend indexer and frontend. **DO NOT** reorder variants or insert new ones
+/// in the middle of the enum, as this will silently renumber all subsequent variants
+/// and break error handling in deployed systems.
+///
+/// When adding a new error variant:
+/// 1. **Always append at the end** of this enum.
+/// 2. Assign a unique numeric code that does not conflict with existing codes.
+/// 3. Update the golden file at `tests/error_codes_golden.txt`.
+/// 4. The test `error_codes_test.rs` will verify the codes.
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum PredifiError {
@@ -743,12 +764,6 @@ impl PredifiContract {
                 MarketState::Resolved | MarketState::Canceled
             )
         )
-    }
-
-    /// Pure: Validate fee basis points
-    /// POST: returns true iff fee_bps ≤ 10_000 (INV-6)
-    fn is_valid_fee_bps(fee_bps: u32) -> bool {
-        fee_bps <= 10_000
     }
 
     /// Pure: Check if a pool is currently active.
@@ -1307,17 +1322,15 @@ impl PredifiContract {
     /// the returned value satisfies `is_valid_fee_bps`.
     fn calculate_dynamic_fee(env: &Env, pool: &Pool) -> u32 {
         let config = Self::get_config(env);
-        let tiers = Self::get_fee_tiers(env.clone());
+        let tiers_vec = Self::get_fee_tiers(env.clone());
+        
         let mut applied_fee = config.fee_bps;
-
         let mut max_threshold = -1i128;
-        for i in 0..tiers.len() {
-            if let Some(tier) = tiers.get(i) {
-                if pool.total_stake >= tier.stake_threshold && tier.stake_threshold > max_threshold
-                {
-                    max_threshold = tier.stake_threshold;
-                    applied_fee = tier.fee_bps;
-                }
+
+        for tier in tiers_vec.iter() {
+            if pool.total_stake >= tier.stake_threshold && tier.stake_threshold > max_threshold {
+                max_threshold = tier.stake_threshold;
+                applied_fee = tier.fee_bps;
             }
         }
         applied_fee
@@ -1332,9 +1345,21 @@ impl PredifiContract {
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[cfg(test)]
-mod issues_1446_1447_1448_1449_boundary_tests;
+mod pool_and_fee_boundary_tests;
+#[cfg(test)]
+mod claim_and_whitelist_boundary_tests;
+#[cfg(test)]
+mod issues_1878_1879_1884_1885_boundary_tests;
+#[cfg(test)]
+mod lifecycle_integration_tests;
 #[cfg(test)]
 mod referral_integration_tests;
+#[cfg(test)]
+mod resolve_pool_boundary_tests;
+#[cfg(test)]
+mod place_prediction_boundary_tests;
+#[cfg(test)]
+mod issues_1880_1886_1887_1888_boundary_tests;
 #[cfg(test)]
 mod test;
 

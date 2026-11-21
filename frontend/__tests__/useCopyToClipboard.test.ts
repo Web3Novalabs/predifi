@@ -1,5 +1,5 @@
 import { renderHook, act } from "@testing-library/react";
-import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
+import { useCopyToClipboard } from "@/lib/hooks/useCopyToClipboard";
 
 describe("useCopyToClipboard", () => {
   const writeText = jest.fn();
@@ -32,7 +32,7 @@ describe("useCopyToClipboard", () => {
 
   it("resets the copied flag after the timeout elapses", async () => {
     writeText.mockResolvedValue(undefined);
-    const { result } = renderHook(() => useCopyToClipboard(1000));
+    const { result } = renderHook(() => useCopyToClipboard({ resetDelay: 1000 }));
 
     await act(async () => {
       await result.current.copy("hello");

@@ -2,6 +2,8 @@ import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { WalletDropdown } from "@/components/WalletDropdown";
 import { WalletErrorBanner } from "@/components/WalletErrorBanner";
+import { WalletConnectionControl } from "@/components/WalletConnectionControl";
+import { WalletContext, type WalletConnectionState } from "@/lib/context/WalletContext";
 import type { WalletError } from "@/lib/walletErrors";
 
 describe("Wallet Components and Connection Flow", () => {
@@ -81,8 +83,12 @@ describe("Wallet Components and Connection Flow", () => {
       );
 
       expect(screen.getByText("Wrong Network")).toBeInTheDocument();
-      expect(screen.getByText("Please switch to Stellar Futurenet")).toBeInTheDocument();
-      expect(screen.getByText("Switch network in Freighter extension")).toBeInTheDocument();
+      expect(
+        screen.getByText("Please switch to Stellar Futurenet"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Switch network in Freighter extension"),
+      ).toBeInTheDocument();
     });
 
     it("triggers onRetry and onDismiss callbacks when clicked", () => {
@@ -104,7 +110,8 @@ describe("Wallet Components and Connection Flow", () => {
       expect(mockOnDismiss).toHaveBeenCalledTimes(1);
     });
 
-    it("renders neutral notice (no alert role) when the user cancelled", () => {
+    it("renders neutral recovery guidance when the user cancelled", () => {
+      mockOnRetry.mockClear();
       const rejectionError: WalletError = {
         code: "USER_REJECTED",
         title: "Connection cancelled",
@@ -115,13 +122,19 @@ describe("Wallet Components and Connection Flow", () => {
       render(
         <WalletErrorBanner
           error={rejectionError}
+          onRetry={mockOnRetry}
           onDismiss={mockOnDismiss}
         />
       );
 
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("status")).toBeInTheDocument();
       expect(screen.getByTestId("wallet-rejection-notice")).toBeInTheDocument();
-      expect(screen.getByText(/Request cancelled/i)).toBeInTheDocument();
+      expect(
+        screen.getByText("Open your wallet and approve the connection when prompted."),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /Try again/i }));
+      expect(mockOnRetry).toHaveBeenCalledTimes(1);
     });
 
     it("renders error alert role for genuine wallet failures", () => {
@@ -136,6 +149,40 @@ describe("Wallet Components and Connection Flow", () => {
 
       expect(screen.getByRole("alert")).toBeInTheDocument();
       expect(screen.getByText("Request timed out")).toBeInTheDocument();
+    });
+  });
+
+  describe("WalletConnectionControl", () => {
+    it("connects from the visible button and exposes error recovery", () => {
+      const connect = jest.fn().mockResolvedValue(null);
+      const walletState: WalletConnectionState = {
+        address: null,
+        isConnecting: false,
+        error: {
+          code: "EXTENSION_NOT_INSTALLED",
+          title: "Wallet not found",
+          message: "Install a compatible wallet extension.",
+          recoveryAction: "Install Freighter, refresh, then connect again.",
+        },
+        requiredNetworkLabel: "Stellar Testnet",
+        connect,
+        disconnect: jest.fn(),
+        clearError: jest.fn(),
+      };
+
+      render(
+        <WalletContext.Provider value={walletState}>
+          <WalletConnectionControl />
+        </WalletContext.Provider>,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /Connect wallet/i }));
+      expect(connect).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByText("Install Freighter, refresh, then connect again."),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByRole("button", { name: /Try again/i }));
+      expect(connect).toHaveBeenCalledTimes(2);
     });
   });
 });

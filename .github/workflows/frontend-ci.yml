@@ -63,8 +63,40 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # This job does compile Rust (Issue #2109). `pnpm generate:api` runs
+      # `frontend/scripts/generate-api-types.mjs`, which — unless `SPEC` is set
+      # — shells out to:
+      #
+      #   cargo run --manifest-path backend/Cargo.toml --bin predifi-openapi
+      #
+      # to export the spec straight from `backend/src/openapi.rs`. That is
+      # deliberate: generating from the Rust source (not the committed
+      # `backend/openapi.json`) is what makes a backend schema change that
+      # breaks the pool client fail `pnpm typecheck` here, and it is why this
+      # workflow's `paths:` filter includes the backend OpenAPI sources.
+      #
+      # Removing the toolchain would make the "Generate API types" step fail
+      # with `spawnSync cargo ENOENT`. Instead the toolchain stays and the
+      # Cargo registry and the `predifi-openapi` build are cached below, so
+      # warm runs skip both the crate downloads and most of the compile.
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      # Keyed on `backend/Cargo.lock`, mirroring the cache in `backend.yml`.
+      # Kept under its own `frontend-` prefix so the frontend job (which only
+      # builds the `predifi-openapi` binary in the dev profile) never restores
+      # or overwrites the backend job's larger test/clippy target directory.
+      - name: Cache Cargo registry and OpenAPI exporter build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            backend/target
+          key: ${{ runner.os }}-frontend-cargo-${{ hashFiles('backend/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-frontend-cargo-
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4

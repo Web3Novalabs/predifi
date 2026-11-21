@@ -13,6 +13,11 @@ pr-description.md
 **/DEPENDENCY_AUDIT_LOCAL.md
 README_CLS_IMPLEMENTATION.md
 security-audit-report.md
+CHANGES.md
 
 # Kiro IDE workspace metadata
 .kiro/
+
+# Legacy StarkNet/Cairo build artifacts at the repository root.
+# The current contracts are Soroban and build under contract/target/.
+/target/

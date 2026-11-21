@@ -18,7 +18,7 @@ import type { components } from "@/types/api";
  * the local backend default so the dashboard works out of the box in dev.
  */
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000";
 
 /** WebSocket base derived from the HTTP API base. */
 export function wsBaseUrl(): string {
@@ -34,6 +34,7 @@ type ApiPool = components["schemas"]["PoolListResponse"]["pools"][number] & {
 type ApiPoolDetail = components["schemas"]["PoolWithOddsDoc"];
 type RuntimePoolDetail = Omit<ApiPoolDetail, "end_time"> & {
   end_time: string | number;
+  tags?: string[];
 };
 
 /** A single prediction-market pool, with backend timestamps normalized to Unix seconds. */
@@ -43,9 +44,10 @@ export type Pool = Omit<ApiPool, "end_time"> & { end_time: number };
 export type OutcomeOdds = components["schemas"]["OutcomeOddsDoc"];
 
 /** Detailed pool payload including live odds. */
-export type PoolDetail = Omit<ApiPoolDetail, "end_time"> & {
-  end_time: number;
-  /** Prediction count derived client-side from live WS updates when available. */
+export interface PoolDetail extends Pool {
+  odds: OutcomeOdds[];
+  outcome_descriptions?: string[];
+  /** Total predictions in the pool. */
   prediction_count?: number;
 };
 
@@ -247,6 +249,8 @@ function isPoolDetail(obj: unknown): obj is RuntimePoolDetail {
     typeof pool.creator === "string" &&
     typeof pool.token === "string" &&
     (pool.result == null || typeof pool.result === "string") &&
+    (pool.tags == null ||
+      (Array.isArray(pool.tags) && pool.tags.every((tag) => typeof tag === "string"))) &&
     Array.isArray(pool.odds) &&
     pool.odds.every(isOutcomeOdds) &&
     Array.isArray(pool.outcome_descriptions) &&
@@ -295,6 +299,7 @@ export async function fetchPoolDetail(url: string, timeout?: number): Promise<Po
       typeof pool.end_time === "string"
         ? Math.floor(new Date(pool.end_time).getTime() / 1000)
         : pool.end_time,
+    tags: pool.tags ?? [],
     odds: pool.odds ?? [],
   };
 }

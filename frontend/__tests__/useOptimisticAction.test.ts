@@ -1,11 +1,11 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 
-import { useOptimisticAction } from "@/hooks/useOptimisticAction";
+import { useOptimisticAction } from "@/lib/hooks/useOptimisticAction";
 
 describe("useOptimisticAction", () => {
   it("applies the optimistic value immediately when the action starts", async () => {
     let resolveAction: (value: string) => void = () => {};
-    const action = jest.fn(
+    const commit = jest.fn(
       () =>
         new Promise<string>((resolve) => {
           resolveAction = resolve;
@@ -13,13 +13,17 @@ describe("useOptimisticAction", () => {
     );
 
     const { result } = renderHook(() =>
-      useOptimisticAction<string, string>("initial", action),
+      useOptimisticAction<string, string>({
+        data: "initial",
+        applyOptimistic: (_current, input) => input,
+        commit,
+      }),
     );
 
     expect(result.current.value).toBe("initial");
 
     act(() => {
-      void result.current.execute("optimistic");
+      void result.current.run("optimistic");
     });
 
     expect(result.current.value).toBe("optimistic");
@@ -31,14 +35,18 @@ describe("useOptimisticAction", () => {
   });
 
   it("keeps the optimistic value when the action resolves successfully", async () => {
-    const action = jest.fn(() => Promise.resolve("resolved"));
+    const commit = jest.fn(() => Promise.resolve("resolved"));
 
     const { result } = renderHook(() =>
-      useOptimisticAction<string, string>("initial", action),
+      useOptimisticAction<string, string>({
+        data: "initial",
+        applyOptimistic: (_current, input) => input,
+        commit,
+      }),
     );
 
     await act(async () => {
-      await result.current.execute("optimistic");
+      await result.current.run("optimistic");
     });
 
     await waitFor(() => {
@@ -51,14 +59,18 @@ describe("useOptimisticAction", () => {
 
   it("rolls back the optimistic value when the action rejects", async () => {
     const failure = new Error("action failed");
-    const action = jest.fn(() => Promise.reject(failure));
+    const commit = jest.fn(() => Promise.reject(failure));
 
     const { result } = renderHook(() =>
-      useOptimisticAction<string, string>("initial", action),
+      useOptimisticAction<string, string>({
+        data: "initial",
+        applyOptimistic: (_current, input) => input,
+        commit,
+      }),
     );
 
     await act(async () => {
-      await result.current.execute("optimistic").catch(() => {});
+      await result.current.run("optimistic");
     });
 
     await waitFor(() => {

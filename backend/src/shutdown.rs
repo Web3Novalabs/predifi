@@ -52,6 +52,30 @@ use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tracing::{error, info, warn};
 
+/// WebSocket close code `1001` ("going away").
+///
+/// Sent to every live connection when the server begins shutting down so
+/// clients can distinguish a planned restart from a network failure and
+/// reconnect against another instance.
+pub const WS_CLOSE_GOING_AWAY: u16 = 1001;
+
+/// Default upper bound on how long [`drain_websockets`] waits for clients to
+/// acknowledge the going-away close frame before giving up.
+pub const DEFAULT_WS_DRAIN_TIMEOUT_SECS: u64 = 5;
+
+/// Resolve the WebSocket drain grace period from configuration.
+///
+/// `configured` is the optional `ws_drain_timeout_secs` value; when absent or
+/// zero the [`DEFAULT_WS_DRAIN_TIMEOUT_SECS`] default is used.  The result is
+/// always bounded so shutdown can never hang on a misbehaving client.
+pub fn ws_drain_timeout(configured: Option<u64>) -> Duration {
+    let secs = match configured {
+        Some(secs) if secs > 0 => secs,
+        _ => DEFAULT_WS_DRAIN_TIMEOUT_SECS,
+    };
+    Duration::from_secs(secs)
+}
+
 // ── Signal handlers ───────────────────────────────────────────────────────────
 
 /// Resolve as soon as the process receives a termination request.
@@ -210,11 +234,18 @@ impl WsShutdownToken {
 
     /// Broadcast the shutdown signal to all live WebSocket connections.
     ///
+    /// Each subscribed connection handler is expected to respond by sending a
+    /// Close frame carrying [`WS_CLOSE_GOING_AWAY`] and then terminating.
+    ///
     /// Returns the number of receivers that were notified.
     pub fn broadcast_shutdown(&self) -> usize {
         match self.sender.send(()) {
             Ok(n) => {
-                info!(connections = n, "WebSocket shutdown signal broadcast");
+                info!(
+                    connections = n,
+                    close_code = WS_CLOSE_GOING_AWAY,
+                    "WebSocket going-away close frame broadcast"
+                );
                 n
             }
             // No active receivers — nothing to do.
@@ -234,14 +265,21 @@ impl WsShutdownToken {
 /// Signal all open WebSocket connections to close and wait up to `timeout`
 /// for the active count to reach zero.
 ///
-/// This gives every connection a chance to send a clean Close frame before
-/// the underlying TCP sockets are torn down by the HTTP server drain.
+/// Every live connection is notified via the broadcast channel; each handler
+/// responds by sending a Close frame with [`WS_CLOSE_GOING_AWAY`] before
+/// terminating.  The wait is bounded by `timeout` (see [`ws_drain_timeout`]),
+/// so shutdown completes even if a client ignores the close frame and never
+/// acknowledges it — remaining connections are logged and then abandoned to
+/// the HTTP server's own drain.
 pub async fn drain_websockets(token: &WsShutdownToken, timeout: Duration) {
     let notified = token.broadcast_shutdown();
     if notified == 0 {
         return;
     }
 
+    // Never wait forever: clamp to a sane minimum so a zero/absurdly small
+    // timeout still gives handlers a chance to flush the close frame.
+    let timeout = timeout.max(Duration::from_millis(1));
     let deadline = tokio::time::Instant::now() + timeout;
     let poll_interval = Duration::from_millis(10);
 
@@ -255,7 +293,8 @@ pub async fn drain_websockets(token: &WsShutdownToken, timeout: Duration) {
             warn!(
                 remaining,
                 timeout_secs = timeout.as_secs_f64(),
-                "WebSocket drain timed out; {} connection(s) still open",
+                close_code = WS_CLOSE_GOING_AWAY,
+                "WebSocket drain timed out; {} connection(s) still open after going-away close frame",
                 remaining
             );
             return;
@@ -419,6 +458,45 @@ mod tests {
         let start = tokio::time::Instant::now();
         drain_websockets(&token, Duration::from_secs(5)).await;
         assert!(start.elapsed() < Duration::from_millis(200));
+    }
+
+    /// `ws_drain_timeout` falls back to the default for missing/zero values
+    /// and honours an explicit configuration otherwise.
+    #[test]
+    fn ws_drain_timeout_is_bounded_and_configurable() {
+        assert_eq!(
+            ws_drain_timeout(None),
+            Duration::from_secs(DEFAULT_WS_DRAIN_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            ws_drain_timeout(Some(0)),
+            Duration::from_secs(DEFAULT_WS_DRAIN_TIMEOUT_SECS)
+        );
+        assert_eq!(ws_drain_timeout(Some(30)), Duration::from_secs(30));
+    }
+
+    /// `drain_websockets` completes within the grace period even when a
+    /// connection never acknowledges the close frame.
+    #[tokio::test]
+    async fn drain_websockets_bounded_when_client_ignores_close() {
+        let token = WsShutdownToken::new(4);
+        // Subscribe but never call `connection_closed`, simulating a client
+        // that ignores the going-away close frame.
+        let _rx = token.subscribe();
+
+        let start = tokio::time::Instant::now();
+        drain_websockets(&token, Duration::from_millis(100)).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            elapsed >= Duration::from_millis(100),
+            "should have waited for the grace period (got {elapsed:?})"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "should not have waited indefinitely (got {elapsed:?})"
+        );
+        assert_eq!(token.active_count(), 1, "connection remains tracked");
     }
 
     /// `drain_workers` completes without panic when workers finish instantly.

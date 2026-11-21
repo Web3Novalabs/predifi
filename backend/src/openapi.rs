@@ -51,6 +51,7 @@ pub struct OutcomeOddsDoc {
 pub struct PoolWithOddsDoc {
     #[serde(flatten)]
     pub pool: PoolDoc,
+    pub prediction_count: i64,
     pub odds: Vec<OutcomeOddsDoc>,
     /// Human-readable label for each outcome index (#1932), e.g.
     /// `["Yes", "No"]` or `["Team A", "Team B", "Draw"]`.
@@ -293,6 +294,72 @@ pub struct HealthResponse {
     pub errors: HealthErrors,
 }
 
+/// OpenAPI schema for the liveness probe response body.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct LivenessResponse {
+    /// Always `alive`.
+    pub status: String,
+    pub service: String,
+    pub version: String,
+    /// RFC 3339 timestamp of the probe.
+    pub checked_at: String,
+}
+
+/// OpenAPI schema for the per-dependency status block inside a readiness response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ReadinessDependencies {
+    pub db: String,
+    pub redis: String,
+    pub price_cache: String,
+}
+
+/// OpenAPI schema for the per-dependency error details block inside a readiness response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ReadinessErrors {
+    pub db: Option<String>,
+    pub redis: Option<String>,
+    pub price_cache: Option<String>,
+}
+
+/// OpenAPI schema for the per-component block inside a readiness response.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ReadinessComponents {
+    pub database: ComponentHealthDoc,
+    pub redis: ComponentHealthDoc,
+    pub price_cache: ComponentHealthDoc,
+}
+
+/// OpenAPI schema for the readiness probe response body.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ReadinessResponse {
+    /// `ready` or `not_ready`.
+    pub status: String,
+    /// Whether every required dependency is reachable.
+    pub ready: bool,
+    pub service: String,
+    pub version: String,
+    /// RFC 3339 timestamp of the check.
+    pub checked_at: String,
+    /// Total time spent probing the dependencies.
+    pub duration_ms: u64,
+    pub components: ReadinessComponents,
+    pub dependencies: ReadinessDependencies,
+    pub errors: ReadinessErrors,
+}
+
+/// OpenAPI schema for rate limit error responses (HTTP 429).
+///
+/// Includes a `Retry-After` HTTP response header (in seconds) that tells clients
+/// when they can safely retry their request. The header value is computed from the
+/// active rate limit tier's window duration.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct RateLimitErrorResponse {
+    /// Always `"error"`.
+    pub status: String,
+    /// Human-readable rate limit message.
+    pub error: String,
+}
+
 /// OpenAPI schema for a generic error response body.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ErrorResponse {
@@ -310,20 +377,63 @@ pub struct ErrorDetailDoc {
 
 /// OpenAPI schema for successful API responses.
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
-#[aliases(
-    ApiPoolDetailsResponse = ApiSuccess<PoolWithOddsDoc>,
-    ApiStatsResponse = ApiSuccess<ProtocolStatsDoc>,
-    ApiLeaderboardResponse = ApiSuccess<LeaderboardResponse>,
-    ApiHistoryResponse = ApiSuccess<PredictionHistoryResponse>,
-    ApiUserPredictionsResponse = ApiSuccess<UserPredictionsResponse>,
-    ApiMarketPredictionsResponse = ApiSuccess<MarketPredictionsResponse>,
-    ApiReferralEarningsResponse = ApiSuccess<ReferralEarningsResponse>,
-    ApiIndexerOkResponse = ApiSuccess<IndexerOkResponse>,
-    ApiPricesResponse = ApiSuccess<Vec<AssetPriceDoc>>
-)]
 pub struct ApiSuccess<T: ToSchema> {
     pub status: String,
     pub data: T,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiPoolDetailsResponse {
+    pub status: String,
+    pub data: PoolWithOddsDoc,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiStatsResponse {
+    pub status: String,
+    pub data: ProtocolStatsDoc,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiLeaderboardResponse {
+    pub status: String,
+    pub data: LeaderboardResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiHistoryResponse {
+    pub status: String,
+    pub data: PredictionHistoryResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiUserPredictionsResponse {
+    pub status: String,
+    pub data: UserPredictionsResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiMarketPredictionsResponse {
+    pub status: String,
+    pub data: MarketPredictionsResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiReferralEarningsResponse {
+    pub status: String,
+    pub data: ReferralEarningsResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiIndexerOkResponse {
+    pub status: String,
+    pub data: IndexerOkResponse,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiPricesResponse {
+    pub status: String,
+    pub data: Vec<AssetPriceDoc>,
 }
 
 /// OpenAPI schema for an asset price returned by the prices endpoint.
@@ -377,6 +487,10 @@ pub struct IndexerOkResponse {
     ),
     paths(
         api_health,
+        api_health_ready,
+        api_health_components,
+        api_v1_health,
+        api_v1_health_ready,
         api_get_pools,
         api_get_pool_by_id,
         api_get_stats,
@@ -417,6 +531,12 @@ pub struct IndexerOkResponse {
         ComponentHealthDoc,
         HealthComponents,
         HealthResponse,
+        LivenessResponse,
+        ReadinessComponents,
+        ReadinessDependencies,
+        ReadinessErrors,
+        ReadinessResponse,
+        RateLimitErrorResponse,
         ErrorResponse,
         ErrorDetailDoc,
         PoolCreatedPayloadDoc,
@@ -450,11 +570,45 @@ pub struct ApiDoc;
 #[allow(dead_code)]
 #[utoipa::path(get, path = "/health", tag = "health",
     responses(
+        (status = 200, description = "Process is alive. Performs no I/O", body = LivenessResponse),
+    )
+)]
+async fn api_health() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/health/ready", tag = "health",
+    responses(
+        (status = 200, description = "Every required dependency is reachable", body = ReadinessResponse),
+        (status = 503, description = "At least one required dependency is down", body = ReadinessResponse),
+    )
+)]
+async fn api_health_ready() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/health/components", tag = "health",
+    responses(
         (status = 200, description = "All components healthy, or some degraded but serving", body = HealthResponse),
         (status = 503, description = "At least one component unhealthy", body = HealthResponse),
     )
 )]
-async fn api_health() {}
+async fn api_health_components() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/health", tag = "health",
+    responses(
+        (status = 200, description = "Process is alive. Performs no I/O", body = LivenessResponse),
+    )
+)]
+async fn api_v1_health() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/health/ready", tag = "health",
+    responses(
+        (status = 200, description = "Every required dependency is reachable", body = ReadinessResponse),
+        (status = 503, description = "At least one required dependency is down", body = ReadinessResponse),
+    )
+)]
+async fn api_v1_health_ready() {}
 
 #[allow(dead_code)]
 #[utoipa::path(get, path = "/api/v1/pools", tag = "pools",
@@ -468,6 +622,7 @@ async fn api_health() {}
     ),
     responses(
         (status = 200, description = "Paginated pool list", body = PoolListResponse),
+        (status = 429, description = "Rate limit exceeded. See Retry-After header for seconds to wait", body = RateLimitErrorResponse),
         (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
@@ -480,6 +635,7 @@ async fn api_get_pools() {}
     responses(
         (status = 200, description = "Pool details with live odds", body = ApiPoolDetailsResponse),
         (status = 404, description = "Pool not found", body = ErrorResponse),
+        (status = 429, description = "Rate limit exceeded. See Retry-After header for seconds to wait", body = RateLimitErrorResponse),
         (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )
@@ -523,6 +679,7 @@ async fn api_get_prices() {}
     ),
     responses(
         (status = 200, description = "User leaderboard", body = ApiLeaderboardResponse),
+        (status = 429, description = "Rate limit exceeded. See Retry-After header for seconds to wait", body = RateLimitErrorResponse),
         (status = 503, description = "Database unavailable", body = ErrorResponse),
         (status = 500, description = "Database error", body = ErrorResponse),
     )

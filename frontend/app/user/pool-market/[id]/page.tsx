@@ -1,14 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { fetchPoolById } from "@/lib/api/pools";
-import { ShareButton, CopyButton } from "@/components/ui";
-import { PoolLeaderboard } from "@/components/pool/PoolLeaderboard";
+import { PoolDetailView } from "@/components/pool/PoolDetailView";
+import { formatStake } from "@/lib/stakeFilters";
 
 const SITE_URL = "https://predifi.app";
-
-function formatStake(amount: number, token: string): string {
-  return `${amount.toLocaleString()} ${token}`;
-}
 
 function outcomeLabel(outcome: number, labels?: string[]): string {
   return labels?.[outcome] ?? `Outcome ${outcome + 1}`;
@@ -55,8 +51,8 @@ export async function generateMetadata({
   const description = userPick
     ? `I predicted ${outcomeLabel(userPick.outcome, pool.outcome_descriptions)} at ${userPick.odds.toFixed(2)}x odds on "${pool.name}" (${pool.category}) — join me on PrediFi.`
     : topOutcome
-      ? `${pool.category} prediction pool on PrediFi — ${formatStake(pool.total_stake, pool.token)} staked. Leading: ${outcomeLabel(topOutcome.outcome, pool.outcome_descriptions)} at ${topOutcome.odds.toFixed(2)}x odds.`
-      : `${pool.category} prediction pool on PrediFi — ${formatStake(pool.total_stake, pool.token)} staked.`;
+      ? `${pool.category} prediction pool on PrediFi — ${formatStake(String(pool.total_stake), pool.token)} staked. Leading: ${outcomeLabel(topOutcome.outcome, pool.outcome_descriptions)} at ${topOutcome.odds.toFixed(2)}x odds.`
+      : `${pool.category} prediction pool on PrediFi — ${formatStake(String(pool.total_stake), pool.token)} staked.`;
 
   const url = userPick
     ? `${SITE_URL}/user/pool-market/${pool.pool_id}?outcome=${userPick.outcome}`
@@ -108,66 +104,12 @@ export default async function PoolDetailPage({ params, searchParams }: PageProps
     : `${pool.name} — predict on PrediFi`;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8">
-      <div className="mx-auto max-w-3xl space-y-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="space-y-1">
-            <p className="text-xs uppercase tracking-wide text-[#7DE3EC]">
-              {pool.category}
-            </p>
-            <h1 className="text-3xl font-bold text-white">{pool.name}</h1>
-            <p className="text-sm text-zinc-500">
-              {formatStake(pool.total_stake, pool.token)} staked · {pool.state}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <CopyButton
-              text={shareUrl}
-              size="md"
-              className="rounded-md border border-zinc-700 p-2"
-              aria-label="Copy pool link"
-            />
-            <ShareButton url={shareUrl} title={shareTitle} text={pool.name} />
-          </div>
-        </div>
-
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5 space-y-3">
-          <h2 className="text-sm font-semibold text-white uppercase tracking-wide">
-            Outcomes &amp; Odds
-          </h2>
-          <div className="space-y-2">
-            {pool.odds.map((o) => (
-              <div
-                key={o.outcome}
-                className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-800/40 px-4 py-3"
-              >
-                <span className="text-sm text-zinc-200">
-                  {outcomeLabel(o.outcome, pool.outcome_descriptions)}
-                  {pool.result != null &&
-                    Number(pool.result) === o.outcome && (
-                      <span className="ml-2 text-xs font-medium text-emerald-400">
-                        Winner
-                      </span>
-                    )}
-                  {userPick?.outcome === o.outcome && (
-                    <span className="ml-2 text-xs font-medium text-amber-400">
-                      Your Pick
-                    </span>
-                  )}
-                </span>
-                <span className="text-sm font-medium text-white">
-                  {o.odds.toFixed(2)}x
-                  <span className="ml-2 text-zinc-500">
-                    ({formatStake(o.stake, pool.token)})
-                  </span>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <PoolLeaderboard poolId={pool.pool_id} />
-      </div>
-    </div>
+    <PoolDetailView
+      poolId={pool.pool_id}
+      initialPool={pool}
+      shareUrl={shareUrl}
+      shareTitle={shareTitle}
+      highlightedOutcome={userPick?.outcome}
+    />
   );
 }

@@ -195,6 +195,74 @@ pub fn calculate_odds_bps(outcome_stake: i128, total_stake: i128) -> u64 {
         .unwrap_or(0) as u64
 }
 
+/// Validate that a fee basis points value is within the allowed range (INV-6).
+///
+/// All protocol fees must be in the range [0, 10_000] where 10_000 = 100%.
+/// This validator ensures no fee can exceed 100% of the pool, which would
+/// violate the payout guarantees of [`calculate_claim_payout`].
+///
+/// # Arguments
+/// * `fee_bps` - Fee in basis points (1 bp = 0.01%)
+///
+/// # Returns
+/// `true` if `fee_bps ≤ 10_000`, `false` otherwise.
+pub fn is_valid_fee_bps(fee_bps: u32) -> bool {
+    fee_bps <= 10_000
+}
+
+/// Fee tier configuration used for dynamic fee selection.
+///
+/// Represents a single tier in the protocol's fee schedule. When a pool is
+/// resolved, the system selects the applicable tier by finding the highest
+/// `stake_threshold` that is still `<=` the pool's total stake, and applies
+/// that tier's `fee_bps`. This allows the protocol to offer discounts on
+/// high-volume pools as a liquidity incentive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FeeTierInput {
+    /// The minimum total pool stake required to apply this tier.
+    pub stake_threshold: i128,
+    /// The protocol fee in basis points for this tier (0–10_000).
+    pub fee_bps: u32,
+}
+
+/// Select the appropriate protocol fee rate based on pool volume.
+///
+/// Walks the provided fee tiers in order and selects the highest `stake_threshold`
+/// that does not exceed the pool's total stake, applying that tier's `fee_bps`.
+/// If no tier threshold is met, uses the fallback (`default_fee_bps`).
+///
+/// This function is **pure** — it does not read from storage or side effects.
+/// All configuration is passed as arguments.
+///
+/// # Arguments
+/// * `pool_total_stake` - The pool's total stake in stroops
+/// * `tiers` - Fee tier configuration slice (should be pre-sorted in ascending order by threshold)
+/// * `default_fee_bps` - Fallback fee if no tier threshold is met
+///
+/// # Returns
+/// A fee rate in basis points (guaranteed to be in range [0, 10_000] if inputs are valid).
+///
+/// # Panics
+/// Does not panic; returns `default_fee_bps` if tiers vector is empty or all
+/// thresholds are exceeded.
+pub fn calculate_dynamic_fee(
+    pool_total_stake: i128,
+    tiers: &[FeeTierInput],
+    default_fee_bps: u32,
+) -> u32 {
+    let mut applied_fee = default_fee_bps;
+    let mut max_threshold = -1i128;
+
+    for tier in tiers.iter() {
+        if pool_total_stake >= tier.stake_threshold && tier.stake_threshold > max_threshold {
+            max_threshold = tier.stake_threshold;
+            applied_fee = tier.fee_bps;
+        }
+    }
+
+    applied_fee
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +359,175 @@ mod tests {
     #[test]
     fn payout_pool_subtracts_fee() {
         assert_eq!(calculate_payout_pool(10_000, 250).unwrap(), 9_750);
+    }
+
+    #[test]
+    fn valid_fee_bps_zero() {
+        assert!(is_valid_fee_bps(0));
+    }
+
+    #[test]
+    fn valid_fee_bps_max() {
+        assert!(is_valid_fee_bps(10_000));
+    }
+
+    #[test]
+    fn valid_fee_bps_mid_range() {
+        assert!(is_valid_fee_bps(500)); // 5%
+    }
+
+    #[test]
+    fn invalid_fee_bps_over_max() {
+        assert!(!is_valid_fee_bps(10_001));
+    }
+
+    #[test]
+    fn invalid_fee_bps_way_over_max() {
+        assert!(!is_valid_fee_bps(u32::MAX));
+    }
+
+    #[test]
+    fn dynamic_fee_no_tiers_uses_default() {
+        let tiers = [];
+        let fee = calculate_dynamic_fee(100_000, &tiers, 500);
+        assert_eq!(fee, 500); // fallback to default
+    }
+
+    #[test]
+    fn dynamic_fee_selects_matching_tier() {
+        let tiers = [
+            FeeTierInput {
+                stake_threshold: 10_000,
+                fee_bps: 250,
+            },
+            FeeTierInput {
+                stake_threshold: 50_000,
+                fee_bps: 150,
+            },
+        ];
+        // Pool stake is 60_000 → should match the 50_000 tier
+        let fee = calculate_dynamic_fee(60_000, &tiers, 500);
+        assert_eq!(fee, 150);
+    }
+
+    #[test]
+    fn dynamic_fee_selects_highest_applicable_threshold() {
+        let tiers = [
+            FeeTierInput {
+                stake_threshold: 10_000,
+                fee_bps: 300,
+            },
+            FeeTierInput {
+                stake_threshold: 50_000,
+                fee_bps: 150,
+            },
+            FeeTierInput {
+                stake_threshold: 100_000,
+                fee_bps: 50,
+            },
+        ];
+        // Pool stake is 75_000 → should match the 50_000 tier (not 10_000)
+        let fee = calculate_dynamic_fee(75_000, &tiers, 500);
+        assert_eq!(fee, 150);
+    }
+
+    #[test]
+    fn dynamic_fee_below_first_tier_uses_default() {
+        let tiers = [
+            FeeTierInput {
+                stake_threshold: 50_000,
+                fee_bps: 150,
+            },
+            FeeTierInput {
+                stake_threshold: 100_000,
+                fee_bps: 50,
+            },
+        ];
+        // Pool stake is 10_000 → below all thresholds, use default
+        let fee = calculate_dynamic_fee(10_000, &tiers, 500);
+        assert_eq!(fee, 500);
+    }
+
+    #[test]
+    fn dynamic_fee_exact_threshold_match() {
+        let tiers = [FeeTierInput {
+            stake_threshold: 50_000,
+            fee_bps: 150,
+        }];
+        // Pool stake exactly equals threshold
+        let fee = calculate_dynamic_fee(50_000, &tiers, 500);
+        assert_eq!(fee, 150);
+    }
+
+    #[test]
+    fn dynamic_fee_just_below_threshold() {
+        let tiers = [FeeTierInput {
+            stake_threshold: 50_000,
+            fee_bps: 150,
+        }];
+        // Pool stake is 1 below threshold
+        let fee = calculate_dynamic_fee(49_999, &tiers, 500);
+        assert_eq!(fee, 500); // uses default, not the tier
+    }
+
+    #[test]
+    fn dynamic_fee_zero_stake() {
+        let tiers = [
+            FeeTierInput {
+                stake_threshold: 10_000,
+                fee_bps: 250,
+            },
+            FeeTierInput {
+                stake_threshold: 50_000,
+                fee_bps: 150,
+            },
+        ];
+        let fee = calculate_dynamic_fee(0, &tiers, 500);
+        assert_eq!(fee, 500); // no tier matches zero stake
+    }
+
+    #[test]
+    fn dynamic_fee_negative_stake_uses_default() {
+        let tiers = [FeeTierInput {
+            stake_threshold: 10_000,
+            fee_bps: 250,
+        }];
+        // Negative stake cannot match any positive threshold
+        let fee = calculate_dynamic_fee(-5_000, &tiers, 500);
+        assert_eq!(fee, 500);
+    }
+
+    #[test]
+    fn dynamic_fee_ignores_out_of_order_tiers() {
+        // If tiers are not pre-sorted, we still select the highest applicable
+        let tiers = [
+            FeeTierInput {
+                stake_threshold: 100_000,
+                fee_bps: 50,
+            },
+            FeeTierInput {
+                stake_threshold: 10_000,
+                fee_bps: 300,
+            },
+        ];
+        // Pool stake is 50_000 → matches 10_000 threshold (highest applicable)
+        let fee = calculate_dynamic_fee(50_000, &tiers, 500);
+        assert_eq!(fee, 300); // matches the 10_000 tier, not affected by order
+    }
+
+    #[test]
+    fn dynamic_fee_large_pool() {
+        let tiers = [
+            FeeTierInput {
+                stake_threshold: 1_000,
+                fee_bps: 200,
+            },
+            FeeTierInput {
+                stake_threshold: 1_000_000,
+                fee_bps: 100,
+            },
+        ];
+        let fee = calculate_dynamic_fee(10_000_000_000i128, &tiers, 250);
+        assert_eq!(fee, 100); // ultra-large pool matches highest tier
     }
 }

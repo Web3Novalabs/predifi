@@ -583,7 +583,9 @@ flowchart LR
   - `db_pool_active_connections`, `db_pool_idle_connections`
   - `websocket_active_clients`
   - `cache_hits_total{cache="pool"|"price"|"redis"}`
-- **`/health`**: Evaluates individual subsystem health (`db`, `rpc`, `redis`, `price_cache`). Returns 200 OK if all operational, or 503 Service Unavailable with per-dependency diagnostics.
+- **`/health`**: Liveness probe. Performs no I/O and returns 200 OK whenever the process is alive, so a dependency outage never triggers a restart loop.
+- **`/health/ready`**: Readiness probe. Evaluates the dependencies that gate traffic (`db`, `redis`, `price_cache`) and returns 200 OK when all required ones are reachable, or 503 Service Unavailable with per-dependency diagnostics.
+- **`/health/components`**: Full component diagnostics. Evaluates individual subsystem health (`db`, `rpc`, `redis`, `disk`, `price_cache`). Returns 200 OK if all operational, or 503 Service Unavailable with per-dependency diagnostics.
 - **Contract Event Monitoring**: Scrapers watch for high-priority security topics: `unauthorized_resolution`, `unauthorized_admin_op`, `double_claim_attempt`, `contract_paused_alert`.
 
 ---

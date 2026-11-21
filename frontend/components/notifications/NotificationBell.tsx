@@ -14,7 +14,7 @@
  * skips re-renders caused by wallet interaction state.
  */
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
@@ -37,10 +37,24 @@ const TYPE_STYLES: Record<NotificationType, string> = {
 };
 
 export function NotificationBell() {
+  const notificationsId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const address = useWalletAddress();
   const [open, setOpen] = useState(false);
   const { notifications, unreadCount, isLoading, isError, markRead, refresh } =
     useNotifications(address);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
 
   // Don't render anything until a wallet is connected.
   if (!address) return null;
@@ -58,10 +72,12 @@ export function NotificationBell() {
   return (
     <div className="relative">
       <button
+        ref={triggerRef}
         type="button"
         onClick={handleOpen}
-        aria-label="Notifications"
+        aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
         aria-expanded={open}
+        aria-controls={notificationsId}
         className="relative flex h-9 w-9 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-white hover:border-zinc-700 transition-colors"
       >
         <Bell className="h-4 w-4" aria-hidden="true" />
@@ -74,13 +90,17 @@ export function NotificationBell() {
 
       {open && (
         <>
-          <button
-            type="button"
-            aria-label="Close notifications"
+          <div
+            aria-hidden="true"
             className="fixed inset-0 z-40 cursor-default"
             onClick={() => setOpen(false)}
           />
-          <div className="absolute right-0 z-50 mt-2 w-80 max-h-96 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+          <div
+            id={notificationsId}
+            className="absolute right-0 z-50 mt-2 w-80 max-h-96 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+            role="region"
+            aria-label="Notifications"
+          >
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
               <p className="text-sm font-semibold text-white">Notifications</p>
               {unreadCount > 0 && (
@@ -137,7 +157,9 @@ export function NotificationBell() {
                           {TYPE_LABEL[notification.notif_type]}
                         </span>
                         {!notification.read && (
-                          <span className="h-1.5 w-1.5 rounded-full bg-[#37B7C3]" />
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#37B7C3]">
+                            <span className="sr-only">Unread</span>
+                          </span>
                         )}
                       </div>
                       <p className="text-sm text-white mt-1">

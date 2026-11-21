@@ -53,14 +53,14 @@ The server listens on `http://localhost:3000`.
 Verify it is running:
 
 ```bash
-curl http://localhost:3000/           # 200 — welcome message
-curl http://localhost:3000/health     # 200 — {"status":"ok","service":"predifi-backend","version":"0.1.0"}
-curl http://localhost:3000/missing    # 404 — unknown route
-curl http://localhost:3000/               # 200 - welcome message
-curl http://localhost:3000/health         # 200 - {"status":"ok","version":"v1"}
-curl http://localhost:3000/api/v1         # 200 - version discovery
-curl http://localhost:3000/api/v1/health  # 200 - {"status":"ok","version":"v1"}
-curl http://localhost:3000/missing        # 404 - unknown route
+curl http://localhost:3000/                 # 200 — welcome message
+curl http://localhost:3000/health           # 200 — {"status":"alive","service":"predifi-backend",...} (liveness, no I/O)
+curl http://localhost:3000/health/ready     # 200/503 — per-dependency readiness
+curl http://localhost:3000/health/components# 200/503 — full component diagnostics
+curl http://localhost:3000/missing          # 404 — unknown route
+curl http://localhost:3000/api/v1           # 200 — version discovery
+curl http://localhost:3000/api/v1/health    # 200 — {"status":"alive","version":"v1",...}
+curl http://localhost:3000/api/v1/health/ready # 200/503 — per-dependency readiness
 ```
 
 Auto-restart on file changes (requires `cargo-watch`):

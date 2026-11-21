@@ -28,8 +28,13 @@ export interface WalletError {
 /** Expected Stellar network for PrediFi (override via env). */
 export type StellarNetwork = "TESTNET" | "PUBLIC" | "FUTURENET";
 
+const configuredNetwork = process.env.NEXT_PUBLIC_STELLAR_NETWORK
+  ?.trim()
+  .toUpperCase();
+const VALID_NETWORKS: StellarNetwork[] = ["TESTNET", "PUBLIC", "FUTURENET"];
+
 export const REQUIRED_STELLAR_NETWORK: StellarNetwork =
-  (process.env.NEXT_PUBLIC_STELLAR_NETWORK as StellarNetwork) || "TESTNET";
+  VALID_NETWORKS.find((network) => network === configuredNetwork) ?? "TESTNET";
 
 export const STELLAR_NETWORK_LABELS: Record<StellarNetwork, string> = {
   TESTNET: "Stellar Testnet",
@@ -121,10 +126,32 @@ function extractMessage(err: unknown): string {
   return "";
 }
 
+function isWalletError(err: unknown): err is WalletError {
+  if (!err || typeof err !== "object") return false;
+  const value = err as Partial<WalletError>;
+  const knownCodes: WalletErrorCode[] = [
+    "NETWORK_MISMATCH",
+    "EXTENSION_NOT_INSTALLED",
+    "USER_REJECTED",
+    "TRANSACTION_TIMEOUT",
+    "INSUFFICIENT_BALANCE",
+    "UNKNOWN",
+  ];
+  return (
+    typeof value.code === "string" &&
+    knownCodes.includes(value.code) &&
+    typeof value.title === "string" &&
+    typeof value.message === "string" &&
+    typeof value.recoveryAction === "string"
+  );
+}
+
 /**
  * Map a raw wallet/provider error into a structured {@link WalletError}.
  */
 export function classifyWalletError(err: unknown): WalletError {
+  if (isWalletError(err)) return err;
+
   const code = extractRawCode(err);
   const message = extractMessage(err).toLowerCase();
 
@@ -144,7 +171,6 @@ export function classifyWalletError(err: unknown): WalletError {
 
   // Extension missing
   if (
-    code === 4100 ||
     message.includes("no provider") ||
     message.includes("freighter is not installed") ||
     message.includes("wallet not found") ||
@@ -170,6 +196,7 @@ export function classifyWalletError(err: unknown): WalletError {
   if (
     message.includes("timeout") ||
     message.includes("timed out") ||
+    message.includes("did not respond in time") ||
     message.includes("deadline exceeded")
   ) {
     return makeWalletError("TRANSACTION_TIMEOUT", err);
@@ -208,14 +235,31 @@ export function checkNetworkMatch(
   walletNetwork: string | null | undefined
 ): WalletError | null {
   if (!walletNetwork) return null;
-  const normalized = walletNetwork.toUpperCase().replace(/\s+/g, "");
+  const normalized = walletNetwork.toLowerCase().replace(/[\s_-]+/g, "");
   const required = REQUIRED_STELLAR_NETWORK;
   const aliases: Record<StellarNetwork, string[]> = {
-    TESTNET: ["TESTNET", "TESTNETNETWORK", "STELLARTESTNET"],
-    PUBLIC: ["PUBLIC", "MAINNET", "PUBLICNETWORK", "STELLARPUBLIC"],
-    FUTURENET: ["FUTURENET", "FUTURENETNETWORK"],
+    TESTNET: [
+      "testnet",
+      "testnetnetwork",
+      "stellartestnet",
+      "testsdfnetwork;september2015",
+    ],
+    PUBLIC: [
+      "public",
+      "mainnet",
+      "publicnetwork",
+      "stellarpublic",
+      "publicglobalstellarnetwork;september2015",
+    ],
+    FUTURENET: [
+      "futurenet",
+      "futurenetnetwork",
+      "testsdfuturenetwork;october2022",
+    ],
   };
-  const ok = aliases[required].some((a) => normalized.includes(a));
+  const ok = aliases[required].some(
+    (alias) => normalized === alias.toLowerCase().replace(/[\s_-]+/g, ""),
+  );
   if (!ok) {
     return makeWalletError("NETWORK_MISMATCH", { walletNetwork, required });
   }

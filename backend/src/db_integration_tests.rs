@@ -230,4 +230,36 @@ mod tests {
         pool.close().await;
         drop(container);
     }
+
+    #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
+    async fn waitlist_signup_is_idempotent_and_case_insensitive() {
+        let (pool, container) = setup().await;
+
+        let first = crate::waitlist::normalize_email("Ada@Example.com");
+        crate::waitlist::add_to_waitlist(&pool, "Ada", &first)
+            .await
+            .expect("first sign-up");
+        // Same address, different case and name: must succeed without a second row.
+        let second = crate::waitlist::normalize_email("  ADA@example.COM ");
+        crate::waitlist::add_to_waitlist(&pool, "Ada L.", &second)
+            .await
+            .expect("duplicate sign-up must not error");
+
+        let count: i64 = sqlx::query("SELECT COUNT(*) FROM waitlist")
+            .fetch_one(&pool)
+            .await
+            .expect("count")
+            .get(0);
+        assert_eq!(count, 1);
+
+        // The table itself rejects a non-lowercase email.
+        let err = sqlx::query("INSERT INTO waitlist (name, email) VALUES ('x', 'MixedCase@example.com')")
+            .execute(&pool)
+            .await;
+        assert!(err.is_err(), "CHECK constraint must reject mixed-case email");
+
+        pool.close().await;
+        drop(container);
+    }
 }

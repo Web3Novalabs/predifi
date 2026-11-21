@@ -213,6 +213,10 @@ async fn runtime_responses_match_documented_schemas() {
     let spec = spec();
     let cases = [
         ("GET", "/health"),
+        ("GET", "/health/ready"),
+        ("GET", "/health/components"),
+        ("GET", "/api/v1/health"),
+        ("GET", "/api/v1/health/ready"),
         ("GET", "/api/v1/fees"),
         ("GET", "/api/v1/pools"),
         ("GET", "/api/v1/pools/1"),

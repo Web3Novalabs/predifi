@@ -4,8 +4,9 @@
 //! in the `Authorization: Bearer <token>` header. Query-parameter tokens are
 //! accepted only outside production (they leak into access logs). Subscribers
 //! receive events whose `user_address` matches the subscribed wallet.
-//! Omitting `address` delivers all events (useful for dashboards). The indexer
-//! calls [`EventBus::send`] whenever a new prediction is indexed.
+//! Unauthenticated clients may subscribe only to `prediction_placed` events for
+//! explicit pool IDs, which are public market data. The indexer calls
+//! [`EventBus::send`] whenever a new prediction is indexed.
 //!
 //! # High-throughput delivery (#1941)
 //!
@@ -55,7 +56,7 @@ use std::time::{Duration, Instant};
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
         Query, State,
     },
     http::{HeaderMap, StatusCode},
@@ -398,6 +399,15 @@ fn connection_settings(
     ))
 }
 
+/// Public pool updates contain only public prediction events and are scoped to
+/// an explicit pool subscription. Wallet and unfiltered subscriptions require JWTs.
+fn is_public_pool_subscription(subscription: &Subscription) -> bool {
+    subscription.wallet.is_none()
+        && !subscription.pools.is_empty()
+        && subscription.event_types.len() == 1
+        && subscription.event_types.contains("prediction_placed")
+}
+
 /// A control frame sent by the client.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -727,30 +737,6 @@ pub async fn ws_handler(
             .into_response();
     }
 
-    let Some(token) = extract_ws_token(&headers, &params, config.is_production()) else {
-        return unauthorized_response("missing or invalid authorization token");
-    };
-
-    let claims =
-        match verify_jwt_token_strict(&token, &config.secret_key, "access", config.jwt_key_version)
-        {
-            Ok(claims) => claims,
-            Err(error) => return unauthorized_response(&error.to_string()),
-        };
-
-    // Authorize wallet subscription: user can only subscribe to their own address
-    if let Some(ref target_address) = params.address {
-        if target_address != &claims.sub {
-            return (
-                StatusCode::FORBIDDEN,
-                axum::Json(serde_json::json!({
-                    "error": "unauthorized wallet subscription",
-                })),
-            )
-                .into_response();
-        }
-    }
-
     let (subscription, options) = match connection_settings(&params) {
         Ok(settings) => settings,
         Err(message) => {
@@ -762,9 +748,40 @@ pub async fn ws_handler(
         }
     };
 
-    crate::tracing_context::record_user_address(&crate::request_logger::redact_address(
-        &claims.sub,
-    ));
+    let token = extract_ws_token(&headers, &params, config.is_production());
+    let claims = match token {
+        Some(token) => {
+            match verify_jwt_token_strict(
+                &token,
+                &config.secret_key,
+                "access",
+                config.jwt_key_version,
+            ) {
+                Ok(claims) => Some(claims),
+                Err(error) => return unauthorized_response(&error.to_string()),
+            }
+        }
+        None if is_public_pool_subscription(&subscription) => None,
+        None => return unauthorized_response("missing or invalid authorization token"),
+    };
+
+    if let Some(ref target_address) = params.address {
+        if claims.as_ref().map(|claims| &claims.sub) != Some(target_address) {
+            return (
+                StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({
+                    "error": "unauthorized wallet subscription",
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    if let Some(claims) = &claims {
+        crate::tracing_context::record_user_address(&crate::request_logger::redact_address(
+            &claims.sub,
+        ));
+    }
     let span = info_span!(
         "websocket.connect",
         correlation_id = %crate::tracing_context::current_correlation_id()
@@ -773,9 +790,24 @@ pub async fn ws_handler(
         pools = subscription.pools.len(),
         batch_ms = options.batch_window.map(|w| w.as_millis() as u64),
         compress = options.compress,
-        subject = %crate::request_logger::redact_address(&claims.sub)
+        subject = ?claims.as_ref().map(|claims| crate::request_logger::redact_address(&claims.sub))
     );
-    ws.on_upgrade(move |socket| handle_socket(socket, bus, subscription, options).instrument(span))
+    let ping_interval = Duration::from_secs(config.ws_ping_interval_secs);
+    let max_missed_pongs = config.ws_max_missed_pongs;
+    let max_subscriber_lag = config.ws_max_subscriber_lag;
+
+    ws.on_upgrade(move |socket| {
+        handle_socket(
+            socket,
+            bus,
+            subscription,
+            options,
+            ping_interval,
+            max_missed_pongs,
+            max_subscriber_lag,
+        )
+        .instrument(span)
+    })
 }
 
 async fn handle_socket(
@@ -783,6 +815,9 @@ async fn handle_socket(
     bus: EventBus,
     subscription: Subscription,
     options: DeliveryOptions,
+    ping_interval: Duration,
+    max_missed_pongs: u32,
+    max_subscriber_lag: u64,
 ) {
     let mut rx = bus.subscribe();
     let (_guard, mut shutdown_rx) =
@@ -795,10 +830,25 @@ async fn handle_socket(
         metrics: bus.metrics.clone(),
         pending: Vec::new(),
         pending_bytes: 0,
+        ping_interval,
+        max_missed_pongs,
+        max_subscriber_lag,
     };
     session.run(&mut rx, &mut shutdown_rx).await;
 
     let _ = socket.send(Message::Close(None)).await;
+}
+
+/// WebSocket close code 1001 (going away), sent when the server shuts down so
+/// clients know the disconnect is intentional and should reconnect.
+const GOING_AWAY_CODE: u16 = 1001;
+
+/// Build the going-away Close frame sent to every connection on shutdown.
+fn going_away_close() -> Message {
+    Message::Close(Some(CloseFrame {
+        code: GOING_AWAY_CODE,
+        reason: "server shutting down".into(),
+    }))
 }
 
 /// Per-connection message rate limiter using a sliding window.
@@ -840,6 +890,12 @@ struct SocketSession<'a> {
     pending: Vec<Arc<BusEvent>>,
     /// Payload bytes in `pending`, to keep batches under [`MAX_MESSAGE_SIZE`].
     pending_bytes: usize,
+    /// Keepalive ping interval.
+    ping_interval: Duration,
+    /// Maximum missed consecutive pongs before closing.
+    max_missed_pongs: u32,
+    /// Maximum missed lagged events before closing slow subscriber.
+    max_subscriber_lag: u64,
 }
 
 impl SocketSession<'_> {
@@ -851,6 +907,10 @@ impl SocketSession<'_> {
         let mut rate_limiter = WsRateLimiter::new(RATE_LIMIT_WS_BURST, RATE_LIMIT_WS_PERIOD_SECS);
         // Deadline for flushing `pending`; only armed while it is non-empty.
         let mut flush_at: Option<tokio::time::Instant> = None;
+        let mut ping_ticker = tokio::time::interval(self.ping_interval);
+        ping_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // Missed pongs counter for keepalive timeout detection.
+        let mut missed_pongs: u32 = 0;
 
         loop {
             let flush_timer = async {
@@ -862,13 +922,28 @@ impl SocketSession<'_> {
 
             tokio::select! {
                 // Server-initiated graceful shutdown: flush what is buffered,
-                // then send a Close frame so the client sees a clean
-                // disconnect instead of the TCP connection simply dropping.
+                // then send a going-away Close frame so the client learns why
+                // the connection is ending and knows to reconnect elsewhere.
                 _ = shutdown_rx.recv() => {
                     tracing::info!("server is shutting down; closing websocket connection");
                     let _ = self.flush().await;
-                    let _ = self.socket.send(Message::Close(None)).await;
+                    let _ = self.socket.send(going_away_close()).await;
                     break;
+                }
+                _ = ping_ticker.tick() => {
+                    if missed_pongs >= self.max_missed_pongs {
+                        tracing::warn!(
+                            missed_pongs,
+                            max_missed_pongs = self.max_missed_pongs,
+                            "WebSocket connection keepalive timeout (missed pongs exceeded), closing"
+                        );
+                        let _ = self.socket.send(Message::Close(None)).await;
+                        break;
+                    }
+                    missed_pongs += 1;
+                    if self.socket.send(Message::Ping(Vec::new())).await.is_err() {
+                        break;
+                    }
                 }
                 _ = flush_timer => {
                     flush_at = None;
@@ -883,6 +958,18 @@ impl SocketSession<'_> {
                             tracing::warn!(missed, "websocket client lagged behind event bus");
                             if let Some(metrics) = &self.metrics {
                                 metrics.record_ws_dropped("lagged", missed);
+                            }
+                            if missed >= self.max_subscriber_lag {
+                                tracing::warn!(
+                                    missed,
+                                    max_subscriber_lag = self.max_subscriber_lag,
+                                    "websocket client exceeded maximum lag threshold, dropping slow subscriber"
+                                );
+                                if let Some(metrics) = &self.metrics {
+                                    metrics.record_ws_dropped_subscriber();
+                                }
+                                let _ = self.socket.send(Message::Close(None)).await;
+                                break;
                             }
                             let notice = serde_json::json!({ "type": "lagged", "missed": missed });
                             if self.send_frame("control", notice.to_string()).await.is_err() {
@@ -955,7 +1042,10 @@ impl SocketSession<'_> {
                             let _ = self.socket.send(Message::Pong(payload.clone())).await;
                             continue;
                         }
-                        Message::Pong(_) => continue,
+                        Message::Pong(_) => {
+                            missed_pongs = 0;
+                            continue;
+                        }
                         Message::Close(_) => break,
                     };
 
@@ -1241,6 +1331,32 @@ mod tests {
     }
 
     #[test]
+    fn public_subscription_is_limited_to_prediction_events_for_pools() {
+        let pool_subscription = Subscription {
+            pools: [1].into_iter().collect(),
+            event_types: ["prediction_placed".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        assert!(is_public_pool_subscription(&pool_subscription));
+
+        let wallet_subscription = Subscription {
+            wallet: Some("GABC".into()),
+            ..pool_subscription.clone()
+        };
+        let unfiltered_subscription = Subscription {
+            event_types: ["prediction_placed".to_string()].into_iter().collect(),
+            ..Default::default()
+        };
+        let other_event_subscription = Subscription {
+            event_types: ["pool_resolved".to_string()].into_iter().collect(),
+            ..pool_subscription
+        };
+        assert!(!is_public_pool_subscription(&wallet_subscription));
+        assert!(!is_public_pool_subscription(&unfiltered_subscription));
+        assert!(!is_public_pool_subscription(&other_event_subscription));
+    }
+
+    #[test]
     fn subscription_caps_pool_count() {
         let mut sub = Subscription::default();
         let ids: Vec<u64> = (0..MAX_POOL_SUBSCRIPTIONS as u64).collect();
@@ -1384,10 +1500,70 @@ mod tests {
     }
 
     #[test]
+    fn going_away_close_carries_code_and_reason() {
+        match going_away_close() {
+            Message::Close(Some(frame)) => {
+                assert_eq!(frame.code, GOING_AWAY_CODE);
+                assert_eq!(frame.code, 1001);
+                assert_eq!(frame.reason.as_ref(), "server shutting down");
+            }
+            other => panic!("expected a Close frame, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn client_ip_prefers_forwarded_for() {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "10.0.0.1, 10.0.0.2".parse().unwrap());
         headers.insert("x-real-ip", "9.9.9.9".parse().unwrap());
         assert_eq!(client_ip(&headers), "10.0.0.1");
+    }
+
+    #[tokio::test]
+    async fn slow_subscriber_dropped_when_lag_exceeds_threshold() {
+        let metrics = Arc::new(crate::metrics::Metrics::new().unwrap());
+        let bus = EventBus::new().with_metrics(metrics.clone());
+        let mut rx = bus.subscribe();
+
+        // Broadcast buffer is 4096. Publish more than 4096 events to trigger Lagged error.
+        for i in 0..4150 {
+            bus.send(&serde_json::json!({
+                "type": "prediction_placed",
+                "pool_id": i,
+                "user_address": "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            }));
+        }
+
+        // Test Lagged error occurs
+        let recv_err = rx.recv().await;
+        match recv_err {
+            Err(broadcast::error::RecvError::Lagged(missed)) => {
+                assert!(missed > 0);
+                assert!(missed >= 50);
+            }
+            other => panic!("expected Lagged error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn ws_keepalive_and_lag_configuration_defaults() {
+        let vars = std::collections::HashMap::new();
+        let config = Config::from_map(&vars).expect("valid config");
+        assert_eq!(config.ws_ping_interval_secs, 30);
+        assert_eq!(config.ws_max_missed_pongs, 3);
+        assert_eq!(config.ws_max_subscriber_lag, 100);
+
+        let custom_vars = std::collections::HashMap::from([
+            (
+                "PREDIFI_WS_PING_INTERVAL_SECS".to_string(),
+                "15".to_string(),
+            ),
+            ("PREDIFI_WS_MAX_MISSED_PONGS".to_string(), "5".to_string()),
+            ("PREDIFI_WS_MAX_SUBSCRIBER_LAG".to_string(), "200".to_string()),
+        ]);
+        let custom_config = Config::from_map(&custom_vars).expect("valid custom config");
+        assert_eq!(custom_config.ws_ping_interval_secs, 15);
+        assert_eq!(custom_config.ws_max_missed_pongs, 5);
+        assert_eq!(custom_config.ws_max_subscriber_lag, 200);
     }
 }

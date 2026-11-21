@@ -7,9 +7,13 @@ import { formatUsd } from "@/lib/stakeFilters";
 
 interface BalanceSectionProps {
     isLoading?: boolean;
-    /** Total balance in USD. Defaults to demo value. */
+    /**
+     * Total balance in USD.
+     * - `undefined`: not loaded yet, a skeleton is shown.
+     * - `null`: unavailable (no wallet, or the lookup failed), "Unavailable" is shown.
+     */
     balance?: number | string | null;
-    /** Rewards amount in USD. Defaults to demo value. */
+    /** Rewards in USD. `undefined` shows a skeleton, `null` shows an em dash. */
     rewards?: number | string | null;
     onWithdraw?: () => Promise<void> | void;
     onClaim?: () => Promise<void> | void;
@@ -17,8 +21,8 @@ interface BalanceSectionProps {
 
 export function BalanceSection({
     isLoading = false,
-    balance = 15255.25,
-    rewards = 1255.68,
+    balance,
+    rewards,
     onWithdraw,
     onClaim,
 }: BalanceSectionProps) {
@@ -67,10 +71,20 @@ export function BalanceSection({
             </CardHeader>
             <CardContent className="space-y-6 relative z-10">
                 <div>
-                    <h2 className="text-5xl font-bold font-mono tracking-tighter mb-4">{formatUsd(balance)}</h2>
+                    {balance === undefined ? (
+                        <div data-testid="balance-skeleton" className="mb-4"><Skeleton className="h-12 w-48" /></div>
+                    ) : balance === null ? (
+                        <h2 className="text-3xl font-bold tracking-tight mb-4 text-zinc-400">Unavailable</h2>
+                    ) : (
+                        <h2 className="text-5xl font-bold font-mono tracking-tighter mb-4">{formatUsd(balance)}</h2>
+                    )}
                     <div className="inline-flex items-center px-4 py-2 rounded-full bg-zinc-900 border border-white/5">
                         <span className="text-zinc-400 mr-2">Rewards:</span>
-                        <span className="font-bold text-white font-mono">{formatUsd(displayRewards)}</span>
+                        {displayRewards === undefined ? (
+                            <span data-testid="rewards-skeleton"><Skeleton className="h-5 w-16" /></span>
+                        ) : (
+                            <span className="font-bold text-white font-mono">{formatUsd(displayRewards)}</span>
+                        )}
                     </div>
                 </div>
 
