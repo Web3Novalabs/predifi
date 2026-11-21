@@ -6185,7 +6185,7 @@ fn test_create_pool_accepts_maximum_boundary_parameters() {
 
 /// min_stake == 0 must be rejected.
 #[test]
-#[should_panic(expected = "min_stake must be greater than zero")]
+#[should_panic(expected = "Error(Contract, #42)")]
 fn test_create_pool_rejects_zero_min_stake() {
     let env = Env::default();
     env.mock_all_auths();
@@ -6221,7 +6221,7 @@ fn test_create_pool_rejects_zero_min_stake() {
 
 /// required_resolutions == 0 must be rejected.
 #[test]
-#[should_panic(expected = "required_resolutions must be at least 1")]
+#[should_panic(expected = "Error(Contract, #90)")]
 fn test_create_pool_rejects_zero_required_resolutions() {
     let env = Env::default();
     env.mock_all_auths();
@@ -6253,7 +6253,7 @@ fn test_create_pool_rejects_zero_required_resolutions() {
 
 /// Negative max_total_stake values must be rejected; zero remains the unlimited sentinel.
 #[test]
-#[should_panic(expected = "max_total_stake must be >= 0")]
+#[should_panic(expected = "Error(Contract, #42)")]
 fn test_create_pool_rejects_negative_max_total_stake() {
     let env = Env::default();
     env.mock_all_auths();
@@ -6285,7 +6285,7 @@ fn test_create_pool_rejects_negative_max_total_stake() {
 
 /// Initial liquidity one unit above MAX_INITIAL_LIQUIDITY must be rejected.
 #[test]
-#[should_panic(expected = "initial_liquidity exceeds maximum allowed value")]
+#[should_panic(expected = "Error(Contract, #42)")]
 fn test_create_pool_rejects_initial_liquidity_above_maximum() {
     let env = Env::default();
     env.mock_all_auths();
@@ -7044,7 +7044,7 @@ fn test_outcome_bounds_with_maximum_options_count() {
 
 /// end_time below MIN_POOL_DURATION from the current ledger must be rejected.
 #[test]
-#[should_panic(expected = "end_time must be at least min_pool_duration in the future")]
+#[should_panic(expected = "Error(Contract, #80)")]
 fn test_create_pool_rejects_end_time_below_min_duration() {
     let env = Env::default();
     env.mock_all_auths();
@@ -7081,7 +7081,7 @@ fn test_create_pool_rejects_end_time_below_min_duration() {
 
 /// Zero-duration pools (end_time == current ledger timestamp) must be rejected.
 #[test]
-#[should_panic(expected = "end_time must be in the future")]
+#[should_panic(expected = "Error(Contract, #132)")]
 fn test_create_pool_rejects_zero_duration() {
     let env = Env::default();
     env.mock_all_auths();
@@ -7159,7 +7159,7 @@ fn test_create_pool_accepts_end_time_exactly_at_min_duration() {
 
 /// max_stake < min_stake must be rejected.
 #[test]
-#[should_panic(expected = "max_stake must be zero (unlimited) or >= min_stake")]
+#[should_panic(expected = "Error(Contract, #42)")]
 fn test_create_pool_rejects_max_stake_less_than_min_stake() {
     let env = Env::default();
     env.mock_all_auths();
@@ -9349,7 +9349,7 @@ fn test_admin_can_set_min_pool_duration() {
 }
 
 #[test]
-#[should_panic(expected = "end_time must be at least min_pool_duration in the future")]
+#[should_panic(expected = "Error(Contract, #80)")]
 fn test_create_pool_respects_configurable_min_duration() {
     let env = Env::default();
     env.mock_all_auths();
@@ -10875,7 +10875,7 @@ fn test_get_supported_tokens_duplicate_additions() {
 /// Per issue #507: `min_total_stake` must be strictly positive (> 0).
 /// Passing 0 should cause the contract to panic.
 #[test]
-#[should_panic(expected = "min_total_stake must be greater than zero")]
+#[should_panic(expected = "Error(Contract, #42)")]
 fn test_create_pool_rejects_zero_min_total_stake() {
     let env = Env::default();
     env.mock_all_auths();

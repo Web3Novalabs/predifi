@@ -117,7 +117,7 @@ fn end_time_equal_to_now_reverts_without_persisting() {
         h.client
             .try_create_pool(&h.creator, &now, &h.token_address, &2u32, &symbol_short!("Crypto"), &config(&env));
 
-    assert!(result.is_err(), "end_time == now must be rejected");
+    assert_eq!(result.unwrap_err().unwrap(), PredifiError::DeadlineInPast);
     assert_no_partial_state(&env, &h);
 }
 
@@ -238,7 +238,7 @@ fn description_of_257_bytes_reverts_without_persisting() {
         &cfg,
     );
 
-    assert!(result.is_err(), "description > 256 bytes must be rejected");
+    assert_eq!(result.unwrap_err().unwrap(), PredifiError::InvalidData);
     assert_no_partial_state(&env, &h);
 }
 

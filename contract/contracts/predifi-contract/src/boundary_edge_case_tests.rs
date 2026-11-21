@@ -1107,7 +1107,10 @@ fn test_1315_state_rollback_after_n_minus_1() {
     assert_eq!(pool.state, MarketState::Active);
     assert_eq!(pool.total_stake, 150, "total_stake must be preserved");
 
-    ctx.stake(&user, pool_id, 250, 1);
+    // A user may back only one outcome per pool (`place_prediction` rejects
+    // a stake on a different outcome than the existing prediction), so top
+    // up the same outcome to verify staking still works after N-1 approvals.
+    ctx.stake(&user, pool_id, 250, 0);
     assert_eq!(ctx.client.get_pool(&pool_id).total_stake, 400);
 
     let approvals = ctx.client.get_emergency_cancel_approvals(&pool_id);
