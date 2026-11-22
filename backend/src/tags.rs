@@ -163,13 +163,11 @@ pub async fn list_distinct_tags(pool: &PgPool) -> Result<Vec<String>, sqlx::Erro
 pub async fn update_pool_tags(
     pool: &PgPool,
     pool_id: i64,
-    creator: &str,
     tags: &[String],
 ) -> Result<bool, sqlx::Error> {
-    let result = sqlx::query("UPDATE pools SET tags = $1 WHERE pool_id = $2 AND creator = $3")
+    let result = sqlx::query("UPDATE pools SET tags = $1 WHERE pool_id = $2")
         .bind(tags)
         .bind(pool_id)
-        .bind(creator)
         .execute(pool)
         .await?;
 

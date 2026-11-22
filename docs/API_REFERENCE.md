@@ -92,10 +92,18 @@ Authorization: Bearer <jwt_access_token>
 
 ### Obtaining and Refreshing Tokens
 
-1. **Sign-In Flow**:
-   - The user connects their wallet (e.g., Freighter).
-   - The frontend generates a nonce challenge and requests the wallet to sign it with `signAuthEntry` or signature of challenge message.
-   - The backend validates the cryptographic signature against the user's public address and returns an access token and refresh token.
+1. **Sign-In Flow** (wallet challenge/response):
+   - `POST /api/v1/auth/challenge` with `{"address":"G..."}` returns a random
+     `nonce`, the exact `message` to sign (`Domain: predifi.login.v1`), and
+     `expires_in: 300`. The nonce is stored in Redis with a 5-minute TTL.
+   - The wallet signs `message` with its ed25519 key and the client calls
+     `POST /api/v1/auth/verify` with
+     `{"address":"G...","nonce":"...","signature":"<base64 64-byte signature>"}`.
+   - The backend verifies the signature against the address's public key,
+     consumes the single-use nonce, and returns `access_token` and
+     `refresh_token`. Any failure (bad address, stale/unknown nonce or bad
+     signature) returns a generic `401` without revealing which check failed.
+   - Both endpoints are in the Token rate-limit tier (10 requests / 60 s).
 2. **Token Refresh Endpoint**:
    - `POST /api/v1/auth/refresh` rotates an unexpired refresh token into a new access/refresh pair.
 
@@ -783,7 +791,7 @@ Per-pool referral earnings breakdown matching `ReferralEarningsResponse` schema.
 
 ### Indexer Ingestion (Internal)
 
-These endpoints ingest events emitted by the Soroban contract. In production, access is restricted to authenticated internal indexer microservices.
+These endpoints ingest events emitted by the Soroban contract. Access is restricted to authenticated internal indexer microservices: send the shared secret `PREDIFI_INDEXER_API_KEY` in an `x-indexer-key` header (or as `Authorization: Bearer <key>`). Requests with a missing, wrong, or unconfigured key return `401`. The same check is applied once by middleware to all three ingest routes.
 
 #### `POST /api/v1/indexer/pool-created`
 - **Tag**: `indexer`
@@ -838,7 +846,8 @@ These endpoints ingest events emitted by the Soroban contract. In production, ac
 ### Tags, Notifications & Templates
 
 - `GET /api/v1/tags`: List active searchable pool tags.
-- `PATCH /api/v1/pools/{id}/tags`: Update tag list for a pool (requires creator auth).
+- `PATCH /api/v1/pools/{id}/tags`: Admin-only for now — requires the `x-admin-api-key` header; the `creator` in the body is no longer trusted as proof of identity.
+- `POST /api/v1/pools/{id}/pay-creator-incentive`: Internal only — requires `x-indexer-key` (or the admin key); Write rate-limit tier.
 - `GET /api/v1/users/{address}/profile`: Fetch comprehensive user profile statistics.
 - `GET /api/v1/users/{address}/interests` / `PUT /api/v1/users/{address}/interests`: Get/set user category interest preferences.
 - `GET /api/v1/notifications/{address}`: List pending user activity notifications.

@@ -14,6 +14,10 @@ pr-description.md
 README_CLS_IMPLEMENTATION.md
 security-audit-report.md
 CHANGES.md
+CHANGES_SUMMARY.md
 
 # Kiro IDE workspace metadata
 .kiro/
+
+# Backend build logs
+backend/*.txt

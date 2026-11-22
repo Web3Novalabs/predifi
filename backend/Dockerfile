@@ -47,6 +47,7 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     libssl3 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
@@ -67,8 +68,8 @@ ENV PREDIFI_APP_PORT=3000
 ENV RUST_LOG=info
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD ["/usr/local/bin/predifi-backend", "--version"] || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=5 \
+    CMD curl -fsS "http://localhost:${PREDIFI_APP_PORT}/health/ready" > /dev/null
 
 EXPOSE 3000
 

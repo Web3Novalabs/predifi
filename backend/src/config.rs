@@ -157,6 +157,10 @@ pub struct Config {
     pub jwt_key_version: u64,
     /// Maximum number of Stellar events processed per indexer batch (default `500`).
     pub indexer_max_batch_size: usize,
+    /// Shared secret required by the `x-indexer-key` header on indexer ingest routes.
+    ///
+    /// Read from `PREDIFI_INDEXER_API_KEY`; required when `PREDIFI_APP_ENV=production`.
+    pub indexer_api_key: Option<String>,
     /// Deployment environment name (e.g. `"production"`, `"staging"`, `"development"`).
     ///
     /// Read from `PREDIFI_APP_ENV`. When set to `"production"`, additional
@@ -189,6 +193,14 @@ pub struct Config {
     /// to a long random string and pass it in the Prometheus `bearer_token`
     /// scrape config.  Comparison is constant-time to prevent timing attacks.
     pub metrics_token: Option<String>,
+
+    /// Shared secret accepted by `PATCH /api/v1/admin/log-level` in the
+    /// `x-admin-api-key` header. Loaded once from `PREDIFI_ADMIN_API_KEY`.
+    pub admin_api_key: Option<String>,
+
+    /// Whether forwarded client-IP headers (`X-Forwarded-For`, `X-Real-IP`,
+    /// `Forwarded`) may be trusted for rate limiting (default `false`).
+    pub trust_proxy_headers: bool,
 
     /// SMTP server hostname for outbound email delivery.  `None` disables
     /// email notifications.  Read from `PREDIFI_SMTP_HOST`.
@@ -308,6 +320,10 @@ impl Config {
             "PREDIFI_INDEXER_MAX_BATCH_SIZE",
             DEFAULT_INDEXER_MAX_BATCH_SIZE,
         )?;
+        let indexer_api_key = vars
+            .get("PREDIFI_INDEXER_API_KEY")
+            .cloned()
+            .filter(|s| !s.is_empty());
 
         // Parse WebSocket allowed origins (optional, defaults to empty for permissive mode)
         let allowed_ws_origins = parse_ws_origins(vars)?;
@@ -331,6 +347,11 @@ impl Config {
 
         // ── Metrics token (#2086) ─────────────────────────────────────────────
         let metrics_token = vars.get("PREDIFI_METRICS_TOKEN").cloned().filter(|s| !s.is_empty());
+        let admin_api_key = vars
+            .get("PREDIFI_ADMIN_API_KEY")
+            .cloned()
+            .filter(|s| !s.is_empty());
+        let trust_proxy_headers = get_bool(vars, "PREDIFI_TRUST_PROXY_HEADERS", false)?;
 
         // ── Email (#1929) ─────────────────────────────────────────────────────
         let smtp_host = vars.get("PREDIFI_SMTP_HOST").cloned().filter(|s| !s.is_empty());
@@ -379,6 +400,7 @@ impl Config {
             secret_key,
             jwt_key_version,
             indexer_max_batch_size,
+            indexer_api_key,
             app_env,
             allowed_ws_origins,
             ws_ping_interval_secs,
@@ -390,6 +412,8 @@ impl Config {
             smtp_password,
             smtp_from,
             metrics_token,
+            admin_api_key,
+            trust_proxy_headers,
         };
 
         config.validate()?;
@@ -447,6 +471,13 @@ impl Config {
             &["http://", "https://"],
         )?;
         validate_url_has_host(&self.stellar_rpc_url, "PREDIFI_STELLAR_RPC_URL")?;
+
+        if self.listener_start_ledger == Some(0) {
+            return Err(ConfigError::InvalidValue {
+                key: "PREDIFI_LISTENER_START_LEDGER",
+                reason: String::from("must be greater than zero"),
+            });
+        }
 
         // ── Database pool ────────────────────────────────────────────────────
         if self.db_max_connections == 0 {
@@ -628,6 +659,22 @@ impl Config {
             });
         }
 
+        // ── Admin API key (#2070) ────────────────────────────────────────────
+        // A missing or weak key leaves the admin log-level endpoint unusable
+        // (or trivially guessable). Report it once at startup in every
+        // environment; the endpoint still fails closed with 401.
+        let weak_admin_key = match &self.admin_api_key {
+            None => true,
+            Some(key) => key.len() < 32,
+        };
+        if weak_admin_key {
+            tracing::warn!(
+                production = self.is_production(),
+                "PREDIFI_ADMIN_API_KEY is missing or shorter than 32 bytes; \
+                 the admin log-level endpoint will reject all requests"
+            );
+        }
+
         // ── Email / SMTP (#1929) ────────────────────────────────────────────
         if self.smtp_port == 0 {
             return Err(ConfigError::InvalidValue {
@@ -711,6 +758,7 @@ impl Config {
             secret_key: String::from(DEFAULT_SECRET_KEY),
             jwt_key_version: 0,
             indexer_max_batch_size: DEFAULT_INDEXER_MAX_BATCH_SIZE,
+            indexer_api_key: None,
             app_env: String::from(DEFAULT_APP_ENV),
             allowed_ws_origins: Vec::new(), // Empty for permissive mode in tests
             ws_ping_interval_secs: DEFAULT_WS_PING_INTERVAL_SECS,
@@ -722,6 +770,8 @@ impl Config {
             smtp_password: None,
             smtp_from: String::from("noreply@predifi.app"),
             metrics_token: None,
+            admin_api_key: None,
+            trust_proxy_headers: false,
         }
     }
 }
@@ -1001,6 +1051,23 @@ fn get_u64(
             .parse::<u64>()
             .map_err(|err| to_number_error(key, value, err)),
         None => Ok(default),
+    }
+}
+
+fn get_optional_u64(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+) -> Result<Option<u64>, ConfigError> {
+    match vars
+        .get(key)
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|err| to_number_error(key, value, err)),
+        None => Ok(None),
     }
 }
 
@@ -2048,6 +2115,21 @@ mod tests {
             .expect("default test config must be valid");
     }
 
+    #[test]
+    fn config_rejects_zero_listener_start_ledger() {
+        let vars = HashMap::from([(
+            String::from("PREDIFI_LISTENER_START_LEDGER"),
+            String::from("0"),
+        )]);
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::InvalidValue {
+                key: "PREDIFI_LISTENER_START_LEDGER",
+                ..
+            })
+        ));
+    }
+
     // ── New validations ───────────────────────────────────────────────────────
 
     // -- host --
@@ -2276,6 +2358,36 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn from_map_requires_indexer_api_key_in_production() {
+        let mut vars: HashMap<String, String> = HashMap::new();
+        vars.insert("PREDIFI_APP_ENV".into(), "production".into());
+        vars.insert(
+            "PREDIFI_DATABASE_URL".into(),
+            "postgres://localhost/predifi".into(),
+        );
+        vars.insert(
+            "PREDIFI_SECRET_KEY".into(),
+            "a-very-strong-production-secret-key-at-least-32-bytes".into(),
+        );
+        vars.insert(
+            "PREDIFI_WS_ALLOWED_ORIGINS".into(),
+            "https://app.predifi.com".into(),
+        );
+
+        assert!(matches!(
+            Config::from_map(&vars),
+            Err(ConfigError::MissingRequired {
+                key: "PREDIFI_INDEXER_API_KEY",
+                ..
+            })
+        ));
+
+        vars.insert("PREDIFI_INDEXER_API_KEY".into(), "indexer-secret".into());
+        let config = Config::from_map(&vars).expect("production config with indexer key");
+        assert_eq!(config.indexer_api_key.as_deref(), Some("indexer-secret"));
     }
 
     // -- production dev secret rejection --

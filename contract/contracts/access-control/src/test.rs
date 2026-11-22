@@ -7,6 +7,7 @@ use soroban_sdk::{Address, Env};
 #[test]
 fn test_initialization() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
@@ -17,8 +18,53 @@ fn test_initialization() {
 }
 
 #[test]
+fn test_init_requires_admin_auth() {
+    // Deliberately does NOT call `env.mock_all_auths()`: `init` must fail
+    // when `admin` has not authorised the invocation.
+    let env = Env::default();
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let result = client.try_init(&admin);
+    assert!(result.is_err(), "init must fail without admin authorization");
+    assert!(
+        client.try_get_admin().is_err(),
+        "no admin should be persisted after a failed init"
+    );
+}
+
+#[test]
+fn test_init_rejects_auth_from_non_admin() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    // Only `attacker` authorises; `admin` never signs.
+    let result = client
+        .mock_auths(&[MockAuth {
+            address: &attacker,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "init",
+                args: (admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_init(&admin);
+    assert!(result.is_err(), "init must fail when signed by a non-admin");
+}
+
+#[test]
 fn test_double_initialization() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
@@ -101,7 +147,10 @@ fn test_admin_transfer() {
     client.init(&admin1);
     assert_eq!(client.get_admin(), admin1);
 
-    client.transfer_admin(&admin1, &admin2);
+    // Use two-step transfer (propose + accept) instead of legacy one-step transfer_admin
+    client.propose_new_admin(&admin1, &admin2);
+    client.accept_admin_role(&admin2);
+
     assert_eq!(client.get_admin(), admin2);
     assert!(client.has_role(&admin2, &Role::Admin));
     assert!(!client.has_role(&admin1, &Role::Admin));
@@ -475,8 +524,9 @@ fn test_has_any_role_operator_oracle() {
     assert!(client.has_any_role(&oracle, &roles));
 }
 
-/// After `transfer_admin`, the new admin holds Admin role (0) and the old
-/// admin loses it — verifying the documented admin-transfer behaviour.
+/// After admin transfer via propose_new_admin + accept_admin_role, the new admin
+/// holds Admin role (0) and the old admin loses it — verifying the documented
+/// admin-transfer behaviour.
 #[test]
 fn test_admin_transfer_updates_role_storage() {
     let env = Env::default();
@@ -489,7 +539,9 @@ fn test_admin_transfer_updates_role_storage() {
     let admin2 = Address::generate(&env);
     client.init(&admin1);
 
-    client.transfer_admin(&admin1, &admin2);
+    // Use two-step transfer instead of legacy one-step transfer_admin
+    client.propose_new_admin(&admin1, &admin2);
+    client.accept_admin_role(&admin2);
 
     assert!(client.has_role(&admin2, &Role::Admin));
     assert!(client.is_admin(&admin2));
@@ -804,8 +856,8 @@ fn test_revoke_all_roles_removes_admin_role() {
     );
 }
 
-/// After `transfer_admin`, the old admin's Admin role is removed from
-/// persistent storage and `is_admin` returns false for them.
+/// After admin transfer via propose_new_admin + accept_admin_role, the old admin's
+/// Admin role is removed from persistent storage and `is_admin` returns false for them.
 ///
 /// This is the primary "admin removal" path: transferring admin rights
 /// atomically removes the role from the previous holder.
@@ -826,31 +878,33 @@ fn test_transfer_admin_removes_admin_role_from_old_admin() {
     assert!(client.is_admin(&old_admin));
     assert!(!client.has_role(&new_admin, &Role::Admin));
 
-    client.transfer_admin(&old_admin, &new_admin);
+    // Use two-step transfer instead of legacy one-step transfer_admin
+    client.propose_new_admin(&old_admin, &new_admin);
+    client.accept_admin_role(&new_admin);
 
     // Old admin must have lost the Admin role entirely.
     assert!(
         !client.has_role(&old_admin, &Role::Admin),
-        "Old admin should no longer hold the Admin role after transfer_admin"
+        "Old admin should no longer hold the Admin role after admin transfer"
     );
     assert!(
         !client.is_admin(&old_admin),
-        "is_admin should return false for the old admin after transfer_admin"
+        "is_admin should return false for the old admin after admin transfer"
     );
 
     // New admin must hold the Admin role.
     assert!(
         client.has_role(&new_admin, &Role::Admin),
-        "New admin should hold the Admin role after transfer_admin"
+        "New admin should hold the Admin role after admin transfer"
     );
     assert!(
         client.is_admin(&new_admin),
-        "is_admin should return true for the new admin after transfer_admin"
+        "is_admin should return true for the new admin after admin transfer"
     );
 }
 
-/// After the two-step propose/accept flow, the proposing admin's Admin role
-/// is removed and the accepting address becomes the sole admin.
+/// After admin transfer via propose_new_admin + accept_admin_role, the proposing
+/// admin's Admin role is removed and the accepting address becomes the sole admin.
 #[test]
 fn test_accept_admin_role_removes_admin_role_from_proposer() {
     let env = Env::default();
@@ -1024,8 +1078,8 @@ fn test_revoke_final_admin_is_rejected() {
     assert!(client.has_role(&user, &Role::Operator));
 }
 
-/// After handing admin over, the former admin's Admin role is no longer "final"
-/// and the new admin can be protected in the same way.
+/// After admin transfer via propose_new_admin + accept_admin_role, the former admin's
+/// Admin role is no longer "final" and the new admin can be protected in the same way.
 #[test]
 fn test_revoke_admin_role_allowed_after_admin_transfer() {
     let env = Env::default();
@@ -1075,4 +1129,87 @@ fn test_self_revocation_behaviour() {
     assert!(!client.has_role(&admin, &Role::Operator));
     assert_eq!(client.get_operator_count(), 1);
     assert!(client.has_role(&admin, &Role::Admin));
+}
+
+/// Test that role checks extend the TTL of persistent storage entries.
+/// Advances the ledger and verifies that the TTL was extended after a role check.
+#[test]
+fn test_has_role_extends_role_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.init(&admin);
+    client.assign_role(&admin, &user, &Role::Operator);
+
+    // Get the initial TTL for the role entry
+    let role_key = DataKey::Role(user.clone(), Role::Operator);
+    let initial_ttl = env.storage().persistent().get_ttl(&role_key);
+
+    // Advance the ledger by a small amount
+    env.bump_current_ledger(5);
+
+    // Check that the role exists before the bump threshold
+    assert!(client.has_role(&user, &Role::Operator));
+
+    // Get the TTL after the role check - it should be extended
+    let ttl_after_check = env.storage().persistent().get_ttl(&role_key);
+
+    // The TTL after the check should be greater than the initial TTL
+    // because has_role should have extended it
+    assert!(
+        ttl_after_check > initial_ttl,
+        "TTL should be extended after has_role check. Initial: {}, After: {}",
+        initial_ttl,
+        ttl_after_check
+    );
+}
+
+/// Test that assigning a role extends the TTL of the role entry.
+#[test]
+fn test_assign_role_extends_role_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    client.init(&admin);
+
+    // Assign the role
+    client.assign_role(&admin, &user, &Role::Operator);
+
+    // Get the TTL for the role entry after assignment
+    let role_key = DataKey::Role(user.clone(), Role::Operator);
+    let ttl_after_assign = env.storage().persistent().get_ttl(&role_key);
+
+    // The TTL should be the BUMP_AMOUNT (30 days in ledgers)
+    // Since we can't directly check against BUMP_AMOUNT (it's a local constant),
+    // we verify it's been extended by checking it's larger than a short period
+    assert!(ttl_after_assign > 1000, "TTL should be extended after assign_role. Got: {}", ttl_after_assign);
+}
+
+/// Test that instance storage TTL is extended on admin operations.
+#[test]
+fn test_init_extends_instance_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.init(&admin);
+
+    // Get the instance TTL after init
+    let instance_ttl = env.storage().instance().get_ttl();
+
+    // The TTL should be the BUMP_AMOUNT (30 days in ledgers)
+    assert!(instance_ttl > 1000, "Instance TTL should be extended after init. Got: {}", instance_ttl);
 }

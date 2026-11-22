@@ -141,7 +141,7 @@ pub async fn get_active_pools(
 
 /// Fetch pools matching optional category and status filters with a sort order.
 ///
-/// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"` (default).  
+/// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"` (default).
 /// `status` accepts `"active"`, `"closed"`, or `"settled"` (defaults to `"active"`).
 ///
 /// # Security
@@ -560,6 +560,16 @@ pub async fn pay_creator_incentive(
 
 // ── Pool templates (#1368) ────────────────────────────────────────────────────
 
+fn pool_template_next_run_at(
+    recurrence_interval_seconds: i64,
+) -> Result<DateTime<Utc>, sqlx::Error> {
+    let recurrence_interval = chrono::Duration::try_seconds(recurrence_interval_seconds)
+        .ok_or_else(|| sqlx::Error::Protocol("recurrence interval is out of range".to_string()))?;
+    Utc::now()
+        .checked_add_signed(recurrence_interval)
+        .ok_or_else(|| sqlx::Error::Protocol("next template run time is out of range".to_string()))
+}
+
 /// Create a new recurring pool template.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_pool_template(
@@ -572,7 +582,7 @@ pub async fn create_pool_template(
     duration_seconds: i64,
     recurrence_interval_seconds: i64,
 ) -> Result<PoolTemplate, sqlx::Error> {
-    let next_run_at = Utc::now() + chrono::Duration::seconds(recurrence_interval_seconds);
+    let next_run_at = pool_template_next_run_at(recurrence_interval_seconds)?;
     let sql = format!(
         r#"
         INSERT INTO pool_templates
@@ -656,6 +666,17 @@ pub async fn advance_pool_template(pool: &PgPool, template_id: i64) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pool_template_next_run_time_rejects_out_of_range_intervals() {
+        assert!(pool_template_next_run_at(i64::MAX).is_err());
+    }
+
+    #[test]
+    fn pool_template_next_run_time_accepts_valid_intervals() {
+        let next_run_at = pool_template_next_run_at(3_600).expect("valid interval");
+        assert!(next_run_at > Utc::now());
+    }
 
     // ── calculate_odds ────────────────────────────────────────────────────────
 

@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
 
+use subtle::ConstantTimeEq;
+
 use crate::config::Config;
 use crate::db::PoolCreatedEvent;
 use crate::db::PredictionPlacedEvent;
@@ -25,6 +27,74 @@ use crate::validated_types::{BoundedI64, NonEmptyString, PoolSortBy, PoolStatus,
 fn internal_error_response(err: impl std::fmt::Display) -> axum::response::Response {
     use axum::response::IntoResponse;
     crate::errors::AppError::Internal(err.to_string()).into_response()
+}
+
+/// Middleware applied once to the indexer sub-router (#2062). Fails closed when
+/// no key is configured.
+async fn require_indexer_key(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    if has_indexer_credential(&headers, state.config.indexer_api_key.as_deref()) {
+        next.run(request).await
+    } else {
+        ApiResponse::<()>::error(
+            axum::http::StatusCode::UNAUTHORIZED,
+            error_codes::UNAUTHORIZED,
+            "invalid or missing indexer credentials",
+        )
+        .into_response()
+    }
+}
+
+/// Compare a request header with a configured shared secret in constant time.
+fn header_matches_secret(
+    headers: &axum::http::HeaderMap,
+    name: &str,
+    expected: Option<&str>,
+) -> bool {
+    let Some(expected) = expected.filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(|provided| {
+            crate::server::constant_time_eq(provided.as_bytes(), expected.as_bytes())
+        })
+        .unwrap_or(false)
+}
+
+/// Admin credential shared with `PATCH /api/v1/admin/log-level` (#2068, #2069).
+fn has_admin_credential_with_key(headers: &axum::http::HeaderMap, expected: Option<&str>) -> bool {
+    header_matches_secret(headers, "x-admin-api-key", expected)
+}
+
+fn has_admin_credential(headers: &axum::http::HeaderMap) -> bool {
+    let expected = std::env::var("PREDIFI_ADMIN_API_KEY").ok();
+    has_admin_credential_with_key(headers, expected.as_deref())
+}
+
+/// Indexer ingest credential (#2062). Accepts `x-indexer-key` or a Bearer token.
+fn has_indexer_credential(headers: &axum::http::HeaderMap, expected: Option<&str>) -> bool {
+    if header_matches_secret(headers, "x-indexer-key", expected) {
+        return true;
+    }
+    let Some(expected) = expected.filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|provided| {
+            crate::server::constant_time_eq(provided.as_bytes(), expected.as_bytes())
+        })
+        .unwrap_or(false)
 }
 
 /// Struct representing fee information, matching the contract structure.
@@ -148,29 +218,30 @@ pub struct SetLogLevelResponse {
 ///
 /// Restricted to callers that present a valid admin API key in the
 /// `x-admin-api-key` header.  The key must match the `PREDIFI_ADMIN_API_KEY`
-/// environment variable.  Returns 401 when the header is absent or does not
-/// match.
+/// value loaded into [`Config`] at startup. Returns 401 when the header is
+/// absent or does not match. Comparison is constant-time.
 ///
 /// The new level is applied immediately and remains in effect until the next
 /// change or a process restart (which reverts to the configured default).
 pub async fn set_log_level(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     headers: axum::http::HeaderMap,
     Json(body): Json<SetLogLevelRequest>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let admin_key = std::env::var("PREDIFI_ADMIN_API_KEY").ok();
-
     let provided = headers
         .get("x-admin-api-key")
         .and_then(|v| v.to_str().ok())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
+        .filter(|s| !s.is_empty());
 
-    let authenticated = match (&admin_key, provided) {
-        (Some(expected), Some(provided)) if expected == &provided => true,
+    let authenticated = match (&state.config.admin_api_key, provided) {
+        (Some(expected), Some(provided)) => bool::from(
+            expected
+                .as_bytes()
+                .ct_eq(provided.as_bytes()),
+        ),
         _ => false,
     };
 
@@ -791,6 +862,12 @@ pub async fn get_pool_leaderboard(
 
 // ── Task 4: Pool Creation Indexer ─────────────────────────────────────────────
 
+/// Minimum number of outcomes in a pool (binary pools).
+const MIN_OPTIONS_COUNT: u32 = 2;
+/// Maximum number of outcomes accepted by the contract. Mirrors
+/// `MAX_OPTIONS_COUNT` in `contract/contracts/predifi-contract/src/constants.rs`.
+const MAX_OPTIONS_COUNT: u32 = 100;
+
 /// Request body for the pool-created event webhook / indexer endpoint.
 ///
 /// The event listener decodes the XDR `pool_created` event from the Stellar
@@ -815,7 +892,24 @@ pub struct PoolCreatedPayload {
 }
 
 fn default_options_count() -> u32 {
-    2
+    MIN_OPTIONS_COUNT
+}
+
+/// Reject malformed ingest payloads before they can wrap when cast to `i32`
+/// or produce pool rows with missing outcome labels (#2065).
+fn validate_pool_created_payload(payload: &PoolCreatedPayload) -> Result<(), &'static str> {
+    if payload.pool_id > i64::MAX as u64 {
+        return Err("pool_id must not exceed i64::MAX");
+    }
+    if !(MIN_OPTIONS_COUNT..=MAX_OPTIONS_COUNT).contains(&payload.options_count) {
+        return Err("options_count must be between 2 and 100");
+    }
+    if !payload.outcome_descriptions.is_empty()
+        && payload.outcome_descriptions.len() != payload.options_count as usize
+    {
+        return Err("outcome_descriptions must be empty or have one entry per options_count");
+    }
+    Ok(())
 }
 
 /// `POST /api/v1/indexer/pool-created` — ingest a decoded `PoolCreated` event
@@ -826,6 +920,11 @@ pub async fn ingest_pool_created(
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    if let Err(message) = validate_pool_created_payload(&payload) {
+        return ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, message)
+            .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1040,12 +1139,28 @@ pub async fn get_creator_stats_handler(
 /// `POST /api/v1/pools/:id/pay-creator-incentive` — pay out a pool creator's
 /// incentive share once the pool has reached its participation threshold.
 /// Idempotent: a second call after payout is a no-op.
+///
+/// Internal callers only (#2069): payouts are triggered by the indexer, so the
+/// `x-indexer-key` header is required; the admin credential (`x-admin-api-key`)
+/// is also accepted for operational recovery. Rate-limited in the Write tier.
 pub async fn pay_creator_incentive_handler(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(pool_id): Path<i64>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let authenticated = has_admin_credential(&headers)
+        || has_indexer_credential(&headers, state.config.indexer_api_key.as_deref());
+    if !authenticated {
+        return ApiResponse::<()>::error(
+            StatusCode::UNAUTHORIZED,
+            error_codes::UNAUTHORIZED,
+            "internal credentials required",
+        )
+        .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1087,7 +1202,39 @@ pub struct CreatePoolTemplateRequest {
     pub recurrence_interval_seconds: i64,
 }
 
+fn validate_pool_template_request(request: &CreatePoolTemplateRequest) -> Result<(), &'static str> {
+    let duration_range =
+        crate::constants::MIN_POOL_TEMPLATE_SECONDS..=crate::constants::MAX_POOL_TEMPLATE_SECONDS;
+    if !duration_range.contains(&request.duration_seconds) {
+        return Err("duration_seconds must be between 3600 and 31536000");
+    }
+    if !duration_range.contains(&request.recurrence_interval_seconds) {
+        return Err("recurrence_interval_seconds must be between 3600 and 31536000");
+    }
+    if request.name.trim().is_empty() {
+        return Err("name must not be empty");
+    }
+    if request.name.chars().count() > crate::constants::MAX_POOL_TEMPLATE_NAME_LENGTH {
+        return Err("name must be 100 characters or fewer");
+    }
+    if request.category.trim().is_empty() {
+        return Err("category must not be empty");
+    }
+    if request.category.chars().count() > crate::constants::MAX_POOL_TEMPLATE_CATEGORY_LENGTH {
+        return Err("category must be 64 characters or fewer");
+    }
+    if request.description.chars().count() > crate::constants::MAX_POOL_TEMPLATE_DESCRIPTION_LENGTH
+    {
+        return Err("description must be 2000 characters or fewer");
+    }
+
+    Ok(())
+}
+
 /// `POST /api/v1/pool-templates` — save a reusable pool configuration.
+///
+/// Durations and recurrence intervals must be between 1 hour and 365 days;
+/// name, category, and description limits are defined in `constants`.
 pub async fn create_pool_template_handler(
     State(state): State<AppState>,
     Json(body): Json<CreatePoolTemplateRequest>,
@@ -1095,13 +1242,17 @@ pub async fn create_pool_template_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let Some(db) = &state.db else {
+    if let Err(message) = validate_pool_template_request(&body) {
         return ApiResponse::<()>::error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error_codes::DATABASE_UNAVAILABLE,
-            "database not available",
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            message,
         )
         .into_response();
+    }
+
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" })).into_response();
     };
 
     match crate::db::create_pool_template(
@@ -1116,8 +1267,85 @@ pub async fn create_pool_template_handler(
     )
     .await
     {
-        Ok(template) => (StatusCode::OK, Json(json!(template))).into_response(),
-        Err(e) => crate::errors::AppError::from(e).into_response(),
+        Ok(template) => Json(json!(template)).into_response(),
+        Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod pool_template_validation_tests {
+    use super::*;
+
+    fn request(
+        duration_seconds: i64,
+        recurrence_interval_seconds: i64,
+    ) -> CreatePoolTemplateRequest {
+        CreatePoolTemplateRequest {
+            creator: "creator".to_string(),
+            name: "Template".to_string(),
+            category: "sports".to_string(),
+            description: String::new(),
+            token: "token".to_string(),
+            duration_seconds,
+            recurrence_interval_seconds,
+        }
+    }
+
+    #[test]
+    fn pool_template_durations_reject_zero() {
+        assert_eq!(
+            validate_pool_template_request(&request(0, 3_600)),
+            Err("duration_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_reject_negative_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(3_600, -1)),
+            Err("recurrence_interval_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_reject_huge_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(i64::MAX, 3_600)),
+            Err("duration_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_accept_valid_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(3_600, 31_536_000)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn pool_template_text_fields_are_bounded() {
+        let mut request = request(3_600, 3_600);
+        request.name = "n".repeat(crate::constants::MAX_POOL_TEMPLATE_NAME_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("name must be 100 characters or fewer")
+        );
+
+        request.name = "Template".to_string();
+        request.category = "c".repeat(crate::constants::MAX_POOL_TEMPLATE_CATEGORY_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("category must be 64 characters or fewer")
+        );
+
+        request.category = "sports".to_string();
+        request.description =
+            "d".repeat(crate::constants::MAX_POOL_TEMPLATE_DESCRIPTION_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("description must be 2000 characters or fewer")
+        );
     }
 }
 
@@ -1204,19 +1432,34 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
 /// Request body for `PATCH /api/v1/pools/:id/tags`.
 #[derive(Debug, Deserialize)]
 pub struct UpdatePoolTagsRequest {
-    /// Must match the pool's on-chain creator — only the creator may retag a pool.
+    /// Legacy field, retained for request compatibility. It is no longer used
+    /// for authorization: pool creators are public and can be copied by anyone.
     pub creator: StellarAddress,
     pub tags: Vec<String>,
 }
 
-/// `PATCH /api/v1/pools/:id/tags` — creator-only: replace a pool's tag set.
+/// `PATCH /api/v1/pools/:id/tags` — admin-only: replace a pool's tag set.
+///
+/// Requires the `x-admin-api-key` header (the same credential as
+/// `/admin/log-level`). Until wallet-based sessions exist, the `creator` in
+/// the body is not trusted as proof of identity.
 pub async fn update_pool_tags_handler(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Path(pool_id): Path<i64>,
     Json(body): Json<UpdatePoolTagsRequest>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    if !has_admin_credential(&headers) {
+        return ApiResponse::<()>::error(
+            StatusCode::UNAUTHORIZED,
+            error_codes::UNAUTHORIZED,
+            "invalid or missing admin credentials",
+        )
+        .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1227,7 +1470,7 @@ pub async fn update_pool_tags_handler(
         .into_response();
     };
 
-    match crate::tags::update_pool_tags(db, pool_id, body.creator.as_str(), &body.tags).await {
+    match crate::tags::update_pool_tags(db, pool_id, &body.tags).await {
         Ok(true) => {
             state.pool_cache.invalidate(pool_id);
             state.redis.invalidate_pools_cache().await;
@@ -1236,7 +1479,7 @@ pub async fn update_pool_tags_handler(
         Ok(false) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
-            "pool not found, or caller is not the creator",
+            "pool not found",
         )
         .into_response(),
         Err(e) => internal_error_response(e),
@@ -1400,6 +1643,40 @@ pub async fn get_user_interests_handler(
     }
 }
 
+const MAX_USER_INTERESTS: usize = 20;
+const MAX_USER_INTEREST_LENGTH: usize = 32;
+
+/// Trim, lowercase, and deduplicate interest labels after validating their bounds.
+///
+/// Labels are not restricted to the currently known categories or tags so clients
+/// can follow custom labels without waiting for the tag list to change.
+fn normalize_user_interests(interests: Vec<String>) -> Result<Vec<String>, &'static str> {
+    use std::collections::HashSet;
+
+    if interests.len() > MAX_USER_INTERESTS {
+        return Err("interests must contain no more than 20 entries");
+    }
+
+    let mut seen = HashSet::with_capacity(interests.len());
+    let mut normalized = Vec::with_capacity(interests.len());
+    for interest in interests {
+        let interest = interest.trim().to_lowercase();
+        if interest.is_empty() {
+            return Err("interests must not contain empty entries");
+        }
+        if interest.chars().count() > MAX_USER_INTEREST_LENGTH {
+            return Err(
+                "each interest must be 32 characters or fewer after trimming and lowercasing",
+            );
+        }
+        if seen.insert(interest.clone()) {
+            normalized.push(interest);
+        }
+    }
+
+    Ok(normalized)
+}
+
 /// `PUT /api/v1/users/:address/interests` — replace a user's interest list wholesale.
 pub async fn set_user_interests_handler(
     State(state): State<AppState>,
@@ -1408,6 +1685,18 @@ pub async fn set_user_interests_handler(
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let interests = match normalize_user_interests(body.interests) {
+        Ok(interests) => interests,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1418,10 +1707,56 @@ pub async fn set_user_interests_handler(
         .into_response();
     };
 
-    match crate::notifications::set_user_interests(db, address.as_str(), &body.interests).await {
-        Ok(()) => ApiResponse::success(json!({ "address": address, "interests": body.interests }))
+    match crate::notifications::set_user_interests(db, address.as_str(), &interests).await {
+        Ok(()) => ApiResponse::success(json!({ "address": address, "interests": interests }))
             .into_response(),
-        Err(e) => internal_error_response(e),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod user_interests_tests {
+    use super::*;
+
+    #[test]
+    fn user_interests_reject_more_than_twenty_entries() {
+        let interests = (0..=MAX_USER_INTERESTS)
+            .map(|index| format!("interest-{index}"))
+            .collect();
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Err("interests must contain no more than 20 entries")
+        );
+    }
+
+    #[test]
+    fn user_interests_reject_entries_longer_than_thirty_two_characters() {
+        let interests = vec!["a".repeat(MAX_USER_INTEREST_LENGTH + 1)];
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Err("each interest must be 32 characters or fewer after trimming and lowercasing")
+        );
+    }
+
+    #[test]
+    fn user_interests_trim_lowercase_and_deduplicate() {
+        let interests = vec![
+            "  Sports ".to_string(),
+            "sports".to_string(),
+            " DeFi ".to_string(),
+        ];
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Ok(vec!["sports".to_string(), "defi".to_string()])
+        );
     }
 }
 
@@ -1450,6 +1785,8 @@ pub fn router(
         event_bus,
     };
 
+    let trust_proxy_headers = state.config.trust_proxy_headers;
+
     // Admin tier — authenticated administrative operations (no public rate limit).
     let admin = Router::new()
         .route("/admin/log-level", patch(set_log_level))
@@ -1466,15 +1803,19 @@ pub fn router(
             .route("/prices", get(crate::price_cache::get_prices))
             .with_state(state.clone()),
         RateLimitTier::Light,
+        trust_proxy_headers,
     );
 
-    // Token tier — refresh rotation and WebSocket handshake (10 req / 60 s).
+    // Token tier — wallet login, refresh rotation and WebSocket handshake (10 req / 60 s).
     let token = with_rate_limit(
         Router::new()
+            .route("/auth/challenge", post(crate::auth_challenge::challenge))
+            .route("/auth/verify", post(crate::auth_challenge::verify))
             .route("/auth/refresh", post(refresh_tokens_handler))
             .route("/ws", get(crate::ws::ws_handler))
             .with_state(state.clone()),
         RateLimitTier::Token,
+        trust_proxy_headers,
     );
 
     // Read tier — public, database-backed read endpoints.
@@ -1494,6 +1835,7 @@ pub fn router(
             .route("/markets/:id/predictions", get(get_market_predictions))
             .with_state(state.clone()),
         RateLimitTier::Read,
+        trust_proxy_headers,
     );
 
     // User tier — per-user history and predictions.
@@ -1521,18 +1863,33 @@ pub fn router(
             )
             .with_state(state.clone()),
         RateLimitTier::User,
+        trust_proxy_headers,
     );
 
-    // Write tier — indexer ingest (typically internal, strictest limit).
+    // Write tier — internal writes (strictest limit). All indexer ingest routes
+    // share a single auth middleware; see `require_indexer_key` (#2062).
+    let indexer = Router::new()
+        .route("/indexer/pool-created", post(ingest_pool_created))
+        .route("/indexer/prediction-placed", post(ingest_prediction_placed))
+        .route("/indexer/claim", post(ingest_claim_handler))
+        .with_state(state.clone())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_indexer_key,
+        ));
+
     let write = with_rate_limit(
         Router::new()
-            .route("/indexer/pool-created", post(ingest_pool_created))
-            .route("/indexer/prediction-placed", post(ingest_prediction_placed))
-            .route("/indexer/claim", post(ingest_claim_handler))
+            .merge(indexer)
             .route("/pools/:id/tags", patch(update_pool_tags_handler))
+            .route(
+                "/pools/:id/pay-creator-incentive",
+                post(pay_creator_incentive_handler),
+            )
             .route("/waitlist", post(join_waitlist_handler))
             .with_state(state.clone()),
         RateLimitTier::Write,
+        trust_proxy_headers,
     );
 
     // Routes without a rate-limit tier of their own. Anything already served by
@@ -1541,10 +1898,6 @@ pub fn router(
     // server at startup.
     Router::new()
         .route("/creators/:address/stats", get(get_creator_stats_handler))
-        .route(
-            "/pools/:id/pay-creator-incentive",
-            post(pay_creator_incentive_handler),
-        )
         .route(
             "/pool-templates",
             get(list_pool_templates_handler).post(create_pool_template_handler),
@@ -2079,6 +2432,33 @@ pub async fn get_user_email_handler(
     }
 }
 
+/// Maximum length of an email address, per RFC 5321.
+const MAX_EMAIL_LENGTH: usize = 254;
+
+/// Validate an email address with the same parser the SMTP worker uses, cap
+/// its length, and lowercase the domain before it is persisted.
+///
+/// Returns the normalized address, or `None` when the input cannot be
+/// delivered as a `lettre::Address` (see #2067).
+fn normalize_email(raw: &str) -> Option<String> {
+    use std::str::FromStr;
+
+    let candidate = raw.trim();
+    if candidate.is_empty() || candidate.len() > MAX_EMAIL_LENGTH {
+        return None;
+    }
+
+    let parsed = lettre::Address::from_str(candidate).ok()?;
+    let domain = parsed.domain();
+    // A bare single-label domain (e.g. `a@b`) cannot be delivered by SMTP.
+    // Bracketed IP literals are accepted as-is.
+    if !domain.starts_with('[') && !domain.contains('.') {
+        return None;
+    }
+
+    Some(format!("{}@{}", parsed.user(), domain.to_lowercase()))
+}
+
 /// `PUT /api/v1/users/:address/email` — register or update a user's email address.
 ///
 /// Body: `{ "email": "user@example.com", "email_enabled": true }`
@@ -2099,19 +2479,21 @@ pub async fn upsert_user_email_handler(
         .into_response();
     };
 
-    let email = body.email.trim();
-    if email.is_empty() || !email.contains('@') {
-        return ApiResponse::<()>::error(
-            StatusCode::BAD_REQUEST,
-            error_codes::INVALID_INPUT,
-            "a valid email address is required",
-        )
-        .into_response();
-    }
+    let email = match normalize_email(&body.email) {
+        Some(email) => email,
+        None => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                "a valid email address is required",
+            )
+            .into_response();
+        }
+    };
 
     let enabled = body.email_enabled.unwrap_or(true);
 
-    match crate::notifications::upsert_user_email(db, address.as_str(), email, enabled).await {
+    match crate::notifications::upsert_user_email(db, address.as_str(), &email, enabled).await {
         Ok(()) => ApiResponse::success(json!({
             "address": address,
             "email": email,
@@ -2119,6 +2501,31 @@ pub async fn upsert_user_email_handler(
         }))
         .into_response(),
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod email_validation_tests {
+    use super::normalize_email;
+
+    #[test]
+    fn rejects_malformed_and_oversized_addresses() {
+        let long = format!("{}@example.com", "a".repeat(300));
+        for invalid in ["@", "a@", "a@b", "a b@c.d", long.as_str(), ""] {
+            assert_eq!(normalize_email(invalid), None, "accepted {invalid:?}");
+        }
+    }
+
+    #[test]
+    fn accepts_valid_address_and_lowercases_domain() {
+        assert_eq!(
+            normalize_email("User@Example.COM"),
+            Some("User@example.com".to_string())
+        );
+        assert_eq!(
+            normalize_email("  user+tag@example.co.uk  "),
+            Some("user+tag@example.co.uk".to_string())
+        );
     }
 }
 
@@ -2168,5 +2575,72 @@ pub async fn join_waitlist_handler(
     match crate::waitlist::add_to_waitlist(db, body.name.trim(), &email).await {
         Ok(()) => ApiResponse::success(json!({ "status": "ok" })).into_response(),
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod pool_created_validation_tests {
+    use super::*;
+
+    fn payload() -> serde_json::Value {
+        use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+        let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend(std::iter::repeat(0xAB_u8).take(32));
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        let address = base32_encode(&bytes);
+        serde_json::json!({
+            "pool_id": 1u64,
+            "creator": address,
+            "end_time": 2_000_000_000u64,
+            "token": "XLM",
+            "category": "sports",
+            "description": "test pool",
+            "options_count": 2u32,
+            "outcome_descriptions": ["Yes", "No"],
+        })
+    }
+
+    fn parsed(value: serde_json::Value) -> PoolCreatedPayload {
+        serde_json::from_value(value).expect("fixture must deserialize")
+    }
+
+    #[test]
+    fn rejects_options_count_below_minimum() {
+        let mut value = payload();
+        value["options_count"] = serde_json::json!(1);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("options_count"));
+    }
+
+    #[test]
+    fn rejects_options_count_above_contract_maximum() {
+        let mut value = payload();
+        value["options_count"] = serde_json::json!(101);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("options_count"));
+    }
+
+    #[test]
+    fn rejects_wrong_number_of_outcome_descriptions() {
+        let mut value = payload();
+        value["outcome_descriptions"] = serde_json::json!(["only one"]);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("outcome_descriptions"));
+    }
+
+    #[test]
+    fn accepts_empty_outcome_descriptions() {
+        let mut value = payload();
+        value["outcome_descriptions"] = serde_json::json!([]);
+        assert!(validate_pool_created_payload(&parsed(value)).is_ok());
+    }
+
+    #[test]
+    fn rejects_pool_id_above_i64_max() {
+        let mut value = payload();
+        value["pool_id"] = serde_json::json!(i64::MAX as u64 + 1);
+        let error = validate_pool_created_payload(&parsed(value)).unwrap_err();
+        assert!(error.contains("pool_id"));
     }
 }

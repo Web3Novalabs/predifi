@@ -136,7 +136,7 @@ async fn metrics_handler(
 
 /// Constant-time byte comparison to prevent timing attacks when validating
 /// bearer tokens.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -367,7 +367,7 @@ where
     // sync traces are correlated in the trace backend.
     let listener_handle: JoinHandle<()> =
         crate::tracing_context::spawn_worker("stellar_listener", async move {
-            crate::worker::stellar_listener::run_worker(
+            crate::worker::stellar_listener::run_worker_with_start_ledger(
                 listener_rpc_url,
                 listener_pool,
                 listener_event_bus,

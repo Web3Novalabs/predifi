@@ -2,6 +2,172 @@
 
 Complete reference for all PrediFi contract methods, events, and data structures.
 
+---
+
+## Access-Control Contract
+
+The access-control contract provides role-based access control (RBAC) for the
+PrediFi protocol. It is deployed separately and its address is passed to
+`predifi-contract::init` as the `access_control` argument.
+
+### Roles
+
+| Role | Value | Used by |
+|---|---|---|
+| Admin | 0 | `pause`, `unpause`, `set_fee_bps`, `set_treasury`, `set_resolution_delay`, `set_referral_cut_bps`, token whitelist, `withdraw_treasury`, `upgrade_contract`, `migrate_state` |
+| Operator | 1 | `resolve_pool`, `cancel_pool`, `set_stake_limits` |
+| Moderator | 2 | Reserved for future dispute-resolution (#595) |
+| Oracle | 3 | `oracle_resolve` (OracleCallback trait) |
+| User | 4 | Basic protocol participants |
+
+### Bootstrap sequence
+
+1. Deploy the access-control contract (no constructor arguments).
+2. Call `init(admin_address)`, signed by `admin_address`. It stores the admin and auto-grants the Admin role (0). Deploy and init atomically in the same transaction, or call `init` immediately after deployment.
+3. Call `assign_role` to grant Operator / Oracle roles as needed.
+4. Pass the contract address to `predifi_contract::init` as `access_control`.
+
+---
+
+### `init`
+
+```rust
+pub fn init(env: &Env, admin: Address)
+```
+
+Initialises the contract and sets the first administrator. Can only be called once; a second call panics with `AlreadyInitializedOrConfigNotSet`.
+
+**Authorization:** calls `admin.require_auth()`, so `admin` must sign the invocation. If it hasn't, `init` fails and nothing is stored. See the [deployment guide](./SMART_CONTRACT_DEPLOYMENT_GUIDE.md) for timing recommendations.
+
+---
+
+### `assign_role`
+
+```rust
+pub fn assign_role(env: &Env, admin_caller: Address, user: Address, role: Role)
+    -> Result<(), PrediFiError>
+```
+
+Grants `role` to `user`. Only the current admin may call this.
+
+---
+
+### `revoke_role`
+
+```rust
+pub fn revoke_role(env: &Env, admin_caller: Address, user: Address, role: Role)
+    -> Result<(), PrediFiError>
+```
+
+Removes `role` from `user`. Returns `AdminError` if called with `Role::Admin` against the current (sole) admin — transfer admin first.
+
+---
+
+### `transfer_role`
+
+```rust
+pub fn transfer_role(env: &Env, admin_caller: Address, from: Address, to: Address, role: Role)
+    -> Result<(), PrediFiError>
+```
+
+Atomically moves `role` from `from` to `to`.
+
+---
+
+### `revoke_all_roles`
+
+```rust
+pub fn revoke_all_roles(env: &Env, admin_caller: Address, user: Address)
+    -> Result<(), PrediFiError>
+```
+
+Removes every role (0–4) from `user`. Returns `AdminError` if `user` is the current admin.
+
+---
+
+### `has_role`
+
+```rust
+pub fn has_role(env: &Env, user: Address, role: Role) -> bool
+```
+
+Returns `true` if `user` holds `role`. Also extends the role entry's TTL on a positive match.
+
+---
+
+### `has_any_role`
+
+```rust
+pub fn has_any_role(env: &Env, user: &Address, roles: &Vec<Role>) -> bool
+```
+
+Returns `true` if `user` holds at least one of the roles in `roles`.
+
+---
+
+### `is_admin`
+
+```rust
+pub fn is_admin(env: &Env, user: &Address) -> bool
+```
+
+Returns `true` if `user` is the current admin.
+
+---
+
+### `get_admin`
+
+```rust
+pub fn get_admin(env: &Env) -> Address
+```
+
+Returns the current admin address. Panics with `"NotInitialized"` if `init` has not been called.
+
+---
+
+### `get_proposed_admin`
+
+```rust
+pub fn get_proposed_admin(env: &Env) -> Option<Address>
+```
+
+Returns the pending proposed admin, or `None` if no transfer is in progress.
+
+---
+
+### `get_operator_count`
+
+```rust
+pub fn get_operator_count(env: &Env) -> u32
+```
+
+Returns how many addresses currently hold the Operator role. Used by `predifi-contract` to validate `required_resolutions`.
+
+---
+
+### Admin transfer (two-step)
+
+> **`transfer_admin` has been removed.** The only supported path is the
+> two-step flow below, which requires the new admin's signature and therefore
+> prevents transferring admin rights to a mistyped or uncontrolled address.
+
+**Step 1 — current admin proposes a successor:**
+
+```rust
+pub fn propose_new_admin(env: &Env, current_admin: Address, new_admin: Address)
+    -> Result<(), PrediFiError>
+```
+
+**Step 2 — proposed admin accepts:**
+
+```rust
+pub fn accept_admin_role(env: &Env, new_admin: Address) -> Result<(), PrediFiError>
+```
+
+On acceptance the old admin loses the Admin role, the new admin gains it, and the pending proposal is cleared.
+
+---
+
 ## Core Functions
 
 ### `init`
@@ -280,6 +446,59 @@ let predictions = contract.get_user_predictions(
     10  // limit
 );
 ```
+
+---
+
+### Pool getters
+
+Read-only getters that load a single pool by ID:
+
+```rust
+pub fn get_pool(env: Env, pool_id: u64) -> Pool
+pub fn get_pool_config(env: Env, pool_id: u64) -> PoolConfig
+pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128>
+pub fn get_pool_participants_count(env: Env, pool_id: u64) -> u32
+pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats
+```
+
+> **Panics on unknown IDs.** Each of these getters panics with `"Pool not found"` if no pool exists for `pool_id`. Use one of the non-panicking alternatives below when the ID may not exist.
+
+#### `find_pool`
+
+```rust
+pub fn find_pool(env: Env, pool_id: u64) -> Option<Pool>
+```
+
+Non-panicking version of `get_pool`. Returns `Some(pool)` if the pool exists and `None` otherwise. It extends the pool's storage TTL only when the pool exists.
+
+> This entry point is called `find_pool` rather than `try_get_pool` because the Soroban-generated client already uses `try_get_pool` as the fallible wrapper for `get_pool`. Inside the contract crate, the same lookup is available as the Rust helper `PredifiContract::try_get_pool(&env, pool_id) -> Option<Pool>`.
+
+#### `pool_exists`
+
+```rust
+pub fn pool_exists(env: Env, pool_id: u64) -> bool
+```
+
+Returns whether a pool exists for `pool_id`. Never panics and doesn't load the pool data.
+
+**Example:**
+
+```rust
+if let Some(pool) = client.find_pool(&pool_id) {
+    // pool exists
+}
+if client.pool_exists(&pool_id) {
+    let stats = client.get_pool_stats(&pool_id); // safe: will not panic
+}
+```
+
+### Pool management entry points: `PoolNotFound`
+
+The following state-changing entry points return `Err(PredifiError::PoolNotFound)` instead of panicking when `pool_id` doesn't exist:
+
+`increase_max_total_stake`, `update_pool_description`, `resolve_pool`, `mark_pool_ready`, `cancel_pool`, `set_stake_limits`, `flag_disputed_pool`.
+
+Role and auth checks that run before the pool is loaded still take precedence. For example, `resolve_pool` returns `Unauthorized` before `PoolNotFound` if the caller lacks the Operator role.
 
 ---
 

@@ -394,10 +394,18 @@ impl PredifiContract {
     ///
     /// # Errors
     /// - `ContractPaused` if the contract is paused.
-    /// - `InvalidData` if `options_count` < 2 or other validation fails.
-    /// - `InvalidTimestamp` if `end_time` is in the past or exceeds maximum pool duration.
+    /// - `InvalidData` if `category` is not allowed, `options_count` is < 2 or
+    ///   > `MAX_OPTIONS_COUNT`, `required_resolutions` is 0, `description`
+    ///   exceeds 256 bytes, `whitelist_key` is malformed, or pool invariants
+    ///   (e.g. `outcome_descriptions.len() != options_count`) fail.
+    /// - `DeadlineInPast` if `end_time <= now`, or a non-zero `start_time` is in the past.
+    /// - `InvalidTimestamp` if `end_time <= start_time`, `end_time` exceeds
+    ///   `MAX_POOL_DURATION` from now, or is less than `min_pool_duration` from now.
     /// - `TokenNotWhitelisted` if the betting token is not on the whitelist.
-    /// - `InvalidAmount` if `initial_liquidity` is invalid.
+    /// - `InvalidAmount` if `initial_liquidity` is negative or above
+    ///   `MAX_INITIAL_LIQUIDITY`, `min_stake <= 0`, `max_stake` is non-zero and
+    ///   below `min_stake`, `min_total_stake <= 0`, or `max_total_stake < 0`.
+    /// - `MetadataUrlInvalid` if `metadata_url` exceeds 512 bytes.
     /// - `InitialLiquidityBelowSafetyMargin` if liquidity is too low relative to `max_total_stake`.
     /// - `InvalidFeeBps` if the pool fee (if any) exceeds 10,000.
     /// - `RequiredResolutionsExceedOperators` if `required_resolutions` is too high for operator count.
@@ -436,23 +444,16 @@ impl PredifiContract {
 
         // Issue #1130 — staking deadlines must be in the future. End_time
         // strictly in the past raises the `DeadlineInPast` protocol error
-        // (typed, machine-checkable). The legacy `assert!` below still
-        // catches the boundary case `end_time == current_time` with its
-        // diagnostic message for backwards-compatible test expectations.
+        // (typed, machine-checkable), including `end_time == current_time`.
         // A `start_time` of 0 is a sentinel for "open immediately"; any
         // non-zero start_time must be strictly in the future so a creator
         // cannot schedule a pool that opens in the past.
-        if end_time < current_time {
-            soroban_sdk::panic_with_error!(&env, PredifiError::DeadlineInPast);
+        if end_time <= current_time {
+            return Err(PredifiError::DeadlineInPast);
         }
         if config.start_time > 0 && config.start_time < current_time {
             soroban_sdk::panic_with_error!(&env, PredifiError::DeadlineInPast);
         }
-
-        // Validate: end_time must be in the future (legacy assert kept for
-        // diagnostic clarity; the DeadlineInPast check above is the
-        // authoritative protocol error).
-        assert!(end_time > current_time, "end_time must be in the future");
 
         // Validate: end_time must not exceed MAX_POOL_DURATION from now
         if end_time > current_time + MAX_POOL_DURATION {
@@ -468,10 +469,9 @@ impl PredifiContract {
 
         // Validate: minimum pool duration
         if min_pool_duration > 0 {
-            assert!(
-                end_time >= current_time + min_pool_duration,
-                "end_time must be at least min_pool_duration in the future"
-            );
+            if end_time < current_time.saturating_add(min_pool_duration) {
+                return Err(PredifiError::InvalidTimestamp);
+            }
         }
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
@@ -485,16 +485,14 @@ impl PredifiContract {
         }
 
         // Validate: initial_liquidity must be non-negative if provided
-        assert!(
-            config.initial_liquidity >= 0,
-            "initial_liquidity must be non-negative"
-        );
+        if config.initial_liquidity < 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
 
         // Validate: initial_liquidity must not exceed maximum limit
-        assert!(
-            config.initial_liquidity <= MAX_INITIAL_LIQUIDITY,
-            "initial_liquidity exceeds maximum allowed value"
-        );
+        if config.initial_liquidity > MAX_INITIAL_LIQUIDITY {
+            return Err(PredifiError::InvalidAmount);
+        }
 
         // Issue #1131 — initial-liquidity safety margin. When the creator
         // caps the pool at `max_total_stake > 0`, the seeded liquidity must
@@ -519,10 +517,9 @@ impl PredifiContract {
         }
 
         // Validate: required_resolutions must be at least 1
-        assert!(
-            config.required_resolutions >= 1,
-            "required_resolutions must be at least 1"
-        );
+        if config.required_resolutions < 1 {
+            return Err(PredifiError::InvalidData);
+        }
 
         // Validate: required_resolutions must not exceed the number of active operators.
         // If required_resolutions > operator_count, the pool can never reach the resolution
@@ -555,25 +552,26 @@ impl PredifiContract {
         // This is the standard pattern in Soroban - invalid tokens will fail when
         // transfers are attempted during place_prediction.
 
-        assert!(
-            config.description.len() <= 256,
-            "description exceeds 256 bytes"
-        );
+        if config.description.len() > 256 {
+            return Err(PredifiError::InvalidData);
+        }
         if config.metadata_url.len() > 512 {
             soroban_sdk::panic_with_error!(&env, PredifiError::MetadataUrlInvalid);
         }
 
         // Validate stake limits
-        assert!(config.min_stake > 0, "min_stake must be greater than zero");
-        assert!(
-            config.max_stake == 0 || config.max_stake >= config.min_stake,
-            "max_stake must be zero (unlimited) or >= min_stake"
-        );
-        assert!(
-            config.min_total_stake > 0,
-            "min_total_stake must be greater than zero"
-        );
-        assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
+        if config.min_stake <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+        if config.max_stake != 0 && config.max_stake < config.min_stake {
+            return Err(PredifiError::InvalidAmount);
+        }
+        if config.min_total_stake <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+        if config.max_total_stake < 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
 
         if let Some(ref whitelist_key) = config.whitelist_key {
             if let Err(e) = Self::validate_referral_code(&env, whitelist_key) {
@@ -712,7 +710,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
         Self::extend_persistent(&env, &pool_key);
 
         if pool.creator != creator {
@@ -787,7 +785,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
         Self::validate_pool_invariants(&pool);
         Self::extend_persistent(&env, &pool_key);
 
@@ -812,7 +810,11 @@ impl PredifiContract {
         // "pool has started" in this contract's model (no separate start_time).
         // We read the pool's participants_count field which is the authoritative participant counter.
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env.storage().persistent().get(&pool_key).expect("Pool not found");
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .ok_or(PredifiError::PoolNotFound)?;
         if pool.participants_count > 0 {
             return Err(PredifiError::InvalidPoolState);
         }
@@ -1764,7 +1766,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
         Self::validate_pool_invariants(&pool);
 
@@ -1941,7 +1943,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
         if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
@@ -2082,11 +2084,13 @@ impl PredifiContract {
         Self::enter_reentrancy_guard(&env);
 
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
-            .storage()
-            .persistent()
-            .get(&pool_key)
-            .expect("Pool not found");
+        let mut pool: Pool = match env.storage().persistent().get(&pool_key) {
+            Some(pool) => pool,
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Err(PredifiError::PoolNotFound);
+            }
+        };
         Self::extend_persistent(&env, &pool_key);
 
         // Determine if caller is admin/operator (role 0 or 1)
@@ -2300,7 +2304,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
         if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
@@ -2326,11 +2330,13 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
-    /// Instead of making N storage reads (one per outcome), it makes a single read.
+    /// Returns the full `Pool` record for `pool_id`.
     ///
-    /// Returns a Vec of stakes where index corresponds to outcome index.
-    /// For example, `stake\[0\]` is the total amount bet on outcome 0.
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::find_pool`] (on-chain, returns `Option<Pool>`),
+    /// [`Self::pool_exists`] (on-chain, returns `bool`), or the Rust-level
+    /// helper [`Self::try_get_pool`] to query a pool without panicking.
     pub fn get_pool(env: Env, pool_id: u64) -> Pool {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2342,6 +2348,28 @@ impl PredifiContract {
         pool
     }
 
+    /// Non-panicking variant of [`Self::get_pool`], exposed as a contract
+    /// entry point.
+    ///
+    /// Returns `Some(pool)` if a pool exists for `pool_id`, or `None` otherwise.
+    /// Extends the pool's storage TTL only when the pool exists.
+    ///
+    /// Note: this is named `find_pool` rather than `try_get_pool` because the
+    /// Soroban-generated client already reserves `try_get_pool` as the fallible
+    /// wrapper around `get_pool`. Inside the contract crate, use the
+    /// [`Self::try_get_pool`] helper.
+    pub fn find_pool(env: Env, pool_id: u64) -> Option<Pool> {
+        Self::try_get_pool(&env, pool_id)
+    }
+
+    /// Returns `true` if a pool exists for `pool_id`, `false` otherwise.
+    ///
+    /// Never panics. Cheaper than [`Self::find_pool`] when the pool data
+    /// itself is not needed.
+    pub fn pool_exists(env: Env, pool_id: u64) -> bool {
+        env.storage().persistent().has(&DataKey::Pool(pool_id))
+    }
+
     /// Returns the configuration fields of a pool as a `PoolConfig` struct.
     ///
     /// This is a lightweight alternative to `get_pool` when only the
@@ -2350,6 +2378,7 @@ impl PredifiContract {
     ///
     /// # Panics
     /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::pool_exists`] or [`Self::find_pool`] first to avoid the panic.
     pub fn get_pool_config(env: Env, pool_id: u64) -> PoolConfig {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2374,6 +2403,17 @@ impl PredifiContract {
         }
     }
 
+    /// Returns the per-outcome stakes for a pool in a single storage read.
+    ///
+    /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
+    /// Instead of making N storage reads (one per outcome), it makes a single read.
+    ///
+    /// Returns a Vec of stakes where index corresponds to outcome index.
+    /// For example, `stake\[0\]` is the total amount bet on outcome 0.
+    ///
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::pool_exists`] or [`Self::find_pool`] first to avoid the panic.
     pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2526,6 +2566,10 @@ impl PredifiContract {
     ///
     /// # Returns
     /// The number of unique participants as a `u32`.
+    ///
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::pool_exists`] or [`Self::find_pool`] first to avoid the panic.
     pub fn get_pool_participants_count(env: Env, pool_id: u64) -> u32 {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2541,6 +2585,10 @@ impl PredifiContract {
     ///
     /// Gas notes: uses the in-pool `participants_count` and computes odds from the
     /// already-loaded stakes vec via [`gas_opt::odds_from_stakes`].
+    ///
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::pool_exists`] or [`Self::find_pool`] first to avoid the panic.
     pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2585,7 +2633,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
         Self::extend_persistent(&env, &pool_key);
 
         if pool.state != MarketState::Active {
@@ -2609,6 +2657,23 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(())
+    }
+}
+
+// ── Non-exported helpers ────────────────────────────────────────────────────
+impl PredifiContract {
+    /// Non-panicking pool lookup (Rust-level helper, not a contract entry point).
+    ///
+    /// Returns `Some(pool)` if a pool exists for `pool_id`, or `None` otherwise,
+    /// extending the pool's storage TTL only when it exists. On-chain callers
+    /// should use the [`Self::find_pool`] entry point, which wraps this helper.
+    pub fn try_get_pool(env: &Env, pool_id: u64) -> Option<Pool> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Option<Pool> = env.storage().persistent().get(&pool_key);
+        if pool.is_some() {
+            Self::extend_persistent(env, &pool_key);
+        }
+        pool
     }
 }
 
