@@ -1202,7 +1202,39 @@ pub struct CreatePoolTemplateRequest {
     pub recurrence_interval_seconds: i64,
 }
 
+fn validate_pool_template_request(request: &CreatePoolTemplateRequest) -> Result<(), &'static str> {
+    let duration_range =
+        crate::constants::MIN_POOL_TEMPLATE_SECONDS..=crate::constants::MAX_POOL_TEMPLATE_SECONDS;
+    if !duration_range.contains(&request.duration_seconds) {
+        return Err("duration_seconds must be between 3600 and 31536000");
+    }
+    if !duration_range.contains(&request.recurrence_interval_seconds) {
+        return Err("recurrence_interval_seconds must be between 3600 and 31536000");
+    }
+    if request.name.trim().is_empty() {
+        return Err("name must not be empty");
+    }
+    if request.name.chars().count() > crate::constants::MAX_POOL_TEMPLATE_NAME_LENGTH {
+        return Err("name must be 100 characters or fewer");
+    }
+    if request.category.trim().is_empty() {
+        return Err("category must not be empty");
+    }
+    if request.category.chars().count() > crate::constants::MAX_POOL_TEMPLATE_CATEGORY_LENGTH {
+        return Err("category must be 64 characters or fewer");
+    }
+    if request.description.chars().count() > crate::constants::MAX_POOL_TEMPLATE_DESCRIPTION_LENGTH
+    {
+        return Err("description must be 2000 characters or fewer");
+    }
+
+    Ok(())
+}
+
 /// `POST /api/v1/pool-templates` — save a reusable pool configuration.
+///
+/// Durations and recurrence intervals must be between 1 hour and 365 days;
+/// name, category, and description limits are defined in `constants`.
 pub async fn create_pool_template_handler(
     State(state): State<AppState>,
     Json(body): Json<CreatePoolTemplateRequest>,
@@ -1210,13 +1242,17 @@ pub async fn create_pool_template_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let Some(db) = &state.db else {
+    if let Err(message) = validate_pool_template_request(&body) {
         return ApiResponse::<()>::error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error_codes::DATABASE_UNAVAILABLE,
-            "database not available",
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            message,
         )
         .into_response();
+    }
+
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" })).into_response();
     };
 
     match crate::db::create_pool_template(
@@ -1231,8 +1267,85 @@ pub async fn create_pool_template_handler(
     )
     .await
     {
-        Ok(template) => (StatusCode::OK, Json(json!(template))).into_response(),
-        Err(e) => crate::errors::AppError::from(e).into_response(),
+        Ok(template) => Json(json!(template)).into_response(),
+        Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod pool_template_validation_tests {
+    use super::*;
+
+    fn request(
+        duration_seconds: i64,
+        recurrence_interval_seconds: i64,
+    ) -> CreatePoolTemplateRequest {
+        CreatePoolTemplateRequest {
+            creator: "creator".to_string(),
+            name: "Template".to_string(),
+            category: "sports".to_string(),
+            description: String::new(),
+            token: "token".to_string(),
+            duration_seconds,
+            recurrence_interval_seconds,
+        }
+    }
+
+    #[test]
+    fn pool_template_durations_reject_zero() {
+        assert_eq!(
+            validate_pool_template_request(&request(0, 3_600)),
+            Err("duration_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_reject_negative_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(3_600, -1)),
+            Err("recurrence_interval_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_reject_huge_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(i64::MAX, 3_600)),
+            Err("duration_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_accept_valid_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(3_600, 31_536_000)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn pool_template_text_fields_are_bounded() {
+        let mut request = request(3_600, 3_600);
+        request.name = "n".repeat(crate::constants::MAX_POOL_TEMPLATE_NAME_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("name must be 100 characters or fewer")
+        );
+
+        request.name = "Template".to_string();
+        request.category = "c".repeat(crate::constants::MAX_POOL_TEMPLATE_CATEGORY_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("category must be 64 characters or fewer")
+        );
+
+        request.category = "sports".to_string();
+        request.description =
+            "d".repeat(crate::constants::MAX_POOL_TEMPLATE_DESCRIPTION_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("description must be 2000 characters or fewer")
+        );
     }
 }
 
@@ -1530,6 +1643,40 @@ pub async fn get_user_interests_handler(
     }
 }
 
+const MAX_USER_INTERESTS: usize = 20;
+const MAX_USER_INTEREST_LENGTH: usize = 32;
+
+/// Trim, lowercase, and deduplicate interest labels after validating their bounds.
+///
+/// Labels are not restricted to the currently known categories or tags so clients
+/// can follow custom labels without waiting for the tag list to change.
+fn normalize_user_interests(interests: Vec<String>) -> Result<Vec<String>, &'static str> {
+    use std::collections::HashSet;
+
+    if interests.len() > MAX_USER_INTERESTS {
+        return Err("interests must contain no more than 20 entries");
+    }
+
+    let mut seen = HashSet::with_capacity(interests.len());
+    let mut normalized = Vec::with_capacity(interests.len());
+    for interest in interests {
+        let interest = interest.trim().to_lowercase();
+        if interest.is_empty() {
+            return Err("interests must not contain empty entries");
+        }
+        if interest.chars().count() > MAX_USER_INTEREST_LENGTH {
+            return Err(
+                "each interest must be 32 characters or fewer after trimming and lowercasing",
+            );
+        }
+        if seen.insert(interest.clone()) {
+            normalized.push(interest);
+        }
+    }
+
+    Ok(normalized)
+}
+
 /// `PUT /api/v1/users/:address/interests` — replace a user's interest list wholesale.
 pub async fn set_user_interests_handler(
     State(state): State<AppState>,
@@ -1538,6 +1685,18 @@ pub async fn set_user_interests_handler(
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let interests = match normalize_user_interests(body.interests) {
+        Ok(interests) => interests,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1548,10 +1707,56 @@ pub async fn set_user_interests_handler(
         .into_response();
     };
 
-    match crate::notifications::set_user_interests(db, address.as_str(), &body.interests).await {
-        Ok(()) => ApiResponse::success(json!({ "address": address, "interests": body.interests }))
+    match crate::notifications::set_user_interests(db, address.as_str(), &interests).await {
+        Ok(()) => ApiResponse::success(json!({ "address": address, "interests": interests }))
             .into_response(),
-        Err(e) => internal_error_response(e),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod user_interests_tests {
+    use super::*;
+
+    #[test]
+    fn user_interests_reject_more_than_twenty_entries() {
+        let interests = (0..=MAX_USER_INTERESTS)
+            .map(|index| format!("interest-{index}"))
+            .collect();
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Err("interests must contain no more than 20 entries")
+        );
+    }
+
+    #[test]
+    fn user_interests_reject_entries_longer_than_thirty_two_characters() {
+        let interests = vec!["a".repeat(MAX_USER_INTEREST_LENGTH + 1)];
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Err("each interest must be 32 characters or fewer after trimming and lowercasing")
+        );
+    }
+
+    #[test]
+    fn user_interests_trim_lowercase_and_deduplicate() {
+        let interests = vec![
+            "  Sports ".to_string(),
+            "sports".to_string(),
+            " DeFi ".to_string(),
+        ];
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Ok(vec!["sports".to_string(), "defi".to_string()])
+        );
     }
 }
 
