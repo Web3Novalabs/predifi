@@ -394,10 +394,18 @@ impl PredifiContract {
     ///
     /// # Errors
     /// - `ContractPaused` if the contract is paused.
-    /// - `InvalidData` if `options_count` < 2 or other validation fails.
-    /// - `InvalidTimestamp` if `end_time` is in the past or exceeds maximum pool duration.
+    /// - `InvalidData` if `category` is not allowed, `options_count` is < 2 or
+    ///   > `MAX_OPTIONS_COUNT`, `required_resolutions` is 0, `description`
+    ///   exceeds 256 bytes, `whitelist_key` is malformed, or pool invariants
+    ///   (e.g. `outcome_descriptions.len() != options_count`) fail.
+    /// - `DeadlineInPast` if `end_time <= now`, or a non-zero `start_time` is in the past.
+    /// - `InvalidTimestamp` if `end_time <= start_time`, `end_time` exceeds
+    ///   `MAX_POOL_DURATION` from now, or is less than `min_pool_duration` from now.
     /// - `TokenNotWhitelisted` if the betting token is not on the whitelist.
-    /// - `InvalidAmount` if `initial_liquidity` is invalid.
+    /// - `InvalidAmount` if `initial_liquidity` is negative or above
+    ///   `MAX_INITIAL_LIQUIDITY`, `min_stake <= 0`, `max_stake` is non-zero and
+    ///   below `min_stake`, `min_total_stake <= 0`, or `max_total_stake < 0`.
+    /// - `MetadataUrlInvalid` if `metadata_url` exceeds 512 bytes.
     /// - `InitialLiquidityBelowSafetyMargin` if liquidity is too low relative to `max_total_stake`.
     /// - `InvalidFeeBps` if the pool fee (if any) exceeds 10,000.
     /// - `RequiredResolutionsExceedOperators` if `required_resolutions` is too high for operator count.
@@ -436,23 +444,16 @@ impl PredifiContract {
 
         // Issue #1130 — staking deadlines must be in the future. End_time
         // strictly in the past raises the `DeadlineInPast` protocol error
-        // (typed, machine-checkable). The legacy `assert!` below still
-        // catches the boundary case `end_time == current_time` with its
-        // diagnostic message for backwards-compatible test expectations.
+        // (typed, machine-checkable), including `end_time == current_time`.
         // A `start_time` of 0 is a sentinel for "open immediately"; any
         // non-zero start_time must be strictly in the future so a creator
         // cannot schedule a pool that opens in the past.
-        if end_time < current_time {
-            soroban_sdk::panic_with_error!(&env, PredifiError::DeadlineInPast);
+        if end_time <= current_time {
+            return Err(PredifiError::DeadlineInPast);
         }
         if config.start_time > 0 && config.start_time < current_time {
             soroban_sdk::panic_with_error!(&env, PredifiError::DeadlineInPast);
         }
-
-        // Validate: end_time must be in the future (legacy assert kept for
-        // diagnostic clarity; the DeadlineInPast check above is the
-        // authoritative protocol error).
-        assert!(end_time > current_time, "end_time must be in the future");
 
         // Validate: end_time must not exceed MAX_POOL_DURATION from now
         if end_time > current_time + MAX_POOL_DURATION {
@@ -468,10 +469,9 @@ impl PredifiContract {
 
         // Validate: minimum pool duration
         if min_pool_duration > 0 {
-            assert!(
-                end_time >= current_time + min_pool_duration,
-                "end_time must be at least min_pool_duration in the future"
-            );
+            if end_time < current_time.saturating_add(min_pool_duration) {
+                return Err(PredifiError::InvalidTimestamp);
+            }
         }
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
@@ -485,16 +485,14 @@ impl PredifiContract {
         }
 
         // Validate: initial_liquidity must be non-negative if provided
-        assert!(
-            config.initial_liquidity >= 0,
-            "initial_liquidity must be non-negative"
-        );
+        if config.initial_liquidity < 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
 
         // Validate: initial_liquidity must not exceed maximum limit
-        assert!(
-            config.initial_liquidity <= MAX_INITIAL_LIQUIDITY,
-            "initial_liquidity exceeds maximum allowed value"
-        );
+        if config.initial_liquidity > MAX_INITIAL_LIQUIDITY {
+            return Err(PredifiError::InvalidAmount);
+        }
 
         // Issue #1131 — initial-liquidity safety margin. When the creator
         // caps the pool at `max_total_stake > 0`, the seeded liquidity must
@@ -519,10 +517,9 @@ impl PredifiContract {
         }
 
         // Validate: required_resolutions must be at least 1
-        assert!(
-            config.required_resolutions >= 1,
-            "required_resolutions must be at least 1"
-        );
+        if config.required_resolutions < 1 {
+            return Err(PredifiError::InvalidData);
+        }
 
         // Validate: required_resolutions must not exceed the number of active operators.
         // If required_resolutions > operator_count, the pool can never reach the resolution
@@ -555,25 +552,26 @@ impl PredifiContract {
         // This is the standard pattern in Soroban - invalid tokens will fail when
         // transfers are attempted during place_prediction.
 
-        assert!(
-            config.description.len() <= 256,
-            "description exceeds 256 bytes"
-        );
+        if config.description.len() > 256 {
+            return Err(PredifiError::InvalidData);
+        }
         if config.metadata_url.len() > 512 {
             soroban_sdk::panic_with_error!(&env, PredifiError::MetadataUrlInvalid);
         }
 
         // Validate stake limits
-        assert!(config.min_stake > 0, "min_stake must be greater than zero");
-        assert!(
-            config.max_stake == 0 || config.max_stake >= config.min_stake,
-            "max_stake must be zero (unlimited) or >= min_stake"
-        );
-        assert!(
-            config.min_total_stake > 0,
-            "min_total_stake must be greater than zero"
-        );
-        assert!(config.max_total_stake >= 0, "max_total_stake must be >= 0");
+        if config.min_stake <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+        if config.max_stake != 0 && config.max_stake < config.min_stake {
+            return Err(PredifiError::InvalidAmount);
+        }
+        if config.min_total_stake <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+        if config.max_total_stake < 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
 
         if let Some(ref whitelist_key) = config.whitelist_key {
             if let Err(e) = Self::validate_referral_code(&env, whitelist_key) {

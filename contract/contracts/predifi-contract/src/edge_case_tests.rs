@@ -140,7 +140,7 @@ fn two_outcome_config(env: &Env) -> PoolConfig {
 ///
 /// The contract asserts `end_time > current_time`, so equality is invalid.
 #[test]
-#[should_panic(expected = "end_time must be in the future")]
+#[should_panic(expected = "Error(Contract, #132)")]
 fn test_create_pool_end_time_equals_current_time_is_rejected() {
     let env = Env::default();
     let (client, token_client, _, _) = setup(&env);
@@ -162,7 +162,7 @@ fn test_create_pool_end_time_equals_current_time_is_rejected() {
 /// Creating a pool with `end_time == current_time + min_pool_duration - 1`
 /// (one second short of the minimum) must also be rejected.
 #[test]
-#[should_panic(expected = "end_time must be at least min_pool_duration in the future")]
+#[should_panic(expected = "Error(Contract, #80)")]
 fn test_create_pool_end_time_below_min_duration_is_rejected() {
     let env = Env::default();
     let (client, token_client, _, _) = setup(&env);

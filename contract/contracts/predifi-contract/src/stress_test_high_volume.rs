@@ -26,6 +26,14 @@ mod high_volume_stress_tests {
         token, Address, Env, String, Vec,
     };
 
+    fn outcome_descriptions(env: &Env, n: u32) -> Vec<String> {
+        let mut v = Vec::new(env);
+        for i in 0..n {
+            v.push_back(String::from_str(env, &std::format!("Outcome {}", i)));
+        }
+        v
+    }
+
     mod dummy_access_control {
         use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
 
@@ -108,21 +116,21 @@ mod high_volume_stress_tests {
 
         // Create pool
         let creator = Address::generate(&env);
-        token_admin_client.mint(&creator, &10_000_000i128);
+        token_admin_client.mint(&creator, &20_000_000i128);
 
         let config = PoolConfig {
             start_time: 1000u64,
-            description: String::from_slice(&env, "1000-user stress test"),
-            metadata_url: String::from_slice(&env, "https://example.com"),
+            description: String::from_str(&env, "1000-user stress test"),
+            metadata_url: String::from_str(&env, "https://example.com"),
             min_stake: 1_000i128,
             max_stake: 100_000i128,
             min_total_stake: 1_000_000i128,
             max_total_stake: 1_000_000_000i128,
-            initial_liquidity: 10_000i128,
+            initial_liquidity: 10_000_000i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: Vec::new(&env),
+            outcome_descriptions: outcome_descriptions(&env, 2),
         };
 
         let pool_id = client.create_pool(
@@ -130,7 +138,7 @@ mod high_volume_stress_tests {
             &5000u64,
             &token_id,
             &2u32,
-            &symbol_short!("TEST"),
+            &symbol_short!("Crypto"),
             &config,
         );
 
@@ -142,11 +150,11 @@ mod high_volume_stress_tests {
 
         for i in 0..500u32 {
             let user = &users[i as usize];
-            let gas_before = env.budget().cpu_instruction_cost();
+            let gas_before = env.cost_estimate().budget().cpu_instruction_cost();
             
             client.place_prediction(&user, &pool_id, &1_000i128, &0u32, &None, &None);
             
-            let gas_after = env.budget().cpu_instruction_cost();
+            let gas_after = env.cost_estimate().budget().cpu_instruction_cost();
             let gas_used = gas_after.saturating_sub(gas_before);
             gas_costs_outcome_0.push(gas_used);
         }
@@ -163,11 +171,11 @@ mod high_volume_stress_tests {
 
         for i in 500..1000u32 {
             let user = &users[i as usize];
-            let gas_before = env.budget().cpu_instruction_cost();
+            let gas_before = env.cost_estimate().budget().cpu_instruction_cost();
             
             client.place_prediction(&user, &pool_id, &1_000i128, &1u32, &None, &None);
             
-            let gas_after = env.budget().cpu_instruction_cost();
+            let gas_after = env.cost_estimate().budget().cpu_instruction_cost();
             let gas_used = gas_after.saturating_sub(gas_before);
             gas_costs_outcome_1.push(gas_used);
         }
@@ -261,21 +269,21 @@ mod high_volume_stress_tests {
         }
 
         let creator = Address::generate(&env);
-        token_admin_client.mint(&creator, &10_000_000i128);
+        token_admin_client.mint(&creator, &20_000_000i128);
 
         let config = PoolConfig {
             start_time: 1000u64,
-            description: String::from_slice(&env, "16-outcome stress test"),
-            metadata_url: String::from_slice(&env, "https://example.com"),
+            description: String::from_str(&env, "16-outcome stress test"),
+            metadata_url: String::from_str(&env, "https://example.com"),
             min_stake: 1_000i128,
             max_stake: 100_000i128,
             min_total_stake: 1_000_000i128,
             max_total_stake: 1_000_000_000i128,
-            initial_liquidity: 10_000i128,
+            initial_liquidity: 10_000_000i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: Vec::new(&env),
+            outcome_descriptions: outcome_descriptions(&env, 16),
         };
 
         let pool_id = client.create_pool(
@@ -283,7 +291,7 @@ mod high_volume_stress_tests {
             &5000u64,
             &token_id,
             &16u32, // 16 outcomes
-            &symbol_short!("TEST"),
+            &symbol_short!("Crypto"),
             &config,
         );
 
@@ -303,11 +311,11 @@ mod high_volume_stress_tests {
 
             for i in start_idx..end_idx {
                 let user = &users[i];
-                let gas_before = env.budget().cpu_instruction_cost();
+                let gas_before = env.cost_estimate().budget().cpu_instruction_cost();
                 
                 client.place_prediction(&user, &pool_id, &1_000i128, &(outcome as u32), &None, &None);
                 
-                let gas_after = env.budget().cpu_instruction_cost();
+                let gas_after = env.cost_estimate().budget().cpu_instruction_cost();
                 let gas_used = gas_after.saturating_sub(gas_before);
                 gas_costs.push((outcome, gas_used));
             }
@@ -415,21 +423,21 @@ mod high_volume_stress_tests {
         }
 
         let creator = Address::generate(&env);
-        token_admin_client.mint(&creator, &10_000_000i128);
+        token_admin_client.mint(&creator, &20_000_000i128);
 
         let config = PoolConfig {
             start_time: 1000u64,
-            description: String::from_slice(&env, "Claim complexity test"),
-            metadata_url: String::from_slice(&env, "https://example.com"),
+            description: String::from_str(&env, "Claim complexity test"),
+            metadata_url: String::from_str(&env, "https://example.com"),
             min_stake: 1_000i128,
             max_stake: 100_000i128,
             min_total_stake: 1_000_000i128,
             max_total_stake: 1_000_000_000i128,
-            initial_liquidity: 10_000i128,
+            initial_liquidity: 10_000_000i128,
             required_resolutions: 1u32,
             private: false,
             whitelist_key: None,
-            outcome_descriptions: Vec::new(&env),
+            outcome_descriptions: outcome_descriptions(&env, 2),
         };
 
         let pool_id = client.create_pool(
@@ -437,7 +445,7 @@ mod high_volume_stress_tests {
             &5000u64,
             &token_id,
             &2u32,
-            &symbol_short!("TEST"),
+            &symbol_short!("Crypto"),
             &config,
         );
 
