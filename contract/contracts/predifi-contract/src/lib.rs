@@ -1122,18 +1122,17 @@ impl PredifiContract {
 
     /// Referral cut in basis points (e.g. 5000 = 50% of referrer's fee share to referrer). Default 5000.
     ///
-    /// Prefers `Config.referral_bps` (set via `set_referral_rate`) when non-zero,
-    /// then falls back to the legacy `ReferralCutBps` storage key, then to 5000.
+    /// `Config.referral_bps` is authoritative whenever `Config` exists, including an
+    /// explicit 0 (set via `set_referral_rate(admin, 0)`), which disables referral payouts.
+    /// The legacy `ReferralCutBps` key is only consulted when `Config` has never been
+    /// set, then the default of 5000.
     fn read_referral_cut_bps(env: &Env) -> u32 {
-        // Prefer the value stored in Config (set via set_referral_rate).
-        let config_bps: Option<Config> = env.storage().instance().get(&DataKey::Config);
-        if let Some(cfg) = config_bps {
-            if cfg.referral_bps > 0 {
-                Self::extend_instance(env);
-                return cfg.referral_bps;
-            }
+        let config: Option<Config> = env.storage().instance().get(&DataKey::Config);
+        if let Some(cfg) = config {
+            Self::extend_instance(env);
+            return cfg.referral_bps;
         }
-        // Fall back to legacy standalone key.
+        // Config never set: fall back to the legacy standalone key.
         let bps = env
             .storage()
             .instance()
@@ -1364,6 +1363,8 @@ mod place_prediction_boundary_tests;
 mod issues_1880_1886_1887_1888_boundary_tests;
 #[cfg(test)]
 mod pool_not_found_and_getters_tests;
+#[cfg(test)]
+mod issues_2017_2021_2022_tests;
 #[cfg(test)]
 mod test;
 

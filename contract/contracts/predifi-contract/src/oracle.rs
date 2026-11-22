@@ -252,6 +252,17 @@ impl PredifiContract {
             return Err(PredifiError::InvalidAmount);
         }
 
+        // Reject prices whose confidence interval is too wide relative to the
+        // price: confidence * 10_000 / price must not exceed MIN_CONFIDENCE_RATIO_BPS.
+        // Checked arithmetic: an overflowing product is treated as invalid data.
+        let confidence_ratio_bps = confidence
+            .checked_mul(10_000)
+            .ok_or(PredifiError::InvalidData)?
+            / price;
+        if confidence_ratio_bps > Self::MIN_CONFIDENCE_RATIO_BPS as i128 {
+            return Err(PredifiError::InvalidData);
+        }
+
         let feed_key = DataKey::PriceFeed(feed_pair.clone());
 
         // Price deviation protection: check against previous price to prevent
