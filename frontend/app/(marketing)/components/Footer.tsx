@@ -1,5 +1,6 @@
 import React from "react";
 import Image from "next/image";
+import Link from "next/link";
 
 /**
  * Footer
@@ -13,34 +14,62 @@ const Footer = React.memo(function Footer() {
       <div className="pb-5 border-b-[#CBECEF] flex flex-col-reverse gap-y-8 items-center border-b-[0.5px] md:flex-row md:justify-between md:items-baseline">
         <Image src="/logo.svg" width={100} height={32} alt="PrediFi logo" />
         <div className="flex gap-x-[34px]">
-          <Image
-            src="/socials/telegram.svg"
-            width={24}
-            height={24}
+          <Link
+            href="https://t.me/PrediFi"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="PrediFi on Telegram"
             className="w-6 h-6"
-            alt="Telegram"
-          />
-          <Image
-            src="/socials/reddit.svg"
-            width={24}
-            height={24}
+          >
+            <Image
+              src="/socials/telegram.svg"
+              width={24}
+              height={24}
+              alt=""
+            />
+          </Link>
+          <Link
+            href="https://www.reddit.com/r/PrediFi"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="PrediFi on Reddit"
             className="w-6 h-6"
-            alt="Reddit"
-          />
-          <Image
-            src="/socials/x.svg"
-            width={24}
-            height={24}
+          >
+            <Image
+              src="/socials/reddit.svg"
+              width={24}
+              height={24}
+              alt=""
+            />
+          </Link>
+          <Link
+            href="https://x.com/PrediFi"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="PrediFi on X"
             className="w-6 h-6"
-            alt="X (Twitter)"
-          />
-          <Image
-            src="/socials/discord.svg"
-            width={24}
-            height={24}
+          >
+            <Image
+              src="/socials/x.svg"
+              width={24}
+              height={24}
+              alt=""
+            />
+          </Link>
+          <Link
+            href="https://discord.gg/PrediFi"
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label="PrediFi on Discord"
             className="w-6 h-6"
-            alt="Discord"
-          />
+          >
+            <Image
+              src="/socials/discord.svg"
+              width={24}
+              height={24}
+              alt=""
+            />
+          </Link>
         </div>
       </div>
 

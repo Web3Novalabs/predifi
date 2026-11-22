@@ -103,7 +103,15 @@ resource "aws_db_instance" "this" {
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [aws_security_group.postgres.id]
 
-  backup_retention_period = 7
+  # Automated backups: 30-day retention enables RDS point-in-time recovery
+  # (PITR) down to the second. See docs/backup-disaster-recovery.md for the
+  # RTO/RPO targets and the cross-region replication plan.
+  backup_retention_period = 30
+  backup_window           = "03:00-04:00"
+  maintenance_window      = "sun:04:00-sun:05:00"
+  copy_tags_to_snapshot   = true
+  delete_automated_backups = false
+
   deletion_protection     = true
   skip_final_snapshot     = false
   final_snapshot_identifier = "${var.name_prefix}-pg-final"

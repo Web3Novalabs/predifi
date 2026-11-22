@@ -27,9 +27,16 @@ const nextConfig: NextConfig = {
   },
   // Enable CSS minification and optimization in production
   compress: true,
-  // Optimize CSS loading
   experimental: {
+    // Optimize CSS loading
     optimizeCss: true,
+    // Rewrites named imports from these packages into per-module imports
+    // (e.g. `import { ChevronDown } from "lucide-react"` becomes an import of
+    // just that icon's module) so webpack's bundler sees exactly what's used
+    // instead of having to tree-shake through each package's barrel file.
+    // Both are among Next.js's own documented candidates for this flag, and
+    // are the two largest UI dependencies in package.json (#1939).
+    optimizePackageImports: ["lucide-react", "recharts"],
   },
   images: {
     // Allow Next.js to optimise SVG files served from the /public directory.

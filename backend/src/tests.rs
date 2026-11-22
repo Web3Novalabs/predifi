@@ -37,6 +37,62 @@ async fn body_string(body: axum::body::Body) -> String {
     String::from_utf8(bytes.to_vec()).expect("body is not valid utf-8")
 }
 
+/// Admin log-level: a request without the API key must be rejected (#2070).
+#[tokio::test]
+async fn admin_log_level_missing_key_returns_401() {
+    let mut config = Config::default_for_test();
+    config.admin_api_key = Some("a-32-byte-long-admin-api-key!!".to_string());
+    let router = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    );
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/v1/admin/log-level")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(axum::body::Body::from(r#"{"level":"info"}"#))
+                .expect("failed to build request"),
+        )
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// Admin log-level: a wrong API key must be rejected even when it shares a
+/// long prefix with the real key (#2070).
+#[tokio::test]
+async fn admin_log_level_wrong_key_returns_401() {
+    let mut config = Config::default_for_test();
+    config.admin_api_key = Some("a-32-byte-long-admin-api-key!!".to_string());
+    let router = build_router(
+        config,
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    );
+
+    let response = router
+        .oneshot(
+            Request::builder()
+                .method(Method::PATCH)
+                .uri("/api/v1/admin/log-level")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header("x-admin-api-key", "a-32-byte-long-admin-api-key!X")
+                .body(axum::body::Body::from(r#"{"level":"info"}"#))
+                .expect("failed to build request"),
+        )
+        .await
+        .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
 /// GET / must return HTTP 200.
 #[tokio::test]
 async fn root_returns_200() {
@@ -53,9 +109,10 @@ async fn root_returns_200() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
-/// GET /health must return HTTP 200 with `{"status":"ok"}` in the body.
+/// GET /health is a liveness probe: it must answer 200 and must not report
+/// dependency status (#1722).
 #[tokio::test]
-async fn health_returns_200_with_ok_body() {
+async fn health_is_a_liveness_probe_that_never_fails() {
     let (router, mock) = build_healthy_router().await;
     let response = router
         .oneshot(get("/health"))
@@ -67,14 +124,19 @@ async fn health_returns_200_with_ok_body() {
 
     let body = body_string(response.into_body()).await;
     assert!(
-        body.contains("\"status\""),
-        "body should contain a status field, got: {body}"
+        body.contains("\"status\":\"alive\""),
+        "body should report the process as alive, got: {body}"
+    );
+    assert!(
+        !body.contains("\"dependencies\""),
+        "liveness must not probe dependencies, got: {body}"
     );
 }
 
-/// GET /api/v1/health must return HTTP 200 from the nested v1 router.
+/// GET /api/v1/health is a liveness probe: it must answer 200 and must not
+/// report dependency status (#1722).
 #[tokio::test]
-async fn api_v1_health_returns_200_with_versioned_body() {
+async fn api_v1_health_is_a_liveness_probe_that_never_fails() {
     let (router, mock) = build_healthy_router().await;
     let response = router
         .oneshot(get("/api/v1/health"))
@@ -86,8 +148,98 @@ async fn api_v1_health_returns_200_with_versioned_body() {
 
     let body = body_string(response.into_body()).await;
     assert!(
-        body.contains("\"status\"") && body.contains("\"version\":\"v1\""),
-        "body should contain status and version fields, got: {body}"
+        body.contains("\"status\":\"alive\""),
+        "body should report the process as alive, got: {body}"
+    );
+    assert!(
+        body.contains("\"version\":\"v1\""),
+        "body should contain the version field, got: {body}"
+    );
+    assert!(
+        !body.contains("\"dependencies\""),
+        "liveness must not probe dependencies, got: {body}"
+    );
+}
+
+/// GET /health stays a 200 liveness probe even when every dependency is down
+/// (#1722). Failing liveness here would restart a process that is perfectly
+/// able to serve traffic.
+#[tokio::test]
+async fn health_stays_200_when_every_dependency_is_down() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"alive\""),
+        "liveness must stay alive while dependencies are down, got: {body}"
+    );
+}
+
+/// GET /health/ready answers 503 while a required dependency is down (#1722).
+#[tokio::test]
+async fn health_ready_returns_503_when_database_is_missing() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/health/ready"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "readiness must fail while the database is unreachable"
+    );
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"ready\":false") && body.contains("\"status\":\"not_ready\""),
+        "body should report the instance as not ready, got: {body}"
+    );
+    assert!(
+        body.contains("\"db\":\"not_configured\""),
+        "body should report the db dependency status, got: {body}"
+    );
+}
+
+/// GET /api/v1/health/ready reports the status of every dependency (#1722).
+#[tokio::test]
+async fn api_v1_health_ready_reports_per_dependency_status() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/health/ready"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"dependencies\"")
+            && body.contains("\"redis\"")
+            && body.contains("\"price_cache\""),
+        "body should report the status of every dependency, got: {body}"
+    );
+    assert!(
+        body.contains("\"version\":\"v1\""),
+        "body should contain the version field, got: {body}"
     );
 }
 
@@ -482,12 +634,12 @@ async fn rate_limiting_returns_429_after_burst() {
 // Advanced Health Check Tests
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Test that /api/v1/health returns 200 with dependency status when everything is OK.
+/// Test that /api/v1/health/components returns 200 with dependency status when everything is OK.
 #[tokio::test]
 async fn api_v1_health_returns_200_with_dependency_status() {
     let (router, mock) = build_healthy_router().await;
     let response = router
-        .oneshot(get("/api/v1/health"))
+        .oneshot(get("/api/v1/health/components"))
         .await
         .expect("request failed");
     mock.shutdown().await;
@@ -517,12 +669,12 @@ async fn api_v1_health_returns_200_with_dependency_status() {
     );
 }
 
-/// Test that /health returns 200 with dependency status when everything is OK.
+/// Test that /health/components returns 200 with dependency status when everything is OK.
 #[tokio::test]
 async fn root_health_returns_200_with_dependency_status() {
     let (router, mock) = build_healthy_router().await;
     let response = router
-        .oneshot(get("/health"))
+        .oneshot(get("/health/components"))
         .await
         .expect("request failed");
     mock.shutdown().await;
@@ -544,12 +696,12 @@ async fn root_health_returns_200_with_dependency_status() {
     );
 }
 
-/// Test that /api/v1/health reports db as 'not_configured' when no database is provided.
+/// Test that /api/v1/health/components reports db as 'not_configured' when no database is provided.
 #[tokio::test]
 async fn api_v1_health_reports_db_not_configured_without_pool() {
     let (router, mock) = build_healthy_router().await;
     let response = router
-        .oneshot(get("/api/v1/health"))
+        .oneshot(get("/api/v1/health/components"))
         .await
         .expect("request failed");
     mock.shutdown().await;
@@ -563,12 +715,12 @@ async fn api_v1_health_reports_db_not_configured_without_pool() {
     );
 }
 
-/// Test that /health reports db as 'not_configured' when no database is provided.
+/// Test that /health/components reports db as 'not_configured' when no database is provided.
 #[tokio::test]
 async fn root_health_reports_db_not_configured_without_pool() {
     let (router, mock) = build_healthy_router().await;
     let response = router
-        .oneshot(get("/health"))
+        .oneshot(get("/health/components"))
         .await
         .expect("request failed");
     mock.shutdown().await;
@@ -582,12 +734,12 @@ async fn root_health_reports_db_not_configured_without_pool() {
     );
 }
 
-/// Test that /api/v1/health returns the "ok" status when healthy.
+/// Test that /api/v1/health/components returns the "ok" status when healthy.
 #[tokio::test]
 async fn api_v1_health_status_is_ok_when_healthy() {
     let (router, mock) = build_healthy_router().await;
     let response = router
-        .oneshot(get("/api/v1/health"))
+        .oneshot(get("/api/v1/health/components"))
         .await
         .expect("request failed");
     mock.shutdown().await;
@@ -601,12 +753,12 @@ async fn api_v1_health_status_is_ok_when_healthy() {
     );
 }
 
-/// Test that /health returns the "ok" status when healthy.
+/// Test that /health/components returns the "ok" status when healthy.
 #[tokio::test]
 async fn root_health_status_is_ok_when_healthy() {
     let (router, mock) = build_healthy_router().await;
     let response = router
-        .oneshot(get("/health"))
+        .oneshot(get("/health/components"))
         .await
         .expect("request failed");
     mock.shutdown().await;
@@ -643,7 +795,7 @@ async fn health_includes_cargo_version() {
 // 503 Service Unavailable Tests (Acceptance Criteria Verification)
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// Test that /api/v1/health returns HTTP 503 when RPC is unreachable.
+/// Test that /api/v1/health/components returns HTTP 503 when RPC is unreachable.
 /// This is critical for the acceptance criteria: "Returns 503 if any dependency is unreachable."
 #[tokio::test]
 async fn api_v1_health_returns_503_when_rpc_unreachable() {
@@ -657,7 +809,7 @@ async fn api_v1_health_returns_503_when_rpc_unreachable() {
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/api/v1/health"))
+    .oneshot(get("/api/v1/health/components"))
     .await
     .expect("request failed");
 
@@ -678,7 +830,7 @@ async fn api_v1_health_returns_503_when_rpc_unreachable() {
     );
 }
 
-/// Test that /health returns HTTP 503 when RPC is unreachable.
+/// Test that /health/components returns HTTP 503 when RPC is unreachable.
 /// This is critical for the acceptance criteria: "Returns 503 if any dependency is unreachable."
 #[tokio::test]
 async fn root_health_returns_503_when_rpc_unreachable() {
@@ -692,7 +844,7 @@ async fn root_health_returns_503_when_rpc_unreachable() {
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/health"))
+    .oneshot(get("/health/components"))
     .await
     .expect("request failed");
 
@@ -725,7 +877,7 @@ async fn health_503_response_includes_dependency_details() {
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/health"))
+    .oneshot(get("/health/components"))
     .await
     .expect("request failed");
 
@@ -746,7 +898,7 @@ async fn health_503_response_includes_dependency_details() {
     );
 }
 
-/// Test that /api/v1/health returns HTTP 503 when Redis is unreachable.
+/// Test that /api/v1/health/components returns HTTP 503 when Redis is unreachable.
 /// This is critical for the acceptance criteria: "Returns 503 if any dependency is unreachable."
 #[tokio::test]
 async fn api_v1_health_returns_503_when_redis_unreachable() {
@@ -759,7 +911,7 @@ async fn api_v1_health_returns_503_when_redis_unreachable() {
         redis,
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/api/v1/health"))
+    .oneshot(get("/api/v1/health/components"))
     .await
     .expect("request failed");
 
@@ -780,7 +932,7 @@ async fn api_v1_health_returns_503_when_redis_unreachable() {
     );
 }
 
-/// Test that /health returns HTTP 503 when Redis is unreachable.
+/// Test that /health/components returns HTTP 503 when Redis is unreachable.
 /// This is critical for the acceptance criteria: "Returns 503 if any dependency is unreachable."
 #[tokio::test]
 async fn root_health_returns_503_when_redis_unreachable() {
@@ -793,7 +945,7 @@ async fn root_health_returns_503_when_redis_unreachable() {
         redis,
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/health"))
+    .oneshot(get("/health/components"))
     .await
     .expect("request failed");
 
@@ -826,7 +978,7 @@ async fn health_503_response_includes_redis_dependency_details() {
         redis,
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/health"))
+    .oneshot(get("/health/components"))
     .await
     .expect("request failed");
 
@@ -843,7 +995,7 @@ async fn health_503_response_includes_redis_dependency_details() {
     );
 }
 
-/// Test that /api/v1/health returns HTTP 503 when price cache is not ready.
+/// Test that /api/v1/health/components returns HTTP 503 when price cache is not ready.
 /// This is critical for the acceptance criteria: "Returns 503 if any dependency is unreachable."
 #[tokio::test]
 async fn api_v1_health_returns_503_when_price_cache_not_ready() {
@@ -856,7 +1008,7 @@ async fn api_v1_health_returns_503_when_price_cache_not_ready() {
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/api/v1/health"))
+    .oneshot(get("/api/v1/health/components"))
     .await
     .expect("request failed");
 
@@ -877,7 +1029,7 @@ async fn api_v1_health_returns_503_when_price_cache_not_ready() {
     );
 }
 
-/// Test that /health returns HTTP 503 when price cache is not ready.
+/// Test that /health/components returns HTTP 503 when price cache is not ready.
 /// This is critical for the acceptance criteria: "Returns 503 if any dependency is unreachable."
 #[tokio::test]
 async fn root_health_returns_503_when_price_cache_not_ready() {
@@ -890,7 +1042,7 @@ async fn root_health_returns_503_when_price_cache_not_ready() {
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/health"))
+    .oneshot(get("/health/components"))
     .await
     .expect("request failed");
 
@@ -923,7 +1075,7 @@ async fn health_503_response_includes_price_cache_dependency_details() {
         RedisCache::disabled(),
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/health"))
+    .oneshot(get("/health/components"))
     .await
     .expect("request failed");
 
@@ -940,7 +1092,7 @@ async fn health_503_response_includes_price_cache_dependency_details() {
     );
 }
 
-/// Test that /api/v1/health includes error details in the response.
+/// Test that /api/v1/health/components includes error details in the response.
 #[tokio::test]
 async fn api_v1_health_includes_error_details() {
     // Create a mock Redis cache that always fails ping
@@ -952,7 +1104,7 @@ async fn api_v1_health_includes_error_details() {
         redis,
         crate::ws::EventBus::new(),
     )
-    .oneshot(get("/api/v1/health"))
+    .oneshot(get("/api/v1/health/components"))
     .await
     .expect("request failed");
 
@@ -1021,6 +1173,64 @@ async fn test_odds_calculation() {
     let odds_with_zero = calculate_odds(&outcome_stakes_with_zero, 100000);
     assert_eq!(odds_with_zero[0].odds, 0.0); // Zero stake = 0 odds
     assert!((odds_with_zero[1].odds - 1.0).abs() < 0.001); // 1.0 / (100000/100000) = 1.0
+}
+
+/// Build a syntactically- and checksum-valid Stellar `G…` test address, so
+/// tests can exercise routes that use `Path<StellarAddress>` as their
+/// extractor without the request being rejected before it reaches the
+/// handler (see `crate::validated_types::StellarAddress`).
+fn test_stellar_address() -> String {
+    use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+    let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+    bytes.extend(std::iter::repeat(0xAB_u8).take(32));
+    let checksum = crc16_xmodem(&bytes);
+    bytes.extend_from_slice(&checksum.to_le_bytes());
+    base32_encode(&bytes)
+}
+
+/// `GET /api/v1/creators/:address/stats` without a DB pool must return 503
+/// with the standard error envelope — not silently 200 with an `"error"`
+/// field in the body, and not a generic panic/500 (#1736).
+#[tokio::test]
+async fn api_v1_creator_stats_returns_503_without_db() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get(&format!(
+        "/api/v1/creators/{}/stats",
+        test_stellar_address()
+    )))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    let body = body_string(response.into_body()).await;
+    assert!(
+        body.contains("\"status\":\"error\""),
+        "body should use the standard error envelope, got: {body}"
+    );
+}
+
+/// `GET /api/v1/creators/:address/stats` with a malformed address must be
+/// rejected at the extractor with 400, before the handler (and thus the
+/// database) is ever reached.
+#[tokio::test]
+async fn api_v1_creator_stats_rejects_invalid_address() {
+    let response = build_router(
+        Config::default_for_test(),
+        PriceCache::new(),
+        RedisCache::disabled(),
+        crate::ws::EventBus::new(),
+    )
+    .oneshot(get("/api/v1/creators/not-a-real-address/stats"))
+    .await
+    .expect("request failed");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 /// Test pool details endpoint returns error when database is not available.

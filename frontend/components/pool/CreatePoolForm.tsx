@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useState, useId } from "react";
-import { useRouter } from "next/navigation";
-import { CheckCircle2, Info, Plus, X } from "lucide-react";
+import { Info, Plus, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button, Input, StakeInput, Checkbox, SupportedTokensPicker } from "@/components/ui";
 import type { Token } from "@/components/ui";
@@ -68,7 +67,6 @@ function CharCount({ current, max }: { current: number; max: number }) {
         "text-xs tabular-nums",
         overLimit ? "text-destructive font-medium" : "text-zinc-600",
       )}
-      aria-live="polite"
     >
       {current}/{max}
     </span>
@@ -306,40 +304,6 @@ function TextareaField({
   );
 }
 
-// ─── Success state ────────────────────────────────────────────────────────────
-
-function SuccessState({ onCreateAnother }: { onCreateAnother: () => void }) {
-  const router = useRouter();
-  return (
-    <div className="flex flex-col items-center justify-center gap-6 rounded-xl border border-zinc-800 bg-zinc-900 p-12 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#37B7C3]/10">
-        <CheckCircle2 className="h-8 w-8 text-[#37B7C3]" aria-hidden="true" />
-      </div>
-      <div className="space-y-2">
-        <h2 className="text-xl font-semibold text-white">
-          Pool Created Successfully
-        </h2>
-        <p className="max-w-sm text-sm text-zinc-400">
-          Your prediction pool has been submitted. It will appear in the market
-          once confirmed on the Stellar network.
-        </p>
-      </div>
-      <div className="flex flex-col sm:flex-row gap-3">
-        <Button
-          variant="primary"
-          size="medium"
-          onClick={() => router.push("/user/pool-market")}
-        >
-          View Pool Market
-        </Button>
-        <Button variant="tertiary" size="medium" onClick={onCreateAnother}>
-          Create Another Pool
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Main form ────────────────────────────────────────────────────────────────
 
 /**
@@ -355,12 +319,6 @@ export function CreatePoolForm() {
 
   const [values, setValues] = useState<CreatePoolFormValues>(INITIAL_VALUES);
   const [errors, setErrors] = useState<CreatePoolFormErrors>({});
-  const [status, setStatus] = useState<"idle" | "submitting" | "success">(
-    "idle",
-  );
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  const isSubmitting = status === "submitting";
 
   // ── Field updaters ──────────────────────────────────────────────────────────
 
@@ -368,12 +326,12 @@ export function CreatePoolForm() {
     field: K,
     value: CreatePoolFormValues[K],
   ) {
-    setValues((prev) => ({ ...prev, [field]: value }));
-    // Clear error on change
-    if (errors[field]) {
-      setErrors((prev) => ({ ...prev, [field]: undefined }));
-    }
-    setSubmitError(null);
+    const next = { ...values, [field]: value };
+    setValues(next);
+    // Real-time validation: re-validate the edited field as the user types so
+    // feedback appears immediately and clears once the value becomes valid.
+    const nextErrors = validateCreatePool(next);
+    setErrors((prev) => ({ ...prev, [field]: nextErrors[field] }));
   }
 
   function setOutcome(index: number, value: string) {
@@ -388,7 +346,6 @@ export function CreatePoolForm() {
       if (outcomeErrors) outcomeErrors[index] = undefined;
       return { ...prev, outcomeErrors, outcomes: undefined };
     });
-    setSubmitError(null);
   }
 
   function addOutcome() {
@@ -424,58 +381,16 @@ export function CreatePoolForm() {
     }));
   }
 
-  // ── Submit ──────────────────────────────────────────────────────────────────
-
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-
-    const validationErrors = validateCreatePool(values);
-    if (Object.keys(validationErrors).length > 0) {
-      setErrors(validationErrors);
-      // Scroll to the first error field
-      const firstErrorField = Object.keys(validationErrors)[0];
-      const targetId =
-        firstErrorField === "outcomeErrors"
-          ? `outcome-${validationErrors.outcomeErrors?.findIndex((e) => e) ?? 0}`
-          : firstErrorField;
-      const el = document.getElementById(targetId);
-      el?.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-
-    setStatus("submitting");
-    setSubmitError(null);
-
-    try {
-      // TODO: replace with actual contract / API call
-      await new Promise<void>((resolve) => setTimeout(resolve, 1500));
-      setStatus("success");
-    } catch {
-      setStatus("idle");
-      setSubmitError(
-        "Something went wrong submitting your pool. Please try again.",
-      );
-    }
-  }
-
   function handleReset() {
     setValues(INITIAL_VALUES);
     setErrors({});
-    setStatus("idle");
-    setSubmitError(null);
-  }
-
-  // ── Success screen ──────────────────────────────────────────────────────────
-
-  if (status === "success") {
-    return <SuccessState onCreateAnother={handleReset} />;
   }
 
   // ── Form ────────────────────────────────────────────────────────────────────
 
   return (
     <form
-      onSubmit={handleSubmit}
+      onSubmit={(event) => event.preventDefault()}
       noValidate
       aria-label="Create prediction pool"
       className="space-y-8"
@@ -493,7 +408,6 @@ export function CreatePoolForm() {
           onChange={(e) => setField("name", e.target.value)}
           error={errors.name}
           helperText="5–80 characters."
-          disabled={isSubmitting}
           autoComplete="off"
         />
 
@@ -508,7 +422,6 @@ export function CreatePoolForm() {
             rows={4}
             error={errors.description}
             helperText="10–300 characters."
-            disabled={isSubmitting}
           />
         </div>
 
@@ -522,7 +435,6 @@ export function CreatePoolForm() {
           options={POOL_CATEGORIES}
           placeholder="Select a category"
           error={errors.category}
-          disabled={isSubmitting}
         />
 
         <Input
@@ -532,7 +444,6 @@ export function CreatePoolForm() {
           value={values.tags}
           onChange={(e) => setField("tags", e.target.value)}
           helperText="Comma-separated. Helps participants filter and find your pool."
-          disabled={isSubmitting}
           autoComplete="off"
         />
       </FormSection>
@@ -555,7 +466,6 @@ export function CreatePoolForm() {
                   value={outcome}
                   onChange={(e) => setOutcome(index, e.target.value)}
                   error={errors.outcomeErrors?.[index]}
-                  disabled={isSubmitting}
                   autoComplete="off"
                 />
               </div>
@@ -563,7 +473,6 @@ export function CreatePoolForm() {
                 <button
                   type="button"
                   onClick={() => removeOutcome(index)}
-                  disabled={isSubmitting}
                   aria-label={`Remove outcome ${index + 1}`}
                   className="mt-7 flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-zinc-700 text-zinc-400 hover:border-red-800 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50"
                 >
@@ -585,7 +494,6 @@ export function CreatePoolForm() {
               variant="tertiary"
               size="small"
               onClick={addOutcome}
-              disabled={isSubmitting}
               className="gap-1.5"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
@@ -611,7 +519,6 @@ export function CreatePoolForm() {
           <SupportedTokensPicker
             value={values.token}
             onChange={handleTokenChange}
-            disabled={isSubmitting}
           />
         </div>
 
@@ -624,7 +531,6 @@ export function CreatePoolForm() {
             token={values.token}
             error={errors.minStake}
             helperText={`Minimum amount per participant.`}
-            disabled={isSubmitting}
           />
           <StakeInput
             id="maxStake"
@@ -634,7 +540,6 @@ export function CreatePoolForm() {
             token={values.token}
             error={errors.maxStake}
             helperText="Maximum amount per participant."
-            disabled={isSubmitting}
           />
         </div>
       </FormSection>
@@ -652,7 +557,6 @@ export function CreatePoolForm() {
           min={minCloseTimeValue()}
           error={errors.closeTime}
           helperText="Must be at least 30 minutes from now."
-          disabled={isSubmitting}
         />
 
         {/* Informational hint */}
@@ -677,7 +581,6 @@ export function CreatePoolForm() {
             onCheckedChange={(checked) =>
               setField("termsAccepted", checked === true)
             }
-            disabled={isSubmitting}
             aria-describedby={
               errors.termsAccepted ? "termsAccepted-error" : undefined
             }
@@ -702,16 +605,6 @@ export function CreatePoolForm() {
         )}
       </div>
 
-      {/* ── Submit error ── */}
-      {submitError && (
-        <div
-          className="rounded-lg border border-red-800 bg-red-900/20 p-4"
-          role="alert"
-        >
-          <p className="text-sm text-red-400 text-center">{submitError}</p>
-        </div>
-      )}
-
       {/* ── Actions ── */}
       <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-2">
         <Button
@@ -719,7 +612,6 @@ export function CreatePoolForm() {
           variant="tertiary"
           size="medium"
           onClick={handleReset}
-          disabled={isSubmitting}
         >
           Reset
         </Button>
@@ -727,12 +619,15 @@ export function CreatePoolForm() {
           type="submit"
           variant="primary"
           size="medium"
-          loading={isSubmitting}
+          disabled
           className="sm:min-w-[160px] bg-[#37B7C3] text-black hover:bg-[#2aa0ac] font-semibold"
         >
-          {isSubmitting ? "Creating Pool…" : "Create Pool"}
+          Create Pool
         </Button>
       </div>
+      <p className="text-center text-sm text-zinc-400" role="status">
+        Pool creation is coming soon. Submissions are not yet available.
+      </p>
     </form>
   );
 }

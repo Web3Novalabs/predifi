@@ -95,7 +95,7 @@ import { ReservedSpace, AspectRatioContainer, SafeDropdown } from "@/lib/cls-uti
 
 ### Level 3: Deep Dive into Implementation (15 min read)
 
-**Read**: `CLS_IMPROVEMENTS.md`
+**Read**: `../docs/frontend/CLS_IMPROVEMENTS.md`
 
 **You'll learn**:
 
@@ -336,7 +336,7 @@ export function MyModal() {
 
 ### I don't understand why something causes CLS
 
-→ Read `CLS_IMPROVEMENTS.md` section "Problem Areas Identified"
+→ Read `../docs/frontend/CLS_IMPROVEMENTS.md` section "Problem Areas Identified"
 
 ### I want to learn CLS deeply
 
@@ -360,7 +360,7 @@ export function MyModal() {
 
 - `CLS_QUICK_REFERENCE.md` — Quick lookup
 - `EXAMPLES_CLS_BEST_PRACTICES.md` — Code examples
-- `CLS_IMPROVEMENTS.md` — Deep technical dive
+- `../docs/frontend/CLS_IMPROVEMENTS.md` — Deep technical dive
 - `frontend/lib/cls-utils.ts` — API reference
 
 ### Measure CLS

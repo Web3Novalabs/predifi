@@ -25,12 +25,12 @@ function readStored(): Theme {
   } catch {
     // ignore
   }
-  return "dark";
+  return "system";
 }
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
-    if (typeof window === "undefined") return "dark";
+    if (typeof window === "undefined") return "system";
     const stored = readStored();
     applyTheme(stored);
     return stored;

@@ -13372,3 +13372,140 @@ fn test_payout_never_exceeds_pool() {
     // Winner should get all of payout pool (3750)
     assert_eq!(winner_payout, 3750);
 }
+
+// ── Issue #1756: price feed staleness bound ──────────────────────────────────
+
+fn setup_price_pool(env: &Env, max_price_age: u64) -> (PredifiContractClient<'_>, u64) {
+    env.mock_all_auths();
+    env.ledger().with_mut(|li| li.timestamp = 1_000);
+
+    let (ac_client, client, token_address, _, _, _, operator, creator) = setup(env);
+    let admin = Address::generate(env);
+    let oracle = Address::generate(env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.add_oracle(&admin, &oracle);
+    client.init_oracle(&admin, &Address::generate(env), &max_price_age, &100u32);
+
+    let pool_id = client.create_pool(
+        &creator,
+        &5_000u64,
+        &token_address,
+        &2u32,
+        &symbol_short!("Finance"),
+        &PoolConfig {
+            start_time: 1_000,
+            description: String::from_str(env, "Staleness"),
+            metadata_url: String::from_str(env, "ipfs://staleness"),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            max_total_stake: 0,
+            min_total_stake: 1,
+            initial_liquidity: 0i128,
+            required_resolutions: 1u32,
+            private: false,
+            whitelist_key: None,
+            outcome_descriptions: soroban_sdk::vec![
+                env,
+                String::from_str(env, "No"),
+                String::from_str(env, "Yes"),
+            ],
+        },
+    );
+
+    let feed_pair = Symbol::new(env, "ETHUSD");
+    client.set_price_condition(&operator, &pool_id, &feed_pair, &1_000i128, &1u32, &100u32);
+    // Price stamped at t=999, valid (expires_at) far beyond any time used below.
+    client.update_price_feed(&oracle, &feed_pair, &1_005i128, &1i128, &999u64, &100_000u64);
+    (client, pool_id)
+}
+
+#[test]
+fn test_max_price_age_getter_reflects_configuration() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = setup(&env);
+    assert_eq!(client.get_max_price_age(), None);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+    client.init_oracle(&admin, &Address::generate(&env), &450u64, &100u32);
+    assert_eq!(client.get_max_price_age(), Some(450));
+}
+
+#[test]
+fn test_resolve_pool_from_price_accepts_fresh_price() {
+    let env = Env::default();
+    let (client, pool_id) = setup_price_pool(&env, 8_000);
+
+    // Resolution time 8_600: price age = 7_601 <= 8_000.
+    env.ledger().with_mut(|li| li.timestamp = 8_600);
+    client.resolve_pool_from_price(&pool_id);
+    assert_eq!(client.get_pool(&pool_id).state, MarketState::Resolved);
+}
+
+#[test]
+fn test_resolve_pool_from_price_rejects_stale_price_with_typed_error() {
+    let env = Env::default();
+    let (client, pool_id) = setup_price_pool(&env, 3_000);
+
+    // Resolution time 8_600: price age = 7_601 > 3_000, though not yet expired.
+    env.ledger().with_mut(|li| li.timestamp = 8_600);
+    let result = client.try_resolve_pool_from_price(&pool_id);
+    assert_eq!(result, Err(Ok(PredifiError::PriceStale)));
+    assert_ne!(client.get_pool(&pool_id).state, MarketState::Resolved);
+}
+
+// ── Issue #1757: fee configuration getter ────────────────────────────────────
+
+#[test]
+fn test_get_fee_config_reflects_configuration_changes() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (ac_client, _client, token_address, _, _, treasury, _, _) = setup(&env);
+    let ac_id = ac_client.address.clone();
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let contract_id = env.register(PredifiContract, ());
+    let c = PredifiContractClient::new(&env, &contract_id);
+    c.init(&ac_id, &treasury, &300u32, &0u64, &3600u64, &0u32);
+    c.add_token_to_whitelist(&admin, &token_address);
+
+    let cfg = c.get_fee_config();
+    assert_eq!(cfg.fee_bps, 300);
+    assert_eq!(cfg.referral_cut_bps, 5000);
+    assert_eq!(cfg.treasury, treasury);
+    assert_eq!(cfg.tiers.len(), 0);
+    assert_eq!(cfg.pending_fee_bps, None);
+    assert_eq!(cfg.pending_fee_effective_at, None);
+    assert_eq!(cfg.fee_change_timelock_seconds, FEE_CHANGE_TIMELOCK_SECONDS);
+
+    // Queue a fee change: visible as pending, base fee unchanged until applied.
+    c.set_fee_bps(&admin, &750u32);
+    let cfg = c.get_fee_config();
+    assert_eq!(cfg.fee_bps, 300);
+    assert_eq!(cfg.pending_fee_bps, Some(750));
+    assert!(cfg.pending_fee_effective_at.is_some());
+
+    // Apply the change, update the referral cut and set tiers.
+    env.ledger()
+        .with_mut(|l| l.timestamp = FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    c.apply_fee_bps(&admin);
+    c.set_referral_cut_bps(&admin, &2000u32);
+    let tiers = soroban_sdk::vec![
+        &env,
+        FeeTier {
+            stake_threshold: 1_000,
+            fee_bps: 100,
+        },
+    ];
+    c.set_fee_tiers(&admin, &tiers);
+
+    let cfg = c.get_fee_config();
+    assert_eq!(cfg.fee_bps, 750);
+    assert_eq!(cfg.referral_cut_bps, 2000);
+    assert_eq!(cfg.tiers, tiers);
+    assert_eq!(cfg.pending_fee_bps, None);
+    assert_eq!(cfg.pending_fee_effective_at, None);
+}

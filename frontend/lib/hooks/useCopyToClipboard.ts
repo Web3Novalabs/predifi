@@ -27,6 +27,8 @@ export interface UseCopyToClipboardReturn {
   copied: boolean;
   /** True while the clipboard write is in-flight. */
   isPending: boolean;
+  /** True for `resetDelay` ms after a failed copy. */
+  error: boolean;
 }
 
 /**
@@ -55,6 +57,7 @@ export function useCopyToClipboard({
 }: CopyToClipboardOptions = {}): UseCopyToClipboardReturn {
   const { addToast } = useToastActions();
   const [copied, setCopied] = useState(false);
+  const [error, setError] = useState(false);
   const [isPending, setIsPending] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -71,6 +74,7 @@ export function useCopyToClipboard({
         if (resetTimer.current) clearTimeout(resetTimer.current);
 
         setCopied(true);
+        setError(false);
         addToast({
           variant: "success",
           title: successTitle,
@@ -83,12 +87,22 @@ export function useCopyToClipboard({
           resetTimer.current = null;
         }, resetDelay);
       } catch {
+        // Clear any existing reset timer so rapid clicks don't conflict
+        if (resetTimer.current) clearTimeout(resetTimer.current);
+
+        setError(true);
+        setCopied(false);
         addToast({
           variant: "error",
           title: errorTitle,
           description: errorDescription,
           duration: 5000,
         });
+
+        resetTimer.current = setTimeout(() => {
+          setError(false);
+          resetTimer.current = null;
+        }, resetDelay);
       } finally {
         setIsPending(false);
       }
@@ -104,5 +118,5 @@ export function useCopyToClipboard({
     ],
   );
 
-  return { copy, copied, isPending };
+  return { copy, copied, error, isPending };
 }

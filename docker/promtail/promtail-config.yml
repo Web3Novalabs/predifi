@@ -27,9 +27,10 @@ scrape_configs:
       - target_label: job
         replacement: predifi
     pipeline_stages:
-      # The backend emits structured JSON via tracing-subscriber
-      # ({"timestamp":..,"level":..,"fields":{"message":..}}). Other services log
-      # free-form text, so parsing is scoped to the backend containers only.
+      # The backend emits flattened structured JSON via tracing-subscriber
+      # ({"timestamp":..,"level":..,"target":..,"message":..,"span":{..}}).
+      # Other services log free-form text, so parsing is scoped to the backend
+      # containers only.
       - match:
           selector: '{service=~"backend|backend-seed"}'
           stages:
@@ -37,11 +38,21 @@ scrape_configs:
                 expressions:
                   level: level
                   timestamp: timestamp
-                  message: fields.message
+                  message: message
+                  target: target
                   span_name: span.name
+                  correlation_id: span.correlation_id
+                  route: 'span."http.route"'
             - labels:
                 level:
                 span_name:
+                target:
+            # Per-request values stay out of the label set (unbounded
+            # cardinality) but remain filterable, e.g.
+            # {service="backend"} | correlation_id="6f1c0e9a-..."
+            - structured_metadata:
+                correlation_id:
+                route:
             - timestamp:
                 source: timestamp
                 format: RFC3339Nano

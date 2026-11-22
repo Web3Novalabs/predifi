@@ -53,10 +53,22 @@ Rate limiting in PrediFi operates on the **token-bucket algorithm**:
 
 ## Client IP & Proxy Handling
 
-The rate limiter identifies clients using `SmartIpKeyExtractor`, which resolves client IPs in the following precedence order:
-1. `X-Forwarded-For` header (first untrusted hop when behind a reverse proxy/load balancer).
+By default the rate limiter identifies clients by the TCP peer socket address
+(`PeerIpKeyExtractor`), because forwarded headers are client-controlled unless a
+trusted proxy overwrites them. The server is started with
+`into_make_service_with_connect_info::<SocketAddr>()` so the peer address is
+available.
+
+Set `PREDIFI_TRUST_PROXY_HEADERS=true` only when the backend is reachable
+exclusively through a reverse proxy or load balancer that **overwrites**
+`X-Forwarded-For`, `X-Real-IP`, and `Forwarded`. In that mode
+`SmartIpKeyExtractor` resolves the client IP in this precedence order:
+1. `X-Forwarded-For` header.
 2. `X-Real-IP` header.
 3. Direct TCP socket address of the incoming connection.
+
+With the default `false`, rotating `X-Forwarded-For` values cannot create fresh
+rate-limit buckets.
 
 ---
 

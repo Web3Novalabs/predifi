@@ -1,5 +1,6 @@
 import React from "react";
 import Image from "next/image";
+import Link from "next/link";
 
 /**
  * Stat
@@ -61,9 +62,12 @@ const HeroSection = React.memo(function HeroSection() {
           your insights.
         </p>
 
-        <button className="mb-6 md:mb-[30px] rounded-full bg-[#37B7C3] px-8 py-3 md:px-[42px] md:py-[15px] text-lg md:text-xl font-semibold text-black transition hover:scale-[1.02] active:scale-[0.98] w-full md:w-auto max-w-[300px] md:max-w-fit">
+        <Link
+          href="/user/pool-market"
+          className="mb-6 md:mb-[30px] rounded-full bg-[#37B7C3] px-8 py-3 md:px-[42px] md:py-[15px] text-lg md:text-xl font-semibold text-black transition hover:scale-[1.02] active:scale-[0.98] w-full md:w-auto max-w-[300px] md:max-w-fit"
+        >
           Explore Pool Market
-        </button>
+        </Link>
 
         <span className="inline-block rounded-full px-[13px] py-2 text-sm md:text-lg/[100%] text-white opacity-80 md:opacity-100">
           Powered by: Stellar

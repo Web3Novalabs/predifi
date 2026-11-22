@@ -7,9 +7,14 @@
 
 import { API_BASE_URL, ApiError } from "@/lib/api/pools";
 
-interface ApiEnvelope<T> {
-  data?: T;
-  [key: string]: unknown;
+/** Type guard to validate tags response shape. */
+function isTagsData(obj: unknown): obj is { tags: string[] } {
+  if (!obj || typeof obj !== "object") return false;
+  const data = obj as Record<string, unknown>;
+  return (
+    Array.isArray(data.tags) &&
+    data.tags.every((tag: unknown) => typeof tag === "string")
+  );
 }
 
 export function tagsUrl(): string {
@@ -23,8 +28,18 @@ export async function fetchTags(url: string): Promise<string[]> {
     throw new ApiError(`Failed to load tags (HTTP ${res.status})`, res.status);
   }
 
-  const body = (await res.json()) as ApiEnvelope<{ tags: string[] }>;
-  return body.data?.tags ?? [];
+  const body = await res.json();
+
+  // Handle both wrapped and unwrapped responses
+  const data =
+    body && typeof body === "object" && "data" in body && body.data ? body.data : body;
+
+  // Validate response shape at boundary
+  if (!isTagsData(data)) {
+    throw new ApiError("Invalid tags response shape", 500);
+  }
+
+  return data.tags;
 }
 
 export async function updatePoolTags(

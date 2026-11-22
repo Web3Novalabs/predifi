@@ -1,0 +1,294 @@
+apiVersion: 1
+
+# Provisioned Grafana alert rules covering core infrastructure and application signals:
+# 1. Error rate (5xx > 1%)
+# 2. Request latency (p99 > 500ms)
+# 3. Worker queue depth (> 50 jobs) and DLQ depth (> 10 jobs)
+# 4. Database connection pool saturation (> 80% warning, > 95% critical)
+groups:
+  - orgId: 1
+    name: predifi_production_alerts
+    folder: PrediFi
+    interval: 1m
+    rules:
+      - uid: high_api_error_rate
+        title: HighApiErrorRate
+        condition: B
+        for: 2m
+        annotations:
+          summary: "API HTTP 5xx error rate exceeded 1%"
+          description: "API HTTP 5xx error rate is currently above 1% over the last 5 minutes."
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: (sum(rate(app_http_requests_total{status=~"5.."}[5m])) / sum(rate(app_http_requests_total[5m]))) * 100
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            queryType: ""
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: B
+              type: threshold
+
+      - uid: high_p99_latency
+        title: HighP99Latency
+        condition: B
+        for: 3m
+        annotations:
+          summary: "API p99 latency is greater than 500ms"
+          description: "The 99th percentile HTTP request latency is > 0.5s over the last 5 minutes."
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: histogram_quantile(0.99, sum(rate(app_http_request_duration_seconds_bucket[5m])) by (le))
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            queryType: ""
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.5
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: B
+              type: threshold
+
+      - uid: worker_queue_backlog
+        title: WorkerQueueBacklog
+        condition: B
+        for: 3m
+        annotations:
+          summary: "Worker queue depth exceeded 50 jobs"
+          description: "Worker queue depth has exceeded 50 jobs, indicating backlog or worker starvation."
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: app_worker_queue_depth
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            queryType: ""
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 50
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: B
+              type: threshold
+
+      - uid: worker_dlq_backlog
+        title: WorkerDLQBacklog
+        condition: B
+        for: 2m
+        annotations:
+          summary: "Worker dead-letter queue (DLQ) backlog exceeded 10 jobs"
+          description: "Worker DLQ contains more than 10 unrecoverable failed jobs."
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: app_worker_dlq_depth
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            queryType: ""
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 10
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: B
+              type: threshold
+
+      - uid: db_pool_saturated
+        title: DatabaseConnectionPoolSaturated
+        condition: B
+        for: 2m
+        annotations:
+          summary: "Database connection pool utilization exceeded 80%"
+          description: "Database connection pool is above 80% capacity (checked out / total slots)."
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: db_pool_utilization_ratio
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            queryType: ""
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.8
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: B
+              type: threshold
+
+      - uid: db_pool_critical
+        title: DatabaseConnectionPoolCritical
+        condition: B
+        for: 1m
+        annotations:
+          summary: "Database connection pool near exhaustion (>95%)"
+          description: "Database connection pool is above 95% capacity, query queue starvation imminent."
+        labels:
+          severity: critical
+        data:
+          - refId: A
+            queryType: ""
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: db_pool_utilization_ratio
+              instant: true
+              range: false
+              refId: A
+          - refId: B
+            queryType: ""
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0.95
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: B
+              type: threshold

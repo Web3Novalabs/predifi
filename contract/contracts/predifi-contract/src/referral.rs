@@ -1,11 +1,42 @@
-//! Referral domain: referrer tracking, referred-volume accounting and the
-//! referral reward configuration.
+//! # Referral Architecture & Incentive Model
+//!
+//! This module manages referral registration, volume accounting, and referrer fee cut configuration.
+//!
+//! ## Referral Model Mechanics
+//!
+//! ### 1. Who Registers a Referrer
+//! - A user registers a referrer when placing their **first prediction** on a market pool via `place_prediction(..., referrer: Option<Address>, ...)`.
+//! - The referrer address is stored in persistent storage under `DataKey::Referrer(user, pool_id)`.
+//! - Alternatively, a user can manage, update, or remove their referrer for a specific pool at any time by calling `update_referrer(env, user, pool_id, new_referrer)`.
+//! - Referrer validation rules: A referrer cannot be the user themselves (`referrer != user`) and cannot be the contract address (`referrer != contract`).
+//!
+//! ### 2. When the Referral Cut is Taken
+//! - The referral cut is **not** deducted at prediction placement time (`place_prediction`).
+//! - Fees are calculated and distributed at **resolution / claim time** when the referred user calls `claim_winnings`.
+//! - When the referred winning user claims payouts:
+//!   1. The total protocol fee is computed from the winning user's payout.
+//!   2. If a referrer is stored for `(user, pool_id)` and any configured referral volume threshold (`set_referral_volume_threshold`) is satisfied by `get_referred_volume`, the referrer's share is calculated.
+//!   3. The referral reward is transferred directly from the contract balance to the referrer's address, and a `ReferralPaidEvent` is emitted.
+//!   4. The remaining protocol fee (`protocol_fee - referral_amount`) goes to the protocol treasury.
+//!
+//! ### 3. How `PREDIFI_REFERRAL_FEE_BPS` / `referral_bps` Relates to it
+//! - `referral_bps` (configured via `set_referral_cut_bps` or `set_referral_rate`) defines the percentage of the **protocol fee** (in basis points, where 10,000 = 100%) that is allocated to the referrer.
+//! - **Formula**:
+//!   ```text
+//!   protocol_fee_total = (user_winnings * pool.fee_bps) / 10_000
+//!   referral_amount    = (protocol_fee_total * referral_bps) / 10_000
+//!   treasury_amount    = protocol_fee_total - referral_amount
+//!   ```
+//! - **Example**: If a winning payout generates a 100 token protocol fee, and `referral_bps` is set to `5000` (50%), the referrer receives 50 tokens and the protocol treasury receives 50 tokens.
 
-use soroban_sdk::{contractimpl, Address, Env};
+use soroban_sdk::{Address, contractevent, contractimpl, contracttype, Env, String};
 
 use crate::{
-    DataKey, PredifiContract, PredifiContractArgs, PredifiContractClient, PredifiError,
-    ReferralThresholdUpdatedEvent, ReferrerUpdatedEvent,
+    DataKey,
+    PredifiContract,
+    PredifiContractArgs,
+    PredifiContractClient,
+    PredifiError,
 };
 
 #[contractimpl]
@@ -169,3 +200,53 @@ impl PredifiContract {
             .unwrap_or(0i128)
     }
 }
+
+// ── Domain types & events (moved from lib.rs, issue #1970) ─────────────────
+
+#[contractevent(topics = ["referral_paid"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralPaidEvent {
+    pub pool_id: u64,
+    pub referrer: Address,
+    pub referred_user: Address,
+    pub amount: i128,
+}
+
+#[contractevent(topics = ["reward_claimed"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RewardClaimedEvent {
+    pub pool_id: u64,
+    pub user: Address,
+    pub amount: i128,
+    pub claim_type: String,
+}
+
+/// Emitted when `update_referrer` successfully changes or removes a referrer
+/// for a (user, pool) pair. Allows off-chain indexers to keep referrer maps
+/// in sync without having to re-scan the full ledger state.
+#[contractevent(topics = ["referrer_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferrerUpdatedEvent {
+    /// The user whose referrer mapping changed.
+    pub user: Address,
+    /// The pool for which the referrer was updated.
+    pub pool_id: u64,
+    /// New referrer address, or `None` if the referrer was removed.
+    pub new_referrer: Option<Address>,
+}
+
+/// Emitted when `set_referral_volume_threshold` changes the minimum referred
+/// volume required for a referrer to qualify for a reward.
+#[contractevent(topics = ["referral_threshold_updated"])]
+#[contracttype(export = false)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReferralThresholdUpdatedEvent {
+    /// The admin that updated the threshold.
+    pub admin: Address,
+    /// The new minimum referred volume (in base token units).
+    pub min_volume: i128,
+}
+

@@ -306,9 +306,9 @@ const styles = useLayoutSafeContainer(
 
 ## 📖 Learn More
 
-- **Full Guide**: [CLS_IMPROVEMENTS.md](../CLS_IMPROVEMENTS.md)
-- **Examples**: [EXAMPLES_CLS_BEST_PRACTICES.md](../EXAMPLES_CLS_BEST_PRACTICES.md)
-- **Tests**: [**tests**/cls.test.ts](__tests__/cls.test.ts)
+- **Full Guide**: [CLS_IMPROVEMENTS.md](../docs/frontend/CLS_IMPROVEMENTS.md)
+- **Examples**: [EXAMPLES_CLS_BEST_PRACTICES.md](EXAMPLES_CLS_BEST_PRACTICES.md)
+- **Tests**: [__tests__/cls.test.tsx](__tests__/cls.test.tsx)
 - **Google Web Vitals**: https://web.dev/vitals/
 - **CLS Debugging**: https://web.dev/cls/
 

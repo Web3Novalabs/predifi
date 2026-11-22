@@ -38,10 +38,10 @@ export const metadata: Metadata = {
     "crypto payment",
   ],
   openGraph: {
-    title: "Predifi- Decentralized prediction protocol built on the Stellar",
+    title: "Predifi - Decentralized prediction protocol built on the Stellar",
     description: SITE_DESCRIPTION,
     url: "https://predifi.app",
-    siteName: "nevo",
+    siteName: "PrediFi",
     images: [
       {
         url: "https://predifi.app/logo.jpeg",
@@ -55,33 +55,10 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Predifi - Decentralized prediction protocol built on the Stellarr",
+    title: "Predifi - Decentralized prediction protocol built on the Stellar",
     description: SITE_DESCRIPTION,
     images: ["https://predifi.app/logo.jpeg"],
     creator: "@nevoapp",
-  },
-
-  icons: {
-    icon: [
-      { url: "/Group 1.svg" },
-      {
-        url: "/Group 1.svg",
-        sizes: "192x192",
-        type: "image/svg+xml",
-      },
-      {
-        url: "/Group 1.svg",
-        sizes: "512x512",
-        type: "image/svg+xml",
-      },
-    ],
-    apple: [
-      {
-        url: "/Group 1.svg",
-        sizes: "180x180",
-        type: "image/svg+xml",
-      },
-    ],
   },
 };
 
@@ -91,8 +68,15 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Apply the persisted theme before paint to avoid a flash of the
+            wrong theme (FOUC). Mirrors the logic in lib/hooks/useTheme.ts. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem("predifi:theme")||"system";var m=window.matchMedia("(prefers-color-scheme: dark)").matches;var d=t==="dark"||(t==="system"&&m);var r=document.documentElement;if(d){r.classList.add("dark");r.setAttribute("data-theme","dark");}else{r.classList.remove("dark");r.setAttribute("data-theme","light");}}catch(e){}})();`,
+          }}
+        />
         {/* Preload critical hero images to improve LCP */}
         <link rel="preload" as="image" href="/swirl-pattern.webp" />
         <link rel="preload" as="image" href="/gradient.webp" />
