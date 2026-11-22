@@ -845,6 +845,23 @@ These endpoints ingest events emitted by the Soroban contract. Access is restric
 
 ### Tags, Notifications & Templates
 
+#### `GET /api/v1/users/{address}/email`
+
+Returns the email opt-in state for a wallet. The public response never contains the full registered address: the local part is masked (e.g. `u***@example.com`). `has_email` indicates whether an email is registered. The full address is only intended for a future authenticated owner-only endpoint.
+
+##### Response (200 OK)
+```json
+{
+  "status": "success",
+  "data": {
+    "address": "GBZXN7PIRZGNMHGA728JAGEL2OC4AHFAXE2XZ2VY5UZWFEXU272K5635",
+    "email": "u***@example.com",
+    "email_enabled": true,
+    "has_email": true
+  }
+}
+```
+
 - `GET /api/v1/tags`: List active searchable pool tags.
 - `PATCH /api/v1/pools/{id}/tags`: Admin-only for now — requires the `x-admin-api-key` header; the `creator` in the body is no longer trusted as proof of identity.
 - `POST /api/v1/pools/{id}/pay-creator-incentive`: Internal only — requires `x-indexer-key` (or the admin key); Write rate-limit tier.

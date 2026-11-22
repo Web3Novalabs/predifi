@@ -424,6 +424,21 @@ pub struct ApiReferralEarningsResponse {
     pub data: ReferralEarningsResponse,
 }
 
+/// Public email preferences. `email` is always masked by the GET endpoint.
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct UserEmailPrefsDoc {
+    pub address: String,
+    pub email: String,
+    pub email_enabled: bool,
+    pub has_email: bool,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
+pub struct ApiUserEmailResponse {
+    pub status: String,
+    pub data: UserEmailPrefsDoc,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct ApiIndexerOkResponse {
     pub status: String,
@@ -502,6 +517,7 @@ pub struct IndexerOkResponse {
         api_get_market_predictions,
         api_get_referrals,
         api_get_user_referral_earnings,
+        api_get_user_email,
         api_ingest_pool_created,
         api_ingest_prediction_placed,
     ),
@@ -526,6 +542,8 @@ pub struct IndexerOkResponse {
         LeaderboardResponse,
         ReferralEarningDoc,
         ReferralEarningsResponse,
+        UserEmailPrefsDoc,
+        ApiUserEmailResponse,
         DependencyStatus,
         HealthErrors,
         ComponentHealthDoc,
@@ -753,6 +771,18 @@ async fn api_get_referrals() {}
     )
 )]
 async fn api_get_user_referral_earnings() {}
+
+#[allow(dead_code)]
+#[utoipa::path(get, path = "/api/v1/users/{address}/email", tag = "users",
+    params(("address" = String, Path, description = "Stellar wallet address (G...)")),
+    responses(
+        (status = 200, description = "Masked email preferences", body = ApiUserEmailResponse),
+        (status = 404, description = "No email registered", body = ErrorResponse),
+        (status = 503, description = "Database unavailable", body = ErrorResponse),
+        (status = 500, description = "Database error", body = ErrorResponse),
+    )
+)]
+async fn api_get_user_email() {}
 
 #[allow(dead_code)]
 #[utoipa::path(post, path = "/api/v1/indexer/pool-created", tag = "indexer",
