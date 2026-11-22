@@ -257,11 +257,19 @@ impl PredifiContract {
         // Price deviation protection: check against previous price to prevent
         // flash loan manipulation. If the new price deviates excessively from
         // the last recorded price, reject the update.
-        if let Some((prev_price, _, _, _)) = env
+        if let Some((prev_price, _, prev_timestamp, _)) = env
             .storage()
             .persistent()
             .get::<DataKey, (i128, i128, u64, u64)>(&feed_key)
         {
+            // Ordering: a delayed or replayed submission must never overwrite a
+            // newer price. The new timestamp has to be strictly after the one
+            // already stored for this feed pair, otherwise resolution could run
+            // against stale data.
+            if timestamp <= prev_timestamp {
+                return Err(PredifiError::InvalidData);
+            }
+
             let (lower, upper) = if prev_price > 0 {
                 let lower = prev_price
                     .checked_div(Self::MAX_PRICE_DEVIATION_MULTIPLIER)
@@ -357,16 +365,19 @@ impl PredifiContract {
 
     /// Load the current price and expiry timestamp for the configured feed.
     ///
-    /// This intentionally preserves the previous missing-feed behavior:
-    /// callers panic with "Feed not found" when the feed has not been updated.
-    fn load_price_feed_for_resolution(env: &Env, feed_pair: Symbol) -> (i128, u64, u64) {
+    /// Returns `PredifiError::PriceFeedNotFound` when the feed has not been
+    /// updated yet, instead of aborting the transaction with a VM panic.
+    fn load_price_feed_for_resolution(
+        env: &Env,
+        feed_pair: Symbol,
+    ) -> Result<(i128, u64, u64), PredifiError> {
         let (price, _confidence, timestamp, expires_at): (i128, i128, u64, u64) = env
             .storage()
             .persistent()
             .get(&DataKey::PriceFeed(feed_pair))
-            .expect("Feed not found");
+            .ok_or(PredifiError::PriceFeedNotFound)?;
 
-        (price, timestamp, expires_at)
+        Ok((price, timestamp, expires_at))
     }
 
     fn require_fresh_price_feed(
@@ -478,7 +489,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
         Self::validate_pool_invariants(&pool);
 
@@ -556,7 +567,8 @@ impl PredifiContract {
 
         let (feed_pair, target_price, comparison_op, tolerance_bps) =
             Self::load_price_resolution_condition(&env, pool_id)?;
-        let (price, timestamp, expires_at) = Self::load_price_feed_for_resolution(&env, feed_pair);
+        let (price, timestamp, expires_at) =
+            Self::load_price_feed_for_resolution(&env, feed_pair)?;
         Self::require_fresh_price_feed(&env, timestamp, expires_at)?;
 
         let outcome =
@@ -588,7 +600,7 @@ impl OracleCallback for PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
         Self::validate_pool_invariants(&pool);
 

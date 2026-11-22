@@ -12,6 +12,8 @@ mod admin;
 mod boundary_edge_case_tests;
 #[cfg(test)]
 mod oracle_edge_case_tests;
+#[cfg(test)]
+mod issues_2018_2019_oracle_tests;
 mod constants;
 mod gas_opt;
 mod oracle;
