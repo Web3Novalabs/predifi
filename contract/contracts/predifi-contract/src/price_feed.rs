@@ -29,18 +29,18 @@
 //! consistency across different asset pairs and oracle providers:
 //!
 //! - **Decimal Places**: Prices are stored as `i128` in the oracle's native decimal format.
-//!    Pyth Network typically uses 8 decimal places for most assets. The contract does NOT
-//!    perform decimal conversion; it assumes all prices in a condition use the same decimal
-//!    precision as the oracle feed.
+//!   Pyth Network typically uses 8 decimal places for most assets. The contract does NOT
+//!   perform decimal conversion; it assumes all prices in a condition use the same decimal
+//!   precision as the oracle feed.
 //!
 //! - **Target Price Alignment**: When setting a `PriceCondition`, the `target_price` must
-//!    be specified in the same decimal format as the oracle feed. For example, if Pyth reports
-//!    BTC at $60,000 as `6000000000000` (8 decimals), the condition's target_price must also
-//!    use 8 decimals.
+//!   be specified in the same decimal format as the oracle feed. For example, if Pyth reports
+//!   BTC at $60,000 as `6000000000000` (8 decimals), the condition's target_price must also
+//!   use 8 decimals.
 //!
 //! - **Confidence Normalization**: The `confidence` field represents the uncertainty range
-//!    (± value) in the same decimal format as the price. The confidence ratio is calculated
-//!    as `(confidence * 10000) / price` to express uncertainty as a percentage in basis points.
+//!   (± value) in the same decimal format as the price. The confidence ratio is calculated
+//!   as `(confidence * 10000) / price` to express uncertainty as a percentage in basis points.
 //!
 //! # Staleness Checks
 //!
@@ -112,7 +112,7 @@
 //!    - Current time <= `feed.expires_at`
 //!    - Current time <= `feed.timestamp + config.max_price_age`
 //!    - `confidence_ratio <= config.min_confidence_ratio`
-//!    If any check fails, resolution fails with `ResolutionDelayNotMet`.
+//!      If any check fails, resolution fails with `ResolutionDelayNotMet`.
 //!
 //! 5. **Condition Evaluation**: `evaluate_price_condition` calculates the tolerance amount
 //!    and evaluates the condition based on the operator:

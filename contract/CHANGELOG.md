@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `update_price_feed` now rejects an update whose `timestamp` is not strictly newer than the one
+  already stored for the same `feed_pair` (`PredifiError::InvalidData`), so a delayed or replayed
+  submission can no longer overwrite a newer price (#2018).
+- `oracle_resolve` and `resolve_pool_from_price` return `PoolNotFound` / `PriceFeedNotFound`
+  instead of aborting with a VM panic when the pool or feed does not exist; no error codes changed
+  (#2019).
+- Re-indented the module docs in `price_feed.rs` so Clippy's `doc_overindented_list_items` and
+  `doc_lazy_continuation` lints pass (#2015).
+
 ### Added
 - Pool creator incentive system (#1933): `claim_creator_incentive` pays a
   pool's creator a configurable share (`set_creator_incentive_bps`) of that
