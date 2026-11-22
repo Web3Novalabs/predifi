@@ -175,6 +175,25 @@ pub const DEFAULT_PREDICTION_COOLDOWN_SECONDS: u64 = 0;
 /// **Used for:** Validating `options_count` during pool creation (via `InvalidData` error).
 pub const MAX_OPTIONS_COUNT: u32 = 100;
 
+/// Maximum number of dynamic fee tiers accepted by `set_fee_tiers`.
+///
+/// **Units:** Count (dimensionless)
+/// **Value:** 10 tiers
+///
+/// **Rationale:** Fee tiers are stored as a single persistent vector and are
+/// iterated whenever a pool's effective fee is computed. Capping the list keeps
+/// storage size, read costs and per-claim CPU instructions bounded and prevents
+/// an admin mistake (or compromised key) from bricking fee calculation with an
+/// oversized vector. Ten tiers is far more granularity than the protocol needs.
+///
+/// **Impact of changes:**
+/// - Increasing this value allows finer-grained fee schedules at the cost of
+///   higher storage and computation per fee lookup.
+/// - Decreasing it reduces costs but limits fee schedule flexibility.
+///
+/// **Used for:** Validating `tiers.len()` in `set_fee_tiers` (via `InvalidData` error).
+pub const MAX_FEE_TIERS: u32 = 10;
+
 /// Maximum initial liquidity that can be provided (100M tokens at 7 decimals).
 ///
 /// **Units:** Token base units. For native XLM, these are stroops; for issued

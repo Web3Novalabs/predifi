@@ -50,8 +50,17 @@
 //   grants it the Admin role (0).  Calling `init` a second time will panic
 //   with `AlreadyInitializedOrConfigNotSet`.
 //
-//   Example (Stellar CLI):
+//   `init` calls `admin.require_auth()`, so the invocation MUST be signed
+//   (authorised) by `admin_address`.  A third party can therefore no longer
+//   initialise the contract with an arbitrary admin.  To close the window
+//   between deployment and initialisation entirely, deploy and call `init`
+//   atomically in the same transaction (e.g. from a deployer/factory
+//   contract), or invoke `init` immediately after deployment and verify
+//   `get_admin()` before wiring the contract into the protocol.
+//
+//   Example (Stellar CLI — the source account must be the admin):
 //     stellar contract invoke --id <ACCESS_CONTROL_ID> \
+//       --source <ADMIN_IDENTITY> \
 //       -- init --admin <ADMIN_ADDRESS>
 //
 // Step 3 — Grant operational roles.
@@ -322,16 +331,24 @@ impl AccessControl {
     /// It stores `admin` as the sole administrator and automatically grants it
     /// the `Admin` role (discriminant 0).
     ///
+    /// # Authorization
+    /// Calls `admin.require_auth()`: the `admin` address must sign (authorise)
+    /// this invocation. Deploy and initialise atomically in the same
+    /// transaction, or call `init` immediately after deployment.
+    ///
     /// # Panics
-    /// Panics with `AlreadyInitializedOrConfigNotSet` if called a second time.
+    /// Panics with `AlreadyInitializedOrConfigNotSet` if called a second time,
+    /// and fails with an auth error if `admin` has not authorised the call.
     ///
     /// # Bootstrap sequence
     /// 1. Deploy this contract and note its address.
-    /// 2. Call `init(admin_address)` — the admin role is set automatically.
+    /// 2. Call `init(admin_address)` signed by `admin_address` — the admin role
+    ///    is set automatically.
     /// 3. Use `assign_role` to grant `Operator` / `Oracle` roles as needed.
     /// 4. Pass this contract's address to `predifi_contract::init` as the
     ///    `access_control` argument so the main contract can verify permissions.
     pub fn init(env: &Env, admin: Address) {
+        admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
             soroban_sdk::panic_with_error!(&env, PrediFiError::AlreadyInitializedOrConfigNotSet);
         }
