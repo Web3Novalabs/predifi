@@ -82,7 +82,7 @@ reads environment variables into a typed `Config` struct.
 | `APP_PORT`                | `3000`                                                | HTTP port                      |
 | `RUST_LOG`                | `info`                                                | Tracing filter; per-module directives allowed, e.g. `info,predifi_backend::ws=debug` |
 | `PREDIFI_LOG_FORMAT`      | `json`                                                | `json` or `pretty` (compact, for local dev) |
-| `PREDIFI_LISTENER_START_LEDGER` | (unset)                                        | Initial retained ledger for a fresh listener database; otherwise starts 100 ledgers behind the RPC tip. Stored cursor takes precedence. |
+| `PREDIFI_CONTRACT_ID`     | (unset)                                               | PrediFi Stellar contract to filter and ingest; required in production. |
 | `DATABASE_URL`            | `postgres://postgres:postgres@localhost:5432/predifi` | PostgreSQL DSN                 |
 | `DB_MAX_CONNECTIONS`      | `10`                                                  | SQLx pool max connections      |
 | `DB_MIN_CONNECTIONS`      | `1`                                                   | SQLx pool min connections      |
