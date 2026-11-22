@@ -12,3 +12,6 @@ README_CLS_IMPLEMENTATION.md
 
 # Kiro IDE workspace metadata
 .kiro/
+
+# Backend build logs
+backend/*.txt
