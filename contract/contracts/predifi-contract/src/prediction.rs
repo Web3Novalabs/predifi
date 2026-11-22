@@ -959,11 +959,9 @@ impl PredifiContract {
 
         // Validate referrer if provided: cannot be self or contract
         if let Some(ref r) = referrer {
-            assert!(r != &user, "referrer cannot be self");
-            assert!(
-                r != &env.current_contract_address(),
-                "referrer cannot be contract"
-            );
+            if r == &user || r == &env.current_contract_address() {
+                soroban_sdk::panic_with_error!(&env, PredifiError::Unauthorized);
+            }
         }
 
         if let Some(ref invite_key) = invite_key {
@@ -979,13 +977,14 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
-        // assert!(pool.state == MarketState::Active, "Pool is not active");
         if !Self::is_pool_active(&pool) {
-            panic!("Pool is not active");
+            soroban_sdk::panic_with_error!(&env, PredifiError::InvalidPoolState);
         }
-        assert!(env.ledger().timestamp() < pool.end_time, "Pool has ended");
+        if env.ledger().timestamp() >= pool.end_time {
+            soroban_sdk::panic_with_error!(&env, PredifiError::PoolExpiryError);
+        }
 
         // Validate: token must be on the allowed betting whitelist
         if !Self::is_token_whitelisted(&env, &pool.token) {
@@ -1044,7 +1043,10 @@ impl PredifiContract {
 
         // Enforce global pool cap (max total stake)
         if pool.max_total_stake > 0 {
-            let new_total = pool.total_stake.checked_add(amount).expect("overflow");
+            let new_total = pool
+                .total_stake
+                .checked_add(amount)
+                .ok_or(PredifiError::ArithmeticError)?;
             if new_total > pool.max_total_stake {
                 Self::exit_reentrancy_guard(&env);
                 soroban_sdk::panic_with_error!(&env, PredifiError::MaxTotalStakeExceeded);

@@ -51,10 +51,9 @@ impl PredifiContract {
         Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_referral_cut_bps")?;
-        assert!(
-            referral_cut_bps <= 10_000,
-            "referral_cut_bps must be at most 10000"
-        );
+        if referral_cut_bps > 10_000 {
+            return Err(PredifiError::InvalidFeeBps);
+        }
         let mut config = Self::get_config(&env);
         config.referral_bps = referral_cut_bps;
         env.storage().instance().set(&DataKey::Config, &config);
