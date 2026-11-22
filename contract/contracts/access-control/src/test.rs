@@ -7,6 +7,7 @@ use soroban_sdk::{Address, Env};
 #[test]
 fn test_initialization() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 
@@ -17,8 +18,53 @@ fn test_initialization() {
 }
 
 #[test]
+fn test_init_requires_admin_auth() {
+    // Deliberately does NOT call `env.mock_all_auths()`: `init` must fail
+    // when `admin` has not authorised the invocation.
+    let env = Env::default();
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let result = client.try_init(&admin);
+    assert!(result.is_err(), "init must fail without admin authorization");
+    assert!(
+        client.try_get_admin().is_err(),
+        "no admin should be persisted after a failed init"
+    );
+}
+
+#[test]
+fn test_init_rejects_auth_from_non_admin() {
+    use soroban_sdk::testutils::{MockAuth, MockAuthInvoke};
+    use soroban_sdk::IntoVal;
+
+    let env = Env::default();
+    let contract_id = env.register(AccessControl, ());
+    let client = AccessControlClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let attacker = Address::generate(&env);
+
+    // Only `attacker` authorises; `admin` never signs.
+    let result = client
+        .mock_auths(&[MockAuth {
+            address: &attacker,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "init",
+                args: (admin.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_init(&admin);
+    assert!(result.is_err(), "init must fail when signed by a non-admin");
+}
+
+#[test]
 fn test_double_initialization() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(AccessControl, ());
     let client = AccessControlClient::new(&env, &contract_id);
 

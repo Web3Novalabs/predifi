@@ -1363,5 +1363,7 @@ mod place_prediction_boundary_tests;
 #[cfg(test)]
 mod issues_1880_1886_1887_1888_boundary_tests;
 #[cfg(test)]
+mod pool_not_found_and_getters_tests;
+#[cfg(test)]
 mod test;
 

@@ -23,7 +23,7 @@ PrediFi protocol. It is deployed separately and its address is passed to
 ### Bootstrap sequence
 
 1. Deploy the access-control contract (no constructor arguments).
-2. Call `init(admin_address)` — stores the admin and auto-grants the Admin role (0).
+2. Call `init(admin_address)`, signed by `admin_address`. It stores the admin and auto-grants the Admin role (0). Deploy and init atomically in the same transaction, or call `init` immediately after deployment.
 3. Call `assign_role` to grant Operator / Oracle roles as needed.
 4. Pass the contract address to `predifi_contract::init` as `access_control`.
 
@@ -36,6 +36,8 @@ pub fn init(env: &Env, admin: Address)
 ```
 
 Initialises the contract and sets the first administrator. Can only be called once; a second call panics with `AlreadyInitializedOrConfigNotSet`.
+
+**Authorization:** calls `admin.require_auth()`, so `admin` must sign the invocation. If it hasn't, `init` fails and nothing is stored. See the [deployment guide](./SMART_CONTRACT_DEPLOYMENT_GUIDE.md) for timing recommendations.
 
 ---
 
@@ -444,6 +446,59 @@ let predictions = contract.get_user_predictions(
     10  // limit
 );
 ```
+
+---
+
+### Pool getters
+
+Read-only getters that load a single pool by ID:
+
+```rust
+pub fn get_pool(env: Env, pool_id: u64) -> Pool
+pub fn get_pool_config(env: Env, pool_id: u64) -> PoolConfig
+pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128>
+pub fn get_pool_participants_count(env: Env, pool_id: u64) -> u32
+pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats
+```
+
+> **Panics on unknown IDs.** Each of these getters panics with `"Pool not found"` if no pool exists for `pool_id`. Use one of the non-panicking alternatives below when the ID may not exist.
+
+#### `find_pool`
+
+```rust
+pub fn find_pool(env: Env, pool_id: u64) -> Option<Pool>
+```
+
+Non-panicking version of `get_pool`. Returns `Some(pool)` if the pool exists and `None` otherwise. It extends the pool's storage TTL only when the pool exists.
+
+> This entry point is called `find_pool` rather than `try_get_pool` because the Soroban-generated client already uses `try_get_pool` as the fallible wrapper for `get_pool`. Inside the contract crate, the same lookup is available as the Rust helper `PredifiContract::try_get_pool(&env, pool_id) -> Option<Pool>`.
+
+#### `pool_exists`
+
+```rust
+pub fn pool_exists(env: Env, pool_id: u64) -> bool
+```
+
+Returns whether a pool exists for `pool_id`. Never panics and doesn't load the pool data.
+
+**Example:**
+
+```rust
+if let Some(pool) = client.find_pool(&pool_id) {
+    // pool exists
+}
+if client.pool_exists(&pool_id) {
+    let stats = client.get_pool_stats(&pool_id); // safe: will not panic
+}
+```
+
+### Pool management entry points: `PoolNotFound`
+
+The following state-changing entry points return `Err(PredifiError::PoolNotFound)` instead of panicking when `pool_id` doesn't exist:
+
+`increase_max_total_stake`, `update_pool_description`, `resolve_pool`, `mark_pool_ready`, `cancel_pool`, `set_stake_limits`, `flag_disputed_pool`.
+
+Role and auth checks that run before the pool is loaded still take precedence. For example, `resolve_pool` returns `Unauthorized` before `PoolNotFound` if the caller lacks the Operator role.
 
 ---
 

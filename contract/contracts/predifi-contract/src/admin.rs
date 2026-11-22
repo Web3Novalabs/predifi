@@ -119,6 +119,7 @@ use crate::{
     DEFAULT_PREDICTION_COOLDOWN_SECONDS,
     FEE_CHANGE_TIMELOCK_SECONDS,
     MAX_CLAIM_WINDOW,
+    MAX_FEE_TIERS,
     MAX_RESOLUTION_DELAY,
     MIN_CLAIM_WINDOW,
 };
@@ -1275,6 +1276,17 @@ impl PredifiContract {
         Ok(results)
     }
 
+    /// Set the dynamic fee tiers (Admin only).
+    ///
+    /// # Validation
+    /// - `tiers.len()` must not exceed [`MAX_FEE_TIERS`]; otherwise
+    ///   `PredifiError::InvalidData` is returned.
+    /// - Tiers must be sorted by strictly increasing `stake_threshold`
+    ///   (no duplicates); otherwise `PredifiError::InvalidData` is returned.
+    /// - Each tier's `fee_bps` must be `<= 10_000`; otherwise
+    ///   `PredifiError::InvalidFeeBps` is returned.
+    ///
+    /// An empty vector is valid and clears all tiers.
     pub fn set_fee_tiers(
         env: Env,
         admin: Address,
@@ -1284,19 +1296,21 @@ impl PredifiContract {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_fee_tiers")?;
 
-        for i in 0..tiers.len() {
-            if let Some(tier) = tiers.get(i) {
-                if tier.fee_bps > 10_000 {
-                    return Err(PredifiError::InvalidFeeBps);
-                }
-                if i > 0 {
-                    if let Some(prev) = tiers.get(i - 1) {
-                        if tier.stake_threshold <= prev.stake_threshold {
-                            return Err(PredifiError::InvalidFeeBps);
-                        }
-                    }
+        if tiers.len() > MAX_FEE_TIERS {
+            return Err(PredifiError::InvalidData);
+        }
+
+        let mut prev_threshold: Option<i128> = None;
+        for tier in tiers.iter() {
+            if tier.fee_bps > 10_000 {
+                return Err(PredifiError::InvalidFeeBps);
+            }
+            if let Some(prev) = prev_threshold {
+                if tier.stake_threshold <= prev {
+                    return Err(PredifiError::InvalidData);
                 }
             }
+            prev_threshold = Some(tier.stake_threshold);
         }
 
         env.storage().persistent().set(&DataKey::FeeTiers, &tiers);
