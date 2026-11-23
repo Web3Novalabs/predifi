@@ -697,6 +697,74 @@ pub async fn get_user_predictions(
     }
 }
 
+/// Build the JSON payload for a global leaderboard request.
+///
+/// Shared by [`get_leaderboard`] and the cache warmer
+/// ([`crate::cache_warmer`]) so a warmed entry is byte-for-byte what a real
+/// request would have cached (#2205).
+pub(crate) async fn build_leaderboard_payload(
+    db: &sqlx::PgPool,
+    rank_by: &str,
+    period: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<serde_json::Value, sqlx::Error> {
+    match rank_by {
+        "winnings" => crate::db::get_users_by_winnings(db, limit, offset)
+            .await
+            .map(|users| {
+                json!({
+                    "leaderboard": users,
+                    "rank_by": "winnings",
+                    "period": "all",
+                    "limit": limit,
+                    "offset": offset,
+                })
+            }),
+        "win_rate" | "streak" => {
+            crate::db::get_leaderboard_extended(db, rank_by, period, None, limit, offset)
+                .await
+                .map(|entries| {
+                    json!({
+                        "leaderboard": entries,
+                        "rank_by": rank_by,
+                        "period": period,
+                        "limit": limit,
+                        "offset": offset,
+                    })
+                })
+        }
+        _ if period != "all" => {
+            // Volume ranking scoped to a time window.
+            crate::db::get_leaderboard_extended(db, "volume", period, None, limit, offset)
+                .await
+                .map(|entries| {
+                    json!({
+                        "leaderboard": entries,
+                        "rank_by": "volume",
+                        "period": period,
+                        "limit": limit,
+                        "offset": offset,
+                    })
+                })
+        }
+        _ => {
+            // Default: all-time volume ranking (unchanged legacy behavior).
+            crate::db::get_users_by_betting_volume(db, limit, offset)
+                .await
+                .map(|users| {
+                    json!({
+                        "leaderboard": users,
+                        "rank_by": "volume",
+                        "period": "all",
+                        "limit": limit,
+                        "offset": offset,
+                    })
+                })
+        }
+    }
+}
+
 /// Query parameters for the `GET /api/v1/leaderboard` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct LeaderboardQuery {
@@ -738,71 +806,39 @@ pub async fn get_leaderboard(
         .into_response();
     };
 
-    match rank_by {
-        "winnings" => match crate::db::get_users_by_winnings(db, limit, offset).await {
-            Ok(users) => {
-                let response = json!({
-                    "leaderboard": users,
-                    "rank_by": "winnings",
-                    "period": "all",
-                    "limit": limit,
-                    "offset": offset,
-                });
-                ApiResponse::success(response).into_response()
-            }
-            Err(e) => internal_error_response(e),
-        },
-        "win_rate" | "streak" => {
-            match crate::db::get_leaderboard_extended(db, rank_by, period, None, limit, offset)
-                .await
-            {
-                Ok(entries) => {
-                    let response = json!({
-                        "leaderboard": entries,
-                        "rank_by": rank_by,
-                        "period": period,
-                        "limit": limit,
-                        "offset": offset,
-                    });
-                    ApiResponse::success(response).into_response()
-                }
-                Err(e) => internal_error_response(e),
-            }
+    // Cache-aside (#2205): leaderboards are `GROUP BY` aggregates over every
+    // prediction and are requested on every leaderboard / dashboard view.
+    // `winnings` ignores `period`, so normalise it to keep one entry per ranking.
+    // Only canonical parameter values are cached so a client cannot create an
+    // unbounded number of Redis keys by varying `rank_by` / `period`.
+    let effective_period = if rank_by == "winnings" { "all" } else { period };
+    let cacheable = matches!(rank_by, "volume" | "winnings" | "win_rate" | "streak")
+        && matches!(effective_period, "all" | "week" | "month");
+    let cache_key =
+        crate::redis_cache::leaderboard_cache_key(rank_by, effective_period, limit, offset);
+    if cacheable {
+        if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+            return ApiResponse::success(cached).into_response();
         }
-        _ if period != "all" => {
-            // Volume ranking scoped to a time window.
-            match crate::db::get_leaderboard_extended(db, "volume", period, None, limit, offset)
-                .await
-            {
-                Ok(entries) => {
-                    let response = json!({
-                        "leaderboard": entries,
-                        "rank_by": "volume",
-                        "period": period,
-                        "limit": limit,
-                        "offset": offset,
-                    });
-                    ApiResponse::success(response).into_response()
-                }
-                Err(e) => internal_error_response(e),
+    }
+
+    let result = build_leaderboard_payload(db, rank_by, period, limit, offset).await;
+
+    match result {
+        Ok(response) => {
+            if cacheable {
+                state
+                    .redis
+                    .set(
+                        &cache_key,
+                        &response,
+                        crate::redis_cache::LEADERBOARD_CACHE_TTL,
+                    )
+                    .await;
             }
+            ApiResponse::success(response).into_response()
         }
-        _ => {
-            // Default: all-time volume ranking (unchanged legacy behavior).
-            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
-                Ok(users) => {
-                    let response = json!({
-                        "leaderboard": users,
-                        "rank_by": "volume",
-                        "period": "all",
-                        "limit": limit,
-                        "offset": offset,
-                    });
-                    ApiResponse::success(response).into_response()
-                }
-                Err(e) => internal_error_response(e),
-            }
-        }
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -843,6 +879,16 @@ pub async fn get_pool_leaderboard(
         .into_response();
     };
 
+    // Only canonical `rank_by` values are cached (bounds the Redis keyspace).
+    let cacheable = matches!(rank_by, "volume" | "win_rate" | "streak");
+    let cache_key =
+        crate::redis_cache::pool_leaderboard_cache_key(pool_id, rank_by, limit, offset);
+    if cacheable {
+        if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+            return ApiResponse::success(cached).into_response();
+        }
+    }
+
     match crate::db::get_leaderboard_extended(db, rank_by, "all", Some(pool_id), limit, offset)
         .await
     {
@@ -854,6 +900,16 @@ pub async fn get_pool_leaderboard(
                 "limit": limit,
                 "offset": offset,
             });
+            if cacheable {
+                state
+                    .redis
+                    .set(
+                        &cache_key,
+                        &response,
+                        crate::redis_cache::POOL_LEADERBOARD_CACHE_TTL,
+                    )
+                    .await;
+            }
             ApiResponse::success(response).into_response()
         }
         Err(e) => internal_error_response(e),
@@ -1068,6 +1124,7 @@ pub async fn ingest_prediction_placed(
                 "amount": event.amount,
             }));
             state.redis.invalidate_stats_cache().await;
+            state.redis.invalidate_leaderboard_cache().await;
             state
                 .redis
                 .invalidate_user_predictions_cache(&event.user_address)
@@ -1584,8 +1641,20 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
         .into_response();
     };
 
+    let cache_key = crate::redis_cache::tags_cache_key();
+    if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+        return ApiResponse::success(cached).into_response();
+    }
+
     match crate::tags::list_distinct_tags(db).await {
-        Ok(tags) => ApiResponse::success(json!({ "tags": tags })).into_response(),
+        Ok(tags) => {
+            let response = json!({ "tags": tags });
+            state
+                .redis
+                .set(&cache_key, &response, crate::redis_cache::TAGS_CACHE_TTL)
+                .await;
+            ApiResponse::success(response).into_response()
+        }
         Err(e) => internal_error_response(e),
     }
 }
@@ -1635,6 +1704,7 @@ pub async fn update_pool_tags_handler(
         Ok(true) => {
             state.pool_cache.invalidate(pool_id);
             state.redis.invalidate_pools_cache().await;
+            state.redis.invalidate_tags_cache().await;
             ApiResponse::success(json!({ "pool_id": pool_id, "tags": body.tags })).into_response()
         }
         Ok(false) => ApiResponse::<()>::error(
@@ -1694,6 +1764,10 @@ pub async fn ingest_claim_handler(
     .await
     {
         Ok(rows) => {
+            if rows > 0 {
+                // Claims change the winnings ranking.
+                state.redis.invalidate_leaderboard_cache().await;
+            }
             ApiResponse::success(json!({ "status": "ok", "rows_updated": rows })).into_response()
         }
         Err(e) => internal_error_response(e),

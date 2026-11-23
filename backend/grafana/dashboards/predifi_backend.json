@@ -1215,12 +1215,59 @@
       ]
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "ops"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 70
+      },
+      "id": 224,
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "title": "Cache Warming Attempts",
+      "description": "Proactive cache-warm attempts per cache_name and result (ok / error) from app_redis_cache_warm_total. Errors mean the warmer's database query failed and that entry will be populated lazily instead.",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(rate(app_redis_cache_warm_total{instance=~\"$instance\"}[5m])) by (cache_name, result)",
+          "legendFormat": "{{cache_name}} / {{result}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 70
+        "y": 78
       },
       "id": 200,
       "panels": [],
@@ -1246,7 +1293,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 71
+        "y": 79
       },
       "id": 201,
       "options": {
@@ -1295,7 +1342,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 71
+        "y": 79
       },
       "id": 202,
       "options": {
@@ -1331,7 +1378,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 79
+        "y": 87
       },
       "id": 210,
       "panels": [],
@@ -1357,7 +1404,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 80
+        "y": 88
       },
       "id": 211,
       "options": {
@@ -1406,7 +1453,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 80
+        "y": 88
       },
       "id": 212,
       "options": {
@@ -1455,7 +1502,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 80
+        "y": 88
       },
       "id": 213,
       "options": {
@@ -1504,7 +1551,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 88
+        "y": 96
       },
       "id": 214,
       "options": {
@@ -1571,7 +1618,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 88
+        "y": 96
       },
       "id": 215,
       "options": {
@@ -1627,7 +1674,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 88
+        "y": 96
       },
       "id": 216,
       "options": {
@@ -1661,7 +1708,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 96
+        "y": 104
       },
       "id": 220,
       "panels": [],
@@ -1687,7 +1734,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 97
+        "y": 105
       },
       "id": 221,
       "options": {
@@ -1736,7 +1783,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 97
+        "y": 105
       },
       "id": 222,
       "options": {
@@ -1803,7 +1850,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 105
+        "y": 113
       },
       "id": 223,
       "options": {
