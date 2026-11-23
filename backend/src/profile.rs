@@ -43,29 +43,32 @@ struct ProfileStatsRow {
 
 /// Fetch aggregate prediction stats (wins/losses/earnings/active positions) for `address`.
 pub async fn get_profile_stats(pool: &PgPool, address: &str) -> Result<ProfileStats, sqlx::Error> {
-    let row = sqlx::query_as::<_, ProfileStatsRow>(
-        r#"
-        SELECT
-            COUNT(*)::BIGINT AS total_predictions,
-            COUNT(*) FILTER (
-                WHERE pl.state = 'settled' AND pl.result IS NOT NULL
-                  AND pl.result ~ '^\d+$' AND pl.result::int = p.outcome
-            )::BIGINT AS wins,
-            COUNT(*) FILTER (
-                WHERE pl.state = 'settled' AND pl.result IS NOT NULL
-                  AND pl.result ~ '^\d+$' AND pl.result::int <> p.outcome
-            )::BIGINT AS losses,
-            COUNT(*) FILTER (WHERE pl.state <> 'settled')::BIGINT AS pending,
-            COALESCE(SUM(p.amount), 0)::BIGINT AS total_staked,
-            COALESCE(SUM(p.claimed_amount) FILTER (WHERE p.claimed), 0)::BIGINT AS total_earnings,
-            COUNT(DISTINCT p.pool_id) FILTER (WHERE pl.state = 'active')::BIGINT AS active_positions
-        FROM predictions p
-        JOIN pools pl ON pl.pool_id = p.pool_id
-        WHERE p.user_address = $1
-        "#,
+    let row = crate::metrics::observe_db(
+        "get_profile_stats",
+        sqlx::query_as::<_, ProfileStatsRow>(
+            r#"
+            SELECT
+                COUNT(*)::BIGINT AS total_predictions,
+                COUNT(*) FILTER (
+                    WHERE pl.state = 'settled' AND pl.result IS NOT NULL
+                      AND pl.result ~ '^\d+$' AND pl.result::int = p.outcome
+                )::BIGINT AS wins,
+                COUNT(*) FILTER (
+                    WHERE pl.state = 'settled' AND pl.result IS NOT NULL
+                      AND pl.result ~ '^\d+$' AND pl.result::int <> p.outcome
+                )::BIGINT AS losses,
+                COUNT(*) FILTER (WHERE pl.state <> 'settled')::BIGINT AS pending,
+                COALESCE(SUM(p.amount), 0)::BIGINT AS total_staked,
+                COALESCE(SUM(p.claimed_amount) FILTER (WHERE p.claimed), 0)::BIGINT AS total_earnings,
+                COUNT(DISTINCT p.pool_id) FILTER (WHERE pl.state = 'active')::BIGINT AS active_positions
+            FROM predictions p
+            JOIN pools pl ON pl.pool_id = p.pool_id
+            WHERE p.user_address = $1
+            "#,
+        )
+        .bind(address)
+        .fetch_one(pool),
     )
-    .bind(address)
-    .fetch_one(pool)
     .await?;
 
     let settled = row.wins + row.losses;
@@ -121,37 +124,40 @@ pub async fn get_user_claim_status(
     pool: &PgPool,
     address: &str,
 ) -> Result<Vec<ClaimStatusRow>, sqlx::Error> {
-    sqlx::query_as::<_, ClaimStatusRow>(
-        r#"
-        SELECT
-            p.id AS prediction_id,
-            p.pool_id,
-            pl.name AS pool_name,
-            p.outcome,
-            p.amount,
-            pl.state AS pool_state,
-            pl.result AS pool_result,
-            CASE
-                WHEN pl.result IS NOT NULL AND pl.result ~ '^\d+$'
-                THEN pl.result::int = p.outcome
-                ELSE NULL
-            END AS is_winner,
-            p.claimed,
-            p.claimed_amount::BIGINT AS claimed_amount,
-            (pl.resolved_at + (pl.claim_window_seconds || ' seconds')::interval) AS claim_window_expires_at,
-            COALESCE(
-                pl.resolved_at IS NOT NULL
-                    AND pl.resolved_at + (pl.claim_window_seconds || ' seconds')::interval < NOW(),
-                FALSE
-            ) AS claim_expired
-        FROM predictions p
-        JOIN pools pl ON pl.pool_id = p.pool_id
-        WHERE p.user_address = $1
-        ORDER BY p.created_at DESC
-        "#,
+    crate::metrics::observe_db(
+        "get_user_claim_status",
+        sqlx::query_as::<_, ClaimStatusRow>(
+            r#"
+            SELECT
+                p.id AS prediction_id,
+                p.pool_id,
+                pl.name AS pool_name,
+                p.outcome,
+                p.amount,
+                pl.state AS pool_state,
+                pl.result AS pool_result,
+                CASE
+                    WHEN pl.result IS NOT NULL AND pl.result ~ '^\d+$'
+                    THEN pl.result::int = p.outcome
+                    ELSE NULL
+                END AS is_winner,
+                p.claimed,
+                p.claimed_amount::BIGINT AS claimed_amount,
+                (pl.resolved_at + (pl.claim_window_seconds || ' seconds')::interval) AS claim_window_expires_at,
+                COALESCE(
+                    pl.resolved_at IS NOT NULL
+                        AND pl.resolved_at + (pl.claim_window_seconds || ' seconds')::interval < NOW(),
+                    FALSE
+                ) AS claim_expired
+            FROM predictions p
+            JOIN pools pl ON pl.pool_id = p.pool_id
+            WHERE p.user_address = $1
+            ORDER BY p.created_at DESC
+            "#,
+        )
+        .bind(address)
+        .fetch_all(pool),
     )
-    .bind(address)
-    .fetch_all(pool)
     .await
 }
 
@@ -174,21 +180,24 @@ pub async fn get_performance_over_time(
     pool: &PgPool,
     address: &str,
 ) -> Result<Vec<PerformancePoint>, sqlx::Error> {
-    sqlx::query_as::<_, PerformancePoint>(
-        r#"
-        SELECT
-            date_trunc('day', p.created_at) AS day,
-            COALESCE(SUM(p.amount), 0)::BIGINT AS staked,
-            COALESCE(SUM(p.claimed_amount) FILTER (WHERE p.claimed), 0)::BIGINT AS earnings,
-            COUNT(*)::BIGINT AS predictions
-        FROM predictions p
-        WHERE p.user_address = $1
-        GROUP BY 1
-        ORDER BY 1
-        "#,
+    crate::metrics::observe_db(
+        "get_performance_over_time",
+        sqlx::query_as::<_, PerformancePoint>(
+            r#"
+            SELECT
+                date_trunc('day', p.created_at) AS day,
+                COALESCE(SUM(p.amount), 0)::BIGINT AS staked,
+                COALESCE(SUM(p.claimed_amount) FILTER (WHERE p.claimed), 0)::BIGINT AS earnings,
+                COUNT(*)::BIGINT AS predictions
+            FROM predictions p
+            WHERE p.user_address = $1
+            GROUP BY 1
+            ORDER BY 1
+            "#,
+        )
+        .bind(address)
+        .fetch_all(pool),
     )
-    .bind(address)
-    .fetch_all(pool)
     .await
 }
 

@@ -83,15 +83,18 @@ pub async fn list_pools(
         "#
     );
 
-    sqlx::query_as::<_, PoolListingRow>(&sql)
-        .bind(valid_status)
-        .bind(category)
-        .bind(tags)
-        .bind(limit)
-        .bind(offset)
-        .bind(q)
-        .fetch_all(pool)
-        .await
+    crate::metrics::observe_db(
+        "list_pools",
+        sqlx::query_as::<_, PoolListingRow>(&sql)
+            .bind(valid_status)
+            .bind(category)
+            .bind(tags)
+            .bind(limit)
+            .bind(offset)
+            .bind(q)
+            .fetch_all(pool),
+    )
+    .await
 }
 
 /// Count pools matching the same full-text search, category/tag/status filters
@@ -125,13 +128,16 @@ pub async fn count_pools(
           )
     "#;
 
-    let count: (i64,) = sqlx::query_as(sql)
-        .bind(valid_status)
-        .bind(category)
-        .bind(tags)
-        .bind(q)
-        .fetch_one(pool)
-        .await?;
+    let count: (i64,) = crate::metrics::observe_db(
+        "count_pools",
+        sqlx::query_as(sql)
+            .bind(valid_status)
+            .bind(category)
+            .bind(tags)
+            .bind(q)
+            .fetch_one(pool),
+    )
+    .await?;
 
     Ok(count.0)
 }
@@ -140,14 +146,17 @@ pub async fn count_pools(
 /// dropdowns on the frontend.
 /// Returns all distinct pool tags in alphabetical order, or a database error.
 pub async fn list_distinct_tags(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        r#"
-        SELECT DISTINCT unnest(tags) AS tag
-        FROM pools
-        ORDER BY tag
-        "#,
+    let rows: Vec<(String,)> = crate::metrics::observe_db(
+        "list_distinct_tags",
+        sqlx::query_as(
+            r#"
+            SELECT DISTINCT unnest(tags) AS tag
+            FROM pools
+            ORDER BY tag
+            "#,
+        )
+        .fetch_all(pool),
     )
-    .fetch_all(pool)
     .await?;
 
     Ok(rows.into_iter().map(|(tag,)| tag).collect())
