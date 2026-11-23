@@ -395,6 +395,35 @@ pub async fn run_sweep_loop_with_email(
     }
 }
 
+/// Run [`run_notification_sweep`] on a fixed interval and deliver the
+/// resulting notifications over every configured channel (email via SMTP,
+/// push via the push gateway). A channel that is `None` is skipped.
+pub async fn run_sweep_loop_with_delivery(
+    pool: PgPool,
+    interval: std::time::Duration,
+    smtp_config: Option<crate::email::SmtpConfig>,
+    push_config: Option<crate::push::PushConfig>,
+) {
+    let mut ticker = tokio::time::interval(interval);
+    loop {
+        ticker.tick().await;
+        if let Err(error) = run_notification_sweep(&pool).await {
+            warn!(error = %error, "notification sweep failed");
+            continue;
+        }
+        if let Some(smtp) = &smtp_config {
+            if let Err(error) = crate::email::deliver_pending_emails(&pool, smtp).await {
+                warn!(error = %error, "email delivery sweep failed");
+            }
+        }
+        if let Some(push) = &push_config {
+            if let Err(error) = crate::push::deliver_pending_push(&pool, push).await {
+                warn!(error = %error, "push delivery sweep failed");
+            }
+        }
+    }
+}
+
 // ── User email registration endpoints ────────────────────────────────────────
 
 /// User email registration / update request body.

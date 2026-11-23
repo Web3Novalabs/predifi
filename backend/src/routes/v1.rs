@@ -311,11 +311,13 @@ fn should_cache_pools_offset(offset: i64, limit: i64) -> bool {
 /// Query parameters for the `GET /api/v1/pools` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct PoolsQuery {
-    /// Sort order: "popular" | "ending_soon" | "new" (default)
+    /// Sort order: "popular" (most predictions) | "stake_desc" | "stake_asc" |
+    /// "ending_soon" | "ending_latest" | "new" (default) | "relevance" (needs `q`).
     pub sort_by: Option<PoolSortBy>,
-    /// Category filter, e.g. "Sports", "Crypto"
+    /// Category filter, e.g. "Sports", "Crypto" (case-insensitive).
     pub category: Option<NonEmptyString>,
-    /// Status filter: "active" | "closed" | "settled" (default: "active")
+    /// Status filter: "active" (default) | "resolved" (alias `settled`) |
+    /// "cancelled" (alias `closed`).
     pub status: Option<PoolStatus>,
     /// Comma-separated tag filter, e.g. "btc,price-prediction". A pool
     /// matches if any of its tags overlap this list.
@@ -323,6 +325,18 @@ pub struct PoolsQuery {
     /// Full-text search query across pool name, category, and tags.
     /// Uses PostgreSQL `plainto_tsquery` + ILIKE fallback.
     pub q: Option<String>,
+    /// Token (contract address) the pool is denominated in.
+    pub token: Option<NonEmptyString>,
+    /// Wallet address of the pool creator.
+    pub creator: Option<StellarAddress>,
+    /// Minimum total stake (inclusive).
+    pub min_stake: Option<i64>,
+    /// Maximum total stake (inclusive).
+    pub max_stake: Option<i64>,
+    /// Only pools ending at or after this RFC 3339 timestamp.
+    pub ends_after: Option<chrono::DateTime<chrono::Utc>>,
+    /// Only pools ending at or before this RFC 3339 timestamp.
+    pub ends_before: Option<chrono::DateTime<chrono::Utc>>,
     /// Page size. Missing defaults to [`POOLS_DEFAULT_PAGE_SIZE`]; a value
     /// outside `[1, POOLS_MAX_PAGE_SIZE]` is clamped into range in the
     /// handler rather than rejected — unlike most other paginated endpoints
@@ -510,22 +524,43 @@ pub async fn get_pools(
     // size still gets a bounded, servable page instead of a 400 (#1734).
     let limit = resolve_pools_page_size(params.limit);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
-    let tags: Option<Vec<String>> = params
+    let tags: Vec<String> = params
         .tags
         .as_ref()
         .map(|s| {
             s.split(',')
-                .map(|t| t.trim().to_string())
+                .map(|t| t.trim().to_lowercase())
                 .filter(|t| !t.is_empty())
                 .collect::<Vec<_>>()
         })
-        .filter(|v| !v.is_empty());
+        .unwrap_or_default();
     // Full-text search query — trim and convert empty to None.
     let q: Option<String> = params
         .q
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+
+    let filter = crate::search::PoolFilter {
+        status: status.to_string(),
+        category: category.map(str::to_string),
+        tags,
+        token: params.token.as_ref().map(|t| t.as_str().trim().to_string()),
+        creator: params.creator.as_ref().map(|c| c.as_str().to_string()),
+        min_stake: params.min_stake,
+        max_stake: params.max_stake,
+        ends_after: params.ends_after,
+        ends_before: params.ends_before,
+        q: q.clone(),
+    };
+    if let Err(message) = filter.validate() {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            message,
+        )
+        .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -536,25 +571,14 @@ pub async fn get_pools(
         .into_response();
     };
 
-    // Cache-aside pattern: Step 1 — Check cache
-    let mut cache_key =
-        crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
-    if let Some(tags) = &tags {
-        let sanitized: Vec<String> = tags
-            .iter()
-            .map(|t| crate::redis_cache::sanitize_key_component(t))
-            .filter(|t| !t.is_empty())
-            .collect();
-        if !sanitized.is_empty() {
-            cache_key = format!("{cache_key}:tags:{}", sanitized.join(","));
-        }
-    }
-    if let Some(q_val) = &q {
-        cache_key = format!(
-            "{cache_key}:q:{}",
-            crate::redis_cache::sanitize_key_component(q_val)
-        );
-    }
+    // Cache-aside pattern: Step 1 — Check cache. The suffix hashes every
+    // filter beyond status/category/sort, and is empty for the default
+    // request so the cache warmer's keys keep matching.
+    let cache_key = format!(
+        "{}{}",
+        crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset),
+        filter.cache_suffix()
+    );
 
     let cacheable_offset = should_cache_pools_offset(offset, limit);
     if cacheable_offset {
@@ -566,17 +590,14 @@ pub async fn get_pools(
 
     // Cache miss — Step 2: Fetch from database
     match tokio::try_join!(
-        crate::tags::list_pools(
+        crate::search::search_pools(
             db,
-            sort_by,
-            category,
-            tags.as_deref(),
-            status,
-            q.as_deref(),
+            &filter,
+            crate::search::PoolSort::parse(sort_by),
             limit,
             offset
         ),
-        crate::tags::count_pools(db, category, tags.as_deref(), status, q.as_deref())
+        crate::search::count_filtered_pools(db, &filter)
     ) {
         Ok((pools, total)) => {
             if status == "active" {
@@ -989,6 +1010,10 @@ pub struct PoolCreatedPayload {
     pub category: NonEmptyString,
     /// Pool description / name decoded from the event data.
     pub description: NonEmptyString,
+    /// Optional creator-assigned tags. Normalised server-side (lower-case,
+    /// de-duplicated, at most 10); invalid tags are dropped.
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Number of distinct outcome options (#1932). Defaults to `2` (binary)
     /// so older callers that predate multi-outcome pools still deserialize.
     #[serde(default = "default_options_count")]
@@ -1050,6 +1075,7 @@ pub async fn ingest_pool_created(
         token: payload.token.into(),
         category: payload.category.into(),
         description: payload.description.into(),
+        tags: payload.tags,
         options_count: payload.options_count as i32,
         outcome_descriptions: payload.outcome_descriptions,
     };
@@ -1679,7 +1705,13 @@ pub async fn get_user_profile_handler(
 
 // ── Pool tags ────────────────────────────────────────────────────────────────
 
-/// `GET /api/v1/tags` — distinct tags currently in use, for filter-UI dropdowns.
+/// Default and maximum number of entries returned by `GET /api/v1/tags`.
+const TAG_LIST_LIMIT: i64 = 200;
+
+/// `GET /api/v1/tags` — tags currently in use, for filter-UI dropdowns.
+///
+/// `tags` is the alphabetical list (unchanged); `counts` lists the same tags
+/// with the number of active pools using each, most used first.
 pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
@@ -1716,32 +1748,88 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
 pub struct UpdatePoolTagsRequest {
     /// Legacy field, retained for request compatibility. It is no longer used
     /// for authorization: pool creators are public and can be copied by anyone.
-    pub creator: StellarAddress,
+    #[serde(default)]
+    pub creator: Option<StellarAddress>,
     pub tags: Vec<String>,
 }
 
-/// `PATCH /api/v1/pools/:id/tags` — admin-only: replace a pool's tag set.
+/// Request body for `PATCH /api/v1/pools/:id/metadata`.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePoolMetadataRequest {
+    /// New category (normalised to lower-case). Omit to leave unchanged.
+    pub category: Option<String>,
+    /// Replacement tag set. Omit to leave unchanged; `[]` clears all tags.
+    pub tags: Option<Vec<String>>,
+}
+
+/// Who is allowed to relabel a pool.
+#[derive(Debug, PartialEq, Eq)]
+enum PoolEditor {
+    Admin,
+    Creator,
+    Denied,
+    Unauthenticated,
+}
+
+/// Decide whether the request may edit a pool created by `pool_creator`.
 ///
-/// Requires the `x-admin-api-key` header (the same credential as
-/// `/admin/log-level`). Until wallet-based sessions exist, the `creator` in
-/// the body is not trusted as proof of identity.
-pub async fn update_pool_tags_handler(
-    State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
-    Path(pool_id): Path<i64>,
-    Json(body): Json<UpdatePoolTagsRequest>,
+/// The admin API key always may; otherwise the bearer must be a valid access
+/// token whose subject is the pool's creator.
+fn resolve_pool_editor(
+    config: &Config,
+    headers: &axum::http::HeaderMap,
+    pool_creator: &str,
+) -> PoolEditor {
+    if has_admin_credential(headers) {
+        return PoolEditor::Admin;
+    }
+    let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::jwt::extract_bearer_token)
+    else {
+        return PoolEditor::Unauthenticated;
+    };
+    match crate::jwt::verify_jwt_token_strict(
+        token,
+        &config.secret_key,
+        "access",
+        config.jwt_key_version,
+    ) {
+        Ok(claims) if !pool_creator.is_empty() && claims.sub == pool_creator => PoolEditor::Creator,
+        Ok(_) => PoolEditor::Denied,
+        Err(_) => PoolEditor::Unauthenticated,
+    }
+}
+
+/// Shared implementation of the category/tag update endpoints.
+async fn apply_pool_labels(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    pool_id: i64,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
+    legacy_response: bool,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    if !has_admin_credential(&headers) {
-        return ApiResponse::<()>::error(
-            StatusCode::UNAUTHORIZED,
-            error_codes::UNAUTHORIZED,
-            "invalid or missing admin credentials",
-        )
-        .into_response();
+    let invalid = |message: &'static str| {
+        ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, message)
+            .into_response()
+    };
+
+    if category.is_none() && tags.is_none() {
+        return invalid("provide at least one of category or tags");
     }
+    let category = match category.as_deref().map(crate::tags::normalize_category).transpose() {
+        Ok(category) => category,
+        Err(message) => return invalid(message),
+    };
+    let tags = match tags.as_deref().map(crate::tags::normalize_tags).transpose() {
+        Ok(tags) => tags,
+        Err(message) => return invalid(message),
+    };
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1752,7 +1840,40 @@ pub async fn update_pool_tags_handler(
         .into_response();
     };
 
-    match crate::tags::update_pool_tags(db, pool_id, &body.tags).await {
+    let creator = match crate::tags::get_pool_creator(db, pool_id).await {
+        Ok(Some(creator)) => creator,
+        Ok(None) => {
+            return ApiResponse::<()>::error(
+                StatusCode::NOT_FOUND,
+                error_codes::NOT_FOUND,
+                "pool not found",
+            )
+            .into_response();
+        }
+        Err(e) => return internal_error_response(e),
+    };
+
+    match resolve_pool_editor(&state.config, headers, &creator) {
+        PoolEditor::Admin | PoolEditor::Creator => {}
+        PoolEditor::Denied => {
+            return ApiResponse::<()>::error(
+                StatusCode::FORBIDDEN,
+                error_codes::FORBIDDEN,
+                "only the pool creator or an admin may edit this pool",
+            )
+            .into_response();
+        }
+        PoolEditor::Unauthenticated => {
+            return ApiResponse::<()>::error(
+                StatusCode::UNAUTHORIZED,
+                error_codes::UNAUTHORIZED,
+                "invalid or missing credentials",
+            )
+            .into_response();
+        }
+    }
+
+    match crate::tags::update_pool_labels(db, pool_id, category.as_deref(), tags.as_deref()).await {
         Ok(true) => {
             state.pool_cache.invalidate(pool_id);
             state.redis.invalidate_pools_cache().await;
@@ -1767,6 +1888,34 @@ pub async fn update_pool_tags_handler(
         .into_response(),
         Err(e) => internal_error_response(e),
     }
+}
+
+/// `PATCH /api/v1/pools/:id/tags` — replace a pool's tag set.
+///
+/// Authorized for the pool's creator (bearer access token whose subject is
+/// the creator) or an admin (`x-admin-api-key`). The `creator` body field is
+/// legacy and never trusted as proof of identity.
+pub async fn update_pool_tags_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(pool_id): Path<i64>,
+    Json(body): Json<UpdatePoolTagsRequest>,
+) -> axum::response::Response {
+    apply_pool_labels(&state, &headers, pool_id, None, Some(body.tags), true).await
+}
+
+/// `PATCH /api/v1/pools/:id/metadata` — update a pool's category and/or tags.
+///
+/// Same authorization as [`update_pool_tags_handler`]. Body:
+/// `{ "category": "crypto", "tags": ["btc", "halving"] }` (both optional, at
+/// least one required).
+pub async fn update_pool_metadata_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(pool_id): Path<i64>,
+    Json(body): Json<UpdatePoolMetadataRequest>,
+) -> axum::response::Response {
+    apply_pool_labels(&state, &headers, pool_id, body.category, body.tags, false).await
 }
 
 // ── Claims (winnings / refunds) ───────────────────────────────────────────────
@@ -2085,6 +2234,119 @@ pub async fn set_user_interests_handler(
     }
 }
 
+// ── Push notification subscriptions ──────────────────────────────────────────
+
+/// `GET /api/v1/users/:address/push` — how many devices receive push alerts.
+pub async fn get_push_subscriptions_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::push::count_subscriptions(db, address.as_str()).await {
+        Ok(devices) => ApiResponse::success(json!({
+            "address": address,
+            "devices": devices,
+            "push_enabled": state.config.push_gateway_url.is_some(),
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
+/// `PUT /api/v1/users/:address/push` — register a device / browser push token.
+///
+/// Body: `{ "token": "…", "platform": "web" | "ios" | "android" }`
+pub async fn register_push_subscription_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<crate::push::RegisterPushRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let (token, platform) = match crate::push::validate_registration(&body) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::push::register_subscription(db, address.as_str(), &token, &platform).await {
+        Ok(()) => ApiResponse::success(json!({
+            "address": address,
+            "platform": platform,
+            "registered": true,
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
+/// `DELETE /api/v1/users/:address/push` — unregister a push token.
+pub async fn unregister_push_subscription_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<crate::push::UnregisterPushRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let token = match crate::push::validate_token(&body.token) {
+        Ok(token) => token,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::push::unregister_subscription(db, address.as_str(), &token).await {
+        Ok(removed) => ApiResponse::success(json!({
+            "address": address,
+            "removed": removed,
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
 #[cfg(test)]
 mod user_interests_tests {
     use super::*;
@@ -2193,6 +2455,7 @@ pub fn router(
             .route("/stats", get(get_stats))
             .route("/leaderboard", get(get_leaderboard))
             .route("/tags", get(list_tags_handler))
+            .route("/categories", get(list_categories_handler))
             .route("/referrals/:address", get(referrals_handler))
             .route(
                 "/referrals/:address/estimate",
@@ -2222,6 +2485,12 @@ pub fn router(
                 "/users/:address/email",
                 get(get_user_email_handler).put(upsert_user_email_handler),
             )
+            .route(
+                "/users/:address/push",
+                get(get_push_subscriptions_handler)
+                    .put(register_push_subscription_handler)
+                    .delete(unregister_push_subscription_handler),
+            )
             .route("/notifications/:address", get(list_notifications_handler))
             .route(
                 "/notifications/:address/read",
@@ -2248,6 +2517,7 @@ pub fn router(
         Router::new()
             .merge(indexer)
             .route("/pools/:id/tags", patch(update_pool_tags_handler))
+            .route("/pools/:id/metadata", patch(update_pool_metadata_handler))
             .route(
                 "/pools/:id/pay-creator-incentive",
                 post(pay_creator_incentive_handler),
