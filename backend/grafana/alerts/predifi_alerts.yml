@@ -21,6 +21,16 @@ groups:
           summary: "API p99 latency is greater than 500ms"
           description: "The 99th percentile HTTP request latency is {{ $value | printf \"%.3f\" }}s."
 
+      # ── 2b. Latency target (p99 > 100ms over 10m, #2204) ───────────────────
+      - alert: ApiP99LatencyAboveTarget
+        expr: histogram_quantile(0.99, sum(rate(app_http_request_duration_seconds_bucket[10m])) by (le)) > 0.1
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "API p99 latency is above the 100ms target"
+          description: "The 99th percentile HTTP request latency is {{ $value | printf \"%.3f\" }}s. Check app_db_query_duration_seconds by query_type, then run predifi-explain-queries."
+
       # ── 3. Worker Queue Depth & DLQ Accumulation ────────────────────────────
       - alert: WorkerQueueBacklog
         expr: app_worker_queue_depth > 50

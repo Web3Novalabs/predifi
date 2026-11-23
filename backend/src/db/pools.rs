@@ -117,6 +117,16 @@ struct OutcomeStakeRow {
     total_stake: i64,
 }
 
+/// Per-outcome stake plus that outcome's prediction count, so the pool's
+/// overall prediction count falls out of the same aggregate (no second
+/// `COUNT(*)` round trip).
+#[derive(sqlx::FromRow)]
+struct OutcomeStatsRow {
+    outcome: i32,
+    total_stake: i64,
+    prediction_count: i64,
+}
+
 // ── Column list shared by template queries ────────────────────────────────────
 
 const POOL_TEMPLATE_COLUMNS: &str = "id, creator, name, category, description, token, \
@@ -264,6 +274,39 @@ pub async fn get_pool_outcome_stakes(
         .collect())
 }
 
+/// `(outcome, total_stake)` pairs plus the pool's total prediction count, in a
+/// single pass over the pool's predictions (served by
+/// `idx_predictions_pool_outcome` / `idx_predictions_pool_id_desc`).
+async fn get_pool_outcome_stats(
+    pool: &PgPool,
+    pool_id: i64,
+) -> Result<(Vec<(i32, i64)>, i64), sqlx::Error> {
+    let rows = crate::metrics::observe_db(
+        "get_pool_outcome_stats",
+        sqlx::query_as::<_, OutcomeStatsRow>(
+            r#"
+            SELECT outcome,
+                   COALESCE(SUM(amount), 0) AS total_stake,
+                   COUNT(*)                 AS prediction_count
+            FROM predictions
+            WHERE pool_id = $1
+            GROUP BY outcome
+            ORDER BY outcome
+            "#,
+        )
+        .bind(pool_id)
+        .fetch_all(pool),
+    )
+    .await?;
+
+    let prediction_count = rows.iter().map(|r| r.prediction_count).sum();
+    let stakes = rows
+        .into_iter()
+        .map(|r| (r.outcome, r.total_stake))
+        .collect();
+    Ok((stakes, prediction_count))
+}
+
 /// Fetch a pool's full detail joined with real-time odds for each outcome.
 ///
 /// Returns `None` when the pool does not exist.
@@ -271,21 +314,18 @@ pub async fn get_pool_with_odds(
     pool: &PgPool,
     pool_id: i64,
 ) -> Result<Option<PoolWithOdds>, sqlx::Error> {
-    let details = match get_pool_by_id(pool, pool_id).await? {
+    // The pool row and the per-outcome aggregate are independent, so fetch
+    // them concurrently on two pooled connections instead of back-to-back
+    // (#2204). Previously this endpoint made three sequential round trips:
+    // pool row, outcome stakes, then a separate `COUNT(*)`.
+    let (details, (outcome_stakes, prediction_count)) = tokio::try_join!(
+        get_pool_by_id(pool, pool_id),
+        get_pool_outcome_stats(pool, pool_id),
+    )?;
+    let details = match details {
         Some(d) => d,
         None => return Ok(None),
     };
-
-    let outcome_stakes = get_pool_outcome_stakes(pool, pool_id).await?;
-    let prediction_count = crate::metrics::observe_db(
-        "get_pool_prediction_count",
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM predictions WHERE pool_id = $1",
-        )
-        .bind(pool_id)
-        .fetch_one(pool),
-    )
-    .await?;
     let calculated_total: i64 = outcome_stakes.iter().map(|(_, s)| s).sum();
     let total_stake = std::cmp::max(details.total_stake, calculated_total);
     let odds = calculate_odds(&outcome_stakes, total_stake);
@@ -505,22 +545,32 @@ pub async fn pay_creator_incentive(
     pool_id: i64,
     treasury_fee_bps: u32,
 ) -> Result<Option<i64>, sqlx::Error> {
-    if !is_creator_reward_eligible(pool, pool_id).await? {
-        return Ok(None);
-    }
-
-    let Some(details) = get_pool_by_id(pool, pool_id).await? else {
+    // One read for everything the payout needs (eligibility, stake, creator and
+    // reward rate) instead of three separate round trips (#2204). The CAS-style
+    // UPDATE below remains the actual guard against double payment.
+    let Some((total_stake, creator, creator_reward_bps, eligible)) =
+        sqlx::query_as::<_, (i64, String, i32, bool)>(
+            r#"
+            SELECT total_stake,
+                   creator,
+                   creator_reward_bps,
+                   (total_stake >= min_participation_threshold AND NOT creator_reward_paid)
+            FROM pools
+            WHERE pool_id = $1
+            "#,
+        )
+        .bind(pool_id)
+        .fetch_optional(pool)
+        .await?
+    else {
         return Ok(None);
     };
 
-    let creator_reward_bps: i32 =
-        sqlx::query_scalar("SELECT creator_reward_bps FROM pools WHERE pool_id = $1")
-            .bind(pool_id)
-            .fetch_one(pool)
-            .await?;
+    if !eligible {
+        return Ok(None);
+    }
 
-    let amount =
-        calculate_creator_incentive(details.total_stake, treasury_fee_bps, creator_reward_bps);
+    let amount = calculate_creator_incentive(total_stake, treasury_fee_bps, creator_reward_bps);
 
     // Atomic CAS-style update: only succeeds when reward has not yet been paid.
     let updated = sqlx::query(
@@ -550,8 +600,8 @@ pub async fn pay_creator_incentive(
         WHERE creator = $1
         "#,
     )
-    .bind(&details.creator)
-    .bind(details.total_stake)
+    .bind(&creator)
+    .bind(total_stake)
     .execute(pool)
     .await?;
 
