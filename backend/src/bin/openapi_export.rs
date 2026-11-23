@@ -33,15 +33,11 @@ fn main() -> ExitCode {
                 }
             },
             "-c" | "--check" => {
-                if let Some(next_arg) = args.peek() {
-                    if !next_arg.starts_with('-') {
-                        check_path = Some(args.next().unwrap());
-                    } else {
-                        check_path = Some("openapi.json".to_string());
-                    }
-                } else {
-                    check_path = Some("openapi.json".to_string());
-                }
+                // The path is optional: only consume the next argument when it is not a flag.
+                check_path = Some(
+                    args.next_if(|next_arg| !next_arg.starts_with('-'))
+                        .unwrap_or_else(|| "openapi.json".to_string()),
+                );
             }
             other => {
                 eprintln!("error: unknown argument {other:?} (see --help)");
