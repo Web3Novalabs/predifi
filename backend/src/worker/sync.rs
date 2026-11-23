@@ -86,10 +86,10 @@ pub fn build_get_stakes_invocation(pool_id: i64) -> stellar_xdr::curr::InvokeCon
     let contract_address = ScAddress::Contract(ContractId(Hash([0u8; 32])));
     let function_name: ScSymbol = "get_pool_outcome_stakes"
         .try_into()
-        .expect("function name within symbol limit");
+        .expect("fixed function name must fit the 32-byte ScSymbol limit");
     let args = vec![ScVal::I64(pool_id)]
         .try_into()
-        .expect("valid args vector");
+        .expect("a one-element args vector must fit within the VecM length limit");
 
     InvokeContractArgs {
         contract_address,

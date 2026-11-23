@@ -327,7 +327,7 @@ pub async fn run_worker(
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
-        .expect("valid reqwest client");
+        .expect("reqwest client with only a timeout configured must always build");
     let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
 
     let stored_cursor = load_cursor(&db).await;

@@ -90,7 +90,7 @@ impl PriceCache {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .expect("failed to build reqwest client");
+            .expect("reqwest client with only a timeout configured must always build");
         Self(Arc::new(Inner {
             prices: RwLock::new(HashMap::new()),
             last_updated: RwLock::new(None),

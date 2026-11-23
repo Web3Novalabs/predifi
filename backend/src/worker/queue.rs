@@ -153,14 +153,22 @@ impl JobQueue {
         self.inner
             .processed
             .lock()
-            .expect("processed lock")
+            .expect("processed-id set mutex must not be poisoned")
             .contains(job_id)
     }
 
     /// Mark a job id as successfully processed (idempotency bookkeeping).
     pub fn mark_processed(&self, job_id: &str) {
-        let mut processed = self.inner.processed.lock().expect("processed lock");
-        let mut order = self.inner.processed_order.lock().expect("order lock");
+        let mut processed = self
+            .inner
+            .processed
+            .lock()
+            .expect("processed-id set mutex must not be poisoned");
+        let mut order = self
+            .inner
+            .processed_order
+            .lock()
+            .expect("processed-id order mutex must not be poisoned");
         if processed.insert(job_id.to_string()) {
             order.push_back(job_id.to_string());
             while order.len() > IDEMPOTENCY_CAPACITY {
@@ -180,7 +188,7 @@ impl JobQueue {
         self.inner
             .pending
             .lock()
-            .expect("pending lock")
+            .expect("pending-job queue mutex must not be poisoned")
             .push_back(job);
         self.update_depth_metrics();
         true
@@ -189,8 +197,16 @@ impl JobQueue {
     /// Pop the next ready job, respecting retry backoff windows.
     pub fn dequeue_ready(&self) -> Option<Job> {
         let now = Instant::now();
-        let mut pending = self.inner.pending.lock().expect("pending lock");
-        let retry_after = self.inner.retry_after.lock().expect("retry lock");
+        let mut pending = self
+            .inner
+            .pending
+            .lock()
+            .expect("pending-job queue mutex must not be poisoned");
+        let retry_after = self
+            .inner
+            .retry_after
+            .lock()
+            .expect("retry-after map mutex must not be poisoned");
 
         let mut skipped = VecDeque::new();
         let mut found = None;
@@ -220,7 +236,7 @@ impl JobQueue {
         self.inner
             .retry_after
             .lock()
-            .expect("retry lock")
+            .expect("retry-after map mutex must not be poisoned")
             .remove(&job.id);
         self.inner
             .last_success_ms
@@ -255,12 +271,12 @@ impl JobQueue {
             self.inner
                 .retry_after
                 .lock()
-                .expect("retry lock")
+                .expect("retry-after map mutex must not be poisoned")
                 .insert(job.id.clone(), Instant::now() + delay);
             self.inner
                 .pending
                 .lock()
-                .expect("pending lock")
+                .expect("pending-job queue mutex must not be poisoned")
                 .push_back(job);
         } else {
             error!(
@@ -280,14 +296,28 @@ impl JobQueue {
 
     fn update_depth_metrics(&self) {
         if let Some(metrics) = crate::metrics::global() {
-            let pending_len = self.inner.pending.lock().expect("pending lock").len();
-            let dlq_len = self.inner.dlq.lock().expect("dlq lock").len();
+            let pending_len = self
+                .inner
+                .pending
+                .lock()
+                .expect("pending-job queue mutex must not be poisoned")
+                .len();
+            let dlq_len = self
+                .inner
+                .dlq
+                .lock()
+                .expect("dead-letter queue mutex must not be poisoned")
+                .len();
             metrics.record_worker_queue_depth(pending_len, dlq_len);
         }
     }
 
     fn push_dlq(&self, entry: DeadLetterEntry) {
-        let mut dlq = self.inner.dlq.lock().expect("dlq lock");
+        let mut dlq = self
+            .inner
+            .dlq
+            .lock()
+            .expect("dead-letter queue mutex must not be poisoned");
         if dlq.len() >= DLQ_CAPACITY {
             dlq.pop_front();
         }
@@ -304,7 +334,7 @@ impl JobQueue {
         self.inner
             .dlq
             .lock()
-            .expect("dlq lock")
+            .expect("dead-letter queue mutex must not be poisoned")
             .iter()
             .cloned()
             .collect()
@@ -312,9 +342,15 @@ impl JobQueue {
 
     /// Re-queue a dead-lettered job for another attempt (clears attempt count).
     pub fn requeue_from_dlq(&self, job_id: &str) -> bool {
-        let mut dlq = self.inner.dlq.lock().expect("dlq lock");
+        let mut dlq = self
+            .inner
+            .dlq
+            .lock()
+            .expect("dead-letter queue mutex must not be poisoned");
         if let Some(pos) = dlq.iter().position(|e| e.job.id == job_id) {
-            let mut entry = dlq.remove(pos).expect("index valid");
+            let mut entry = dlq
+                .remove(pos)
+                .expect("pos is an in-bounds index of the locked dead-letter queue");
             entry.job.attempts = 0;
             drop(dlq);
             self.enqueue(entry.job);
@@ -328,8 +364,18 @@ impl JobQueue {
         let consecutive = self.inner.consecutive_failures.load(Ordering::Relaxed);
         let last_success = nonzero_ms(self.inner.last_success_ms.load(Ordering::Relaxed));
         let last_failure = nonzero_ms(self.inner.last_failure_ms.load(Ordering::Relaxed));
-        let dlq_depth = self.inner.dlq.lock().expect("dlq lock").len();
-        let pending_retries = self.inner.pending.lock().expect("pending lock").len();
+        let dlq_depth = self
+            .inner
+            .dlq
+            .lock()
+            .expect("dead-letter queue mutex must not be poisoned")
+            .len();
+        let pending_retries = self
+            .inner
+            .pending
+            .lock()
+            .expect("pending-job queue mutex must not be poisoned")
+            .len();
 
         // Unhealthy if we have never succeeded and already failed, or many consecutive failures.
         let is_healthy = consecutive < 5

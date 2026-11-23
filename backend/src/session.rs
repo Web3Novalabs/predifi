@@ -155,7 +155,11 @@ impl SessionStore {
         let mut evicted_ids = Vec::new();
 
         {
-            let mut state = self.inner.state.lock().expect("session state");
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("session store state mutex must not be poisoned");
             let stale_ids: Vec<_> = state
                 .by_user
                 .get(user_address)
@@ -234,7 +238,11 @@ impl SessionStore {
 
     /// Validate a session token and refresh idle timer. Returns `None` if invalid/expired.
     pub fn validate_and_touch(&self, session_id: &str) -> Option<UserSession> {
-        let mut state = self.inner.state.lock().expect("session state");
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .expect("session store state mutex must not be poisoned");
         let (user_address, stored_session_id, key_version, last_activity) =
             match state.sessions.get(session_id) {
                 Some(session) => (
@@ -290,7 +298,7 @@ impl SessionStore {
         let session = state
             .sessions
             .get_mut(session_id)
-            .expect("session remains present while state is locked");
+            .expect("session found earlier under this state lock must still be present");
         session.last_activity = Instant::now();
         let out = UserSession {
             session_id: session.session_id.clone(),
@@ -309,7 +317,11 @@ impl SessionStore {
     /// Invalidate all sessions for a user after a password/key change.
     pub fn invalidate_on_key_change(&self, user_address: &str) {
         let ids = {
-            let mut state = self.inner.state.lock().expect("session state");
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("session store state mutex must not be poisoned");
             let entry = state
                 .key_versions
                 .entry(user_address.to_string())
@@ -339,7 +351,11 @@ impl SessionStore {
     /// Explicit logout — destroy a single session.
     pub fn logout(&self, session_id: &str) -> bool {
         let user = {
-            let mut state = self.inner.state.lock().expect("session state");
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("session store state mutex must not be poisoned");
             let Some(user) = state
                 .sessions
                 .get(session_id)
@@ -365,7 +381,7 @@ impl SessionStore {
         self.inner
             .state
             .lock()
-            .expect("session state")
+            .expect("session store state mutex must not be poisoned")
             .by_user
             .get(user_address)
             .map(|q| q.len())
@@ -381,7 +397,7 @@ impl SessionStore {
         self.inner
             .revoked_tokens
             .lock()
-            .expect("revoked tokens")
+            .expect("revoked-token set mutex must not be poisoned")
             .contains(jti)
     }
 
@@ -390,7 +406,7 @@ impl SessionStore {
         self.inner
             .revoked_tokens
             .lock()
-            .expect("revoked tokens")
+            .expect("revoked-token set mutex must not be poisoned")
             .insert(jti.to_string());
     }
 
@@ -399,7 +415,7 @@ impl SessionStore {
         self.inner
             .activity
             .lock()
-            .expect("activity")
+            .expect("session activity log mutex must not be poisoned")
             .iter()
             .cloned()
             .collect()
@@ -407,7 +423,11 @@ impl SessionStore {
 
     fn purge_idle_for_user(&self, user_address: &str) {
         let stale = {
-            let mut state = self.inner.state.lock().expect("session state");
+            let mut state = self
+                .inner
+                .state
+                .lock()
+                .expect("session store state mutex must not be poisoned");
             let stale: Vec<String> = state
                 .by_user
                 .get(user_address)
@@ -462,7 +482,11 @@ impl SessionStore {
             detail = %entry.detail,
             "session.activity"
         );
-        let mut log = self.inner.activity.lock().expect("activity");
+        let mut log = self
+            .inner
+            .activity
+            .lock()
+            .expect("session activity log mutex must not be poisoned");
         if log.len() >= ACTIVITY_LOG_CAPACITY {
             log.pop_front();
         }
