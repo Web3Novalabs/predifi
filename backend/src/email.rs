@@ -72,10 +72,11 @@ pub async fn deliver_pending_emails(
         JOIN user_emails ue
           ON ue.user_address = n.user_address
          AND ue.email_enabled = TRUE
-         AND ue.verified = FALSE  -- treat all as deliverable (verified flag is advisory)
         LEFT JOIN notification_delivery_log dl
           ON dl.notification_id = n.id AND dl.channel = 'email'
         WHERE dl.notification_id IS NULL
+          -- Never email a historical backlog (e.g. right after a user opts in).
+          AND n.created_at > NOW() - INTERVAL '2 days'
         ORDER BY n.created_at
         LIMIT 100
         "#,

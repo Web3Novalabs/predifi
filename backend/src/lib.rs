@@ -22,6 +22,7 @@ pub mod openapi;
 pub mod pool_cache;
 pub mod price_cache;
 pub mod profile;
+pub mod push;
 pub mod rate_limit;
 pub mod redis_cache;
 pub mod referrals;

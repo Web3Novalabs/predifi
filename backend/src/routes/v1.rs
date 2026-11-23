@@ -1954,6 +1954,119 @@ pub async fn set_user_interests_handler(
     }
 }
 
+// ── Push notification subscriptions ──────────────────────────────────────────
+
+/// `GET /api/v1/users/:address/push` — how many devices receive push alerts.
+pub async fn get_push_subscriptions_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::push::count_subscriptions(db, address.as_str()).await {
+        Ok(devices) => ApiResponse::success(json!({
+            "address": address,
+            "devices": devices,
+            "push_enabled": state.config.push_gateway_url.is_some(),
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
+/// `PUT /api/v1/users/:address/push` — register a device / browser push token.
+///
+/// Body: `{ "token": "…", "platform": "web" | "ios" | "android" }`
+pub async fn register_push_subscription_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<crate::push::RegisterPushRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let (token, platform) = match crate::push::validate_registration(&body) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::push::register_subscription(db, address.as_str(), &token, &platform).await {
+        Ok(()) => ApiResponse::success(json!({
+            "address": address,
+            "platform": platform,
+            "registered": true,
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
+/// `DELETE /api/v1/users/:address/push` — unregister a push token.
+pub async fn unregister_push_subscription_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<crate::push::UnregisterPushRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let token = match crate::push::validate_token(&body.token) {
+        Ok(token) => token,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::push::unregister_subscription(db, address.as_str(), &token).await {
+        Ok(removed) => ApiResponse::success(json!({
+            "address": address,
+            "removed": removed,
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
 #[cfg(test)]
 mod user_interests_tests {
     use super::*;
@@ -2090,6 +2203,12 @@ pub fn router(
             .route(
                 "/users/:address/email",
                 get(get_user_email_handler).put(upsert_user_email_handler),
+            )
+            .route(
+                "/users/:address/push",
+                get(get_push_subscriptions_handler)
+                    .put(register_push_subscription_handler)
+                    .delete(unregister_push_subscription_handler),
             )
             .route("/notifications/:address", get(list_notifications_handler))
             .route(

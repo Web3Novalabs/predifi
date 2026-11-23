@@ -71,7 +71,7 @@ async fn create_notification(
         r#"
         INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
         VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (user_address, pool_id, notif_type) DO NOTHING
+        ON CONFLICT DO NOTHING
         "#,
     )
     .bind(user_address)
@@ -235,170 +235,103 @@ pub struct SweepSummary {
     pub new_pool_matches: usize,
 }
 
-#[derive(FromRow)]
-struct PoolRef {
-    pool_id: i64,
-    name: String,
-}
-
-#[derive(FromRow)]
-struct UserAddr {
-    user_address: String,
-}
+/// Resolution / claim-expiry notices are only generated for pools resolved
+/// within this window, so the first sweep after a deploy does not notify
+/// users about every historical pool.
+const RESOLVED_LOOKBACK: &str = "7 days";
 
 /// Scan current pool/prediction state and create any notifications that are
 /// now due. Safe to call on a fixed interval — every insert is deduplicated
-/// by the unique `(user_address, pool_id, notif_type)` index.
+/// by the unique `(user_address, pool_id, notif_type)` index, and each
+/// category is a single set-based `INSERT … SELECT` (no per-user round trips).
+/// Counts in the summary are rows actually inserted.
 #[instrument(skip(pool), name = "notifications.run_sweep")]
 pub async fn run_notification_sweep(pool: &PgPool) -> Result<SweepSummary, sqlx::Error> {
     let mut summary = SweepSummary::default();
 
-    // 1. Pools ending soon → notify everyone with a stake in them.
-    let ending_soon: Vec<PoolRef> = sqlx::query_as(&format!(
+    // 1. Pools ending soon → notify everyone with a stake in them, plus the
+    //    pool's creator.
+    summary.pools_ending_soon = sqlx::query(&format!(
         r#"
-        SELECT pool_id, name FROM pools
-        WHERE state = 'active'
-          AND end_time BETWEEN NOW() AND NOW() + INTERVAL '{POOL_ENDING_SOON_WINDOW}'
+        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+        SELECT u.user_address, 'pool_ending_soon', 'Pool ending soon',
+               format('"%s" closes within the hour.', p.name), p.pool_id
+        FROM pools p
+        CROSS JOIN LATERAL (
+            SELECT DISTINCT user_address FROM predictions WHERE pool_id = p.pool_id
+            UNION
+            SELECT p.creator WHERE p.creator <> ''
+        ) u
+        WHERE p.state = 'active'
+          AND p.end_time BETWEEN NOW() AND NOW() + INTERVAL '{POOL_ENDING_SOON_WINDOW}'
+        ON CONFLICT DO NOTHING
         "#
     ))
-    .fetch_all(pool)
-    .await?;
+    .execute(pool)
+    .await?
+    .rows_affected() as usize;
 
-    for p in &ending_soon {
-        let users: Vec<UserAddr> = sqlx::query_as(
-            "SELECT DISTINCT user_address FROM predictions WHERE pool_id = $1",
-        )
-        .bind(p.pool_id)
-        .fetch_all(pool)
-        .await?;
-
-        for u in &users {
-            create_notification(
-                pool,
-                &u.user_address,
-                NotifType::PoolEndingSoon,
-                "Pool ending soon",
-                &format!("\"{}\" closes within the hour.", p.name),
-                p.pool_id,
-            )
-            .await?;
-            summary.pools_ending_soon += 1;
-        }
-    }
-
-    // 2. Resolved pools → notify everyone who predicted on them.
-    let resolved: Vec<PoolRef> = sqlx::query_as(
-        "SELECT pool_id, name FROM pools WHERE state = 'settled' AND result IS NOT NULL",
-    )
-    .fetch_all(pool)
-    .await?;
-
-    for p in &resolved {
-        let users: Vec<UserAddr> = sqlx::query_as(
-            "SELECT DISTINCT user_address FROM predictions WHERE pool_id = $1",
-        )
-        .bind(p.pool_id)
-        .fetch_all(pool)
-        .await?;
-
-        for u in &users {
-            create_notification(
-                pool,
-                &u.user_address,
-                NotifType::PoolResolved,
-                "Pool resolved",
-                &format!("\"{}\" has been resolved. Check your result.", p.name),
-                p.pool_id,
-            )
-            .await?;
-            summary.pools_resolved += 1;
-        }
-    }
+    // 2. Recently resolved pools → notify everyone who predicted on them, with
+    //    their own outcome when it can be determined.
+    summary.pools_resolved = sqlx::query(&format!(
+        r#"
+        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+        SELECT DISTINCT pr.user_address, 'pool_resolved', 'Pool resolved',
+               format('"%s" has been resolved. Check your result.', p.name), p.pool_id
+        FROM pools p
+        JOIN predictions pr ON pr.pool_id = p.pool_id
+        WHERE p.state = 'settled'
+          AND p.result IS NOT NULL
+          AND p.resolved_at IS NOT NULL
+          AND p.resolved_at > NOW() - INTERVAL '{RESOLVED_LOOKBACK}'
+        ON CONFLICT DO NOTHING
+        "#
+    ))
+    .execute(pool)
+    .await?
+    .rows_affected() as usize;
 
     // 3. Claim windows expiring soon → notify unclaimed winners.
-    let expiring: Vec<PoolRef> = sqlx::query_as(&format!(
+    summary.claims_expiring = sqlx::query(&format!(
         r#"
-        SELECT pool_id, name FROM pools
-        WHERE state = 'settled'
-          AND resolved_at IS NOT NULL
-          AND resolved_at + (claim_window_seconds || ' seconds')::interval
+        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+        SELECT DISTINCT pr.user_address, 'claim_expiring', 'Claim window closing soon',
+               format('Your winnings from "%s" must be claimed soon.', p.name), p.pool_id
+        FROM pools p
+        JOIN predictions pr ON pr.pool_id = p.pool_id
+        WHERE p.state = 'settled'
+          AND p.resolved_at IS NOT NULL
+          AND p.resolved_at + (p.claim_window_seconds || ' seconds')::interval
               BETWEEN NOW() AND NOW() + INTERVAL '{CLAIM_EXPIRING_WINDOW}'
+          AND NOT pr.claimed
+          AND p.result IS NOT NULL AND p.result ~ '^\d+$'
+          AND p.result::int = pr.outcome
+        ON CONFLICT DO NOTHING
         "#
     ))
-    .fetch_all(pool)
-    .await?;
+    .execute(pool)
+    .await?
+    .rows_affected() as usize;
 
-    for p in &expiring {
-        let winners: Vec<UserAddr> = sqlx::query_as(
-            r#"
-            SELECT DISTINCT p.user_address
-            FROM predictions p
-            JOIN pools pl ON pl.pool_id = p.pool_id
-            WHERE p.pool_id = $1
-              AND NOT p.claimed
-              AND pl.result IS NOT NULL AND pl.result ~ '^\d+$'
-              AND pl.result::int = p.outcome
-            "#,
-        )
-        .bind(p.pool_id)
-        .fetch_all(pool)
-        .await?;
-
-        for u in &winners {
-            create_notification(
-                pool,
-                &u.user_address,
-                NotifType::ClaimExpiring,
-                "Claim window closing soon",
-                &format!("Your winnings from \"{}\" must be claimed soon.", p.name),
-                p.pool_id,
-            )
-            .await?;
-            summary.claims_expiring += 1;
-        }
-    }
-
-    // 4. New pools matching a user's registered interests.
-    #[derive(FromRow)]
-    struct NewPool {
-        pool_id: i64,
-        name: String,
-        category: String,
-        tags: Vec<String>,
-    }
-    let new_pools: Vec<NewPool> = sqlx::query_as(&format!(
+    // 4. New pools matching a user's registered interests (category or tag,
+    //    case-insensitive). The creator is not notified about their own pool.
+    summary.new_pool_matches = sqlx::query(&format!(
         r#"
-        SELECT pool_id, name, category, tags FROM pools
-        WHERE created_at > NOW() - INTERVAL '{NEW_POOL_LOOKBACK}'
+        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+        SELECT DISTINCT ui.user_address, 'new_pool_match', 'New pool matching your interests',
+               format('"%s" was just created in %s.', p.name, p.category), p.pool_id
+        FROM pools p
+        JOIN user_interests ui
+          ON ui.interest = lower(p.category)
+          OR ui.interest IN (SELECT lower(t) FROM unnest(p.tags) AS t)
+        WHERE p.created_at > NOW() - INTERVAL '{NEW_POOL_LOOKBACK}'
+          AND ui.user_address <> p.creator
+        ON CONFLICT DO NOTHING
         "#
     ))
-    .fetch_all(pool)
-    .await?;
-
-    for p in &new_pools {
-        let mut interests = p.tags.clone();
-        interests.push(p.category.clone());
-
-        let matched_users: Vec<UserAddr> = sqlx::query_as(
-            "SELECT DISTINCT user_address FROM user_interests WHERE interest = ANY($1)",
-        )
-        .bind(&interests)
-        .fetch_all(pool)
-        .await?;
-
-        for u in &matched_users {
-            create_notification(
-                pool,
-                &u.user_address,
-                NotifType::NewPoolMatch,
-                "New pool matching your interests",
-                &format!("\"{}\" was just created in {}.", p.name, p.category),
-                p.pool_id,
-            )
-            .await?;
-            summary.new_pool_matches += 1;
-        }
-    }
+    .execute(pool)
+    .await?
+    .rows_affected() as usize;
 
     info!(
         pools_ending_soon = summary.pools_ending_soon,
@@ -442,6 +375,35 @@ pub async fn run_sweep_loop_with_email(
         }
         if let Err(error) = crate::email::deliver_pending_emails(&pool, &smtp_config).await {
             warn!(error = %error, "email delivery sweep failed");
+        }
+    }
+}
+
+/// Run [`run_notification_sweep`] on a fixed interval and deliver the
+/// resulting notifications over every configured channel (email via SMTP,
+/// push via the push gateway). A channel that is `None` is skipped.
+pub async fn run_sweep_loop_with_delivery(
+    pool: PgPool,
+    interval: std::time::Duration,
+    smtp_config: Option<crate::email::SmtpConfig>,
+    push_config: Option<crate::push::PushConfig>,
+) {
+    let mut ticker = tokio::time::interval(interval);
+    loop {
+        ticker.tick().await;
+        if let Err(error) = run_notification_sweep(&pool).await {
+            warn!(error = %error, "notification sweep failed");
+            continue;
+        }
+        if let Some(smtp) = &smtp_config {
+            if let Err(error) = crate::email::deliver_pending_emails(&pool, smtp).await {
+                warn!(error = %error, "email delivery sweep failed");
+            }
+        }
+        if let Some(push) = &push_config {
+            if let Err(error) = crate::push::deliver_pending_push(&pool, push).await {
+                warn!(error = %error, "push delivery sweep failed");
+            }
         }
     }
 }

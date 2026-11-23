@@ -214,6 +214,13 @@ pub struct Config {
     /// "From" address used in outbound notification emails.
     /// Read from `PREDIFI_SMTP_FROM`, defaults to `"noreply@predifi.app"`.
     pub smtp_from: String,
+
+    /// Push gateway endpoint for push notification delivery. `None` disables
+    /// push. Read from `PREDIFI_PUSH_GATEWAY_URL`.
+    pub push_gateway_url: Option<String>,
+    /// Optional bearer token sent to the push gateway.
+    /// Read from `PREDIFI_PUSH_GATEWAY_TOKEN`.
+    pub push_gateway_token: Option<String>,
 }
 
 impl Config {
@@ -360,6 +367,16 @@ impl Config {
         let smtp_password = vars.get("PREDIFI_SMTP_PASSWORD").cloned().filter(|s| !s.is_empty());
         let smtp_from = get_string(vars, "PREDIFI_SMTP_FROM", "noreply@predifi.app");
 
+        // ── Push notifications ────────────────────────────────────────────────
+        let push_gateway_url = vars
+            .get("PREDIFI_PUSH_GATEWAY_URL")
+            .cloned()
+            .filter(|s| !s.trim().is_empty());
+        let push_gateway_token = vars
+            .get("PREDIFI_PUSH_GATEWAY_TOKEN")
+            .cloned()
+            .filter(|s| !s.is_empty());
+
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_MIN_CONNECTIONS",
@@ -411,6 +428,8 @@ impl Config {
             smtp_username,
             smtp_password,
             smtp_from,
+            push_gateway_url,
+            push_gateway_token,
             metrics_token,
             admin_api_key,
             trust_proxy_headers,
@@ -709,6 +728,18 @@ impl Config {
             });
         }
 
+        // ── Push gateway ─────────────────────────────────────────────────────
+        if let Some(url) = &self.push_gateway_url {
+            let is_https = url.starts_with("https://");
+            let is_local_http = !self.is_production() && url.starts_with("http://");
+            if !is_https && !is_local_http {
+                return Err(ConfigError::InvalidValue {
+                    key: "PREDIFI_PUSH_GATEWAY_URL",
+                    reason: String::from("must be an https:// URL (http:// only outside production)"),
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -769,6 +800,8 @@ impl Config {
             smtp_username: None,
             smtp_password: None,
             smtp_from: String::from("noreply@predifi.app"),
+            push_gateway_url: None,
+            push_gateway_token: None,
             metrics_token: None,
             admin_api_key: None,
             trust_proxy_headers: false,
