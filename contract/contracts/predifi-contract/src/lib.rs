@@ -59,7 +59,7 @@ mod creator_incentive;
 
 use soroban_sdk::{
     contract, contracterror, contractevent, contractimpl, contracttype, symbol_short, token,
-    Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
+    Address, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
 };
 
 pub use constants::*;

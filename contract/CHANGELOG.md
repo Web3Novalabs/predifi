@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (#2019).
 - Re-indented the module docs in `price_feed.rs` so Clippy's `doc_overindented_list_items` and
   `doc_lazy_continuation` lints pass (#2015).
+- Removed the unused `BytesN` import in `lib.rs` and the unnecessary `mut` in
+  `update_pool_description`, and made `payouts::calculate_payout_pool` test-only (production code
+  never called it; it remains the reference the payout unit and property tests compare against), so
+  Clippy no longer reports them under `-D warnings` (#2013).
 
 ### Added
 - Pool creator incentive system (#1933): `claim_creator_incentive` pays a

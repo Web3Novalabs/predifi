@@ -23,7 +23,7 @@
 //! | Function                     | Direction            | Remainder goes to                                   |
 //! |-------------------------------|----------------------|------------------------------------------------------|
 //! | [`calculate_protocol_fee`]    | Down (floor)         | Stays out of the fee, ends up in the payout pool     |
-//! | [`calculate_payout_pool`]     | N/A (subtraction)    | Inherits the fee's floor; itself exact               |
+//! | `calculate_payout_pool`       | N/A (subtraction)    | Inherits the fee's floor; itself exact               |
 //! | [`calculate_winnings`]        | Down (floor)         | Left unclaimed in the contract's token balance       |
 //! | [`calculate_claim_payout`]    | Down (composed)      | Same as above — no additional rounding is introduced |
 //! | [`calculate_referral_amount`] | **Nearest** (½ up)   | Comes out of the treasury's fee share, not user funds |
@@ -59,8 +59,9 @@ pub struct PayoutBreakdown {
 /// Always rounds **down** (`RoundingMode::ProtocolFavor` = floor division).
 /// The fee taken is therefore always `<=` the exact `fee_bps` percentage of
 /// `total_stake`. The fractional remainder is not collected as fee — it
-/// stays in `total_stake` and flows into [`calculate_payout_pool`], so it
-/// ends up available to winners rather than being lost or double-counted.
+/// stays in `total_stake` and flows into the payout pool computed by
+/// [`calculate_claim_payout`], so it ends up available to winners rather than
+/// being lost or double-counted.
 pub fn calculate_protocol_fee(total_stake: i128, fee_bps: i128) -> Result<i128, PrediFiError> {
     SafeMath::percentage(total_stake, fee_bps, RoundingMode::ProtocolFavor)
 }
@@ -72,6 +73,11 @@ pub fn calculate_protocol_fee(total_stake: i128, fee_bps: i128) -> Result<i128, 
 /// It inherits the downward rounding of [`calculate_protocol_fee`]: because
 /// the fee is floored, `payout_pool` is always `>=` the exact
 /// (`total_stake` × (1 − fee_bps)) value, never less.
+///
+/// Test-only reference implementation: [`calculate_claim_payout`] needs the fee
+/// as well as the pool, so it subtracts inline and computes the fee once. The
+/// unit and property tests use this function to check that the two agree.
+#[cfg(test)]
 pub fn calculate_payout_pool(total_stake: i128, fee_bps: i128) -> Result<i128, PrediFiError> {
     let fee = calculate_protocol_fee(total_stake, fee_bps)?;
     total_stake
