@@ -12,6 +12,8 @@ import {
 import { SearchResultHighlighter } from "@/components/search/SearchResultHighlighter";
 import { usePools } from "@/lib/hooks/usePools";
 import { useTags } from "@/lib/hooks/useTags";
+import { useCategories } from "@/lib/hooks/useCategories";
+import { formatCategory, type CategoryCount } from "@/lib/api/categories";
 import {
   usePoolsQuery,
   type AdvancedFilters,
@@ -63,19 +65,6 @@ function statusLabel(status: PoolStatus): string {
       return "active";
   }
 }
-
-const CATEGORIES = [
-  "All",
-  "Crypto",
-  "Sports",
-  "Politics",
-  "Finance",
-  "Entertainment",
-  "Technology",
-  "Science",
-  "Gaming",
-  "Other",
-];
 
 // ---------------------------------------------------------------------------
 // SearchablePools
@@ -131,6 +120,7 @@ export function SearchablePools({
   } = usePools(poolsQuery);
 
   const { tags: availableTags } = useTags();
+  const { categories: availableCategories } = useCategories();
 
   // ── Search handler ───────────────────────────────────────────────────────
   const handleSearch = useCallback(
@@ -222,6 +212,7 @@ export function SearchablePools({
 
         {/* Category filter */}
         <CategoryFilter
+          categories={availableCategories}
           selected={category}
           onSelect={setCategory}
         />
@@ -256,7 +247,13 @@ export function SearchablePools({
           <>
             <div className="space-y-3">
               {pools.map((pool) => (
-                <PoolRow key={pool.pool_id} pool={pool} query={debouncedSearch} />
+                <PoolRow
+                  key={pool.pool_id}
+                  pool={pool}
+                  query={debouncedSearch}
+                  onSelectCategory={setCategory}
+                  onToggleTag={toggleTag}
+                />
               ))}
             </div>
 
@@ -298,25 +295,34 @@ export function SearchablePools({
 // ---------------------------------------------------------------------------
 
 interface CategoryFilterProps {
+  categories: CategoryCount[];
   selected: string;
   onSelect: (category: string) => void;
 }
 
-function CategoryFilter({ selected, onSelect }: CategoryFilterProps) {
+function CategoryFilter({ categories, selected, onSelect }: CategoryFilterProps) {
+  const selectedKey = selected.toLowerCase();
+  const options: { value: string; label: string; count?: number }[] = [
+    { value: "", label: "All" },
+    ...categories.map((c) => ({
+      value: c.category,
+      label: formatCategory(c.category),
+      count: c.count,
+    })),
+  ];
   return (
     <div
       className="flex flex-wrap gap-1.5"
       role="group"
       aria-label="Category filter"
     >
-      {CATEGORIES.map((cat) => {
-        const value = cat === "All" ? "" : cat;
-        const active = selected === value;
+      {options.map((opt) => {
+        const active = selectedKey === opt.value;
         return (
           <button
-            key={cat}
+            key={opt.value || "all"}
             type="button"
-            onClick={() => onSelect(active ? "" : value)}
+            onClick={() => onSelect(active ? "" : opt.value)}
             aria-pressed={active}
             className={[
               "rounded-full px-3 py-1 text-xs font-medium transition-colors",
@@ -325,7 +331,8 @@ function CategoryFilter({ selected, onSelect }: CategoryFilterProps) {
                 : "bg-zinc-900 text-zinc-500 hover:text-zinc-300",
             ].join(" ")}
           >
-            {cat}
+            {opt.label}
+            {opt.count ? <span className="pl-1 text-zinc-600">{opt.count}</span> : null}
           </button>
         );
       })}
@@ -578,7 +585,14 @@ function AdvancedFilterPanel({ value, onChange }: AdvancedFilterPanelProps) {
 // PoolRow
 // ---------------------------------------------------------------------------
 
-function PoolRow({ pool, query }: { pool: Pool; query: string }) {
+interface PoolRowProps {
+  pool: Pool;
+  query: string;
+  onSelectCategory: (category: string) => void;
+  onToggleTag: (tag: string) => void;
+}
+
+function PoolRow({ pool, query, onSelectCategory, onToggleTag }: PoolRowProps) {
   return (
     <div className="flex items-center justify-between gap-3 rounded-lg bg-zinc-900/50 p-3 transition-colors hover:bg-zinc-900/80">
       <div className="min-w-0 space-y-1">
@@ -586,7 +600,17 @@ function PoolRow({ pool, query }: { pool: Pool; query: string }) {
           <SearchResultHighlighter text={pool.name} searchQuery={query} />
         </p>
         <p className="text-xs text-zinc-500">
-          <SearchResultHighlighter text={pool.category} searchQuery={query} />
+          <button
+            type="button"
+            onClick={() => onSelectCategory(pool.category)}
+            className="rounded hover:text-zinc-300 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]"
+            aria-label={`Filter by category ${formatCategory(pool.category)}`}
+          >
+            <SearchResultHighlighter
+              text={formatCategory(pool.category)}
+              searchQuery={query}
+            />
+          </button>
           {" · "}
           {pool.total_stake.toLocaleString()} {pool.token}
           {pool.prediction_count != null && (
@@ -600,12 +624,15 @@ function PoolRow({ pool, query }: { pool: Pool; query: string }) {
         {pool.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 pt-0.5">
             {pool.tags.slice(0, 5).map((tag) => (
-              <span
+              <button
                 key={tag}
-                className="inline-flex items-center rounded-full bg-zinc-800 px-2 py-px text-[10px] font-medium text-zinc-400"
+                type="button"
+                onClick={() => onToggleTag(tag)}
+                aria-label={`Filter by tag ${tag}`}
+                className="inline-flex items-center rounded-full bg-zinc-800 px-2 py-px text-[10px] font-medium text-zinc-400 hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]"
               >
                 #{tag}
-              </span>
+              </button>
             ))}
           </div>
         )}

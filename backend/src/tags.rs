@@ -10,6 +10,129 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::{FromRow, PgPool};
 
+/// Categories offered by default in the UI. Creators are not limited to this
+/// list — any label that passes [`normalize_category`] is accepted — but these
+/// are always returned by `GET /api/v1/categories` so filter UIs have a stable
+/// baseline even before any pool exists in a category.
+pub const KNOWN_CATEGORIES: &[&str] = &[
+    "crypto",
+    "sports",
+    "politics",
+    "finance",
+    "entertainment",
+    "technology",
+    "science",
+    "gaming",
+    "other",
+];
+
+/// Category assigned when a creator supplies none (or an unusable one).
+pub const DEFAULT_CATEGORY: &str = "other";
+/// Longest accepted category, in characters.
+pub const MAX_CATEGORY_LENGTH: usize = 64;
+/// Longest accepted tag, in characters.
+pub const MAX_TAG_LENGTH: usize = 32;
+/// Most tags a pool may carry.
+pub const MAX_TAGS_PER_POOL: usize = 10;
+
+/// Strictly normalise a category: trim, lower-case and collapse inner
+/// whitespace. Allowed characters are `a-z`, `0-9`, space, `-`, `_` and `&`.
+pub fn normalize_category(raw: &str) -> Result<String, &'static str> {
+    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+    if collapsed.is_empty() {
+        return Err("category must not be empty");
+    }
+    if collapsed.chars().count() > MAX_CATEGORY_LENGTH {
+        return Err("category must be 64 characters or fewer");
+    }
+    if !collapsed
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_' | '&'))
+    {
+        return Err("category may only contain letters, digits, spaces, '-', '_' and '&'");
+    }
+    Ok(collapsed)
+}
+
+/// Like [`normalize_category`] but never fails: unusable input becomes
+/// [`DEFAULT_CATEGORY`]. Used on the indexer path, where a pool created
+/// on-chain must be stored even if its category is odd.
+pub fn normalize_category_lenient(raw: &str) -> String {
+    normalize_category(raw).unwrap_or_else(|_| DEFAULT_CATEGORY.to_string())
+}
+
+fn normalize_tag(raw: &str) -> Result<String, &'static str> {
+    let tag = raw
+        .trim()
+        .trim_start_matches('#')
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_lowercase();
+    if tag.is_empty() {
+        return Err("tags must not be empty");
+    }
+    if tag.chars().count() > MAX_TAG_LENGTH {
+        return Err("each tag must be 32 characters or fewer");
+    }
+    if !tag
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+    {
+        return Err("tags may only contain letters, digits, '-' and '_'");
+    }
+    Ok(tag)
+}
+
+/// Strictly normalise a tag set: each tag is trimmed, stripped of a leading
+/// `#`, lower-cased and has inner whitespace turned into `-`; duplicates are
+/// removed (order preserved). Rejects invalid tags and more than
+/// [`MAX_TAGS_PER_POOL`] distinct tags.
+pub fn normalize_tags(raw: &[String]) -> Result<Vec<String>, &'static str> {
+    let mut out: Vec<String> = Vec::with_capacity(raw.len());
+    for tag in raw {
+        let tag = normalize_tag(tag)?;
+        if !out.contains(&tag) {
+            out.push(tag);
+        }
+    }
+    if out.len() > MAX_TAGS_PER_POOL {
+        return Err("a pool may have at most 10 tags");
+    }
+    Ok(out)
+}
+
+/// Like [`normalize_tags`] but drops invalid tags and truncates to
+/// [`MAX_TAGS_PER_POOL`] instead of failing (indexer path).
+pub fn normalize_tags_lenient(raw: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tag in raw {
+        if let Ok(tag) = normalize_tag(tag) {
+            if !out.contains(&tag) {
+                out.push(tag);
+            }
+        }
+        if out.len() == MAX_TAGS_PER_POOL {
+            break;
+        }
+    }
+    out
+}
+
+/// A category and how many pools are currently in it.
+#[derive(Debug, Clone, Serialize, FromRow, PartialEq, Eq)]
+pub struct CategoryCount {
+    pub category: String,
+    pub count: i64,
+}
+
+/// A tag and how many pools carry it.
+#[derive(Debug, Clone, Serialize, FromRow, PartialEq, Eq)]
+pub struct TagCount {
+    pub tag: String,
+    pub count: i64,
+}
+
 /// A pool row for listing views, including its tags.
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct PoolListingRow {
@@ -120,6 +243,88 @@ pub async fn update_pool_tags(
     Ok(result.rows_affected() > 0)
 }
 
+/// Categories with the number of **active** pools in each, most populated
+/// first. Every entry of [`KNOWN_CATEGORIES`] is included (with a zero count
+/// when empty) so filter UIs always have the baseline list.
+pub async fn list_category_counts(pool: &PgPool) -> Result<Vec<CategoryCount>, sqlx::Error> {
+    let rows: Vec<CategoryCount> = sqlx::query_as(
+        r#"
+        SELECT lower(category) AS category, COUNT(*) AS count
+        FROM pools
+        WHERE state = 'active' AND category <> ''
+        GROUP BY lower(category)
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(merge_known_categories(rows))
+}
+
+/// Merge DB counts with [`KNOWN_CATEGORIES`] and order by count (desc), then name.
+fn merge_known_categories(mut rows: Vec<CategoryCount>) -> Vec<CategoryCount> {
+    for known in KNOWN_CATEGORIES {
+        if !rows.iter().any(|r| r.category == *known) {
+            rows.push(CategoryCount {
+                category: (*known).to_string(),
+                count: 0,
+            });
+        }
+    }
+    rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.category.cmp(&b.category)));
+    rows
+}
+
+/// Tags with the number of **active** pools carrying each, most used first.
+pub async fn list_tag_counts(pool: &PgPool, limit: i64) -> Result<Vec<TagCount>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT tag, COUNT(*) AS count
+        FROM pools, unnest(tags) AS tag
+        WHERE state = 'active'
+        GROUP BY tag
+        ORDER BY count DESC, tag ASC
+        LIMIT $1
+        "#,
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+/// The creator wallet of `pool_id`, or `None` when the pool does not exist.
+pub async fn get_pool_creator(pool: &PgPool, pool_id: i64) -> Result<Option<String>, sqlx::Error> {
+    let row: Option<(String,)> = sqlx::query_as("SELECT creator FROM pools WHERE pool_id = $1")
+        .bind(pool_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|(creator,)| creator))
+}
+
+/// Update a pool's category and/or tags. `None` leaves a field unchanged.
+/// Values must already be normalised. Returns `false` when the pool is
+/// missing.
+pub async fn update_pool_labels(
+    pool: &PgPool,
+    pool_id: i64,
+    category: Option<&str>,
+    tags: Option<&[String]>,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        r#"
+        UPDATE pools
+        SET category = COALESCE($1, category),
+            tags     = COALESCE($2, tags)
+        WHERE pool_id = $3
+        "#,
+    )
+    .bind(category)
+    .bind(tags)
+    .bind(pool_id)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,5 +332,46 @@ mod tests {
     #[test]
     fn invalid_status_defaults_to_active() {
         assert_eq!(crate::search::normalize_status("bogus"), "active");
+    }
+
+    #[test]
+    fn category_is_trimmed_lowercased_and_validated() {
+        assert_eq!(normalize_category("  Crypto ").unwrap(), "crypto");
+        assert_eq!(normalize_category("Pop   Culture").unwrap(), "pop culture");
+        assert!(normalize_category("   ").is_err());
+        assert!(normalize_category("bad;drop").is_err());
+        assert!(normalize_category(&"x".repeat(MAX_CATEGORY_LENGTH + 1)).is_err());
+        assert_eq!(normalize_category_lenient("???"), DEFAULT_CATEGORY);
+    }
+
+    #[test]
+    fn tags_are_normalised_and_deduplicated() {
+        let raw = vec!["#BTC".to_string(), "btc".to_string(), "Price Prediction".to_string()];
+        assert_eq!(normalize_tags(&raw).unwrap(), vec!["btc", "price-prediction"]);
+        assert!(normalize_tags(&["bad tag!".to_string()]).is_err());
+        assert!(normalize_tags(&[String::new()]).is_err());
+        let many: Vec<String> = (0..=MAX_TAGS_PER_POOL).map(|i| format!("t{i}")).collect();
+        assert!(normalize_tags(&many).is_err());
+    }
+
+    #[test]
+    fn lenient_tags_drop_invalid_and_truncate() {
+        let mut raw: Vec<String> = (0..20).map(|i| format!("t{i}")).collect();
+        raw.insert(0, "no good!".to_string());
+        let out = normalize_tags_lenient(&raw);
+        assert_eq!(out.len(), MAX_TAGS_PER_POOL);
+        assert_eq!(out[0], "t0");
+    }
+
+    #[test]
+    fn known_categories_are_always_listed() {
+        let merged = merge_known_categories(vec![CategoryCount {
+            category: "sports".into(),
+            count: 4,
+        }]);
+        assert_eq!(merged[0].category, "sports");
+        for known in KNOWN_CATEGORIES {
+            assert!(merged.iter().any(|c| c.category == *known));
+        }
     }
 }

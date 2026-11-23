@@ -902,6 +902,10 @@ pub struct PoolCreatedPayload {
     pub category: NonEmptyString,
     /// Pool description / name decoded from the event data.
     pub description: NonEmptyString,
+    /// Optional creator-assigned tags. Normalised server-side (lower-case,
+    /// de-duplicated, at most 10); invalid tags are dropped.
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Number of distinct outcome options (#1932). Defaults to `2` (binary)
     /// so older callers that predate multi-outcome pools still deserialize.
     #[serde(default = "default_options_count")]
@@ -963,6 +967,7 @@ pub async fn ingest_pool_created(
         token: payload.token.into(),
         category: payload.category.into(),
         description: payload.description.into(),
+        tags: payload.tags,
         options_count: payload.options_count as i32,
         outcome_descriptions: payload.outcome_descriptions,
     };
@@ -1591,7 +1596,13 @@ pub async fn get_user_profile_handler(
 
 // ── Pool tags ────────────────────────────────────────────────────────────────
 
-/// `GET /api/v1/tags` — distinct tags currently in use, for filter-UI dropdowns.
+/// Default and maximum number of entries returned by `GET /api/v1/tags`.
+const TAG_LIST_LIMIT: i64 = 200;
+
+/// `GET /api/v1/tags` — tags currently in use, for filter-UI dropdowns.
+///
+/// `tags` is the alphabetical list (unchanged); `counts` lists the same tags
+/// with the number of active pools using each, most used first.
 pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
@@ -1605,43 +1616,22 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
         .into_response();
     };
 
-    match crate::tags::list_distinct_tags(db).await {
-        Ok(tags) => ApiResponse::success(json!({ "tags": tags })).into_response(),
+    match tokio::try_join!(
+        crate::tags::list_distinct_tags(db),
+        crate::tags::list_tag_counts(db, TAG_LIST_LIMIT)
+    ) {
+        Ok((tags, counts)) => {
+            ApiResponse::success(json!({ "tags": tags, "counts": counts })).into_response()
+        }
         Err(e) => internal_error_response(e),
     }
 }
 
-/// Request body for `PATCH /api/v1/pools/:id/tags`.
-#[derive(Debug, Deserialize)]
-pub struct UpdatePoolTagsRequest {
-    /// Legacy field, retained for request compatibility. It is no longer used
-    /// for authorization: pool creators are public and can be copied by anyone.
-    pub creator: StellarAddress,
-    pub tags: Vec<String>,
-}
-
-/// `PATCH /api/v1/pools/:id/tags` — admin-only: replace a pool's tag set.
-///
-/// Requires the `x-admin-api-key` header (the same credential as
-/// `/admin/log-level`). Until wallet-based sessions exist, the `creator` in
-/// the body is not trusted as proof of identity.
-pub async fn update_pool_tags_handler(
-    State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
-    Path(pool_id): Path<i64>,
-    Json(body): Json<UpdatePoolTagsRequest>,
-) -> axum::response::Response {
+/// `GET /api/v1/categories` — pool categories with the number of active pools
+/// in each. The default categories are always present, even when empty.
+pub async fn list_categories_handler(State(state): State<AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
-
-    if !has_admin_credential(&headers) {
-        return ApiResponse::<()>::error(
-            StatusCode::UNAUTHORIZED,
-            error_codes::UNAUTHORIZED,
-            "invalid or missing admin credentials",
-        )
-        .into_response();
-    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1652,11 +1642,152 @@ pub async fn update_pool_tags_handler(
         .into_response();
     };
 
-    match crate::tags::update_pool_tags(db, pool_id, &body.tags).await {
+    match crate::tags::list_category_counts(db).await {
+        Ok(categories) => ApiResponse::success(json!({ "categories": categories })).into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
+/// Request body for `PATCH /api/v1/pools/:id/tags`.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePoolTagsRequest {
+    /// Legacy field, retained for request compatibility. It is no longer used
+    /// for authorization: pool creators are public and can be copied by anyone.
+    #[serde(default)]
+    pub creator: Option<StellarAddress>,
+    pub tags: Vec<String>,
+}
+
+/// Request body for `PATCH /api/v1/pools/:id/metadata`.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePoolMetadataRequest {
+    /// New category (normalised to lower-case). Omit to leave unchanged.
+    pub category: Option<String>,
+    /// Replacement tag set. Omit to leave unchanged; `[]` clears all tags.
+    pub tags: Option<Vec<String>>,
+}
+
+/// Who is allowed to relabel a pool.
+#[derive(Debug, PartialEq, Eq)]
+enum PoolEditor {
+    Admin,
+    Creator,
+    Denied,
+    Unauthenticated,
+}
+
+/// Decide whether the request may edit a pool created by `pool_creator`.
+///
+/// The admin API key always may; otherwise the bearer must be a valid access
+/// token whose subject is the pool's creator.
+fn resolve_pool_editor(
+    config: &Config,
+    headers: &axum::http::HeaderMap,
+    pool_creator: &str,
+) -> PoolEditor {
+    if has_admin_credential(headers) {
+        return PoolEditor::Admin;
+    }
+    let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::jwt::extract_bearer_token)
+    else {
+        return PoolEditor::Unauthenticated;
+    };
+    match crate::jwt::verify_jwt_token_strict(
+        token,
+        &config.secret_key,
+        "access",
+        config.jwt_key_version,
+    ) {
+        Ok(claims) if !pool_creator.is_empty() && claims.sub == pool_creator => PoolEditor::Creator,
+        Ok(_) => PoolEditor::Denied,
+        Err(_) => PoolEditor::Unauthenticated,
+    }
+}
+
+/// Shared implementation of the category/tag update endpoints.
+async fn apply_pool_labels(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    pool_id: i64,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
+    legacy_response: bool,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let invalid = |message: &'static str| {
+        ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, message)
+            .into_response()
+    };
+
+    if category.is_none() && tags.is_none() {
+        return invalid("provide at least one of category or tags");
+    }
+    let category = match category.as_deref().map(crate::tags::normalize_category).transpose() {
+        Ok(category) => category,
+        Err(message) => return invalid(message),
+    };
+    let tags = match tags.as_deref().map(crate::tags::normalize_tags).transpose() {
+        Ok(tags) => tags,
+        Err(message) => return invalid(message),
+    };
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    let creator = match crate::tags::get_pool_creator(db, pool_id).await {
+        Ok(Some(creator)) => creator,
+        Ok(None) => {
+            return ApiResponse::<()>::error(
+                StatusCode::NOT_FOUND,
+                error_codes::NOT_FOUND,
+                "pool not found",
+            )
+            .into_response();
+        }
+        Err(e) => return internal_error_response(e),
+    };
+
+    match resolve_pool_editor(&state.config, headers, &creator) {
+        PoolEditor::Admin | PoolEditor::Creator => {}
+        PoolEditor::Denied => {
+            return ApiResponse::<()>::error(
+                StatusCode::FORBIDDEN,
+                error_codes::FORBIDDEN,
+                "only the pool creator or an admin may edit this pool",
+            )
+            .into_response();
+        }
+        PoolEditor::Unauthenticated => {
+            return ApiResponse::<()>::error(
+                StatusCode::UNAUTHORIZED,
+                error_codes::UNAUTHORIZED,
+                "invalid or missing credentials",
+            )
+            .into_response();
+        }
+    }
+
+    match crate::tags::update_pool_labels(db, pool_id, category.as_deref(), tags.as_deref()).await {
         Ok(true) => {
             state.pool_cache.invalidate(pool_id);
             state.redis.invalidate_pools_cache().await;
-            ApiResponse::success(json!({ "pool_id": pool_id, "tags": body.tags })).into_response()
+            let body = if legacy_response {
+                json!({ "pool_id": pool_id, "tags": tags })
+            } else {
+                json!({ "pool_id": pool_id, "category": category, "tags": tags })
+            };
+            ApiResponse::success(body).into_response()
         }
         Ok(false) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
@@ -1666,6 +1797,34 @@ pub async fn update_pool_tags_handler(
         .into_response(),
         Err(e) => internal_error_response(e),
     }
+}
+
+/// `PATCH /api/v1/pools/:id/tags` — replace a pool's tag set.
+///
+/// Authorized for the pool's creator (bearer access token whose subject is
+/// the creator) or an admin (`x-admin-api-key`). The `creator` body field is
+/// legacy and never trusted as proof of identity.
+pub async fn update_pool_tags_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(pool_id): Path<i64>,
+    Json(body): Json<UpdatePoolTagsRequest>,
+) -> axum::response::Response {
+    apply_pool_labels(&state, &headers, pool_id, None, Some(body.tags), true).await
+}
+
+/// `PATCH /api/v1/pools/:id/metadata` — update a pool's category and/or tags.
+///
+/// Same authorization as [`update_pool_tags_handler`]. Body:
+/// `{ "category": "crypto", "tags": ["btc", "halving"] }` (both optional, at
+/// least one required).
+pub async fn update_pool_metadata_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(pool_id): Path<i64>,
+    Json(body): Json<UpdatePoolMetadataRequest>,
+) -> axum::response::Response {
+    apply_pool_labels(&state, &headers, pool_id, body.category, body.tags, false).await
 }
 
 // ── Claims (winnings / refunds) ───────────────────────────────────────────────
@@ -2196,6 +2355,7 @@ pub fn router(
             .route("/stats", get(get_stats))
             .route("/leaderboard", get(get_leaderboard))
             .route("/tags", get(list_tags_handler))
+            .route("/categories", get(list_categories_handler))
             .route("/referrals/:address", get(referrals_handler))
             .route(
                 "/referrals/:address/estimate",
@@ -2257,6 +2417,7 @@ pub fn router(
         Router::new()
             .merge(indexer)
             .route("/pools/:id/tags", patch(update_pool_tags_handler))
+            .route("/pools/:id/metadata", patch(update_pool_metadata_handler))
             .route(
                 "/pools/:id/pay-creator-incentive",
                 post(pay_creator_incentive_handler),

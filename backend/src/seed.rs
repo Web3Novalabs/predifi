@@ -465,6 +465,7 @@ pub fn seed_pool_to_event(p: &SeedPool) -> PoolCreatedEvent {
         token: p.token.clone(),
         category: p.category.clone(),
         description: p.description.clone(),
+        tags: Vec::new(),
         // Seed fixtures predate per-outcome labels (#1932) and are only used
         // for local/dev seeding, so a binary default with no labels is fine.
         options_count: 2,

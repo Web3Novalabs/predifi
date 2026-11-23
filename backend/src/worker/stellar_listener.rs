@@ -672,6 +672,8 @@ async fn handle_pool_created_event(
     // an older/partial event payload omits them rather than failing ingest.
     let options_count = extract_u32(data, "options_count").unwrap_or(2);
     let outcome_descriptions = extract_string_vec(data, "outcome_descriptions").unwrap_or_default();
+    // Optional creator-assigned tags; older events omit them.
+    let tags = extract_string_vec(data, "tags").unwrap_or_default();
 
     let pool_event = crate::db::PoolCreatedEvent {
         pool_id,
@@ -680,6 +682,7 @@ async fn handle_pool_created_event(
         token,
         category,
         description,
+        tags,
         options_count: options_count as i32,
         outcome_descriptions,
     };

@@ -98,6 +98,9 @@ pub struct PoolCreatedEvent {
     pub token: String,
     pub category: String,
     pub description: String,
+    /// Creator-assigned tags. Normalised (lower-case, de-duplicated, at most
+    /// 10) on insert, so callers may pass raw labels.
+    pub tags: Vec<String>,
     /// Number of distinct outcome options (#1932). The on-chain event has
     /// carried this since multi-outcome pools were added
     /// (`events.rs::PoolCreatedEvent::options_count`); the indexer
@@ -325,19 +328,20 @@ pub async fn insert_pool_from_event(
             r#"
             INSERT INTO pools
                 (pool_id, name, category, total_stake, end_time, state, creator, token, created_at,
-                 options_count, outcome_descriptions)
-            VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW(), $7, $8)
+                 options_count, outcome_descriptions, tags)
+            VALUES ($1, $2, $3, 0, to_timestamp($4), 'active', $5, $6, NOW(), $7, $8, $9)
             ON CONFLICT (pool_id) DO NOTHING
             "#,
         )
         .bind(event.pool_id as i64)
         .bind(&event.description)
-        .bind(&event.category)
+        .bind(crate::tags::normalize_category_lenient(&event.category))
         .bind(event.end_time as f64)
         .bind(&event.creator)
         .bind(&event.token)
         .bind(event.options_count)
         .bind(&event.outcome_descriptions)
+        .bind(crate::tags::normalize_tags_lenient(&event.tags))
         .execute(pool),
     )
     .await?;
