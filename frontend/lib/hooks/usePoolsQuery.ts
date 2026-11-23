@@ -11,11 +11,32 @@ import { useDebounce } from "@/lib/hooks/useDebounce";
  */
 export type SortBy = NonNullable<PoolsQuery["sort_by"]>;
 
+/** Parse a non-negative integer stake from a URL param; `null` when invalid. */
+function parseStake(raw: string | null): number | null {
+  if (raw == null || raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
 /**
  * Valid lifecycle status options.
  * Mirrors the `status` field of {@link PoolsQuery}.
  */
 export type PoolStatus = NonNullable<PoolsQuery["status"]>;
+
+/** Advanced (non-primary) pool filters. Empty string / `null` means "unset". */
+export interface AdvancedFilters {
+  token: string;
+  creator: string;
+  /** Minimum total stake, base units. */
+  minStake: number | null;
+  /** Maximum total stake, base units. */
+  maxStake: number | null;
+  /** `YYYY-MM-DD` — pools ending on or after the start of this day (UTC). */
+  endsAfter: string;
+  /** `YYYY-MM-DD` — pools ending on or before the end of this day (UTC). */
+  endsBefore: string;
+}
 
 /** The shape of the query state managed by {@link usePoolsQuery}. */
 export interface PoolsQueryState {
@@ -31,6 +52,8 @@ export interface PoolsQueryState {
   category: string;
   /** Active tag filters. */
   tags: string[];
+  /** Advanced filters (token, creator, stake range, end-time range). */
+  advanced: AdvancedFilters;
   /** Current page index (0-based). */
   page: number;
   /** Number of items per page. */
@@ -47,6 +70,8 @@ export interface PoolsQueryActions {
   toggleTag: (tag: string) => void;
   /** Replace the entire tag filter set. */
   setTags: (tags: string[]) => void;
+  /** Merge changes into the advanced filter set. */
+  setAdvanced: (changes: Partial<AdvancedFilters>) => void;
   /** Navigate to a specific page (0-based). */
   setPage: (page: number) => void;
   setPageSize: (size: number) => void;
@@ -115,6 +140,14 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
   const tags: string[] = tagsParam
     ? tagsParam.split(",").map((t) => t.trim()).filter(Boolean)
     : [];
+  const advanced: AdvancedFilters = {
+    token: syncUrl ? (searchParams.get("token") ?? "") : "",
+    creator: syncUrl ? (searchParams.get("creator") ?? "") : "",
+    minStake: syncUrl ? parseStake(searchParams.get("min_stake")) : null,
+    maxStake: syncUrl ? parseStake(searchParams.get("max_stake")) : null,
+    endsAfter: syncUrl ? (searchParams.get("ends_after") ?? "") : "",
+    endsBefore: syncUrl ? (searchParams.get("ends_before") ?? "") : "",
+  };
   const page = syncUrl ? Number(searchParams.get("page") ?? 0) : 0;
   const pageSize = syncUrl ? Number(searchParams.get("limit") ?? defaultPageSize) : defaultPageSize;
 
@@ -178,6 +211,20 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
     [navigate],
   );
 
+  const setAdvanced = useCallback(
+    (changes: Partial<AdvancedFilters>) => {
+      const params: Record<string, string | number | null> = { page: null };
+      if ("token" in changes) params.token = changes.token || null;
+      if ("creator" in changes) params.creator = changes.creator || null;
+      if ("minStake" in changes) params.min_stake = changes.minStake ?? null;
+      if ("maxStake" in changes) params.max_stake = changes.maxStake ?? null;
+      if ("endsAfter" in changes) params.ends_after = changes.endsAfter || null;
+      if ("endsBefore" in changes) params.ends_before = changes.endsBefore || null;
+      navigate(params);
+    },
+    [navigate],
+  );
+
   const toggleTag = useCallback(
     (tag: string) => {
       const next = tags.includes(tag) ? tags.filter((t) => t !== tag) : [...tags, tag];
@@ -215,8 +262,29 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
     if (category) q.category = category;
     if (tags.length > 0) q.tags = tags;
     if (debouncedSearch.trim()) q.q = debouncedSearch.trim();
+    if (advanced.token.trim()) q.token = advanced.token.trim();
+    if (advanced.creator.trim()) q.creator = advanced.creator.trim();
+    if (advanced.minStake != null) q.min_stake = advanced.minStake;
+    if (advanced.maxStake != null) q.max_stake = advanced.maxStake;
+    if (advanced.endsAfter) q.ends_after = `${advanced.endsAfter}T00:00:00Z`;
+    if (advanced.endsBefore) q.ends_before = `${advanced.endsBefore}T23:59:59Z`;
     return q;
-  }, [sortBy, status, category, tags, debouncedSearch, page, pageSize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    sortBy,
+    status,
+    category,
+    tagsParam,
+    debouncedSearch,
+    advanced.token,
+    advanced.creator,
+    advanced.minStake,
+    advanced.maxStake,
+    advanced.endsAfter,
+    advanced.endsBefore,
+    page,
+    pageSize,
+  ]);
 
   return {
     // State
@@ -226,6 +294,7 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
     status,
     category,
     tags,
+    advanced,
     page,
     pageSize,
     // Actions
@@ -234,6 +303,7 @@ export function usePoolsQuery(options: UsePoolsQueryOptions = {}): PoolsQuerySta
     setStatus,
     setCategory,
     setTags,
+    setAdvanced,
     toggleTag,
     setPage,
     setPageSize,

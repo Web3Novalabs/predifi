@@ -290,11 +290,13 @@ const POOLS_MAX_PAGE_SIZE: i64 = 100;
 /// Query parameters for the `GET /api/v1/pools` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct PoolsQuery {
-    /// Sort order: "popular" | "ending_soon" | "new" (default)
+    /// Sort order: "popular" (most predictions) | "stake_desc" | "stake_asc" |
+    /// "ending_soon" | "ending_latest" | "new" (default) | "relevance" (needs `q`).
     pub sort_by: Option<PoolSortBy>,
-    /// Category filter, e.g. "Sports", "Crypto"
+    /// Category filter, e.g. "Sports", "Crypto" (case-insensitive).
     pub category: Option<NonEmptyString>,
-    /// Status filter: "active" | "closed" | "settled" (default: "active")
+    /// Status filter: "active" (default) | "resolved" (alias `settled`) |
+    /// "cancelled" (alias `closed`).
     pub status: Option<PoolStatus>,
     /// Comma-separated tag filter, e.g. "btc,price-prediction". A pool
     /// matches if any of its tags overlap this list.
@@ -302,6 +304,18 @@ pub struct PoolsQuery {
     /// Full-text search query across pool name, category, and tags.
     /// Uses PostgreSQL `plainto_tsquery` + ILIKE fallback.
     pub q: Option<String>,
+    /// Token (contract address) the pool is denominated in.
+    pub token: Option<NonEmptyString>,
+    /// Wallet address of the pool creator.
+    pub creator: Option<StellarAddress>,
+    /// Minimum total stake (inclusive).
+    pub min_stake: Option<i64>,
+    /// Maximum total stake (inclusive).
+    pub max_stake: Option<i64>,
+    /// Only pools ending at or after this RFC 3339 timestamp.
+    pub ends_after: Option<chrono::DateTime<chrono::Utc>>,
+    /// Only pools ending at or before this RFC 3339 timestamp.
+    pub ends_before: Option<chrono::DateTime<chrono::Utc>>,
     /// Page size. Missing defaults to [`POOLS_DEFAULT_PAGE_SIZE`]; a value
     /// outside `[1, POOLS_MAX_PAGE_SIZE]` is clamped into range in the
     /// handler rather than rejected — unlike most other paginated endpoints
@@ -483,22 +497,43 @@ pub async fn get_pools(
     // size still gets a bounded, servable page instead of a 400 (#1734).
     let limit = resolve_pools_page_size(params.limit);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
-    let tags: Option<Vec<String>> = params
+    let tags: Vec<String> = params
         .tags
         .as_ref()
         .map(|s| {
             s.split(',')
-                .map(|t| t.trim().to_string())
+                .map(|t| t.trim().to_lowercase())
                 .filter(|t| !t.is_empty())
                 .collect::<Vec<_>>()
         })
-        .filter(|v| !v.is_empty());
+        .unwrap_or_default();
     // Full-text search query — trim and convert empty to None.
     let q: Option<String> = params
         .q
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+
+    let filter = crate::search::PoolFilter {
+        status: status.to_string(),
+        category: category.map(str::to_string),
+        tags,
+        token: params.token.as_ref().map(|t| t.as_str().trim().to_string()),
+        creator: params.creator.as_ref().map(|c| c.as_str().to_string()),
+        min_stake: params.min_stake,
+        max_stake: params.max_stake,
+        ends_after: params.ends_after,
+        ends_before: params.ends_before,
+        q: q.clone(),
+    };
+    if let Err(message) = filter.validate() {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            message,
+        )
+        .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -509,25 +544,14 @@ pub async fn get_pools(
         .into_response();
     };
 
-    // Cache-aside pattern: Step 1 — Check cache
-    let mut cache_key =
-        crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
-    if let Some(tags) = &tags {
-        let sanitized: Vec<String> = tags
-            .iter()
-            .map(|t| crate::redis_cache::sanitize_key_component(t))
-            .filter(|t| !t.is_empty())
-            .collect();
-        if !sanitized.is_empty() {
-            cache_key = format!("{cache_key}:tags:{}", sanitized.join(","));
-        }
-    }
-    if let Some(q_val) = &q {
-        cache_key = format!(
-            "{cache_key}:q:{}",
-            crate::redis_cache::sanitize_key_component(q_val)
-        );
-    }
+    // Cache-aside pattern: Step 1 — Check cache. The suffix hashes every
+    // filter beyond status/category/sort, and is empty for the default
+    // request so the cache warmer's keys keep matching.
+    let cache_key = format!(
+        "{}{}",
+        crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset),
+        filter.cache_suffix()
+    );
 
     if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
         // Cache hit — return cached data
@@ -536,17 +560,14 @@ pub async fn get_pools(
 
     // Cache miss — Step 2: Fetch from database
     match tokio::try_join!(
-        crate::tags::list_pools(
+        crate::search::search_pools(
             db,
-            sort_by,
-            category,
-            tags.as_deref(),
-            status,
-            q.as_deref(),
+            &filter,
+            crate::search::PoolSort::parse(sort_by),
             limit,
             offset
         ),
-        crate::tags::count_pools(db, category, tags.as_deref(), status, q.as_deref())
+        crate::search::count_filtered_pools(db, &filter)
     ) {
         Ok((pools, total)) => {
             if status == "active" {

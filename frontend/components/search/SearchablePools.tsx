@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -12,7 +12,12 @@ import {
 import { SearchResultHighlighter } from "@/components/search/SearchResultHighlighter";
 import { usePools } from "@/lib/hooks/usePools";
 import { useTags } from "@/lib/hooks/useTags";
-import { usePoolsQuery, type SortBy, type PoolStatus } from "@/lib/hooks/usePoolsQuery";
+import {
+  usePoolsQuery,
+  type AdvancedFilters,
+  type SortBy,
+  type PoolStatus,
+} from "@/lib/hooks/usePoolsQuery";
 import type { Pool } from "@/lib/api/pools";
 
 // ---------------------------------------------------------------------------
@@ -33,14 +38,31 @@ export interface SearchablePoolsProps {
 const SORT_OPTIONS: { value: SortBy; label: string }[] = [
   { value: "new", label: "Newest" },
   { value: "popular", label: "Popular" },
+  { value: "stake_desc", label: "Stake ↓" },
+  { value: "stake_asc", label: "Stake ↑" },
   { value: "ending_soon", label: "Ending soon" },
+  { value: "ending_latest", label: "Ending last" },
 ];
 
 const STATUS_OPTIONS: { value: PoolStatus; label: string }[] = [
   { value: "active", label: "Active" },
-  { value: "closed", label: "Closed" },
-  { value: "settled", label: "Settled" },
+  { value: "resolved", label: "Resolved" },
+  { value: "cancelled", label: "Cancelled" },
 ];
+
+/** Human label for a status filter value, including legacy aliases. */
+function statusLabel(status: PoolStatus): string {
+  switch (status) {
+    case "settled":
+    case "resolved":
+      return "resolved";
+    case "closed":
+    case "cancelled":
+      return "cancelled";
+    default:
+      return "active";
+  }
+}
 
 const CATEGORIES = [
   "All",
@@ -85,9 +107,11 @@ export function SearchablePools({
     status,
     category,
     tags,
+    advanced,
     page,
     pageSize,
     poolsQuery,
+    setAdvanced,
     setSearch,
     setSortBy,
     setStatus,
@@ -155,7 +179,8 @@ export function SearchablePools({
     tags.length +
     (debouncedSearch ? 1 : 0) +
     (status !== defaultStatus ? 1 : 0) +
-    (sortBy !== defaultSortBy ? 1 : 0);
+    (sortBy !== defaultSortBy ? 1 : 0) +
+    countAdvancedFilters(advanced);
 
   // ── Main render ──────────────────────────────────────────────────────────
   return (
@@ -172,7 +197,7 @@ export function SearchablePools({
           <div className="flex items-center gap-2 sm:shrink-0">
             <span className="inline-flex items-center justify-center rounded-full bg-[#37B7C3]/10 px-3 py-1 text-xs font-medium text-[#7DE3EC]">
               {total.toLocaleString()}{" "}
-              {status === "active" ? "active" : status === "closed" ? "closed" : "settled"}
+              {statusLabel(status)}
             </span>
             {activeFilters > 0 && (
               <button
@@ -217,6 +242,9 @@ export function SearchablePools({
           onSortChange={setSortBy}
           onStatusChange={setStatus}
         />
+
+        {/* Advanced filters: token, creator, stake range, end-time range */}
+        <AdvancedFilterPanel value={advanced} onChange={setAdvanced} />
       </CardHeader>
 
       <CardContent>
@@ -416,6 +444,137 @@ function FilterBar({ sortBy, status, onSortChange, onStatusChange }: FilterBarPr
 }
 
 // ---------------------------------------------------------------------------
+// AdvancedFilterPanel
+// ---------------------------------------------------------------------------
+
+function countAdvancedFilters(a: AdvancedFilters): number {
+  return (
+    (a.token ? 1 : 0) +
+    (a.creator ? 1 : 0) +
+    (a.minStake != null ? 1 : 0) +
+    (a.maxStake != null ? 1 : 0) +
+    (a.endsAfter ? 1 : 0) +
+    (a.endsBefore ? 1 : 0)
+  );
+}
+
+interface AdvancedFilterPanelProps {
+  value: AdvancedFilters;
+  onChange: (changes: Partial<AdvancedFilters>) => void;
+}
+
+const FIELD_CLASS =
+  "w-full rounded-md bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]";
+
+function toStake(raw: string): number | null {
+  if (raw.trim() === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+}
+
+function AdvancedFilterPanel({ value, onChange }: AdvancedFilterPanelProps) {
+  const [open, setOpen] = useState(() => countAdvancedFilters(value) > 0);
+  const rangeInvalid =
+    value.minStake != null && value.maxStake != null && value.minStake > value.maxStake;
+  const datesInvalid =
+    value.endsAfter !== "" && value.endsBefore !== "" && value.endsAfter > value.endsBefore;
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls="advanced-pool-filters"
+        className="text-xs font-medium text-zinc-400 hover:text-zinc-200 transition-colors"
+      >
+        {open ? "Hide" : "Show"} advanced filters
+      </button>
+      {open && (
+        <div
+          id="advanced-pool-filters"
+          className="grid gap-3 sm:grid-cols-2"
+          role="group"
+          aria-label="Advanced pool filters"
+        >
+          <label className="space-y-1 text-xs text-zinc-500">
+            Token
+            <input
+              type="text"
+              className={FIELD_CLASS}
+              placeholder="Token contract address"
+              value={value.token}
+              onChange={(e) => onChange({ token: e.target.value })}
+            />
+          </label>
+          <label className="space-y-1 text-xs text-zinc-500">
+            Creator
+            <input
+              type="text"
+              className={FIELD_CLASS}
+              placeholder="Creator wallet address"
+              value={value.creator}
+              onChange={(e) => onChange({ creator: e.target.value })}
+            />
+          </label>
+          <label className="space-y-1 text-xs text-zinc-500">
+            Min stake
+            <input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              className={FIELD_CLASS}
+              value={value.minStake ?? ""}
+              aria-invalid={rangeInvalid}
+              onChange={(e) => onChange({ minStake: toStake(e.target.value) })}
+            />
+          </label>
+          <label className="space-y-1 text-xs text-zinc-500">
+            Max stake
+            <input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              className={FIELD_CLASS}
+              value={value.maxStake ?? ""}
+              aria-invalid={rangeInvalid}
+              onChange={(e) => onChange({ maxStake: toStake(e.target.value) })}
+            />
+          </label>
+          <label className="space-y-1 text-xs text-zinc-500">
+            Ends on or after
+            <input
+              type="date"
+              className={FIELD_CLASS}
+              value={value.endsAfter}
+              aria-invalid={datesInvalid}
+              onChange={(e) => onChange({ endsAfter: e.target.value })}
+            />
+          </label>
+          <label className="space-y-1 text-xs text-zinc-500">
+            Ends on or before
+            <input
+              type="date"
+              className={FIELD_CLASS}
+              value={value.endsBefore}
+              aria-invalid={datesInvalid}
+              onChange={(e) => onChange({ endsBefore: e.target.value })}
+            />
+          </label>
+          {(rangeInvalid || datesInvalid) && (
+            <p role="alert" className="text-xs text-red-400 sm:col-span-2">
+              {rangeInvalid
+                ? "Min stake must not exceed max stake."
+                : "The start date must not be after the end date."}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // PoolRow
 // ---------------------------------------------------------------------------
 
@@ -430,6 +589,13 @@ function PoolRow({ pool, query }: { pool: Pool; query: string }) {
           <SearchResultHighlighter text={pool.category} searchQuery={query} />
           {" · "}
           {pool.total_stake.toLocaleString()} {pool.token}
+          {pool.prediction_count != null && (
+            <>
+              {" · "}
+              {pool.prediction_count.toLocaleString()} prediction
+              {pool.prediction_count === 1 ? "" : "s"}
+            </>
+          )}
         </p>
         {pool.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 pt-0.5">
@@ -459,13 +625,19 @@ const STATE_STYLES: Record<string, string> = {
   settled: "bg-violet-400/10 text-violet-400",
 };
 
+/** Display names for stored pool states (cancelled pools are stored as closed). */
+const STATE_LABELS: Record<string, string> = {
+  closed: "cancelled",
+  settled: "resolved",
+};
+
 function PoolStateChip({ state }: { state: string }) {
   const cls = STATE_STYLES[state] ?? "bg-zinc-400/10 text-zinc-400";
   return (
     <span
       className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium capitalize ${cls}`}
     >
-      {state}
+      {STATE_LABELS[state] ?? state}
     </span>
   );
 }

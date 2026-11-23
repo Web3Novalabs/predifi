@@ -29,6 +29,7 @@ pub mod referrals;
 pub mod request_logger;
 pub mod response;
 pub mod routes;
+pub mod search;
 pub mod seed;
 pub mod server;
 pub mod session;

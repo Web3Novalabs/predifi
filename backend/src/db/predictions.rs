@@ -640,7 +640,10 @@ pub async fn insert_prediction_from_event(
     .execute(&mut **tx)
     .await?;
 
-    sqlx::query("UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2")
+    sqlx::query(
+        "UPDATE pools SET total_stake = total_stake + $1, prediction_count = prediction_count + 1 \
+         WHERE pool_id = $2",
+    )
         .bind(event.amount)
         .bind(event.pool_id as i64)
         .execute(&mut **tx)

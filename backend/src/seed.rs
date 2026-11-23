@@ -413,7 +413,10 @@ pub async fn insert_seed_predictions(
         .execute(&mut *tx)
         .await?;
 
-        sqlx::query("UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2")
+        sqlx::query(
+            "UPDATE pools SET total_stake = total_stake + $1, prediction_count = prediction_count + 1 \
+             WHERE pool_id = $2",
+        )
             .bind(pred.amount)
             .bind(pred.pool_id as i64)
             .execute(&mut *tx)

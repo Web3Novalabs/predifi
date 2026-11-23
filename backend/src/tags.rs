@@ -18,6 +18,8 @@ pub struct PoolListingRow {
     pub category: String,
     pub tags: Vec<String>,
     pub total_stake: i64,
+    /// Number of predictions placed in the pool (popularity).
+    pub prediction_count: i64,
     pub end_time: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub state: String,
@@ -28,15 +30,11 @@ pub struct PoolListingRow {
 
 /// Fetch pools with optional full-text search, category/tag/status filters, and sort order.
 ///
-/// `sort_by` accepts `"popular"`, `"ending_soon"`, or `"new"`.
-/// `status` accepts `"active"`, `"closed"`, or `"settled"`.
-/// `tags`, when non-empty, matches pools whose `tags` array overlaps it.
-/// `q`, when `Some`, performs full-text search across `name`, `category`, and
-/// `tags` using `to_tsvector` / `plainto_tsquery` — falls back to `ILIKE`
-/// prefix matching when the value is too short for a useful tsvector.
-///
-/// Lists pools matching all supplied filters ordered by the requested sort
-/// mode.  Returns a database error if the query cannot be completed.
+/// Thin wrapper over [`crate::search::search_pools`] kept for callers (such as
+/// the cache warmer) that only need the basic filters. `sort_by` accepts any
+/// [`crate::search::PoolSort`] key; `status` accepts `active`, `closed`/`cancelled`
+/// or `settled`/`resolved`.
+#[allow(clippy::too_many_arguments)]
 pub async fn list_pools(
     pool: &PgPool,
     sort_by: &str,
@@ -47,55 +45,18 @@ pub async fn list_pools(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<PoolListingRow>, sqlx::Error> {
-    let order_clause = match sort_by {
-        "popular" => "total_stake DESC",
-        "ending_soon" => "end_time ASC",
-        _ => "created_at DESC",
-    };
-
-    let valid_status = match status {
-        "active" | "closed" | "settled" => status,
-        _ => "active",
-    };
-
-    // SECURITY: order_clause comes from the controlled match above only —
-    // no user input reaches the format string directly, mirroring the
-    // pattern already used in db::get_pools_with_filters.
-    let sql = format!(
-        r#"
-        SELECT pool_id, name, category, tags, total_stake, end_time, created_at,
-               state, creator, token, result
-        FROM pools
-        WHERE state = $1
-          AND ($2::text IS NULL OR category = $2)
-          AND ($3::text[] IS NULL OR tags && $3)
-          AND (
-            $6::text IS NULL
-            OR (
-              to_tsvector('english', name || ' ' || category || ' ' || array_to_string(tags, ' '))
-              @@ plainto_tsquery('english', $6)
-            )
-            OR name ILIKE '%' || $6 || '%'
-            OR category ILIKE '%' || $6 || '%'
-          )
-        ORDER BY {order_clause}
-        LIMIT $4 OFFSET $5
-        "#
-    );
-
-    sqlx::query_as::<_, PoolListingRow>(&sql)
-        .bind(valid_status)
-        .bind(category)
-        .bind(tags)
-        .bind(limit)
-        .bind(offset)
-        .bind(q)
-        .fetch_all(pool)
-        .await
+    let filter = basic_filter(category, tags, status, q);
+    crate::search::search_pools(
+        pool,
+        &filter,
+        crate::search::PoolSort::parse(sort_by),
+        limit,
+        offset,
+    )
+    .await
 }
 
-/// Count pools matching the same full-text search, category/tag/status filters
-/// as [`list_pools`].  Returns the matching row count or a database error.
+/// Count pools matching the same filters as [`list_pools`].
 pub async fn count_pools(
     pool: &PgPool,
     category: Option<&str>,
@@ -103,37 +64,22 @@ pub async fn count_pools(
     status: &str,
     q: Option<&str>,
 ) -> Result<i64, sqlx::Error> {
-    let valid_status = match status {
-        "active" | "closed" | "settled" => status,
-        _ => "active",
-    };
+    crate::search::count_filtered_pools(pool, &basic_filter(category, tags, status, q)).await
+}
 
-    let sql = r#"
-        SELECT COUNT(*)
-        FROM pools
-        WHERE state = $1
-          AND ($2::text IS NULL OR category = $2)
-          AND ($3::text[] IS NULL OR tags && $3)
-          AND (
-            $4::text IS NULL
-            OR (
-              to_tsvector('english', name || ' ' || category || ' ' || array_to_string(tags, ' '))
-              @@ plainto_tsquery('english', $4)
-            )
-            OR name ILIKE '%' || $4 || '%'
-            OR category ILIKE '%' || $4 || '%'
-          )
-    "#;
-
-    let count: (i64,) = sqlx::query_as(sql)
-        .bind(valid_status)
-        .bind(category)
-        .bind(tags)
-        .bind(q)
-        .fetch_one(pool)
-        .await?;
-
-    Ok(count.0)
+fn basic_filter(
+    category: Option<&str>,
+    tags: Option<&[String]>,
+    status: &str,
+    q: Option<&str>,
+) -> crate::search::PoolFilter {
+    crate::search::PoolFilter {
+        status: status.to_string(),
+        category: category.map(str::to_string),
+        tags: tags.map(<[String]>::to_vec).unwrap_or_default(),
+        q: q.map(str::to_string),
+        ..Default::default()
+    }
 }
 
 /// Distinct tags in use across all pools, alphabetically — powers filter-UI
@@ -180,10 +126,6 @@ mod tests {
 
     #[test]
     fn invalid_status_defaults_to_active() {
-        let valid_status = match "bogus" {
-            "active" | "closed" | "settled" => "bogus",
-            _ => "active",
-        };
-        assert_eq!(valid_status, "active");
+        assert_eq!(crate::search::normalize_status("bogus"), "active");
     }
 }

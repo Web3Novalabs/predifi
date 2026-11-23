@@ -30,6 +30,8 @@ export function wsBaseUrl(): string {
 
 type ApiPool = components["schemas"]["PoolListResponse"]["pools"][number] & {
   tags: string[];
+  /** Number of predictions placed in the pool (popularity). */
+  prediction_count?: number;
 };
 type ApiPoolDetail = components["schemas"]["PoolWithOddsDoc"];
 type RuntimePoolDetail = Omit<ApiPoolDetail, "end_time"> & {
@@ -57,10 +59,26 @@ export type PoolsResponse = Omit<
   "pools" | "total"
 > & { pools: Pool[]; total: number; q?: string | null };
 
+/** Sort orders accepted by `GET /api/v1/pools`. */
+export type PoolSortBy =
+  | "popular"
+  | "stake_desc"
+  | "stake_asc"
+  | "ending_soon"
+  | "ending_latest"
+  | "new"
+  | "relevance";
+
+/**
+ * Lifecycle filter. `resolved` is an alias of `settled` and `cancelled` an
+ * alias of `closed` (cancelled pools are stored as closed).
+ */
+export type PoolStatusFilter = "active" | "resolved" | "cancelled" | "closed" | "settled";
+
 /** Filters accepted by `GET /api/v1/pools`. */
 export interface PoolsQuery {
   /** Sort order. Defaults to `"new"` on the backend. */
-  sort_by?: "popular" | "ending_soon" | "new";
+  sort_by?: PoolSortBy;
   /** Category filter, e.g. `"Sports"` or `"Crypto"`. */
   category?: string;
   /** Tag filter — a pool matches if any of its tags overlap this list. */
@@ -68,7 +86,19 @@ export interface PoolsQuery {
   /** Full-text search query across pool name, category, and tags. */
   q?: string;
   /** Lifecycle filter. Defaults to `"active"` on the backend. */
-  status?: "active" | "closed" | "settled";
+  status?: PoolStatusFilter;
+  /** Token (contract address) the pool is denominated in. */
+  token?: string;
+  /** Wallet address of the pool creator. */
+  creator?: string;
+  /** Minimum total stake (inclusive, in base units). */
+  min_stake?: number;
+  /** Maximum total stake (inclusive, in base units). */
+  max_stake?: number;
+  /** Only pools ending at or after this RFC 3339 timestamp. */
+  ends_after?: string;
+  /** Only pools ending at or before this RFC 3339 timestamp. */
+  ends_before?: string;
   limit?: number;
   offset?: number;
 }
@@ -86,6 +116,12 @@ export function poolsUrl(query: PoolsQuery = {}): string {
   if (query.tags && query.tags.length > 0) params.set("tags", query.tags.join(","));
   if (query.q && query.q.trim()) params.set("q", query.q.trim());
   if (query.status) params.set("status", query.status);
+  if (query.token && query.token.trim()) params.set("token", query.token.trim());
+  if (query.creator && query.creator.trim()) params.set("creator", query.creator.trim());
+  if (query.min_stake != null) params.set("min_stake", String(query.min_stake));
+  if (query.max_stake != null) params.set("max_stake", String(query.max_stake));
+  if (query.ends_after) params.set("ends_after", query.ends_after);
+  if (query.ends_before) params.set("ends_before", query.ends_before);
   if (query.limit != null) params.set("limit", String(query.limit));
   if (query.offset != null) params.set("offset", String(query.offset));
 
