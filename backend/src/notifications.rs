@@ -21,6 +21,10 @@ const POOL_ENDING_SOON_WINDOW: &str = "1 hour";
 const CLAIM_EXPIRING_WINDOW: &str = "1 day";
 /// How far back to scan for newly created pools when matching interests.
 const NEW_POOL_LOOKBACK: &str = "1 day";
+/// How far back to look for newly resolved pools. Older resolutions were
+/// notified on an earlier sweep (the dedupe index makes re-scanning them a
+/// no-op), so scanning them again every tick is pure overhead.
+const RESOLVED_LOOKBACK: &str = "7 days";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotifType {
@@ -57,38 +61,10 @@ pub struct NotificationRow {
     pub created_at: DateTime<Utc>,
 }
 
-/// Insert a notification for `user_address`, silently skipping if an
-/// identical `(user, pool, type)` notification already exists.
-async fn create_notification(
-    pool: &PgPool,
-    user_address: &str,
-    notif_type: NotifType,
-    title: &str,
-    message: &str,
-    pool_id: i64,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        r#"
-        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT DO NOTHING
-        "#,
-    )
-    .bind(user_address)
-    .bind(notif_type.as_str())
-    .bind(title)
-    .bind(message)
-    .bind(pool_id)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
 /// Insert a "recurring pool template is due" notification for `creator`
 /// (#1935).
 ///
-/// Unlike [`create_notification`], this has no real `pool_id` yet — the
+/// Unlike the sweep's set-based inserts, this has no real `pool_id` yet — the
 /// on-chain pool hasn't been created, since the backend has no custodial
 /// signing key and can't submit that transaction on the creator's behalf
 /// (see `worker::template_scheduler`). The `(user_address, pool_id,
@@ -235,103 +211,143 @@ pub struct SweepSummary {
     pub new_pool_matches: usize,
 }
 
-/// Resolution / claim-expiry notices are only generated for pools resolved
-/// within this window, so the first sweep after a deploy does not notify
-/// users about every historical pool.
-const RESOLVED_LOOKBACK: &str = "7 days";
+/// Execute one set-based `INSERT … SELECT` notification statement and return
+/// how many rows were actually inserted (rows skipped by the dedupe index are
+/// not counted).
+async fn insert_notifications(pool: &PgPool, sql: &str) -> Result<usize, sqlx::Error> {
+    let result = crate::metrics::observe_db(
+        "notification_sweep_insert",
+        sqlx::query(sql).execute(pool),
+    )
+    .await?;
+    Ok(result.rows_affected() as usize)
+}
 
 /// Scan current pool/prediction state and create any notifications that are
 /// now due. Safe to call on a fixed interval — every insert is deduplicated
-/// by the unique `(user_address, pool_id, notif_type)` index, and each
-/// category is a single set-based `INSERT … SELECT` (no per-user round trips).
-/// Counts in the summary are rows actually inserted.
+/// by the unique `(user_address, pool_id, notif_type)` index.
+///
+/// Each notification type is a single set-based `INSERT … SELECT … ON CONFLICT
+/// DO NOTHING` (#2204). This replaces an N+1 pattern that ran one query per
+/// pool to list its users and then one `INSERT` per user — a sweep over P pools
+/// with U users each cost `1 + P + P·U` round trips every five minutes; it now
+/// costs four regardless of data volume.
 #[instrument(skip(pool), name = "notifications.run_sweep")]
 pub async fn run_notification_sweep(pool: &PgPool) -> Result<SweepSummary, sqlx::Error> {
     let mut summary = SweepSummary::default();
 
-    // 1. Pools ending soon → notify everyone with a stake in them, plus the
-    //    pool's creator.
-    summary.pools_ending_soon = sqlx::query(&format!(
-        r#"
-        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
-        SELECT u.user_address, 'pool_ending_soon', 'Pool ending soon',
-               format('"%s" closes within the hour.', p.name), p.pool_id
-        FROM pools p
-        CROSS JOIN LATERAL (
-            SELECT DISTINCT user_address FROM predictions WHERE pool_id = p.pool_id
-            UNION
-            SELECT p.creator WHERE p.creator <> ''
-        ) u
-        WHERE p.state = 'active'
-          AND p.end_time BETWEEN NOW() AND NOW() + INTERVAL '{POOL_ENDING_SOON_WINDOW}'
-        ON CONFLICT DO NOTHING
-        "#
-    ))
-    .execute(pool)
-    .await?
-    .rows_affected() as usize;
+    // 1. Pools ending soon → notify everyone with a stake in them.
+    summary.pools_ending_soon = insert_notifications(
+        pool,
+        &format!(
+            r#"
+            INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+            SELECT u.user_address,
+                   '{ending}',
+                   'Pool ending soon',
+                   '"' || pl.name || '" closes within the hour.',
+                   pl.pool_id
+            FROM pools pl
+            CROSS JOIN LATERAL (
+                SELECT DISTINCT p.user_address
+                FROM predictions p
+                WHERE p.pool_id = pl.pool_id
+            ) u
+            WHERE pl.state = 'active'
+              AND pl.end_time BETWEEN NOW() AND NOW() + INTERVAL '{POOL_ENDING_SOON_WINDOW}'
+            ON CONFLICT DO NOTHING
+            "#,
+            ending = NotifType::PoolEndingSoon.as_str(),
+        ),
+    )
+    .await?;
 
-    // 2. Recently resolved pools → notify everyone who predicted on them, with
-    //    their own outcome when it can be determined.
-    summary.pools_resolved = sqlx::query(&format!(
-        r#"
-        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
-        SELECT DISTINCT pr.user_address, 'pool_resolved', 'Pool resolved',
-               format('"%s" has been resolved. Check your result.', p.name), p.pool_id
-        FROM pools p
-        JOIN predictions pr ON pr.pool_id = p.pool_id
-        WHERE p.state = 'settled'
-          AND p.result IS NOT NULL
-          AND p.resolved_at IS NOT NULL
-          AND p.resolved_at > NOW() - INTERVAL '{RESOLVED_LOOKBACK}'
-        ON CONFLICT DO NOTHING
-        "#
-    ))
-    .execute(pool)
-    .await?
-    .rows_affected() as usize;
+    // 2. Recently resolved pools → notify everyone who predicted on them.
+    //    Bounded by `RESOLVED_LOOKBACK` (served by idx_pools_settled_resolved_at)
+    //    so the sweep does not re-scan every pool ever settled on each tick.
+    summary.pools_resolved = insert_notifications(
+        pool,
+        &format!(
+            r#"
+            INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+            SELECT u.user_address,
+                   '{resolved}',
+                   'Pool resolved',
+                   '"' || pl.name || '" has been resolved. Check your result.',
+                   pl.pool_id
+            FROM pools pl
+            CROSS JOIN LATERAL (
+                SELECT DISTINCT p.user_address
+                FROM predictions p
+                WHERE p.pool_id = pl.pool_id
+            ) u
+            WHERE pl.state = 'settled'
+              AND pl.result IS NOT NULL
+              AND pl.resolved_at >= NOW() - INTERVAL '{RESOLVED_LOOKBACK}'
+            ON CONFLICT DO NOTHING
+            "#,
+            resolved = NotifType::PoolResolved.as_str(),
+        ),
+    )
+    .await?;
 
     // 3. Claim windows expiring soon → notify unclaimed winners.
-    summary.claims_expiring = sqlx::query(&format!(
-        r#"
-        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
-        SELECT DISTINCT pr.user_address, 'claim_expiring', 'Claim window closing soon',
-               format('Your winnings from "%s" must be claimed soon.', p.name), p.pool_id
-        FROM pools p
-        JOIN predictions pr ON pr.pool_id = p.pool_id
-        WHERE p.state = 'settled'
-          AND p.resolved_at IS NOT NULL
-          AND p.resolved_at + (p.claim_window_seconds || ' seconds')::interval
-              BETWEEN NOW() AND NOW() + INTERVAL '{CLAIM_EXPIRING_WINDOW}'
-          AND NOT pr.claimed
-          AND p.result IS NOT NULL AND p.result ~ '^\d+$'
-          AND p.result::int = pr.outcome
-        ON CONFLICT DO NOTHING
-        "#
-    ))
-    .execute(pool)
-    .await?
-    .rows_affected() as usize;
+    summary.claims_expiring = insert_notifications(
+        pool,
+        &format!(
+            r#"
+            INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+            SELECT w.user_address,
+                   '{expiring}',
+                   'Claim window closing soon',
+                   'Your winnings from "' || pl.name || '" must be claimed soon.',
+                   pl.pool_id
+            FROM pools pl
+            CROSS JOIN LATERAL (
+                SELECT DISTINCT p.user_address
+                FROM predictions p
+                WHERE p.pool_id = pl.pool_id
+                  AND NOT p.claimed
+                  AND pl.result ~ '^\d+$'
+                  AND pl.result::int = p.outcome
+            ) w
+            WHERE pl.state = 'settled'
+              AND pl.result IS NOT NULL
+              AND pl.resolved_at IS NOT NULL
+              AND pl.resolved_at + (pl.claim_window_seconds || ' seconds')::interval
+                  BETWEEN NOW() AND NOW() + INTERVAL '{CLAIM_EXPIRING_WINDOW}'
+            ON CONFLICT DO NOTHING
+            "#,
+            expiring = NotifType::ClaimExpiring.as_str(),
+        ),
+    )
+    .await?;
 
-    // 4. New pools matching a user's registered interests (category or tag,
-    //    case-insensitive). The creator is not notified about their own pool.
-    summary.new_pool_matches = sqlx::query(&format!(
-        r#"
-        INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
-        SELECT DISTINCT ui.user_address, 'new_pool_match', 'New pool matching your interests',
-               format('"%s" was just created in %s.', p.name, p.category), p.pool_id
-        FROM pools p
-        JOIN user_interests ui
-          ON ui.interest = lower(p.category)
-          OR ui.interest IN (SELECT lower(t) FROM unnest(p.tags) AS t)
-        WHERE p.created_at > NOW() - INTERVAL '{NEW_POOL_LOOKBACK}'
-          AND ui.user_address <> p.creator
-        ON CONFLICT DO NOTHING
-        "#
-    ))
-    .execute(pool)
-    .await?
-    .rows_affected() as usize;
+    // 4. New pools matching a user's registered interests (served by
+    //    idx_user_interests_interest).
+    summary.new_pool_matches = insert_notifications(
+        pool,
+        &format!(
+            r#"
+            INSERT INTO notifications (user_address, notif_type, title, message, pool_id)
+            SELECT m.user_address,
+                   '{new_match}',
+                   'New pool matching your interests',
+                   '"' || pl.name || '" was just created in ' || pl.category || '.',
+                   pl.pool_id
+            FROM pools pl
+            CROSS JOIN LATERAL (
+                SELECT DISTINCT ui.user_address
+                FROM user_interests ui
+                WHERE ui.interest = ANY(pl.tags || pl.category)
+            ) m
+            WHERE pl.created_at > NOW() - INTERVAL '{NEW_POOL_LOOKBACK}'
+            ON CONFLICT DO NOTHING
+            "#,
+            new_match = NotifType::NewPoolMatch.as_str(),
+        ),
+    )
+    .await?;
 
     info!(
         pools_ending_soon = summary.pools_ending_soon,

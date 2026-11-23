@@ -136,6 +136,40 @@ mod tests {
         drop(container);
     }
 
+    #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
+    async fn pending_email_query_includes_verified_addresses() {
+        let (pool, container) = setup().await;
+
+        sqlx::query(
+            "INSERT INTO user_emails (user_address, email, email_enabled, verified) \
+             VALUES ('GVERIFIED', 'verified@example.com', TRUE, TRUE)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert verified email preference");
+
+        let notification_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notifications (user_address, notif_type, title, message) \
+             VALUES ('GVERIFIED', 'pool_resolved', 'Resolved', 'A pool was resolved') \
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("insert notification");
+
+        let pending = crate::email::fetch_pending_emails(&pool)
+            .await
+            .expect("fetch pending emails");
+        assert!(
+            pending.iter().any(|email| email.id == notification_id),
+            "enabled address must receive email even when verified = TRUE"
+        );
+
+        pool.close().await;
+        drop(container);
+    }
+
     /// The pool-scoped leaderboard query (`/pools/:id/leaderboard`) must use
     /// an index on `predictions.pool_id`, not a sequential scan, once the
     /// table holds enough rows to make the difference measurable (#1733).

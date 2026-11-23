@@ -45,6 +45,7 @@ const HeroSection = React.memo(function HeroSection() {
         alt=""
         aria-hidden="true"
         fill
+        sizes="100vw"
         className="object-cover pointer-events-none z-0"
         priority
         loading="eager"

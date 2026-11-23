@@ -168,13 +168,52 @@ pub async fn list_pools(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<PoolListingRow>, sqlx::Error> {
-    let filter = basic_filter(category, tags, status, q);
-    crate::search::search_pools(
-        pool,
-        &filter,
-        crate::search::PoolSort::parse(sort_by),
-        limit,
-        offset,
+    let order_clause = match sort_by {
+        "popular" => "total_stake DESC",
+        "ending_soon" => "end_time ASC",
+        _ => "created_at DESC",
+    };
+
+    let valid_status = match status {
+        "active" | "closed" | "settled" => status,
+        _ => "active",
+    };
+
+    // SECURITY: order_clause comes from the controlled match above only —
+    // no user input reaches the format string directly, mirroring the
+    // pattern already used in db::get_pools_with_filters.
+    let sql = format!(
+        r#"
+        SELECT pool_id, name, category, tags, total_stake, end_time, created_at,
+               state, creator, token, result
+        FROM pools
+        WHERE state = $1
+          AND ($2::text IS NULL OR category = $2)
+          AND ($3::text[] IS NULL OR tags && $3)
+          AND (
+            $6::text IS NULL
+            OR (
+              to_tsvector('english', name || ' ' || category || ' ' || array_to_string(tags, ' '))
+              @@ plainto_tsquery('english', $6)
+            )
+            OR name ILIKE '%' || $6 || '%'
+            OR category ILIKE '%' || $6 || '%'
+          )
+        ORDER BY {order_clause}
+        LIMIT $4 OFFSET $5
+        "#
+    );
+
+    crate::metrics::observe_db(
+        "list_pools",
+        sqlx::query_as::<_, PoolListingRow>(&sql)
+            .bind(valid_status)
+            .bind(category)
+            .bind(tags)
+            .bind(limit)
+            .bind(offset)
+            .bind(q)
+            .fetch_all(pool),
     )
     .await
 }
@@ -187,8 +226,38 @@ pub async fn count_pools(
     status: &str,
     q: Option<&str>,
 ) -> Result<i64, sqlx::Error> {
-    crate::search::count_filtered_pools(pool, &basic_filter(category, tags, status, q)).await
-}
+    let valid_status = match status {
+        "active" | "closed" | "settled" => status,
+        _ => "active",
+    };
+
+    let sql = r#"
+        SELECT COUNT(*)
+        FROM pools
+        WHERE state = $1
+          AND ($2::text IS NULL OR category = $2)
+          AND ($3::text[] IS NULL OR tags && $3)
+          AND (
+            $4::text IS NULL
+            OR (
+              to_tsvector('english', name || ' ' || category || ' ' || array_to_string(tags, ' '))
+              @@ plainto_tsquery('english', $4)
+            )
+            OR name ILIKE '%' || $4 || '%'
+            OR category ILIKE '%' || $4 || '%'
+          )
+    "#;
+
+    let count: (i64,) = crate::metrics::observe_db(
+        "count_pools",
+        sqlx::query_as(sql)
+            .bind(valid_status)
+            .bind(category)
+            .bind(tags)
+            .bind(q)
+            .fetch_one(pool),
+    )
+    .await?;
 
 fn basic_filter(
     category: Option<&str>,
@@ -209,14 +278,17 @@ fn basic_filter(
 /// dropdowns on the frontend.
 /// Returns all distinct pool tags in alphabetical order, or a database error.
 pub async fn list_distinct_tags(pool: &PgPool) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> = sqlx::query_as(
-        r#"
-        SELECT DISTINCT unnest(tags) AS tag
-        FROM pools
-        ORDER BY tag
-        "#,
+    let rows: Vec<(String,)> = crate::metrics::observe_db(
+        "list_distinct_tags",
+        sqlx::query_as(
+            r#"
+            SELECT DISTINCT unnest(tags) AS tag
+            FROM pools
+            ORDER BY tag
+            "#,
+        )
+        .fetch_all(pool),
     )
-    .fetch_all(pool)
     .await?;
 
     Ok(rows.into_iter().map(|(tag,)| tag).collect())

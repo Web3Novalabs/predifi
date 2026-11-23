@@ -32,14 +32,44 @@ pub const POOL_DETAILS_CACHE_TTL: u64 = 30;
 /// Default TTL for user predictions (45 seconds)
 pub const USER_PREDICTIONS_CACHE_TTL: u64 = 45;
 
-/// Default TTL for cached protocol stats (30 seconds)
-pub const STATS_CACHE_TTL: u64 = 30;
+/// Default TTL for cached protocol stats (60 seconds).
+///
+/// Raised from 30s (#2205): every pool-create / prediction-placed ingest
+/// explicitly invalidates `stats:*`, so the TTL is only a backstop against a
+/// missed invalidation. The cache warmer refreshes it at half this interval.
+pub const STATS_CACHE_TTL: u64 = 60;
+
+/// Default TTL for cached global leaderboards (60 seconds).
+///
+/// Leaderboards are aggregate `GROUP BY` queries over every prediction and are
+/// requested on every dashboard / leaderboard page view (#2205).
+pub const LEADERBOARD_CACHE_TTL: u64 = 60;
+
+/// Default TTL for cached per-pool leaderboards (60 seconds). Must exceed the
+/// warmer interval (`POOLS_CACHE_TTL / 2`) so warmed entries never lapse.
+pub const POOL_LEADERBOARD_CACHE_TTL: u64 = 60;
+
+/// Default TTL for the distinct-tag list (5 minutes). Tags only change via the
+/// admin tag-update endpoint, which invalidates this entry explicitly.
+pub const TAGS_CACHE_TTL: u64 = 300;
 
 /// Redis key pattern matching all cached pool list queries.
 pub const POOLS_CACHE_PATTERN: &str = "pools:*";
 
 /// Redis key pattern matching all cached stats queries.
 pub const STATS_CACHE_PATTERN: &str = "stats:*";
+
+/// Redis key pattern matching all cached global leaderboards.
+pub const LEADERBOARD_CACHE_PATTERN: &str = "leaderboard:*";
+
+/// Redis key pattern matching all cached per-pool leaderboards.
+pub const POOL_LEADERBOARD_CACHE_PATTERN: &str = "poolboard:*";
+
+/// Redis key pattern matching the cached tag list.
+pub const TAGS_CACHE_PATTERN: &str = "tags:*";
+
+/// Number of keys requested per `SCAN` round trip in [`RedisCache::delete_pattern`].
+const SCAN_BATCH_SIZE: usize = 500;
 
 /// Logical namespace prepended to every Redis key this process writes.
 /// Isolates PrediFi keys from other applications sharing the same Redis.
@@ -234,6 +264,14 @@ impl RedisCache {
         }
     }
 
+    /// Record a proactive cache-warming attempt (`"ok"` / `"error"`) via the
+    /// attached metrics sink, if any. Used by [`crate::cache_warmer`].
+    pub fn record_warm(&self, cache_name: &str, result: &str) {
+        if let Some(metrics) = &self.metrics {
+            metrics.record_cache_warm(cache_name, result);
+        }
+    }
+
     /// Record a cache lookup outcome via the attached metrics sink, if any.
     fn record_lookup(&self, cache_name: &str, outcome: &str) {
         if let Some(metrics) = &self.metrics {
@@ -327,21 +365,44 @@ impl RedisCache {
 
         let mut conn = manager.clone();
 
-        // Get all keys matching pattern (already namespaced)
-        let start = Instant::now();
-        let keys_result = conn.keys(&namespaced).await;
-        self.record_op("keys", keys_result.is_ok(), start);
-        let keys: Vec<String> = match keys_result {
-            Ok(k) => k,
-            Err(err) => {
-                if is_connection_error(err.kind()) {
-                    warn!("Redis connection dropout on KEYS {}: {}", pattern, err);
-                } else {
-                    error!("Redis KEYS error for pattern {}: {}", pattern, err);
+        // Collect all keys matching the (already namespaced) pattern with an
+        // incremental SCAN. `KEYS` is O(N) over the whole keyspace and blocks
+        // the single-threaded Redis server, stalling every other cache
+        // lookup while an invalidation runs (#2205).
+        let mut keys: Vec<String> = Vec::new();
+        let mut cursor: u64 = 0;
+        loop {
+            let start = Instant::now();
+            let scan_result: Result<(u64, Vec<String>), _> = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&namespaced)
+                .arg("COUNT")
+                .arg(SCAN_BATCH_SIZE)
+                .query_async(&mut conn)
+                .await;
+            self.record_op("scan", scan_result.is_ok(), start);
+            match scan_result {
+                Ok((next, batch)) => {
+                    keys.extend(batch);
+                    cursor = next;
+                    if cursor == 0 {
+                        break;
+                    }
                 }
-                return;
+                Err(err) => {
+                    if is_connection_error(err.kind()) {
+                        warn!("Redis connection dropout on SCAN {}: {}", pattern, err);
+                    } else {
+                        error!("Redis SCAN error for pattern {}: {}", pattern, err);
+                    }
+                    return;
+                }
             }
-        };
+        }
+        // SCAN may return a key more than once.
+        keys.sort_unstable();
+        keys.dedup();
 
         if keys.is_empty() {
             return;
@@ -391,6 +452,20 @@ impl RedisCache {
     /// `GET /api/v1/stats` request reflects the updated aggregates.
     pub async fn invalidate_stats_cache(&self) {
         self.delete_pattern(STATS_CACHE_PATTERN).await;
+    }
+
+    /// Invalidate all cached global and per-pool leaderboards.
+    ///
+    /// Call after a prediction is recorded or a claim is processed, since both
+    /// change the volume / winnings / streak rankings.
+    pub async fn invalidate_leaderboard_cache(&self) {
+        self.delete_pattern(LEADERBOARD_CACHE_PATTERN).await;
+        self.delete_pattern(POOL_LEADERBOARD_CACHE_PATTERN).await;
+    }
+
+    /// Invalidate the cached distinct-tag list.
+    pub async fn invalidate_tags_cache(&self) {
+        self.delete_pattern(TAGS_CACHE_PATTERN).await;
     }
 
     /// Invalidate every cached prediction-history page for one user.
@@ -594,6 +669,36 @@ pub fn user_predictions_cache_key(address: &str, limit: i64, offset: i64) -> Str
         limit,
         offset
     )
+}
+
+/// Generate a cache key for the global leaderboard endpoint.
+///
+/// Encodes every parameter that changes the result so each ranking / window /
+/// page is cached independently. Inputs are sanitized against key injection.
+pub fn leaderboard_cache_key(rank_by: &str, period: &str, limit: i64, offset: i64) -> String {
+    format!(
+        "leaderboard:{}:{}:{}:{}",
+        sanitize_key_component(rank_by),
+        sanitize_key_component(period),
+        limit,
+        offset
+    )
+}
+
+/// Generate a cache key for a single pool's leaderboard.
+pub fn pool_leaderboard_cache_key(pool_id: i64, rank_by: &str, limit: i64, offset: i64) -> String {
+    format!(
+        "poolboard:{}:{}:{}:{}",
+        pool_id,
+        sanitize_key_component(rank_by),
+        limit,
+        offset
+    )
+}
+
+/// Generate a cache key for the distinct-tag list.
+pub fn tags_cache_key() -> String {
+    "tags:all".to_string()
 }
 
 /// Generate a cache key for the protocol stats endpoint.
@@ -851,7 +956,32 @@ mod tests {
 
     #[test]
     fn test_stats_cache_ttl() {
-        assert_eq!(STATS_CACHE_TTL, 30);
+        assert_eq!(STATS_CACHE_TTL, 60);
+    }
+
+    #[test]
+    fn test_leaderboard_cache_keys() {
+        assert_eq!(
+            leaderboard_cache_key("volume", "week", 20, 0),
+            "leaderboard:volume:week:20:0"
+        );
+        assert_eq!(
+            pool_leaderboard_cache_key(7, "win_rate", 10, 5),
+            "poolboard:7:win_rate:10:5"
+        );
+        assert_eq!(tags_cache_key(), "tags:all");
+        // Injection attempts are stripped from user-supplied components.
+        assert_eq!(
+            leaderboard_cache_key("vol:*\n", "all", 1, 0),
+            "leaderboard:vol:all:1:0"
+        );
+    }
+
+    #[test]
+    fn test_new_cache_ttls_are_bounded() {
+        for ttl in [LEADERBOARD_CACHE_TTL, POOL_LEADERBOARD_CACHE_TTL, TAGS_CACHE_TTL] {
+            assert!(ttl >= MIN_TTL_SECS && ttl <= MAX_TTL_SECS);
+        }
     }
 
     // ── Key sanitization tests ───────────────────────────────────────────────

@@ -175,6 +175,11 @@ pub const DEFAULT_PAGE_LIMIT: i64 = 20;
 /// **Used for:** Clamping the `limit` query parameter on list endpoints.
 pub const MAX_PAGE_LIMIT: i64 = 100;
 
+/// Maximum row offset accepted by paginated list endpoints.
+///
+/// Bounding offsets limits the amount of work PostgreSQL may do to skip rows.
+pub const MAX_PAGINATION_OFFSET: i64 = 10_000;
+
 // ── Pool templates ────────────────────────────────────────────────────────────
 
 /// Minimum supported pool-template duration and recurrence interval (1 hour).

@@ -40,12 +40,31 @@ impl SmtpConfig {
 
 /// A pending notification that has not yet been emailed.
 #[derive(sqlx::FromRow)]
-struct PendingEmail {
-    id: i64,
+pub(crate) struct PendingEmail {
+    pub(crate) id: i64,
     user_address: String,
     title: String,
     message: String,
     email: String,
+}
+
+pub(crate) async fn fetch_pending_emails(pool: &PgPool) -> Result<Vec<PendingEmail>, sqlx::Error> {
+    sqlx::query_as(
+        r#"
+        SELECT n.id, n.user_address, n.title, n.message, ue.email
+        FROM notifications n
+        JOIN user_emails ue
+          ON ue.user_address = n.user_address
+         AND ue.email_enabled = TRUE
+        LEFT JOIN notification_delivery_log dl
+          ON dl.notification_id = n.id AND dl.channel = 'email'
+        WHERE dl.notification_id IS NULL
+        ORDER BY n.created_at
+        LIMIT 100
+        "#,
+    )
+    .fetch_all(pool)
+    .await
 }
 
 /// Deliver all undelivered notifications via SMTP, then record each sent
@@ -65,24 +84,7 @@ pub async fn deliver_pending_emails(
     };
 
     // Collect notifications that have not yet been emailed.
-    let pending: Vec<PendingEmail> = sqlx::query_as(
-        r#"
-        SELECT n.id, n.user_address, n.title, n.message, ue.email
-        FROM notifications n
-        JOIN user_emails ue
-          ON ue.user_address = n.user_address
-         AND ue.email_enabled = TRUE
-        LEFT JOIN notification_delivery_log dl
-          ON dl.notification_id = n.id AND dl.channel = 'email'
-        WHERE dl.notification_id IS NULL
-          -- Never email a historical backlog (e.g. right after a user opts in).
-          AND n.created_at > NOW() - INTERVAL '2 days'
-        ORDER BY n.created_at
-        LIMIT 100
-        "#,
-    )
-    .fetch_all(pool)
-    .await?;
+    let pending = fetch_pending_emails(pool).await?;
 
     if pending.is_empty() {
         return Ok(());

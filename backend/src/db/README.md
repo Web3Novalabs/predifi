@@ -102,6 +102,52 @@ gauges.record(&pool);
 - `is_transient_error` — classify sqlx errors as transient vs. permanent
 - `PoolCreationError` — startup-failure error type
 
+## Query audit and performance (#2204)
+
+Target: **< 100 ms p99 on every API endpoint** (alert `ApiP99LatencyAboveTarget`,
+per-query latency in `app_db_query_duration_seconds{query_type=...}`).
+
+### Findings and fixes
+
+| Area | Problem found | Fix |
+| :--- | :--- | :--- |
+| `notifications::run_notification_sweep` | **N+1**: one query per pool to list its users, then one `INSERT` per user — `1 + P + P·U` round trips every 5 min. The "resolved" pass also re-scanned every pool ever settled. | Four set-based `INSERT … SELECT … ON CONFLICT DO NOTHING` statements (4 round trips total); the resolved pass is bounded by `RESOLVED_LOOKBACK` (7 days). |
+| `get_users_by_winnings` | Scanned `predictions ⨝ pools` **three times** (winning totals, winning predictions, user totals) and `FULL OUTER JOIN`ed the results. | One shared `settled` CTE scan feeding all three aggregates; deterministic `user_address` tie-break. |
+| `get_pool_with_odds` | Three sequential round trips (pool row, outcome stakes, separate `COUNT(*)`). | Prediction count comes from the outcome aggregate; the two reads run concurrently via `try_join!`. |
+| `pay_creator_incentive` | Three sequential reads (eligibility, pool row, reward bps) before the CAS `UPDATE`. | One read. The `UPDATE … WHERE NOT creator_reward_paid` guard is unchanged. |
+| `get_market_predictions` | `ORDER BY id DESC` for a pool with no matching index → read + sort all of the pool's rows. | `idx_predictions_pool_id_desc (pool_id, id DESC)` (migration 016). |
+| `get_users_by_betting_volume`, profile queries | `GROUP BY user_address` / per-user aggregates fetched every row from the heap. | Covering index `idx_predictions_user_covering` (migration 016) → index-only scans. |
+| Notification interest matching | `WHERE interest = ANY($1)` against a PK that leads with `user_address`. | `idx_user_interests_interest` (migration 016). |
+| Observability | Leaderboard, winnings, profile and tag queries were not timed, so p99 was invisible for the slowest endpoints. | Wrapped in `metrics::observe_db`. |
+
+Unnecessary joins: none found — every `JOIN pools` in `get_user_*` reads columns
+from `pools` that are part of the response.
+
+Deliberately **not** changed: the pools list's `($2 IS NULL OR category = $2)`
+filter (fine with Postgres' per-execution custom plans) and full-text search
+(`to_tsvector(... array_to_string(tags))` is not `IMMUTABLE`, so it cannot be
+indexed without a schema change). Both are cached in Redis (see #2205).
+
+### Capturing `EXPLAIN ANALYZE` output
+
+```bash
+cd backend
+cargo run --bin predifi-explain-queries                    # busiest user, biggest pool
+cargo run --bin predifi-explain-queries -- <ADDRESS> <POOL_ID>
+```
+
+This prints `EXPLAIN (ANALYZE, BUFFERS)` for every critical query in
+[`explain.rs`](explain.rs) (pool list, pool detail, market predictions, user
+history, all leaderboards, protocol stats, profile stats). Each statement runs
+in a transaction that is always rolled back, so it is safe against a replica.
+Plans depend on table size and statistics, so capture them against production-
+sized data (`ANALYZE` first) and paste the output into the PR / issue.
+
+What to look for: `Seq Scan on predictions` for a pool- or user-scoped query,
+a `Sort` node above a scan that an index could have ordered, `Heap Fetches`
+much larger than 0 on an index-only scan (run `VACUUM`), and `Buffers:
+shared read` far above `shared hit`.
+
 ## Testing
 
 Each module has its own `#[cfg(test)]` section with unit tests for pure
