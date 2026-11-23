@@ -32,6 +32,8 @@
 
 The PrediFi backend API is an asynchronous Rust service built on Axum and Tokio. It provides indexed reads, real-time WebSocket feeds, and cached calculations for the PrediFi prediction market protocol running on Stellar/Soroban.
 
+Paginated list endpoints accept offsets from 0 through 10,000. Larger offsets return HTTP 400 with error code `INVALID_INPUT`. The `/pools` endpoint caches only its first five pages.
+
 ### Generating and Checking the OpenAPI Spec
 
 The OpenAPI definition is maintained in code via `backend/src/openapi.rs` using `utoipa`. The compiled CLI tool `predifi-openapi` enables automated export, validation, and continuous integration verification without needing to spin up database dependencies:
@@ -492,7 +494,7 @@ Retrieve a paginated list of prediction market pools filtered by category, statu
 | `category` | string | No | - | Category filter e.g. `Crypto`, `Sports`, `Politics`, `Economics`. |
 | `status` | string | No | `active` | Filter by state: `active`, `closed`, `settled`. |
 | `limit` | integer | No | 20 | Page size (1 to 100). |
-| `offset` | integer | No | 0 | Number of rows to skip. |
+| `offset` | integer | No | 0 | Number of rows to skip (0 to 10,000). Values above 10,000 return `400 INVALID_INPUT`. |
 
 ##### Response (200 OK)
 ```json
@@ -641,7 +643,7 @@ Query platform leaderboards ranked by total betting volume or aggregate winnings
 |-----------|------|----------|---------|-------------|
 | `rank_by` | string | No | `volume` | Ranking mode: `volume` or `winnings`. |
 | `limit` | integer | No | 20 | Page size (1 to 100). |
-| `offset` | integer | No | 0 | Page offset. |
+| `offset` | integer | No | 0 | Page offset (0 to 10,000). Values above 10,000 return `400 INVALID_INPUT`. |
 
 ##### Response (200 OK - Ranked by Volume)
 ```json
@@ -666,6 +668,8 @@ Query platform leaderboards ranked by total betting volume or aggregate winnings
 
 #### `GET /api/v1/users/{address}/history`
 Fetch raw chronological prediction history for a specific Stellar address.
+
+The `offset` query parameter is limited to 0–10,000; larger values return `400 INVALID_INPUT`.
 
 - **Tag**: `predictions`
 - **Rate Limit**: User tier (30 req / 60s)
@@ -695,6 +699,8 @@ Fetch raw chronological prediction history for a specific Stellar address.
 
 #### `GET /api/v1/users/{address}/predictions`
 Fetch enhanced predictions augmented with current pool state and user win status.
+
+The `offset` query parameter is limited to 0–10,000; larger values return `400 INVALID_INPUT`.
 
 - **Tag**: `predictions`
 - **Rate Limit**: User tier (30 req / 60s)
@@ -870,6 +876,8 @@ Returns the email opt-in state for a wallet. The public response never contains 
 - `GET /api/v1/notifications/{address}`: List pending user activity notifications.
 - `POST /api/v1/notifications/{address}/read`: Mark notifications as acknowledged.
 - `GET /api/v1/pool-templates` / `POST /api/v1/pool-templates`: Manage recurring prediction templates.
+
+For `GET /api/v1/notifications/{address}`, `offset` is limited to 0–10,000; larger values return `400 INVALID_INPUT`.
 
 ---
 
