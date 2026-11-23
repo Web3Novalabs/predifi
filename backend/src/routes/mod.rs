@@ -450,4 +450,52 @@ mod tests {
         let body = body_string(response.into_body()).await;
         assert!(!body.contains("database not available"), "got: {body}");
     }
+
+    fn valid_test_stellar_address() -> String {
+        let mut bytes = vec![crate::validated_types::STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend([1u8; 32]);
+        let checksum = crate::validated_types::crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        crate::validated_types::base32_encode(&bytes)
+    }
+
+    #[tokio::test]
+    async fn pagination_offsets_enforce_cap_and_return_invalid_input() {
+        let address = valid_test_stellar_address();
+        let paths = [
+            "/v1/pools?offset={offset}".to_string(),
+            format!("/v1/users/{address}/history?offset={{offset}}"),
+            format!("/v1/users/{address}/predictions?offset={{offset}}"),
+            "/v1/leaderboard?offset={offset}".to_string(),
+            "/v1/pools/1/leaderboard?offset={offset}".to_string(),
+            format!("/v1/notifications/{address}?offset={{offset}}"),
+        ];
+
+        for path in paths {
+            let response = build_router_without_db()
+                .oneshot(get(&path.replace("{offset}", "10000")))
+                .await
+                .expect("request failed");
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "offset at cap should pass query validation for {path}"
+            );
+
+            let response = build_router_without_db()
+                .oneshot(get(&path.replace("{offset}", "10001")))
+                .await
+                .expect("request failed");
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "offset above cap should be rejected for {path}"
+            );
+            let body = body_string(response.into_body()).await;
+            assert!(
+                body.contains("\"code\":\"INVALID_INPUT\""),
+                "expected INVALID_INPUT for {path}, got: {body}"
+            );
+        }
+    }
 }

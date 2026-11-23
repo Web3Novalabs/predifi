@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{rejection::QueryRejection, Path, Query, State},
     routing::{get, patch, post},
     Json, Router,
 };
@@ -27,6 +27,21 @@ use crate::validated_types::{BoundedI64, NonEmptyString, PoolSortBy, PoolStatus,
 fn internal_error_response(err: impl std::fmt::Display) -> axum::response::Response {
     use axum::response::IntoResponse;
     crate::errors::AppError::Internal(err.to_string()).into_response()
+}
+
+fn query_or_invalid<T>(
+    query: Result<Query<T>, QueryRejection>,
+) -> Result<T, axum::response::Response> {
+    use axum::response::IntoResponse;
+
+    query.map(|Query(params)| params).map_err(|rejection| {
+        ApiResponse::<()>::error(
+            axum::http::StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            rejection.body_text(),
+        )
+        .into_response()
+    })
 }
 
 /// Middleware applied once to the indexer sub-router (#2062). Fails closed when
@@ -286,6 +301,12 @@ const POOLS_DEFAULT_PAGE_SIZE: i64 = 20;
 /// is clamped down to it rather than rejected with 400, so a client that
 /// over-requests still gets a bounded, servable page (see #1734).
 const POOLS_MAX_PAGE_SIZE: i64 = 100;
+/// Number of initial pool pages retained in Redis.
+const POOLS_CACHE_PAGE_COUNT: i64 = 5;
+
+fn should_cache_pools_offset(offset: i64, limit: i64) -> bool {
+    offset < limit * POOLS_CACHE_PAGE_COUNT
+}
 
 /// Query parameters for the `GET /api/v1/pools` endpoint.
 #[derive(Debug, Deserialize)]
@@ -307,8 +328,8 @@ pub struct PoolsQuery {
     /// handler rather than rejected — unlike most other paginated endpoints
     /// in this file, which use [`BoundedI64`] and reject out-of-range values.
     pub limit: Option<i64>,
-    /// Zero-based page offset, minimum 0.
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Zero-based page offset, from 0 to `MAX_PAGINATION_OFFSET`.
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
 }
 
 /// Resolve the effective page size for `GET /api/v1/pools`: missing defaults
@@ -452,15 +473,16 @@ pub async fn get_stats(
 }
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
 ///
-/// Checks the Redis cache first; falls back to the database on a cache miss
-/// and stores the result for [`POOLS_CACHE_TTL`](crate::redis_cache::POOLS_CACHE_TTL) seconds.
+/// The first five pages use Redis cache-aside for
+/// [`POOLS_CACHE_TTL`](crate::redis_cache::POOLS_CACHE_TTL) seconds; deeper
+/// offsets bypass Redis to avoid unbounded cache-key growth.
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
 ///
 /// Implements the **cache-aside pattern**:
 ///
 /// 1. Check Redis cache for the queried parameters (sort_by, category, status, limit, offset)
 /// 2. If cache hit: Return the cached response
-/// 3. If cache miss: Fetch from database and cache the result for POOLS_CACHE_TTL (60s)
+/// 3. If cache miss: Fetch from database and cache the first five pages for 60s
 ///
 /// This reduces database load for frequently accessed pool lists while keeping
 /// data relatively fresh. When a new pool is created, the entire cache is
@@ -471,10 +493,15 @@ pub async fn get_stats(
 /// maintain separate cache entries.
 pub async fn get_pools(
     State(state): State<AppState>,
-    Query(params): Query<PoolsQuery>,
+    params: Result<Query<PoolsQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let sort_by = params.sort_by.map(|s| s.as_str()).unwrap_or("new");
     let category = params.category.as_ref().map(|s| s.as_str());
@@ -529,9 +556,12 @@ pub async fn get_pools(
         );
     }
 
-    if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        // Cache hit — return cached data
-        return (StatusCode::OK, Json(cached_response)).into_response();
+    let cacheable_offset = should_cache_pools_offset(offset, limit);
+    if cacheable_offset {
+        if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
+            // Cache hit — return cached data
+            return (StatusCode::OK, Json(cached_response)).into_response();
+        }
     }
 
     // Cache miss — Step 2: Fetch from database
@@ -567,14 +597,16 @@ pub async fn get_pools(
             let json_response = json!(&response);
 
             // Step 3: Cache the response for 60 seconds
-            state
-                .redis
-                .set(
-                    &cache_key,
-                    &json_response,
-                    crate::redis_cache::POOLS_CACHE_TTL,
-                )
-                .await;
+            if cacheable_offset {
+                state
+                    .redis
+                    .set(
+                        &cache_key,
+                        &json_response,
+                        crate::redis_cache::POOLS_CACHE_TTL,
+                    )
+                    .await;
+            }
 
             // Return the response
             (StatusCode::OK, Json(json_response)).into_response()
@@ -590,18 +622,23 @@ pub async fn get_pools(
 pub struct PaginationQuery {
     /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<BoundedI64<1, 100>>,
-    /// Zero-based offset for pagination (default 0).
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Zero-based offset for pagination, from 0 to `MAX_PAGINATION_OFFSET` (default 0).
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
 }
 
 /// `GET /api/v1/users/:address/history` — paginated prediction history for a user.
 pub async fn get_user_history(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
-    Query(params): Query<PaginationQuery>,
+    params: Result<Query<PaginationQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
@@ -648,10 +685,15 @@ pub async fn get_user_history(
 pub async fn get_user_predictions(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
-    Query(params): Query<PaginationQuery>,
+    params: Result<Query<PaginationQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
@@ -702,8 +744,8 @@ pub async fn get_user_predictions(
 pub struct LeaderboardQuery {
     /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<BoundedI64<1, 100>>,
-    /// Zero-based offset for pagination (default 0).
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Zero-based offset for pagination, from 0 to `MAX_PAGINATION_OFFSET` (default 0).
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
     /// Ranking type: "volume" | "winnings" | "win_rate" | "streak" (default: "volume")
     pub rank_by: Option<NonEmptyString>,
     /// Time window: "week" | "month" | "all" (default: "all"). Ignored for `rank_by=winnings`.
@@ -715,10 +757,15 @@ pub struct LeaderboardQuery {
 /// ("week" | "month" | "all").
 pub async fn get_leaderboard(
     State(state): State<AppState>,
-    Query(params): Query<LeaderboardQuery>,
+    params: Result<Query<LeaderboardQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
@@ -811,8 +858,8 @@ pub async fn get_leaderboard(
 pub struct PoolLeaderboardQuery {
     /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<BoundedI64<1, 100>>,
-    /// Zero-based offset for pagination (default 0).
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Zero-based offset for pagination, from 0 to `MAX_PAGINATION_OFFSET` (default 0).
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
     /// Ranking type: "volume" | "win_rate" | "streak" (default: "volume")
     pub rank_by: Option<NonEmptyString>,
 }
@@ -821,10 +868,15 @@ pub struct PoolLeaderboardQuery {
 pub async fn get_pool_leaderboard(
     State(state): State<AppState>,
     Path(pool_id): Path<i64>,
-    Query(params): Query<PoolLeaderboardQuery>,
+    params: Result<Query<PoolLeaderboardQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
@@ -1772,17 +1824,22 @@ mod claim_ingest_validation_tests {
 pub struct NotificationsQuery {
     pub unread_only: Option<bool>,
     pub limit: Option<BoundedI64<1, 100>>,
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
 }
 
 /// `GET /api/v1/notifications/:address` — list a user's notifications, newest first.
 pub async fn list_notifications_handler(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
-    Query(params): Query<NotificationsQuery>,
+    params: Result<Query<NotificationsQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -2594,7 +2651,10 @@ mod cache_aside_tests {
 /// clamped into bounds rather than rejected with 400.
 #[cfg(test)]
 mod pools_pagination_tests {
-    use super::{resolve_pools_page_size, POOLS_DEFAULT_PAGE_SIZE, POOLS_MAX_PAGE_SIZE};
+    use super::{
+        resolve_pools_page_size, should_cache_pools_offset, POOLS_DEFAULT_PAGE_SIZE,
+        POOLS_MAX_PAGE_SIZE,
+    };
 
     #[test]
     fn missing_limit_uses_documented_default() {
@@ -2627,6 +2687,14 @@ mod pools_pagination_tests {
     fn non_positive_limit_is_clamped_up_to_one() {
         assert_eq!(resolve_pools_page_size(Some(0)), 1);
         assert_eq!(resolve_pools_page_size(Some(-5)), 1);
+    }
+
+    #[test]
+    fn caches_only_the_first_five_pool_pages() {
+        assert!(should_cache_pools_offset(0, 20));
+        assert!(should_cache_pools_offset(99, 20));
+        assert!(!should_cache_pools_offset(100, 20));
+        assert!(!should_cache_pools_offset(500, 100));
     }
 }
 
