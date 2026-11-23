@@ -122,6 +122,7 @@ export default function Home() {
             alt=""
             aria-hidden="true"
             fill
+            sizes="100vw"
             className="absolute top-0 left-0 w-full pointer-events-none z-0 object-cover"
             priority
             loading="eager"

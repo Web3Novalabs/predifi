@@ -3,6 +3,7 @@
 import { useCallback, useMemo, type ReactNode } from "react";
 import useSWR from "swr";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { ArrowLeft, Radio, Users, Coins } from "lucide-react";
 import {
   fetchPoolDetail,
@@ -13,11 +14,19 @@ import {
 import { usePoolWebSocket } from "@/lib/hooks/usePoolWebSocket";
 import { AnimatedNumber } from "@/components/pool/AnimatedNumber";
 import { CountdownTimer } from "@/components/pool/CountdownTimer";
-import { PoolLeaderboard } from "@/components/pool/PoolLeaderboard";
-import { CopyButton, ShareButton } from "@/components/ui";
+import { CopyButton, ShareButton, Skeleton } from "@/components/ui";
 import { formatStake } from "@/lib/stakeFilters";
 import { cn } from "@/lib/utils";
 import { useAnnounce } from "@/components/ui/live-region";
+
+// Below the fold and fetches its own data — split into its own chunk (#2206).
+const PoolLeaderboard = dynamic(
+  () =>
+    import("@/components/pool/PoolLeaderboard").then(
+      (mod) => mod.PoolLeaderboard,
+    ),
+  { loading: () => <Skeleton className="h-48 w-full rounded-xl" /> },
+);
 
 export interface PoolDetailViewProps {
   poolId: number;

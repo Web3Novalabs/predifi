@@ -2,13 +2,20 @@
 
 import { useMemo, useState, useCallback } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, SearchBar, Skeleton } from "@/components/ui";
 import { SearchResultHighlighter } from "@/components/search/SearchResultHighlighter";
-import { OddsCalculator } from "@/components/ui/odds-calculator";
 import { usePools } from "@/lib/hooks/usePools";
 import { useTags } from "@/lib/hooks/useTags";
 import type { Pool } from "@/lib/api/pools";
+
+// Only rendered after the user toggles it, so load it on demand (#2206).
+const OddsCalculator = dynamic(
+  () =>
+    import("@/components/ui/odds-calculator").then((mod) => mod.OddsCalculator),
+  { ssr: false, loading: () => <Skeleton className="h-64 w-full rounded-xl" /> },
+);
 
 const CATEGORIES = [
   "All",
