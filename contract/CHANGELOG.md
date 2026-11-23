@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `update_pool_description`, and made `payouts::calculate_payout_pool` test-only (production code
   never called it; it remains the reference the payout unit and property tests compare against), so
   Clippy no longer reports them under `-D warnings` (#2013).
+- Migrated the creator incentive events from the deprecated `env.events().publish` to
+  `#[contractevent]`. Topics (`creator_incentive_config_updated`, `creator_incentive_paid`) and
+  payload fields are unchanged; the config event struct is now `CreatorIncentiveUpdateEvent`
+  because `#[contractevent]` limits struct names to 32 characters (#2014).
 
 ### Added
 - Pool creator incentive system (#1933): `claim_creator_incentive` pays a

@@ -15,10 +15,12 @@
 
 mod common;
 
-use common::{event_count, event_data, field, setup, test_env, Harness};
-use predifi_contract::PoolConfig;
+use common::{event_count, event_data, field, setup, setup_with_fee, test_env, Harness};
+use predifi_contract::{PoolConfig, DEFAULT_CREATOR_MIN_PARTICIPANTS};
 use soroban_sdk::{
-    symbol_short, testutils::Address as _, vec, Address, Env, Map, String, Symbol, TryFromVal, Val,
+    symbol_short,
+    testutils::{Address as _, Events as _},
+    vec, Address, Env, Map, String, Symbol, TryFromVal, Val,
 };
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -29,6 +31,23 @@ where
     T: TryFromVal<Env, Val>,
 {
     T::try_from_val(env, &field(env, data, name)).expect("event field type mismatch")
+}
+
+/// Topics of the **last** event published under `topic` (`topics[0]` is the
+/// event name itself), or `None` if no such event was emitted.
+fn event_topics(env: &Env, topic: &str) -> Option<soroban_sdk::Vec<Val>> {
+    let want = Symbol::new(env, topic);
+    let mut found = None;
+    for e in env.events().all().iter() {
+        if let Some(topic_val) = e.1.get(0) {
+            if let Ok(sym) = Symbol::try_from_val(env, &topic_val) {
+                if sym == want {
+                    found = Some(e.1.clone());
+                }
+            }
+        }
+    }
+    found
 }
 
 /// A minimal valid pool configuration with exactly two outcomes.
@@ -427,6 +446,88 @@ fn private_pool_whitelist_events_have_exact_fields() {
     assert_eq!(decode::<Address>(&env, &removed, "user"), user);
     assert_eq!(decode::<Address>(&env, &removed, "removed_by"), h.creator);
     assert_eq!(decode::<u64>(&env, &removed, "timestamp"), now);
+}
+
+// ── creator incentive ───────────────────────────────────────────────────────
+
+#[test]
+fn set_creator_incentive_bps_emits_config_updated_with_exact_fields() {
+    let env = test_env();
+    let h = setup(&env);
+
+    h.client.set_creator_incentive_bps(&h.admin, &500u32);
+
+    assert_eq!(event_count(&env, "creator_incentive_config_updated"), 1);
+    // The name is the only topic, so indexers filtering on it keep matching.
+    let topics = event_topics(&env, "creator_incentive_config_updated")
+        .expect("creator_incentive_config_updated missing");
+    assert_eq!(topics.len(), 1);
+
+    let data = event_data(&env, "creator_incentive_config_updated")
+        .expect("creator_incentive_config_updated missing");
+    assert_eq!(data.len(), 3);
+    assert_eq!(decode::<Address>(&env, &data, "admin"), h.admin);
+    assert_eq!(decode::<u32>(&env, &data, "incentive_bps"), 500);
+    assert_eq!(
+        decode::<u32>(&env, &data, "min_participants"),
+        DEFAULT_CREATOR_MIN_PARTICIPANTS
+    );
+}
+
+#[test]
+fn set_creator_min_participants_emits_config_updated_with_exact_fields() {
+    let env = test_env();
+    let h = setup(&env);
+
+    h.client.set_creator_min_participants(&h.admin, &3u32);
+
+    assert_eq!(event_count(&env, "creator_incentive_config_updated"), 1);
+    let topics = event_topics(&env, "creator_incentive_config_updated")
+        .expect("creator_incentive_config_updated missing");
+    assert_eq!(topics.len(), 1);
+
+    let data = event_data(&env, "creator_incentive_config_updated")
+        .expect("creator_incentive_config_updated missing");
+    assert_eq!(data.len(), 3);
+    assert_eq!(decode::<Address>(&env, &data, "admin"), h.admin);
+    // The incentive is disabled (0 bps) until an admin opts in.
+    assert_eq!(decode::<u32>(&env, &data, "incentive_bps"), 0);
+    assert_eq!(decode::<u32>(&env, &data, "min_participants"), 3);
+}
+
+#[test]
+fn claim_creator_incentive_emits_creator_incentive_paid_with_exact_fields() {
+    let env = test_env();
+    // 10% protocol fee; the creator is paid 50% of that fee.
+    let h = setup_with_fee(&env, 1_000);
+    h.client.set_creator_incentive_bps(&h.admin, &5_000u32);
+    h.client.set_creator_min_participants(&h.admin, &1u32);
+
+    let end_time = env.ledger().timestamp() + 1_000;
+    let pool_id = create_pool(&env, &h, end_time);
+
+    let user = Address::generate(&env);
+    h.mint(&user, 1_000);
+    h.client
+        .place_prediction(&user, &pool_id, &1_000i128, &1u32, &None, &None);
+
+    h.set_time(end_time + 1);
+    h.client.resolve_pool(&h.operator, &pool_id, &1u32);
+
+    let paid = h.client.claim_creator_incentive(&h.creator, &pool_id);
+    assert_eq!(paid, 50);
+
+    assert_eq!(event_count(&env, "creator_incentive_paid"), 1);
+    let topics =
+        event_topics(&env, "creator_incentive_paid").expect("creator_incentive_paid missing");
+    assert_eq!(topics.len(), 1);
+
+    let data = event_data(&env, "creator_incentive_paid").expect("creator_incentive_paid missing");
+    assert_eq!(data.len(), 4);
+    assert_eq!(decode::<u64>(&env, &data, "pool_id"), pool_id);
+    assert_eq!(decode::<Address>(&env, &data, "creator"), h.creator);
+    assert_eq!(decode::<i128>(&env, &data, "amount"), 50);
+    assert_eq!(decode::<u32>(&env, &data, "participants_count"), 1);
 }
 
 // ── negative path ───────────────────────────────────────────────────────────
