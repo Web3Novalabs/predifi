@@ -2,7 +2,7 @@
  * Pool tags API client.
  *
  * Wraps `GET /api/v1/tags` (distinct tags in use, for filter dropdowns) and
- * `PATCH /api/v1/pools/:id/tags` (creator-only tag updates).
+ * `PATCH /api/v1/pools/:id/tags` (creator/admin tag updates).
  */
 
 import { API_BASE_URL, ApiError } from "@/lib/api/pools";
@@ -42,15 +42,24 @@ export async function fetchTags(url: string): Promise<string[]> {
   return data.tags;
 }
 
+/**
+ * Replace a pool's tags. Requires the pool creator's access token (or an
+ * admin key). The legacy `creator` body field is no longer sent — it was never
+ * trusted for authorization.
+ */
 export async function updatePoolTags(
   poolId: number,
-  creator: string,
   tags: string[],
+  auth: { accessToken?: string; adminKey?: string },
 ): Promise<void> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (auth.accessToken) headers.Authorization = `Bearer ${auth.accessToken}`;
+  if (auth.adminKey) headers["x-admin-api-key"] = auth.adminKey;
+
   const res = await fetch(`${API_BASE_URL}/api/v1/pools/${poolId}/tags`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ creator, tags }),
+    headers,
+    body: JSON.stringify({ tags }),
   });
 
   if (!res.ok) {

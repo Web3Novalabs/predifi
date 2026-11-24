@@ -115,12 +115,11 @@ pub struct Config {
     pub referral_fee_bps: u32,
     /// Stellar Soroban RPC endpoint URL (default: testnet).
     pub stellar_rpc_url: String,
-    /// Optional initial ledger for the Stellar listener on a fresh database.
+    /// Stellar contract whose events are accepted by the listener.
     ///
-    /// Read from `PREDIFI_LISTENER_START_LEDGER`. A stored listener cursor
-    /// takes precedence; when this is unset, the listener starts near the
-    /// latest ledger reported by the RPC.
-    pub listener_start_ledger: Option<u64>,
+    /// Read from `PREDIFI_CONTRACT_ID`. The listener is disabled when it is
+    /// absent outside production.
+    pub predifi_contract_id: Option<String>,
     /// Optional Sentry DSN for error reporting. `None` disables Sentry.
     pub sentry_dsn: Option<String>,
     /// Redis connection URL (default `redis://localhost:6379`).
@@ -215,6 +214,13 @@ pub struct Config {
     /// "From" address used in outbound notification emails.
     /// Read from `PREDIFI_SMTP_FROM`, defaults to `"noreply@predifi.app"`.
     pub smtp_from: String,
+
+    /// Push gateway endpoint for push notification delivery. `None` disables
+    /// push. Read from `PREDIFI_PUSH_GATEWAY_URL`.
+    pub push_gateway_url: Option<String>,
+    /// Optional bearer token sent to the push gateway.
+    /// Read from `PREDIFI_PUSH_GATEWAY_TOKEN`.
+    pub push_gateway_token: Option<String>,
 }
 
 impl Config {
@@ -299,7 +305,10 @@ impl Config {
         let treasury_fee_bps = get_u32(vars, "PREDIFI_TREASURY_FEE_BPS", DEFAULT_TREASURY_FEE_BPS)?;
         let referral_fee_bps = get_u32(vars, "PREDIFI_REFERRAL_FEE_BPS", DEFAULT_REFERRAL_FEE_BPS)?;
         let stellar_rpc_url = get_string(vars, "PREDIFI_STELLAR_RPC_URL", DEFAULT_STELLAR_RPC_URL);
-        let listener_start_ledger = get_optional_u64(vars, "PREDIFI_LISTENER_START_LEDGER")?;
+        let predifi_contract_id = vars
+            .get("PREDIFI_CONTRACT_ID")
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         let sentry_dsn = vars.get("PREDIFI_SENTRY_DSN").cloned();
         let redis_url = get_string(vars, "PREDIFI_REDIS_URL", DEFAULT_REDIS_URL);
         let redis_required = get_bool(vars, "PREDIFI_REDIS_REQUIRED", DEFAULT_REDIS_REQUIRED)?;
@@ -358,6 +367,16 @@ impl Config {
         let smtp_password = vars.get("PREDIFI_SMTP_PASSWORD").cloned().filter(|s| !s.is_empty());
         let smtp_from = get_string(vars, "PREDIFI_SMTP_FROM", "noreply@predifi.app");
 
+        // ── Push notifications ────────────────────────────────────────────────
+        let push_gateway_url = vars
+            .get("PREDIFI_PUSH_GATEWAY_URL")
+            .cloned()
+            .filter(|s| !s.trim().is_empty());
+        let push_gateway_token = vars
+            .get("PREDIFI_PUSH_GATEWAY_TOKEN")
+            .cloned()
+            .filter(|s| !s.is_empty());
+
         if db_min_connections > db_max_connections {
             return Err(ConfigError::InvalidValue {
                 key: "PREDIFI_DB_MIN_CONNECTIONS",
@@ -389,7 +408,7 @@ impl Config {
             treasury_fee_bps,
             referral_fee_bps,
             stellar_rpc_url,
-            listener_start_ledger,
+            predifi_contract_id,
             sentry_dsn,
             redis_url,
             redis_required,
@@ -409,6 +428,8 @@ impl Config {
             smtp_username,
             smtp_password,
             smtp_from,
+            push_gateway_url,
+            push_gateway_token,
             metrics_token,
             admin_api_key,
             trust_proxy_headers,
@@ -423,10 +444,10 @@ impl Config {
                 description: "PostgreSQL connection string used by the backend",
             });
         }
-        if config.is_production() && !vars.contains_key("PREDIFI_INDEXER_API_KEY") {
+        if config.is_production() && config.predifi_contract_id.is_none() {
             return Err(ConfigError::MissingRequired {
-                key: "PREDIFI_INDEXER_API_KEY",
-                description: "shared secret required on indexer ingest endpoints",
+                key: "PREDIFI_CONTRACT_ID",
+                description: "Stellar contract ID whose events the listener processes",
             });
         }
         Ok(config)
@@ -707,6 +728,18 @@ impl Config {
             });
         }
 
+        // ── Push gateway ─────────────────────────────────────────────────────
+        if let Some(url) = &self.push_gateway_url {
+            let is_https = url.starts_with("https://");
+            let is_local_http = !self.is_production() && url.starts_with("http://");
+            if !is_https && !is_local_http {
+                return Err(ConfigError::InvalidValue {
+                    key: "PREDIFI_PUSH_GATEWAY_URL",
+                    reason: String::from("must be an https:// URL (http:// only outside production)"),
+                });
+            }
+        }
+
         Ok(())
     }
 
@@ -747,7 +780,7 @@ impl Config {
             treasury_fee_bps: DEFAULT_TREASURY_FEE_BPS,
             referral_fee_bps: DEFAULT_REFERRAL_FEE_BPS,
             stellar_rpc_url: String::from(DEFAULT_STELLAR_RPC_URL),
-            listener_start_ledger: None,
+            predifi_contract_id: None,
             sentry_dsn: None,
             redis_url: String::from(DEFAULT_REDIS_URL),
             redis_required: DEFAULT_REDIS_REQUIRED,
@@ -767,6 +800,8 @@ impl Config {
             smtp_username: None,
             smtp_password: None,
             smtp_from: String::from("noreply@predifi.app"),
+            push_gateway_url: None,
+            push_gateway_token: None,
             metrics_token: None,
             admin_api_key: None,
             trust_proxy_headers: false,
@@ -1669,13 +1704,13 @@ mod tests {
     }
 
     #[test]
-    fn config_reads_listener_start_ledger_from_env() {
+    fn config_reads_predifi_contract_id_from_env() {
         let vars = HashMap::from([(
-            String::from("PREDIFI_LISTENER_START_LEDGER"),
-            String::from("12345"),
+            String::from("PREDIFI_CONTRACT_ID"),
+            String::from(" CABC123 "),
         )]);
         let config = Config::from_map(&vars).unwrap();
-        assert_eq!(config.listener_start_ledger, Some(12_345));
+        assert_eq!(config.predifi_contract_id.as_deref(), Some("CABC123"));
     }
 
     #[test]
@@ -2589,5 +2624,33 @@ mod tests {
             ),
             "unexpected error: {error}"
         );
+    }
+
+    #[test]
+    fn config_requires_predifi_contract_id_in_production() {
+        let vars = HashMap::from([
+            (String::from("PREDIFI_APP_ENV"), String::from("production")),
+            (
+                String::from("PREDIFI_DATABASE_URL"),
+                String::from("postgres://postgres@localhost/predifi"),
+            ),
+            (
+                String::from("PREDIFI_SECRET_KEY"),
+                String::from("a-very-strong-production-secret-key-at-least-32-bytes"),
+            ),
+            (
+                String::from("PREDIFI_WS_ALLOWED_ORIGINS"),
+                String::from("https://app.predifi.com"),
+            ),
+        ]);
+        let error = Config::from_map(&vars)
+            .expect_err("production without a PrediFi contract ID must fail");
+        assert!(matches!(
+            error,
+            ConfigError::MissingRequired {
+                key: "PREDIFI_CONTRACT_ID",
+                ..
+            }
+        ));
     }
 }

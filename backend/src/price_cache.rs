@@ -90,7 +90,7 @@ impl PriceCache {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .expect("failed to build reqwest client");
+            .expect("reqwest client with only a timeout configured must always build");
         Self(Arc::new(Inner {
             prices: RwLock::new(HashMap::new()),
             last_updated: RwLock::new(None),
@@ -163,7 +163,18 @@ impl PriceCache {
     /// returned rather than an error.
     pub async fn ensure_fresh(&self, metrics: Option<&SharedMetrics>) -> HashMap<String, f64> {
         if !self.is_expired() {
+            // Served straight from memory — a cache hit (#2205). Recorded under
+            // the same metric as the Redis caches so it shares their hit-ratio
+            // dashboard panel.
+            if let Some(metrics) = metrics {
+                metrics.record_cache_lookup("price", "hit");
+            }
             return self.snapshot();
+        }
+
+        // Entry expired: this request has to wait for an upstream refresh.
+        if let Some(metrics) = metrics {
+            metrics.record_cache_lookup("price", "miss");
         }
 
         let _guard = self.0.refresh_lock.lock().await;

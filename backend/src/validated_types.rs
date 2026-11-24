@@ -235,17 +235,31 @@ impl<'de> Deserialize<'de> for StellarAddress {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PoolSortBy {
+    /// Most predictions first.
     Popular,
+    /// Highest total stake first.
+    StakeDesc,
+    /// Lowest total stake first.
+    StakeAsc,
+    /// Earliest end time first.
     EndingSoon,
+    /// Latest end time first.
+    EndingLatest,
     New,
+    /// Best full-text match first (needs `q`).
+    Relevance,
 }
 
 impl PoolSortBy {
     pub fn as_str(self) -> &'static str {
         match self {
             PoolSortBy::Popular => "popular",
+            PoolSortBy::StakeDesc => "stake_desc",
+            PoolSortBy::StakeAsc => "stake_asc",
             PoolSortBy::EndingSoon => "ending_soon",
+            PoolSortBy::EndingLatest => "ending_latest",
             PoolSortBy::New => "new",
+            PoolSortBy::Relevance => "relevance",
         }
     }
 }
@@ -255,10 +269,15 @@ impl<'de> Deserialize<'de> for PoolSortBy {
         let s = String::deserialize(de)?;
         match s.as_str() {
             "popular" => Ok(PoolSortBy::Popular),
+            "stake_desc" => Ok(PoolSortBy::StakeDesc),
+            "stake_asc" => Ok(PoolSortBy::StakeAsc),
             "ending_soon" => Ok(PoolSortBy::EndingSoon),
+            "ending_latest" => Ok(PoolSortBy::EndingLatest),
             "new" => Ok(PoolSortBy::New),
+            "relevance" => Ok(PoolSortBy::Relevance),
             other => Err(serde::de::Error::custom(format!(
-                "invalid sort_by value '{other}': must be one of popular, ending_soon, new"
+                "invalid sort_by value '{other}': must be one of popular, stake_desc, stake_asc, \
+                 ending_soon, ending_latest, new, relevance"
             ))),
         }
     }
@@ -290,10 +309,12 @@ impl<'de> Deserialize<'de> for PoolStatus {
         let s = String::deserialize(de)?;
         match s.as_str() {
             "active" => Ok(PoolStatus::Active),
-            "closed" => Ok(PoolStatus::Closed),
-            "settled" => Ok(PoolStatus::Settled),
+            // `cancelled` pools are stored as `closed`; `resolved` is `settled`.
+            "closed" | "cancelled" | "canceled" => Ok(PoolStatus::Closed),
+            "settled" | "resolved" => Ok(PoolStatus::Settled),
             other => Err(serde::de::Error::custom(format!(
-                "invalid status '{other}': must be one of active, closed, settled"
+                "invalid status '{other}': must be one of active, resolved (settled), \
+                 cancelled (closed)"
             ))),
         }
     }

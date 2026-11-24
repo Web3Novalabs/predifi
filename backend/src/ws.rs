@@ -48,8 +48,29 @@
 //!
 //! When a slow client falls behind the broadcast buffer it receives
 //! `{"type":"lagged","missed":N}` so it knows to resynchronise over REST.
+//!
+//! # Connection security
+//!
+//! * **Authentication** is checked on the HTTP upgrade request, before the
+//!   socket is accepted. Tokens must be access JWTs; they are also enforced
+//!   for the *lifetime* of the connection — the socket is closed with code
+//!   1008 when the token's `exp` passes.
+//! * **Hijacking** (cross-site WebSocket hijacking) is mitigated by the
+//!   mandatory `Origin` allow-list in production plus header-only bearer
+//!   tokens (no ambient cookies are ever honoured).
+//! * **Message size** is capped at the protocol layer
+//!   ([`MAX_CLIENT_MESSAGE_SIZE`]) so oversize frames are rejected while being
+//!   read rather than after being fully buffered in memory.
+//! * **Connection limits**: per-IP handshake rate, per-IP concurrent
+//!   connections and a global cap.
+//! * **Message rate**: every client frame (including ping/pong) counts toward
+//!   the per-connection sliding window.
+//! * **Cleanup**: all per-connection state is released by RAII guards, and
+//!   outbound sends are bounded by [`SEND_TIMEOUT`] so a stalled peer cannot
+//!   pin a connection slot forever.
 
 use std::collections::{BTreeSet, HashMap};
+use std::net::SocketAddr;
 use std::io::Write as _;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -57,7 +78,7 @@ use std::time::{Duration, Instant};
 use axum::{
     extract::{
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade},
-        Query, State,
+        ConnectInfo, Query, State,
     },
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -96,8 +117,23 @@ const MAX_BATCH_MAX: usize = 500;
 /// outweigh the savings.
 pub const COMPRESSION_THRESHOLD: usize = 1_024;
 
-/// Maximum allowed message size in bytes to prevent memory exhaustion attacks.
+/// Maximum size of a single *outbound* message / batch frame in bytes.
 const MAX_MESSAGE_SIZE: usize = 1_048_576; // 1 MB
+
+/// Maximum size of a single *inbound* (client → server) message or frame.
+///
+/// Clients only ever send tiny JSON control frames (`subscribe`,
+/// `unsubscribe`, `list`), so this is deliberately small. It is enforced by
+/// the WebSocket protocol layer while the frame is being read, so an
+/// attacker cannot make the server buffer megabytes per message.
+const MAX_CLIENT_MESSAGE_SIZE: usize = 8 * 1024;
+
+/// Maximum concurrent WebSocket connections from one client IP.
+const MAX_CONNECTIONS_PER_IP: usize = 20;
+
+/// Upper bound for a single outbound send. A peer that stops reading would
+/// otherwise block the connection task (and its slot) indefinitely.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Maximum active concurrent WebSocket connections allowed before returning 429.
 const MAX_ACTIVE_CONNECTIONS: usize = 10_000;
@@ -184,6 +220,58 @@ impl ConnectRateLimiter {
         }
         entry.push(now);
         true
+    }
+}
+
+/// Tracks concurrent connections per client IP.
+struct IpConnectionTracker {
+    active: Mutex<HashMap<String, usize>>,
+}
+
+impl IpConnectionTracker {
+    fn new() -> Self {
+        Self {
+            active: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Reserves a slot for `ip`, or returns `None` when it already holds
+    /// [`MAX_CONNECTIONS_PER_IP`] connections. The slot is released when the
+    /// returned guard is dropped.
+    fn acquire(self: &Arc<Self>, ip: &str) -> Option<IpConnectionGuard> {
+        let mut map = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        let count = map.entry(ip.to_string()).or_insert(0);
+        if *count >= MAX_CONNECTIONS_PER_IP {
+            return None;
+        }
+        *count += 1;
+        Some(IpConnectionGuard {
+            tracker: Arc::clone(self),
+            ip: ip.to_string(),
+        })
+    }
+
+    fn release(&self, ip: &str) {
+        let mut map = self.active.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = map.get_mut(ip) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                map.remove(ip);
+            }
+        }
+    }
+}
+
+/// RAII guard releasing a per-IP connection slot on drop (including panics
+/// and aborted upgrades).
+struct IpConnectionGuard {
+    tracker: Arc<IpConnectionTracker>,
+    ip: String,
+}
+
+impl Drop for IpConnectionGuard {
+    fn drop(&mut self) {
+        self.tracker.release(&self.ip);
     }
 }
 
@@ -502,6 +590,7 @@ pub struct EventBus {
     /// [`EventBus::ws_shutdown_token`]).
     ws_shutdown: WsShutdownToken,
     connect_limiter: Arc<ConnectRateLimiter>,
+    ip_connections: Arc<IpConnectionTracker>,
 }
 
 impl Default for EventBus {
@@ -522,6 +611,7 @@ impl EventBus {
             metrics: None,
             ws_shutdown: WsShutdownToken::new(1),
             connect_limiter: Arc::new(ConnectRateLimiter::new()),
+            ip_connections: Arc::new(IpConnectionTracker::new()),
         }
     }
 
@@ -567,6 +657,10 @@ impl EventBus {
 
     fn allow_connect(&self, ip: &str) -> bool {
         self.connect_limiter.check(ip)
+    }
+
+    fn acquire_ip_slot(&self, ip: &str) -> Option<IpConnectionGuard> {
+        self.ip_connections.acquire(ip)
     }
 }
 
@@ -622,6 +716,17 @@ fn client_ip(headers: &HeaderMap) -> String {
                 None
             }
         })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Resolve the client IP: forwarded headers (set by the trusted reverse
+/// proxy) first, then the TCP peer address when the server exposes it.
+fn resolve_client_ip(headers: &HeaderMap, peer: Option<SocketAddr>) -> String {
+    let from_headers = client_ip(headers);
+    if from_headers != "unknown" {
+        return from_headers;
+    }
+    peer.map(|addr| addr.ip().to_string())
         .unwrap_or_else(|| "unknown".to_string())
 }
 
@@ -690,6 +795,7 @@ fn unauthorized_response(message: &str) -> Response {
 /// Axum handler — validates JWT credentials, then upgrades to WebSocket.
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
+    peer: Option<ConnectInfo<SocketAddr>>,
     headers: HeaderMap,
     Query(params): Query<WsConnectParams>,
     State(config): State<Arc<Config>>,
@@ -706,7 +812,7 @@ pub async fn ws_handler(
             .into_response();
     }
 
-    let ip = client_ip(&headers);
+    let ip = resolve_client_ip(&headers, peer.map(|ConnectInfo(addr)| addr));
     if ip == "unknown" {
         return (
             StatusCode::BAD_REQUEST,
@@ -736,6 +842,18 @@ pub async fn ws_handler(
         )
             .into_response();
     }
+
+    // Per-IP concurrent connection cap. The guard moves into the upgraded
+    // task, so the slot is released however the connection ends.
+    let Some(ip_guard) = bus.acquire_ip_slot(&ip) else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(serde_json::json!({
+                "error": "too many concurrent websocket connections from this address",
+            })),
+        )
+            .into_response();
+    };
 
     let (subscription, options) = match connection_settings(&params) {
         Ok(settings) => settings,
@@ -792,22 +910,37 @@ pub async fn ws_handler(
         compress = options.compress,
         subject = ?claims.as_ref().map(|claims| crate::request_logger::redact_address(&claims.sub))
     );
+    // Enforce token expiry for the lifetime of the connection.
+    let expires_in = claims.as_ref().map(|claims| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Duration::from_secs(claims.exp.saturating_sub(now))
+    });
     let ping_interval = Duration::from_secs(config.ws_ping_interval_secs);
     let max_missed_pongs = config.ws_max_missed_pongs;
     let max_subscriber_lag = config.ws_max_subscriber_lag;
 
-    ws.on_upgrade(move |socket| {
-        handle_socket(
-            socket,
-            bus,
-            subscription,
-            options,
-            ping_interval,
-            max_missed_pongs,
-            max_subscriber_lag,
-        )
-        .instrument(span)
-    })
+    // Cap frame/message sizes at the protocol layer so oversize payloads are
+    // rejected while being read, not after they are buffered.
+    ws.max_message_size(MAX_CLIENT_MESSAGE_SIZE)
+        .max_frame_size(MAX_CLIENT_MESSAGE_SIZE)
+        .on_upgrade(move |socket| {
+            handle_socket(
+                socket,
+                bus,
+                subscription,
+                options,
+                ping_interval,
+                max_missed_pongs,
+                max_subscriber_lag,
+                expires_in,
+                ip_guard,
+            )
+            .instrument(span)
+        })
+        .into_response()
 }
 
 async fn handle_socket(
@@ -818,6 +951,8 @@ async fn handle_socket(
     ping_interval: Duration,
     max_missed_pongs: u32,
     max_subscriber_lag: u64,
+    expires_in: Option<Duration>,
+    _ip_guard: IpConnectionGuard,
 ) {
     let mut rx = bus.subscribe();
     let (_guard, mut shutdown_rx) =
@@ -833,10 +968,12 @@ async fn handle_socket(
         ping_interval,
         max_missed_pongs,
         max_subscriber_lag,
+        expires_in,
     };
     session.run(&mut rx, &mut shutdown_rx).await;
 
-    let _ = socket.send(Message::Close(None)).await;
+    // Best-effort close; bounded so a dead peer cannot hold the slot.
+    let _ = tokio::time::timeout(SEND_TIMEOUT, socket.send(Message::Close(None))).await;
 }
 
 /// WebSocket close code 1001 (going away), sent when the server shuts down so
@@ -849,6 +986,29 @@ fn going_away_close() -> Message {
         code: GOING_AWAY_CODE,
         reason: "server shutting down".into(),
     }))
+}
+
+/// Close code 1008 (policy violation): rate limit, expired credentials, etc.
+const POLICY_VIOLATION_CODE: u16 = 1008;
+/// Close code 1009 (message too big).
+const MESSAGE_TOO_BIG_CODE: u16 = 1009;
+
+fn close_with(code: u16, reason: &'static str) -> Message {
+    Message::Close(Some(CloseFrame {
+        code,
+        reason: reason.into(),
+    }))
+}
+
+/// Error returned when an outbound frame could not be delivered (peer gone,
+/// transport error or [`SEND_TIMEOUT`] elapsed). The connection is torn down.
+#[derive(Debug)]
+struct SendError;
+
+impl From<axum::Error> for SendError {
+    fn from(_: axum::Error) -> Self {
+        SendError
+    }
 }
 
 /// Per-connection message rate limiter using a sliding window.
@@ -896,6 +1056,9 @@ struct SocketSession<'a> {
     max_missed_pongs: u32,
     /// Maximum missed lagged events before closing slow subscriber.
     max_subscriber_lag: u64,
+    /// Time until the authenticating JWT expires (`None` for public,
+    /// unauthenticated subscriptions).
+    expires_in: Option<Duration>,
 }
 
 impl SocketSession<'_> {
@@ -911,8 +1074,18 @@ impl SocketSession<'_> {
         ping_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // Missed pongs counter for keepalive timeout detection.
         let mut missed_pongs: u32 = 0;
+        let token_expiry = self
+            .expires_in
+            .map(|remaining| tokio::time::Instant::now() + remaining);
 
         loop {
+            let expiry_timer = async {
+                match token_expiry {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending().await,
+                }
+            };
+
             let flush_timer = async {
                 match flush_at {
                     Some(deadline) => tokio::time::sleep_until(deadline).await,
@@ -927,7 +1100,12 @@ impl SocketSession<'_> {
                 _ = shutdown_rx.recv() => {
                     tracing::info!("server is shutting down; closing websocket connection");
                     let _ = self.flush().await;
-                    let _ = self.socket.send(going_away_close()).await;
+                    let _ = self.send_close(going_away_close()).await;
+                    break;
+                }
+                _ = expiry_timer => {
+                    tracing::info!("websocket access token expired; closing connection");
+                    let _ = self.send_close(close_with(POLICY_VIOLATION_CODE, "token expired")).await;
                     break;
                 }
                 _ = ping_ticker.tick() => {
@@ -937,11 +1115,11 @@ impl SocketSession<'_> {
                             max_missed_pongs = self.max_missed_pongs,
                             "WebSocket connection keepalive timeout (missed pongs exceeded), closing"
                         );
-                        let _ = self.socket.send(Message::Close(None)).await;
+                        let _ = self.send_close(close_with(POLICY_VIOLATION_CODE, "keepalive timeout")).await;
                         break;
                     }
                     missed_pongs += 1;
-                    if self.socket.send(Message::Ping(Vec::new())).await.is_err() {
+                    if self.send_raw(Message::Ping(Vec::new())).await.is_err() {
                         break;
                     }
                 }
@@ -968,7 +1146,7 @@ impl SocketSession<'_> {
                                 if let Some(metrics) = &self.metrics {
                                     metrics.record_ws_dropped_subscriber();
                                 }
-                                let _ = self.socket.send(Message::Close(None)).await;
+                                let _ = self.send_close(close_with(POLICY_VIOLATION_CODE, "client too slow")).await;
                                 break;
                             }
                             let notice = serde_json::json!({ "type": "lagged", "missed": missed });
@@ -1013,33 +1191,41 @@ impl SocketSession<'_> {
                         _ => break,
                     };
 
+                    // Every client frame — including ping/pong — counts toward
+                    // the rate limit so control-frame floods are throttled too.
+                    if !matches!(msg, Message::Close(_)) && !rate_limiter.check() {
+                        tracing::warn!("WebSocket connection rate limited");
+                        let _ = self.send_close(close_with(POLICY_VIOLATION_CODE, "rate limit exceeded")).await;
+                        break;
+                    }
+
                     let reply = match &msg {
                         Message::Text(text) => {
-                            if text.len() > MAX_MESSAGE_SIZE {
+                            if text.len() > MAX_CLIENT_MESSAGE_SIZE {
                                 tracing::warn!(
                                     message_size = text.len(),
-                                    max_size = MAX_MESSAGE_SIZE,
+                                    max_size = MAX_CLIENT_MESSAGE_SIZE,
                                     "Incoming WebSocket text message exceeds size limit, closing connection"
                                 );
-                                let _ = self.socket.send(Message::Close(None)).await;
+                                let _ = self.send_close(close_with(MESSAGE_TOO_BIG_CODE, "message too large")).await;
                                 break;
                             }
                             Some(text.clone())
                         }
                         Message::Binary(data) => {
-                            if data.len() > MAX_MESSAGE_SIZE {
+                            if data.len() > MAX_CLIENT_MESSAGE_SIZE {
                                 tracing::warn!(
                                     message_size = data.len(),
-                                    max_size = MAX_MESSAGE_SIZE,
+                                    max_size = MAX_CLIENT_MESSAGE_SIZE,
                                     "Incoming WebSocket binary message exceeds size limit, closing connection"
                                 );
-                                let _ = self.socket.send(Message::Close(None)).await;
+                                let _ = self.send_close(close_with(MESSAGE_TOO_BIG_CODE, "message too large")).await;
                                 break;
                             }
                             None
                         }
                         Message::Ping(payload) => {
-                            let _ = self.socket.send(Message::Pong(payload.clone())).await;
+                            let _ = self.send_raw(Message::Pong(payload.clone())).await;
                             continue;
                         }
                         Message::Pong(_) => {
@@ -1048,12 +1234,6 @@ impl SocketSession<'_> {
                         }
                         Message::Close(_) => break,
                     };
-
-                    if !rate_limiter.check() {
-                        tracing::warn!("WebSocket connection rate limited");
-                        let _ = self.socket.send(Message::Close(None)).await;
-                        break;
-                    }
 
                     if let Some(text) = reply {
                         let response = handle_client_command(&mut self.subscription, &text);
@@ -1071,7 +1251,7 @@ impl SocketSession<'_> {
     }
 
     /// Filter one event and either send it now or add it to the batch.
-    async fn accept(&mut self, event: Arc<BusEvent>) -> Result<(), axum::Error> {
+    async fn accept(&mut self, event: Arc<BusEvent>) -> Result<(), SendError> {
         if !self.subscription.matches(&event) {
             return Ok(());
         }
@@ -1103,7 +1283,7 @@ impl SocketSession<'_> {
     }
 
     /// Send every buffered event as a single batch frame.
-    async fn flush(&mut self) -> Result<(), axum::Error> {
+    async fn flush(&mut self) -> Result<(), SendError> {
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -1115,7 +1295,22 @@ impl SocketSession<'_> {
         self.send_frame("batch", batch_frame(&events)).await
     }
 
-    async fn send_frame(&mut self, kind: &str, text: String) -> Result<(), axum::Error> {
+    /// Send a raw message, bounded by [`SEND_TIMEOUT`].
+    async fn send_raw(&mut self, message: Message) -> Result<(), SendError> {
+        match tokio::time::timeout(SEND_TIMEOUT, self.socket.send(message)).await {
+            Ok(result) => result.map_err(SendError::from),
+            Err(_) => {
+                tracing::warn!("websocket send timed out, dropping stalled connection");
+                Err(SendError)
+            }
+        }
+    }
+
+    async fn send_close(&mut self, message: Message) -> Result<(), SendError> {
+        self.send_raw(message).await
+    }
+
+    async fn send_frame(&mut self, kind: &str, text: String) -> Result<(), SendError> {
         let (message, encoding) = encode_frame(text, self.options.compress);
         if let Some(metrics) = &self.metrics {
             let bytes = match &message {
@@ -1125,7 +1320,7 @@ impl SocketSession<'_> {
             };
             metrics.record_ws_frame(kind, encoding, bytes);
         }
-        self.socket.send(message).await
+        self.send_raw(message).await
     }
 }
 
@@ -1263,6 +1458,31 @@ mod tests {
         }
         assert!(!limiter.check("1.2.3.4"));
         assert!(limiter.check("5.6.7.8"), "other IPs are independent");
+    }
+
+    #[test]
+    fn per_ip_connection_cap_is_enforced_and_released() {
+        let tracker = Arc::new(IpConnectionTracker::new());
+        let guards: Vec<_> = (0..MAX_CONNECTIONS_PER_IP)
+            .map(|_| tracker.acquire("1.2.3.4").expect("under cap"))
+            .collect();
+        assert!(tracker.acquire("1.2.3.4").is_none(), "cap reached");
+        assert!(tracker.acquire("5.6.7.8").is_some(), "other IPs independent");
+        drop(guards);
+        assert!(tracker.acquire("1.2.3.4").is_some(), "slots released on drop");
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_peer_address() {
+        let headers = HeaderMap::new();
+        let peer: SocketAddr = "203.0.113.9:4000".parse().unwrap();
+        assert_eq!(resolve_client_ip(&headers, Some(peer)), "203.0.113.9");
+        assert_eq!(resolve_client_ip(&headers, None), "unknown");
+    }
+
+    #[test]
+    fn inbound_limit_is_smaller_than_outbound_limit() {
+        assert!(MAX_CLIENT_MESSAGE_SIZE < MAX_MESSAGE_SIZE);
     }
 
     #[test]

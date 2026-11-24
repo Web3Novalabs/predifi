@@ -3,7 +3,9 @@ import { DM_Mono } from "next/font/google";
 import "./globals.css";
 import { SWRProvider } from "@/components/providers/SWRProvider";
 import { NetworkGuardProvider } from "@/components/providers/NetworkGuardProvider";
-import { ToastProvider, SkipLink, LiveRegionProvider } from "@/components/ui";
+import { ToastProvider } from "@/components/ui/toast-provider";
+import { SkipLink } from "@/components/ui/skip-link";
+import { LiveRegionProvider } from "@/components/ui/live-region";
 import { WalletProvider, ThemeProvider } from "@/lib/context";
 
 const SITE_DESCRIPTION =

@@ -247,6 +247,20 @@ stellar contract invoke \
   --admin "$ADMIN_ADDR"
 ```
 
+> **Admin signature required.** `init` calls `admin.require_auth()`, so the
+> invocation must be authorised by the `--admin` address. In the example above
+> the `--source` identity (`deployer`) is also the admin, so the CLI signs the
+> auth entry automatically. If the admin is a different account (e.g. a
+> multisig or hardware wallet), that account must sign the transaction's auth
+> entry, otherwise `init` fails with an auth error and nothing is stored.
+>
+> **Initialization timing.** Until `init` succeeds the contract has no admin.
+> Prefer deploying and initializing **atomically in the same transaction**
+> (e.g. via a deployer/factory contract that deploys and then calls `init`).
+> If that is not possible, invoke `init` **immediately after deployment**, then
+> confirm with `get_admin` before passing the contract address to
+> `predifi-contract`'s `init`.
+
 #### Step 3: Deploy PrediFi Contract
 ```bash
 PREDIFI_ID=$(stellar contract deploy \

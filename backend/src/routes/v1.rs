@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::{rejection::QueryRejection, Path, Query, State},
     routing::{get, patch, post},
     Json, Router,
 };
@@ -27,6 +27,21 @@ use crate::validated_types::{BoundedI64, NonEmptyString, PoolSortBy, PoolStatus,
 fn internal_error_response(err: impl std::fmt::Display) -> axum::response::Response {
     use axum::response::IntoResponse;
     crate::errors::AppError::Internal(err.to_string()).into_response()
+}
+
+fn query_or_invalid<T>(
+    query: Result<Query<T>, QueryRejection>,
+) -> Result<T, axum::response::Response> {
+    use axum::response::IntoResponse;
+
+    query.map(|Query(params)| params).map_err(|rejection| {
+        ApiResponse::<()>::error(
+            axum::http::StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            rejection.body_text(),
+        )
+        .into_response()
+    })
 }
 
 /// Middleware applied once to the indexer sub-router (#2062). Fails closed when
@@ -286,15 +301,23 @@ const POOLS_DEFAULT_PAGE_SIZE: i64 = 20;
 /// is clamped down to it rather than rejected with 400, so a client that
 /// over-requests still gets a bounded, servable page (see #1734).
 const POOLS_MAX_PAGE_SIZE: i64 = 100;
+/// Number of initial pool pages retained in Redis.
+const POOLS_CACHE_PAGE_COUNT: i64 = 5;
+
+fn should_cache_pools_offset(offset: i64, limit: i64) -> bool {
+    offset < limit * POOLS_CACHE_PAGE_COUNT
+}
 
 /// Query parameters for the `GET /api/v1/pools` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct PoolsQuery {
-    /// Sort order: "popular" | "ending_soon" | "new" (default)
+    /// Sort order: "popular" (most predictions) | "stake_desc" | "stake_asc" |
+    /// "ending_soon" | "ending_latest" | "new" (default) | "relevance" (needs `q`).
     pub sort_by: Option<PoolSortBy>,
-    /// Category filter, e.g. "Sports", "Crypto"
+    /// Category filter, e.g. "Sports", "Crypto" (case-insensitive).
     pub category: Option<NonEmptyString>,
-    /// Status filter: "active" | "closed" | "settled" (default: "active")
+    /// Status filter: "active" (default) | "resolved" (alias `settled`) |
+    /// "cancelled" (alias `closed`).
     pub status: Option<PoolStatus>,
     /// Comma-separated tag filter, e.g. "btc,price-prediction". A pool
     /// matches if any of its tags overlap this list.
@@ -302,13 +325,25 @@ pub struct PoolsQuery {
     /// Full-text search query across pool name, category, and tags.
     /// Uses PostgreSQL `plainto_tsquery` + ILIKE fallback.
     pub q: Option<String>,
+    /// Token (contract address) the pool is denominated in.
+    pub token: Option<NonEmptyString>,
+    /// Wallet address of the pool creator.
+    pub creator: Option<StellarAddress>,
+    /// Minimum total stake (inclusive).
+    pub min_stake: Option<i64>,
+    /// Maximum total stake (inclusive).
+    pub max_stake: Option<i64>,
+    /// Only pools ending at or after this RFC 3339 timestamp.
+    pub ends_after: Option<chrono::DateTime<chrono::Utc>>,
+    /// Only pools ending at or before this RFC 3339 timestamp.
+    pub ends_before: Option<chrono::DateTime<chrono::Utc>>,
     /// Page size. Missing defaults to [`POOLS_DEFAULT_PAGE_SIZE`]; a value
     /// outside `[1, POOLS_MAX_PAGE_SIZE]` is clamped into range in the
     /// handler rather than rejected — unlike most other paginated endpoints
     /// in this file, which use [`BoundedI64`] and reject out-of-range values.
     pub limit: Option<i64>,
-    /// Zero-based page offset, minimum 0.
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Zero-based page offset, from 0 to `MAX_PAGINATION_OFFSET`.
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
 }
 
 /// Resolve the effective page size for `GET /api/v1/pools`: missing defaults
@@ -452,15 +487,16 @@ pub async fn get_stats(
 }
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
 ///
-/// Checks the Redis cache first; falls back to the database on a cache miss
-/// and stores the result for [`POOLS_CACHE_TTL`](crate::redis_cache::POOLS_CACHE_TTL) seconds.
+/// The first five pages use Redis cache-aside for
+/// [`POOLS_CACHE_TTL`](crate::redis_cache::POOLS_CACHE_TTL) seconds; deeper
+/// offsets bypass Redis to avoid unbounded cache-key growth.
 /// `GET /api/v1/pools` — paginated list of pools with optional filters.
 ///
 /// Implements the **cache-aside pattern**:
 ///
 /// 1. Check Redis cache for the queried parameters (sort_by, category, status, limit, offset)
 /// 2. If cache hit: Return the cached response
-/// 3. If cache miss: Fetch from database and cache the result for POOLS_CACHE_TTL (60s)
+/// 3. If cache miss: Fetch from database and cache the first five pages for 60s
 ///
 /// This reduces database load for frequently accessed pool lists while keeping
 /// data relatively fresh. When a new pool is created, the entire cache is
@@ -471,10 +507,15 @@ pub async fn get_stats(
 /// maintain separate cache entries.
 pub async fn get_pools(
     State(state): State<AppState>,
-    Query(params): Query<PoolsQuery>,
+    params: Result<Query<PoolsQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let sort_by = params.sort_by.map(|s| s.as_str()).unwrap_or("new");
     let category = params.category.as_ref().map(|s| s.as_str());
@@ -483,22 +524,43 @@ pub async fn get_pools(
     // size still gets a bounded, servable page instead of a 400 (#1734).
     let limit = resolve_pools_page_size(params.limit);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
-    let tags: Option<Vec<String>> = params
+    let tags: Vec<String> = params
         .tags
         .as_ref()
         .map(|s| {
             s.split(',')
-                .map(|t| t.trim().to_string())
+                .map(|t| t.trim().to_lowercase())
                 .filter(|t| !t.is_empty())
                 .collect::<Vec<_>>()
         })
-        .filter(|v| !v.is_empty());
+        .unwrap_or_default();
     // Full-text search query — trim and convert empty to None.
     let q: Option<String> = params
         .q
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
+
+    let filter = crate::search::PoolFilter {
+        status: status.to_string(),
+        category: category.map(str::to_string),
+        tags,
+        token: params.token.as_ref().map(|t| t.as_str().trim().to_string()),
+        creator: params.creator.as_ref().map(|c| c.as_str().to_string()),
+        min_stake: params.min_stake,
+        max_stake: params.max_stake,
+        ends_after: params.ends_after,
+        ends_before: params.ends_before,
+        q: q.clone(),
+    };
+    if let Err(message) = filter.validate() {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            message,
+        )
+        .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -509,44 +571,33 @@ pub async fn get_pools(
         .into_response();
     };
 
-    // Cache-aside pattern: Step 1 — Check cache
-    let mut cache_key =
-        crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset);
-    if let Some(tags) = &tags {
-        let sanitized: Vec<String> = tags
-            .iter()
-            .map(|t| crate::redis_cache::sanitize_key_component(t))
-            .filter(|t| !t.is_empty())
-            .collect();
-        if !sanitized.is_empty() {
-            cache_key = format!("{cache_key}:tags:{}", sanitized.join(","));
-        }
-    }
-    if let Some(q_val) = &q {
-        cache_key = format!(
-            "{cache_key}:q:{}",
-            crate::redis_cache::sanitize_key_component(q_val)
-        );
-    }
+    // Cache-aside pattern: Step 1 — Check cache. The suffix hashes every
+    // filter beyond status/category/sort, and is empty for the default
+    // request so the cache warmer's keys keep matching.
+    let cache_key = format!(
+        "{}{}",
+        crate::redis_cache::pools_cache_key(sort_by, category, status, limit, offset),
+        filter.cache_suffix()
+    );
 
-    if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
-        // Cache hit — return cached data
-        return (StatusCode::OK, Json(cached_response)).into_response();
+    let cacheable_offset = should_cache_pools_offset(offset, limit);
+    if cacheable_offset {
+        if let Some(cached_response) = state.redis.get::<serde_json::Value>(&cache_key).await {
+            // Cache hit — return cached data
+            return (StatusCode::OK, Json(cached_response)).into_response();
+        }
     }
 
     // Cache miss — Step 2: Fetch from database
     match tokio::try_join!(
-        crate::tags::list_pools(
+        crate::search::search_pools(
             db,
-            sort_by,
-            category,
-            tags.as_deref(),
-            status,
-            q.as_deref(),
+            &filter,
+            crate::search::PoolSort::parse(sort_by),
             limit,
             offset
         ),
-        crate::tags::count_pools(db, category, tags.as_deref(), status, q.as_deref())
+        crate::search::count_filtered_pools(db, &filter)
     ) {
         Ok((pools, total)) => {
             if status == "active" {
@@ -567,14 +618,16 @@ pub async fn get_pools(
             let json_response = json!(&response);
 
             // Step 3: Cache the response for 60 seconds
-            state
-                .redis
-                .set(
-                    &cache_key,
-                    &json_response,
-                    crate::redis_cache::POOLS_CACHE_TTL,
-                )
-                .await;
+            if cacheable_offset {
+                state
+                    .redis
+                    .set(
+                        &cache_key,
+                        &json_response,
+                        crate::redis_cache::POOLS_CACHE_TTL,
+                    )
+                    .await;
+            }
 
             // Return the response
             (StatusCode::OK, Json(json_response)).into_response()
@@ -590,18 +643,23 @@ pub async fn get_pools(
 pub struct PaginationQuery {
     /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<BoundedI64<1, 100>>,
-    /// Zero-based offset for pagination (default 0).
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Zero-based offset for pagination, from 0 to `MAX_PAGINATION_OFFSET` (default 0).
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
 }
 
 /// `GET /api/v1/users/:address/history` — paginated prediction history for a user.
 pub async fn get_user_history(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
-    Query(params): Query<PaginationQuery>,
+    params: Result<Query<PaginationQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
@@ -648,10 +706,15 @@ pub async fn get_user_history(
 pub async fn get_user_predictions(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
-    Query(params): Query<PaginationQuery>,
+    params: Result<Query<PaginationQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
@@ -697,13 +760,81 @@ pub async fn get_user_predictions(
     }
 }
 
+/// Build the JSON payload for a global leaderboard request.
+///
+/// Shared by [`get_leaderboard`] and the cache warmer
+/// ([`crate::cache_warmer`]) so a warmed entry is byte-for-byte what a real
+/// request would have cached (#2205).
+pub(crate) async fn build_leaderboard_payload(
+    db: &sqlx::PgPool,
+    rank_by: &str,
+    period: &str,
+    limit: i64,
+    offset: i64,
+) -> Result<serde_json::Value, sqlx::Error> {
+    match rank_by {
+        "winnings" => crate::db::get_users_by_winnings(db, limit, offset)
+            .await
+            .map(|users| {
+                json!({
+                    "leaderboard": users,
+                    "rank_by": "winnings",
+                    "period": "all",
+                    "limit": limit,
+                    "offset": offset,
+                })
+            }),
+        "win_rate" | "streak" => {
+            crate::db::get_leaderboard_extended(db, rank_by, period, None, limit, offset)
+                .await
+                .map(|entries| {
+                    json!({
+                        "leaderboard": entries,
+                        "rank_by": rank_by,
+                        "period": period,
+                        "limit": limit,
+                        "offset": offset,
+                    })
+                })
+        }
+        _ if period != "all" => {
+            // Volume ranking scoped to a time window.
+            crate::db::get_leaderboard_extended(db, "volume", period, None, limit, offset)
+                .await
+                .map(|entries| {
+                    json!({
+                        "leaderboard": entries,
+                        "rank_by": "volume",
+                        "period": period,
+                        "limit": limit,
+                        "offset": offset,
+                    })
+                })
+        }
+        _ => {
+            // Default: all-time volume ranking (unchanged legacy behavior).
+            crate::db::get_users_by_betting_volume(db, limit, offset)
+                .await
+                .map(|users| {
+                    json!({
+                        "leaderboard": users,
+                        "rank_by": "volume",
+                        "period": "all",
+                        "limit": limit,
+                        "offset": offset,
+                    })
+                })
+        }
+    }
+}
+
 /// Query parameters for the `GET /api/v1/leaderboard` endpoint.
 #[derive(Debug, Deserialize)]
 pub struct LeaderboardQuery {
     /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<BoundedI64<1, 100>>,
-    /// Zero-based offset for pagination (default 0).
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Zero-based offset for pagination, from 0 to `MAX_PAGINATION_OFFSET` (default 0).
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
     /// Ranking type: "volume" | "winnings" | "win_rate" | "streak" (default: "volume")
     pub rank_by: Option<NonEmptyString>,
     /// Time window: "week" | "month" | "all" (default: "all"). Ignored for `rank_by=winnings`.
@@ -715,10 +846,15 @@ pub struct LeaderboardQuery {
 /// ("week" | "month" | "all").
 pub async fn get_leaderboard(
     State(state): State<AppState>,
-    Query(params): Query<LeaderboardQuery>,
+    params: Result<Query<LeaderboardQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
@@ -738,71 +874,39 @@ pub async fn get_leaderboard(
         .into_response();
     };
 
-    match rank_by {
-        "winnings" => match crate::db::get_users_by_winnings(db, limit, offset).await {
-            Ok(users) => {
-                let response = json!({
-                    "leaderboard": users,
-                    "rank_by": "winnings",
-                    "period": "all",
-                    "limit": limit,
-                    "offset": offset,
-                });
-                ApiResponse::success(response).into_response()
-            }
-            Err(e) => internal_error_response(e),
-        },
-        "win_rate" | "streak" => {
-            match crate::db::get_leaderboard_extended(db, rank_by, period, None, limit, offset)
-                .await
-            {
-                Ok(entries) => {
-                    let response = json!({
-                        "leaderboard": entries,
-                        "rank_by": rank_by,
-                        "period": period,
-                        "limit": limit,
-                        "offset": offset,
-                    });
-                    ApiResponse::success(response).into_response()
-                }
-                Err(e) => internal_error_response(e),
-            }
+    // Cache-aside (#2205): leaderboards are `GROUP BY` aggregates over every
+    // prediction and are requested on every leaderboard / dashboard view.
+    // `winnings` ignores `period`, so normalise it to keep one entry per ranking.
+    // Only canonical parameter values are cached so a client cannot create an
+    // unbounded number of Redis keys by varying `rank_by` / `period`.
+    let effective_period = if rank_by == "winnings" { "all" } else { period };
+    let cacheable = matches!(rank_by, "volume" | "winnings" | "win_rate" | "streak")
+        && matches!(effective_period, "all" | "week" | "month");
+    let cache_key =
+        crate::redis_cache::leaderboard_cache_key(rank_by, effective_period, limit, offset);
+    if cacheable {
+        if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+            return ApiResponse::success(cached).into_response();
         }
-        _ if period != "all" => {
-            // Volume ranking scoped to a time window.
-            match crate::db::get_leaderboard_extended(db, "volume", period, None, limit, offset)
-                .await
-            {
-                Ok(entries) => {
-                    let response = json!({
-                        "leaderboard": entries,
-                        "rank_by": "volume",
-                        "period": period,
-                        "limit": limit,
-                        "offset": offset,
-                    });
-                    ApiResponse::success(response).into_response()
-                }
-                Err(e) => internal_error_response(e),
+    }
+
+    let result = build_leaderboard_payload(db, rank_by, period, limit, offset).await;
+
+    match result {
+        Ok(response) => {
+            if cacheable {
+                state
+                    .redis
+                    .set(
+                        &cache_key,
+                        &response,
+                        crate::redis_cache::LEADERBOARD_CACHE_TTL,
+                    )
+                    .await;
             }
+            ApiResponse::success(response).into_response()
         }
-        _ => {
-            // Default: all-time volume ranking (unchanged legacy behavior).
-            match crate::db::get_users_by_betting_volume(db, limit, offset).await {
-                Ok(users) => {
-                    let response = json!({
-                        "leaderboard": users,
-                        "rank_by": "volume",
-                        "period": "all",
-                        "limit": limit,
-                        "offset": offset,
-                    });
-                    ApiResponse::success(response).into_response()
-                }
-                Err(e) => internal_error_response(e),
-            }
-        }
+        Err(e) => internal_error_response(e),
     }
 }
 
@@ -811,8 +915,8 @@ pub async fn get_leaderboard(
 pub struct PoolLeaderboardQuery {
     /// Maximum number of results to return (capped at 100, default 20).
     pub limit: Option<BoundedI64<1, 100>>,
-    /// Zero-based offset for pagination (default 0).
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    /// Zero-based offset for pagination, from 0 to `MAX_PAGINATION_OFFSET` (default 0).
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
     /// Ranking type: "volume" | "win_rate" | "streak" (default: "volume")
     pub rank_by: Option<NonEmptyString>,
 }
@@ -821,10 +925,15 @@ pub struct PoolLeaderboardQuery {
 pub async fn get_pool_leaderboard(
     State(state): State<AppState>,
     Path(pool_id): Path<i64>,
-    Query(params): Query<PoolLeaderboardQuery>,
+    params: Result<Query<PoolLeaderboardQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let limit = params.limit.map(|b| b.get()).unwrap_or(20);
     let offset = params.offset.map(|b| b.get()).unwrap_or(0);
@@ -843,6 +952,16 @@ pub async fn get_pool_leaderboard(
         .into_response();
     };
 
+    // Only canonical `rank_by` values are cached (bounds the Redis keyspace).
+    let cacheable = matches!(rank_by, "volume" | "win_rate" | "streak");
+    let cache_key =
+        crate::redis_cache::pool_leaderboard_cache_key(pool_id, rank_by, limit, offset);
+    if cacheable {
+        if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+            return ApiResponse::success(cached).into_response();
+        }
+    }
+
     match crate::db::get_leaderboard_extended(db, rank_by, "all", Some(pool_id), limit, offset)
         .await
     {
@@ -854,6 +973,16 @@ pub async fn get_pool_leaderboard(
                 "limit": limit,
                 "offset": offset,
             });
+            if cacheable {
+                state
+                    .redis
+                    .set(
+                        &cache_key,
+                        &response,
+                        crate::redis_cache::POOL_LEADERBOARD_CACHE_TTL,
+                    )
+                    .await;
+            }
             ApiResponse::success(response).into_response()
         }
         Err(e) => internal_error_response(e),
@@ -881,6 +1010,10 @@ pub struct PoolCreatedPayload {
     pub category: NonEmptyString,
     /// Pool description / name decoded from the event data.
     pub description: NonEmptyString,
+    /// Optional creator-assigned tags. Normalised server-side (lower-case,
+    /// de-duplicated, at most 10); invalid tags are dropped.
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Number of distinct outcome options (#1932). Defaults to `2` (binary)
     /// so older callers that predate multi-outcome pools still deserialize.
     #[serde(default = "default_options_count")]
@@ -942,6 +1075,7 @@ pub async fn ingest_pool_created(
         token: payload.token.into(),
         category: payload.category.into(),
         description: payload.description.into(),
+        tags: payload.tags,
         options_count: payload.options_count as i32,
         outcome_descriptions: payload.outcome_descriptions,
     };
@@ -966,6 +1100,36 @@ pub struct PredictionPlacedPayload {
     pub amount: i64,
 }
 
+/// Validate the self-contained fields of a prediction event.
+fn validate_prediction_payload(payload: &PredictionPlacedPayload) -> Result<(), &'static str> {
+    BoundedI64::<1, { i64::MAX }>::new(payload.amount)
+        .map_err(|_| "amount must be greater than zero")?;
+    if payload.outcome < 0 {
+        return Err("outcome must not be negative");
+    }
+    Ok(())
+}
+
+/// Outcome-range failure modes, mapped to HTTP responses by the handler.
+#[derive(Debug, PartialEq)]
+enum OutcomeRangeError {
+    UnknownPool,
+    OutOfRange,
+}
+
+/// Check an outcome against the pool's option count. `None` means the pool is
+/// not known to the database.
+fn validate_outcome_against_pool(
+    options_count: Option<i32>,
+    outcome: i32,
+) -> Result<(), OutcomeRangeError> {
+    match options_count {
+        None => Err(OutcomeRangeError::UnknownPool),
+        Some(count) if outcome >= count => Err(OutcomeRangeError::OutOfRange),
+        Some(_) => Ok(()),
+    }
+}
+
 /// `POST /api/v1/indexer/prediction-placed` — ingest a decoded prediction event and update DB state.
 pub async fn ingest_prediction_placed(
     State(state): State<AppState>,
@@ -973,6 +1137,11 @@ pub async fn ingest_prediction_placed(
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    if let Err(message) = validate_prediction_payload(&payload) {
+        return ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, message)
+            .into_response();
+    }
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -982,6 +1151,38 @@ pub async fn ingest_prediction_placed(
         )
         .into_response();
     };
+
+    let pool_id = payload.pool_id as i64;
+    let options_count: Option<i32> = match sqlx::query_scalar(
+        "SELECT options_count FROM pools WHERE pool_id = $1",
+    )
+    .bind(pool_id)
+    .fetch_optional(db)
+    .await
+    {
+        Ok(count) => count,
+        Err(e) => return internal_error_response(e),
+    };
+
+    match validate_outcome_against_pool(options_count, payload.outcome) {
+        Ok(()) => {}
+        Err(OutcomeRangeError::UnknownPool) => {
+            return ApiResponse::<()>::error(
+                StatusCode::NOT_FOUND,
+                error_codes::NOT_FOUND,
+                "pool not found",
+            )
+            .into_response();
+        }
+        Err(OutcomeRangeError::OutOfRange) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                "outcome is outside the pool's options",
+            )
+            .into_response();
+        }
+    }
 
     let event = PredictionPlacedEvent {
         pool_id: payload.pool_id,
@@ -1001,6 +1202,7 @@ pub async fn ingest_prediction_placed(
                 "amount": event.amount,
             }));
             state.redis.invalidate_stats_cache().await;
+            state.redis.invalidate_leaderboard_cache().await;
             state
                 .redis
                 .invalidate_user_predictions_cache(&event.user_address)
@@ -1009,6 +1211,100 @@ pub async fn ingest_prediction_placed(
             ApiResponse::success(response).into_response()
         }
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod prediction_ingest_validation_tests {
+    use super::*;
+    use axum::{extract::Json, http::StatusCode};
+    use std::sync::Arc;
+
+    fn valid_address() -> StellarAddress {
+        use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+        let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend_from_slice(&[0xAB; 32]);
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        StellarAddress::new(base32_encode(&bytes)).expect("valid test address")
+    }
+
+    fn test_state() -> AppState {
+        AppState {
+            config: Arc::new(Config::default_for_test()),
+            cache: PriceCache::new(),
+            pool_cache: PoolCache::with_negative_ttl(std::time::Duration::from_secs(60)),
+            redis: RedisCache::disabled(),
+            db: None,
+            metrics: Arc::new(crate::metrics::Metrics::new().expect("metrics")),
+            event_bus: crate::ws::EventBus::new(),
+        }
+    }
+
+    async fn call_handler(amount: i64, outcome: i32) -> (StatusCode, String) {
+        let response = ingest_prediction_placed(
+            State(test_state()),
+            Json(PredictionPlacedPayload {
+                pool_id: 1,
+                user_address: valid_address(),
+                outcome,
+                amount,
+            }),
+        )
+        .await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn rejects_zero_and_negative_amounts() {
+        for amount in [0, -1] {
+            let (status, body) = call_handler(amount, 0).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert!(body.contains(error_codes::INVALID_INPUT));
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_negative_outcome() {
+        let (status, body) = call_handler(100, -1).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains(error_codes::INVALID_INPUT));
+    }
+
+    #[tokio::test]
+    async fn valid_payload_passes_validation() {
+        let payload = PredictionPlacedPayload {
+            pool_id: 1,
+            user_address: valid_address(),
+            outcome: 1,
+            amount: 100,
+        };
+        assert_eq!(validate_prediction_payload(&payload), Ok(()));
+        assert_eq!(validate_outcome_against_pool(Some(2), 1), Ok(()));
+        // With no DB configured the handler reaches the DB check and returns
+        // 503, which proves the payload was not rejected as invalid input.
+        let (status, _) = call_handler(100, 1).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn rejects_outcome_at_or_above_options_count() {
+        assert_eq!(
+            validate_outcome_against_pool(Some(2), 2),
+            Err(OutcomeRangeError::OutOfRange)
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_pool() {
+        assert_eq!(
+            validate_outcome_against_pool(None, 0),
+            Err(OutcomeRangeError::UnknownPool)
+        );
     }
 }
 
@@ -1202,7 +1498,39 @@ pub struct CreatePoolTemplateRequest {
     pub recurrence_interval_seconds: i64,
 }
 
+fn validate_pool_template_request(request: &CreatePoolTemplateRequest) -> Result<(), &'static str> {
+    let duration_range =
+        crate::constants::MIN_POOL_TEMPLATE_SECONDS..=crate::constants::MAX_POOL_TEMPLATE_SECONDS;
+    if !duration_range.contains(&request.duration_seconds) {
+        return Err("duration_seconds must be between 3600 and 31536000");
+    }
+    if !duration_range.contains(&request.recurrence_interval_seconds) {
+        return Err("recurrence_interval_seconds must be between 3600 and 31536000");
+    }
+    if request.name.trim().is_empty() {
+        return Err("name must not be empty");
+    }
+    if request.name.chars().count() > crate::constants::MAX_POOL_TEMPLATE_NAME_LENGTH {
+        return Err("name must be 100 characters or fewer");
+    }
+    if request.category.trim().is_empty() {
+        return Err("category must not be empty");
+    }
+    if request.category.chars().count() > crate::constants::MAX_POOL_TEMPLATE_CATEGORY_LENGTH {
+        return Err("category must be 64 characters or fewer");
+    }
+    if request.description.chars().count() > crate::constants::MAX_POOL_TEMPLATE_DESCRIPTION_LENGTH
+    {
+        return Err("description must be 2000 characters or fewer");
+    }
+
+    Ok(())
+}
+
 /// `POST /api/v1/pool-templates` — save a reusable pool configuration.
+///
+/// Durations and recurrence intervals must be between 1 hour and 365 days;
+/// name, category, and description limits are defined in `constants`.
 pub async fn create_pool_template_handler(
     State(state): State<AppState>,
     Json(body): Json<CreatePoolTemplateRequest>,
@@ -1210,13 +1538,17 @@ pub async fn create_pool_template_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    let Some(db) = &state.db else {
+    if let Err(message) = validate_pool_template_request(&body) {
         return ApiResponse::<()>::error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error_codes::DATABASE_UNAVAILABLE,
-            "database not available",
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            message,
         )
         .into_response();
+    }
+
+    let Some(db) = &state.db else {
+        return Json(json!({ "error": "database not available" })).into_response();
     };
 
     match crate::db::create_pool_template(
@@ -1231,8 +1563,85 @@ pub async fn create_pool_template_handler(
     )
     .await
     {
-        Ok(template) => (StatusCode::OK, Json(json!(template))).into_response(),
-        Err(e) => crate::errors::AppError::from(e).into_response(),
+        Ok(template) => Json(json!(template)).into_response(),
+        Err(e) => Json(json!({ "error": e.to_string() })).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod pool_template_validation_tests {
+    use super::*;
+
+    fn request(
+        duration_seconds: i64,
+        recurrence_interval_seconds: i64,
+    ) -> CreatePoolTemplateRequest {
+        CreatePoolTemplateRequest {
+            creator: "creator".to_string(),
+            name: "Template".to_string(),
+            category: "sports".to_string(),
+            description: String::new(),
+            token: "token".to_string(),
+            duration_seconds,
+            recurrence_interval_seconds,
+        }
+    }
+
+    #[test]
+    fn pool_template_durations_reject_zero() {
+        assert_eq!(
+            validate_pool_template_request(&request(0, 3_600)),
+            Err("duration_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_reject_negative_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(3_600, -1)),
+            Err("recurrence_interval_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_reject_huge_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(i64::MAX, 3_600)),
+            Err("duration_seconds must be between 3600 and 31536000")
+        );
+    }
+
+    #[test]
+    fn pool_template_durations_accept_valid_values() {
+        assert_eq!(
+            validate_pool_template_request(&request(3_600, 31_536_000)),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn pool_template_text_fields_are_bounded() {
+        let mut request = request(3_600, 3_600);
+        request.name = "n".repeat(crate::constants::MAX_POOL_TEMPLATE_NAME_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("name must be 100 characters or fewer")
+        );
+
+        request.name = "Template".to_string();
+        request.category = "c".repeat(crate::constants::MAX_POOL_TEMPLATE_CATEGORY_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("category must be 64 characters or fewer")
+        );
+
+        request.category = "sports".to_string();
+        request.description =
+            "d".repeat(crate::constants::MAX_POOL_TEMPLATE_DESCRIPTION_LENGTH + 1);
+        assert_eq!(
+            validate_pool_template_request(&request),
+            Err("description must be 2000 characters or fewer")
+        );
     }
 }
 
@@ -1296,7 +1705,13 @@ pub async fn get_user_profile_handler(
 
 // ── Pool tags ────────────────────────────────────────────────────────────────
 
-/// `GET /api/v1/tags` — distinct tags currently in use, for filter-UI dropdowns.
+/// Default and maximum number of entries returned by `GET /api/v1/tags`.
+const TAG_LIST_LIMIT: i64 = 200;
+
+/// `GET /api/v1/tags` — tags currently in use, for filter-UI dropdowns.
+///
+/// `tags` is the alphabetical list (unchanged); `counts` lists the same tags
+/// with the number of active pools using each, most used first.
 pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
@@ -1310,8 +1725,20 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
         .into_response();
     };
 
+    let cache_key = crate::redis_cache::tags_cache_key();
+    if let Some(cached) = state.redis.get::<serde_json::Value>(&cache_key).await {
+        return ApiResponse::success(cached).into_response();
+    }
+
     match crate::tags::list_distinct_tags(db).await {
-        Ok(tags) => ApiResponse::success(json!({ "tags": tags })).into_response(),
+        Ok(tags) => {
+            let response = json!({ "tags": tags });
+            state
+                .redis
+                .set(&cache_key, &response, crate::redis_cache::TAGS_CACHE_TTL)
+                .await;
+            ApiResponse::success(response).into_response()
+        }
         Err(e) => internal_error_response(e),
     }
 }
@@ -1321,32 +1748,88 @@ pub async fn list_tags_handler(State(state): State<AppState>) -> axum::response:
 pub struct UpdatePoolTagsRequest {
     /// Legacy field, retained for request compatibility. It is no longer used
     /// for authorization: pool creators are public and can be copied by anyone.
-    pub creator: StellarAddress,
+    #[serde(default)]
+    pub creator: Option<StellarAddress>,
     pub tags: Vec<String>,
 }
 
-/// `PATCH /api/v1/pools/:id/tags` — admin-only: replace a pool's tag set.
+/// Request body for `PATCH /api/v1/pools/:id/metadata`.
+#[derive(Debug, Deserialize)]
+pub struct UpdatePoolMetadataRequest {
+    /// New category (normalised to lower-case). Omit to leave unchanged.
+    pub category: Option<String>,
+    /// Replacement tag set. Omit to leave unchanged; `[]` clears all tags.
+    pub tags: Option<Vec<String>>,
+}
+
+/// Who is allowed to relabel a pool.
+#[derive(Debug, PartialEq, Eq)]
+enum PoolEditor {
+    Admin,
+    Creator,
+    Denied,
+    Unauthenticated,
+}
+
+/// Decide whether the request may edit a pool created by `pool_creator`.
 ///
-/// Requires the `x-admin-api-key` header (the same credential as
-/// `/admin/log-level`). Until wallet-based sessions exist, the `creator` in
-/// the body is not trusted as proof of identity.
-pub async fn update_pool_tags_handler(
-    State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
-    Path(pool_id): Path<i64>,
-    Json(body): Json<UpdatePoolTagsRequest>,
+/// The admin API key always may; otherwise the bearer must be a valid access
+/// token whose subject is the pool's creator.
+fn resolve_pool_editor(
+    config: &Config,
+    headers: &axum::http::HeaderMap,
+    pool_creator: &str,
+) -> PoolEditor {
+    if has_admin_credential(headers) {
+        return PoolEditor::Admin;
+    }
+    let Some(token) = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::jwt::extract_bearer_token)
+    else {
+        return PoolEditor::Unauthenticated;
+    };
+    match crate::jwt::verify_jwt_token_strict(
+        token,
+        &config.secret_key,
+        "access",
+        config.jwt_key_version,
+    ) {
+        Ok(claims) if !pool_creator.is_empty() && claims.sub == pool_creator => PoolEditor::Creator,
+        Ok(_) => PoolEditor::Denied,
+        Err(_) => PoolEditor::Unauthenticated,
+    }
+}
+
+/// Shared implementation of the category/tag update endpoints.
+async fn apply_pool_labels(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    pool_id: i64,
+    category: Option<String>,
+    tags: Option<Vec<String>>,
+    legacy_response: bool,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
-    if !has_admin_credential(&headers) {
-        return ApiResponse::<()>::error(
-            StatusCode::UNAUTHORIZED,
-            error_codes::UNAUTHORIZED,
-            "invalid or missing admin credentials",
-        )
-        .into_response();
+    let invalid = |message: &'static str| {
+        ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, message)
+            .into_response()
+    };
+
+    if category.is_none() && tags.is_none() {
+        return invalid("provide at least one of category or tags");
     }
+    let category = match category.as_deref().map(crate::tags::normalize_category).transpose() {
+        Ok(category) => category,
+        Err(message) => return invalid(message),
+    };
+    let tags = match tags.as_deref().map(crate::tags::normalize_tags).transpose() {
+        Ok(tags) => tags,
+        Err(message) => return invalid(message),
+    };
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1357,10 +1840,44 @@ pub async fn update_pool_tags_handler(
         .into_response();
     };
 
-    match crate::tags::update_pool_tags(db, pool_id, &body.tags).await {
+    let creator = match crate::tags::get_pool_creator(db, pool_id).await {
+        Ok(Some(creator)) => creator,
+        Ok(None) => {
+            return ApiResponse::<()>::error(
+                StatusCode::NOT_FOUND,
+                error_codes::NOT_FOUND,
+                "pool not found",
+            )
+            .into_response();
+        }
+        Err(e) => return internal_error_response(e),
+    };
+
+    match resolve_pool_editor(&state.config, headers, &creator) {
+        PoolEditor::Admin | PoolEditor::Creator => {}
+        PoolEditor::Denied => {
+            return ApiResponse::<()>::error(
+                StatusCode::FORBIDDEN,
+                error_codes::FORBIDDEN,
+                "only the pool creator or an admin may edit this pool",
+            )
+            .into_response();
+        }
+        PoolEditor::Unauthenticated => {
+            return ApiResponse::<()>::error(
+                StatusCode::UNAUTHORIZED,
+                error_codes::UNAUTHORIZED,
+                "invalid or missing credentials",
+            )
+            .into_response();
+        }
+    }
+
+    match crate::tags::update_pool_labels(db, pool_id, category.as_deref(), tags.as_deref()).await {
         Ok(true) => {
             state.pool_cache.invalidate(pool_id);
             state.redis.invalidate_pools_cache().await;
+            state.redis.invalidate_tags_cache().await;
             ApiResponse::success(json!({ "pool_id": pool_id, "tags": body.tags })).into_response()
         }
         Ok(false) => ApiResponse::<()>::error(
@@ -1371,6 +1888,34 @@ pub async fn update_pool_tags_handler(
         .into_response(),
         Err(e) => internal_error_response(e),
     }
+}
+
+/// `PATCH /api/v1/pools/:id/tags` — replace a pool's tag set.
+///
+/// Authorized for the pool's creator (bearer access token whose subject is
+/// the creator) or an admin (`x-admin-api-key`). The `creator` body field is
+/// legacy and never trusted as proof of identity.
+pub async fn update_pool_tags_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(pool_id): Path<i64>,
+    Json(body): Json<UpdatePoolTagsRequest>,
+) -> axum::response::Response {
+    apply_pool_labels(&state, &headers, pool_id, None, Some(body.tags), true).await
+}
+
+/// `PATCH /api/v1/pools/:id/metadata` — update a pool's category and/or tags.
+///
+/// Same authorization as [`update_pool_tags_handler`]. Body:
+/// `{ "category": "crypto", "tags": ["btc", "halving"] }` (both optional, at
+/// least one required).
+pub async fn update_pool_metadata_handler(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(pool_id): Path<i64>,
+    Json(body): Json<UpdatePoolMetadataRequest>,
+) -> axum::response::Response {
+    apply_pool_labels(&state, &headers, pool_id, body.category, body.tags, false).await
 }
 
 // ── Claims (winnings / refunds) ───────────────────────────────────────────────
@@ -1393,6 +1938,15 @@ pub async fn ingest_claim_handler(
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
 
+    if BoundedI64::<0, { i64::MAX }>::new(payload.amount_paid).is_err() {
+        return ApiResponse::<()>::error(
+            StatusCode::BAD_REQUEST,
+            error_codes::INVALID_INPUT,
+            "amount_paid must not be negative",
+        )
+        .into_response();
+    }
+
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1411,9 +1965,78 @@ pub async fn ingest_claim_handler(
     .await
     {
         Ok(rows) => {
+            if rows > 0 {
+                // Claims change the winnings ranking.
+                state.redis.invalidate_leaderboard_cache().await;
+            }
             ApiResponse::success(json!({ "status": "ok", "rows_updated": rows })).into_response()
         }
         Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod claim_ingest_validation_tests {
+    use super::*;
+    use axum::{extract::Json, http::StatusCode};
+    use std::sync::Arc;
+
+    fn valid_address() -> StellarAddress {
+        use crate::validated_types::{base32_encode, crc16_xmodem, STRKEY_VERSION_ACCOUNT_ID};
+        let mut bytes = vec![STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend_from_slice(&[0xAB; 32]);
+        let checksum = crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        StellarAddress::new(base32_encode(&bytes)).expect("valid test address")
+    }
+
+    async fn call_handler(amount_paid: i64) -> (StatusCode, String) {
+        let state = AppState {
+            config: Arc::new(Config::default_for_test()),
+            cache: PriceCache::new(),
+            pool_cache: PoolCache::with_negative_ttl(std::time::Duration::from_secs(60)),
+            redis: RedisCache::disabled(),
+            db: None,
+            metrics: Arc::new(crate::metrics::Metrics::new().expect("metrics")),
+            event_bus: crate::ws::EventBus::new(),
+        };
+        let response = ingest_claim_handler(
+            State(state),
+            Json(ClaimPayload {
+                pool_id: 1,
+                user_address: valid_address(),
+                amount_paid,
+            }),
+        )
+        .await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    #[tokio::test]
+    async fn rejects_negative_amount_paid() {
+        let (status, body) = call_handler(-1).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains(error_codes::INVALID_INPUT));
+    }
+
+    #[tokio::test]
+    async fn accepts_zero_amount_paid() {
+        // No DB is configured in this test, so a valid payload reaches the
+        // database check and returns 503 rather than a validation error.
+        let (status, body) = call_handler(0).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!body.contains(error_codes::INVALID_INPUT));
+    }
+
+    #[tokio::test]
+    async fn accepts_positive_amount_paid() {
+        let (status, body) = call_handler(2_500_000).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!body.contains(error_codes::INVALID_INPUT));
     }
 }
 
@@ -1424,17 +2047,22 @@ pub async fn ingest_claim_handler(
 pub struct NotificationsQuery {
     pub unread_only: Option<bool>,
     pub limit: Option<BoundedI64<1, 100>>,
-    pub offset: Option<BoundedI64<0, 9223372036854775807>>,
+    pub offset: Option<BoundedI64<0, { crate::constants::MAX_PAGINATION_OFFSET }>>,
 }
 
 /// `GET /api/v1/notifications/:address` — list a user's notifications, newest first.
 pub async fn list_notifications_handler(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
-    Query(params): Query<NotificationsQuery>,
+    params: Result<Query<NotificationsQuery>, QueryRejection>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+
+    let params = match query_or_invalid(params) {
+        Ok(params) => params,
+        Err(response) => return response,
+    };
 
     let Some(db) = &state.db else {
         return ApiResponse::<()>::error(
@@ -1530,11 +2158,88 @@ pub async fn get_user_interests_handler(
     }
 }
 
+const MAX_USER_INTERESTS: usize = 20;
+const MAX_USER_INTEREST_LENGTH: usize = 32;
+
+/// Trim, lowercase, and deduplicate interest labels after validating their bounds.
+///
+/// Labels are not restricted to the currently known categories or tags so clients
+/// can follow custom labels without waiting for the tag list to change.
+fn normalize_user_interests(interests: Vec<String>) -> Result<Vec<String>, &'static str> {
+    use std::collections::HashSet;
+
+    if interests.len() > MAX_USER_INTERESTS {
+        return Err("interests must contain no more than 20 entries");
+    }
+
+    let mut seen = HashSet::with_capacity(interests.len());
+    let mut normalized = Vec::with_capacity(interests.len());
+    for interest in interests {
+        let interest = interest.trim().to_lowercase();
+        if interest.is_empty() {
+            return Err("interests must not contain empty entries");
+        }
+        if interest.chars().count() > MAX_USER_INTEREST_LENGTH {
+            return Err(
+                "each interest must be 32 characters or fewer after trimming and lowercasing",
+            );
+        }
+        if seen.insert(interest.clone()) {
+            normalized.push(interest);
+        }
+    }
+
+    Ok(normalized)
+}
+
 /// `PUT /api/v1/users/:address/interests` — replace a user's interest list wholesale.
 pub async fn set_user_interests_handler(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
     Json(body): Json<crate::notifications::SetInterestsRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let interests = match normalize_user_interests(body.interests) {
+        Ok(interests) => interests,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::notifications::set_user_interests(db, address.as_str(), &interests).await {
+        Ok(()) => ApiResponse::success(json!({ "address": address, "interests": interests }))
+            .into_response(),
+        Err(e) => ApiResponse::<()>::error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_codes::INTERNAL_ERROR,
+            e.to_string(),
+        )
+        .into_response(),
+    }
+}
+
+// ── Push notification subscriptions ──────────────────────────────────────────
+
+/// `GET /api/v1/users/:address/push` — how many devices receive push alerts.
+pub async fn get_push_subscriptions_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
 ) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
@@ -1548,10 +2253,138 @@ pub async fn set_user_interests_handler(
         .into_response();
     };
 
-    match crate::notifications::set_user_interests(db, address.as_str(), &body.interests).await {
-        Ok(()) => ApiResponse::success(json!({ "address": address, "interests": body.interests }))
-            .into_response(),
+    match crate::push::count_subscriptions(db, address.as_str()).await {
+        Ok(devices) => ApiResponse::success(json!({
+            "address": address,
+            "devices": devices,
+            "push_enabled": state.config.push_gateway_url.is_some(),
+        }))
+        .into_response(),
         Err(e) => internal_error_response(e),
+    }
+}
+
+/// `PUT /api/v1/users/:address/push` — register a device / browser push token.
+///
+/// Body: `{ "token": "…", "platform": "web" | "ios" | "android" }`
+pub async fn register_push_subscription_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<crate::push::RegisterPushRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let (token, platform) = match crate::push::validate_registration(&body) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::push::register_subscription(db, address.as_str(), &token, &platform).await {
+        Ok(()) => ApiResponse::success(json!({
+            "address": address,
+            "platform": platform,
+            "registered": true,
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
+/// `DELETE /api/v1/users/:address/push` — unregister a push token.
+pub async fn unregister_push_subscription_handler(
+    State(state): State<AppState>,
+    Path(address): Path<StellarAddress>,
+    Json(body): Json<crate::push::UnregisterPushRequest>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    let token = match crate::push::validate_token(&body.token) {
+        Ok(token) => token,
+        Err(message) => {
+            return ApiResponse::<()>::error(
+                StatusCode::BAD_REQUEST,
+                error_codes::INVALID_INPUT,
+                message,
+            )
+            .into_response();
+        }
+    };
+
+    let Some(db) = &state.db else {
+        return ApiResponse::<()>::error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error_codes::DATABASE_UNAVAILABLE,
+            "database not available",
+        )
+        .into_response();
+    };
+
+    match crate::push::unregister_subscription(db, address.as_str(), &token).await {
+        Ok(removed) => ApiResponse::success(json!({
+            "address": address,
+            "removed": removed,
+        }))
+        .into_response(),
+        Err(e) => internal_error_response(e),
+    }
+}
+
+#[cfg(test)]
+mod user_interests_tests {
+    use super::*;
+
+    #[test]
+    fn user_interests_reject_more_than_twenty_entries() {
+        let interests = (0..=MAX_USER_INTERESTS)
+            .map(|index| format!("interest-{index}"))
+            .collect();
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Err("interests must contain no more than 20 entries")
+        );
+    }
+
+    #[test]
+    fn user_interests_reject_entries_longer_than_thirty_two_characters() {
+        let interests = vec!["a".repeat(MAX_USER_INTEREST_LENGTH + 1)];
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Err("each interest must be 32 characters or fewer after trimming and lowercasing")
+        );
+    }
+
+    #[test]
+    fn user_interests_trim_lowercase_and_deduplicate() {
+        let interests = vec![
+            "  Sports ".to_string(),
+            "sports".to_string(),
+            " DeFi ".to_string(),
+        ];
+
+        assert_eq!(
+            normalize_user_interests(interests),
+            Ok(vec!["sports".to_string(), "defi".to_string()])
+        );
     }
 }
 
@@ -1622,6 +2455,7 @@ pub fn router(
             .route("/stats", get(get_stats))
             .route("/leaderboard", get(get_leaderboard))
             .route("/tags", get(list_tags_handler))
+            .route("/categories", get(list_categories_handler))
             .route("/referrals/:address", get(referrals_handler))
             .route(
                 "/referrals/:address/estimate",
@@ -1651,6 +2485,12 @@ pub fn router(
                 "/users/:address/email",
                 get(get_user_email_handler).put(upsert_user_email_handler),
             )
+            .route(
+                "/users/:address/push",
+                get(get_push_subscriptions_handler)
+                    .put(register_push_subscription_handler)
+                    .delete(unregister_push_subscription_handler),
+            )
             .route("/notifications/:address", get(list_notifications_handler))
             .route(
                 "/notifications/:address/read",
@@ -1677,6 +2517,7 @@ pub fn router(
         Router::new()
             .merge(indexer)
             .route("/pools/:id/tags", patch(update_pool_tags_handler))
+            .route("/pools/:id/metadata", patch(update_pool_metadata_handler))
             .route(
                 "/pools/:id/pay-creator-incentive",
                 post(pay_creator_incentive_handler),
@@ -2154,7 +2995,10 @@ mod cache_aside_tests {
 /// clamped into bounds rather than rejected with 400.
 #[cfg(test)]
 mod pools_pagination_tests {
-    use super::{resolve_pools_page_size, POOLS_DEFAULT_PAGE_SIZE, POOLS_MAX_PAGE_SIZE};
+    use super::{
+        resolve_pools_page_size, should_cache_pools_offset, POOLS_DEFAULT_PAGE_SIZE,
+        POOLS_MAX_PAGE_SIZE,
+    };
 
     #[test]
     fn missing_limit_uses_documented_default() {
@@ -2188,12 +3032,44 @@ mod pools_pagination_tests {
         assert_eq!(resolve_pools_page_size(Some(0)), 1);
         assert_eq!(resolve_pools_page_size(Some(-5)), 1);
     }
+
+    #[test]
+    fn caches_only_the_first_five_pool_pages() {
+        assert!(should_cache_pools_offset(0, 20));
+        assert!(should_cache_pools_offset(99, 20));
+        assert!(!should_cache_pools_offset(100, 20));
+        assert!(!should_cache_pools_offset(500, 100));
+    }
 }
 
 // ── User email registration (#1929) ──────────────────────────────────────────
 
-/// `GET /api/v1/users/:address/email` — retrieve the registered email and
-/// opt-in state for a user.
+/// Mask an email address for public responses: keep only the first character
+/// of the local part, so `user@example.com` becomes `u***@example.com`.
+fn mask_email(email: &str) -> String {
+    let Some((local, domain)) = email.split_once('@') else {
+        return "***".to_string();
+    };
+    let first = local.chars().next().map(|c| c.to_string()).unwrap_or_default();
+    format!("{first}***@{domain}")
+}
+
+/// Build the public email-preferences response. The full address is never
+/// exposed here; an authenticated owner check is required before that can
+/// change.
+fn user_email_response(address: &str, email: &str, enabled: bool) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    ApiResponse::success(json!({
+        "address": address,
+        "email": mask_email(email),
+        "email_enabled": enabled,
+        "has_email": true,
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/users/:address/email` — retrieve the masked registered email
+/// and opt-in state for a user.
 pub async fn get_user_email_handler(
     State(state): State<AppState>,
     Path(address): Path<StellarAddress>,
@@ -2211,12 +3087,7 @@ pub async fn get_user_email_handler(
     };
 
     match crate::notifications::get_user_email(db, address.as_str()).await {
-        Ok(Some((email, enabled))) => ApiResponse::success(json!({
-            "address": address,
-            "email": email,
-            "email_enabled": enabled,
-        }))
-        .into_response(),
+        Ok(Some((email, enabled))) => user_email_response(address.as_str(), &email, enabled),
         Ok(None) => ApiResponse::<()>::error(
             StatusCode::NOT_FOUND,
             error_codes::NOT_FOUND,
@@ -2301,7 +3172,29 @@ pub async fn upsert_user_email_handler(
 
 #[cfg(test)]
 mod email_validation_tests {
-    use super::normalize_email;
+    use super::{mask_email, normalize_email, user_email_response};
+
+    #[tokio::test]
+    async fn public_email_response_never_contains_unmasked_address() {
+        let response = user_email_response(
+            "GBZXN7PIRZGNMHGA728JAGEL2OC4AHFAXE2XZ2VY5UZWFEXU272K5635",
+            "user@example.com",
+            true,
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let body = String::from_utf8_lossy(&bytes);
+        assert!(body.contains("u***@example.com"));
+        assert!(!body.contains("user@example.com"));
+        assert!(body.contains("has_email"));
+    }
+
+    #[test]
+    fn masks_email_local_part() {
+        assert_eq!(mask_email("user@example.com"), "u***@example.com");
+        assert_eq!(mask_email("a@sub.example.co.uk"), "a***@sub.example.co.uk");
+    }
 
     #[test]
     fn rejects_malformed_and_oversized_addresses() {

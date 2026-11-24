@@ -361,7 +361,7 @@ where
     let listener_redis = redis.clone();
     let listener_rpc_timeout = Duration::from_secs(config.rpc_timeout_secs);
     let listener_batch_size = config.indexer_max_batch_size;
-    let listener_start_ledger = config.listener_start_ledger;
+    let listener_contract_id = config.predifi_contract_id.clone();
 
     // spawn_worker roots the listener under a named OTel span so all Stellar
     // sync traces are correlated in the trace backend.
@@ -374,7 +374,7 @@ where
                 listener_redis,
                 listener_rpc_timeout,
                 listener_batch_size,
-                listener_start_ledger,
+                listener_contract_id,
             )
             .await;
         });
@@ -384,10 +384,17 @@ where
     // Every insert is deduplicated on the DB side, so this can run on a fixed
     // interval without ever double-notifying a user.
     let notifications_pool = pool.clone();
+    let notifications_smtp = crate::email::SmtpConfig::from_config(&config);
+    let notifications_push = crate::push::PushConfig::from_config(&config);
     let notifications_handle: JoinHandle<()> =
         crate::tracing_context::spawn_worker("notification_sweep", async move {
-            crate::notifications::run_sweep_loop(notifications_pool, Duration::from_secs(300))
-                .await;
+            crate::notifications::run_sweep_loop_with_delivery(
+                notifications_pool,
+                Duration::from_secs(300),
+                notifications_smtp,
+                notifications_push,
+            )
+            .await;
         });
 
     // Proactively refreshes the Redis cache for the default, first-page

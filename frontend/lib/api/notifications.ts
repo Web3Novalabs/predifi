@@ -166,8 +166,10 @@ export async function setInterests(address: string, interests: string[]): Promis
 
 export interface UserEmailPrefs {
   address: string;
+  /** Masked by the public GET endpoint, e.g. `u***@example.com`. */
   email: string;
   email_enabled: boolean;
+  has_email: boolean;
 }
 
 function isUserEmailPrefs(obj: unknown): obj is UserEmailPrefs {
@@ -176,7 +178,8 @@ function isUserEmailPrefs(obj: unknown): obj is UserEmailPrefs {
   return (
     typeof d.address === "string" &&
     typeof d.email === "string" &&
-    typeof d.email_enabled === "boolean"
+    typeof d.email_enabled === "boolean" &&
+    typeof d.has_email === "boolean"
   );
 }
 

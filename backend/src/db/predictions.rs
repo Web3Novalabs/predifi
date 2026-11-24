@@ -293,21 +293,28 @@ pub async fn get_users_by_betting_volume(
 ) -> Result<Vec<UserBettingVolume>, sqlx::Error> {
     use crate::db::builders::PaginationBuilder;
 
-    let rows = sqlx::query_as::<_, UserVolumeRow>(
-        r#"
-        SELECT
-            user_address,
-            SUM(amount)  AS total_volume,
-            COUNT(*)     AS prediction_count
-        FROM predictions
-        GROUP BY user_address
-        ORDER BY SUM(amount) DESC
-        LIMIT $1 OFFSET $2
-        "#,
+    // Served by the covering index `idx_predictions_user_covering`
+    // (user_address) INCLUDE (amount, …): an index-only GroupAggregate rather
+    // than a heap scan. `user_address` is the tie-breaker so OFFSET pagination
+    // is stable when two users have identical volume.
+    let rows = crate::metrics::observe_db(
+        "get_users_by_betting_volume",
+        sqlx::query_as::<_, UserVolumeRow>(
+            r#"
+            SELECT
+                user_address,
+                SUM(amount)  AS total_volume,
+                COUNT(*)     AS prediction_count
+            FROM predictions
+            GROUP BY user_address
+            ORDER BY SUM(amount) DESC, user_address
+            LIMIT $1 OFFSET $2
+            "#,
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool),
     )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
     .await?;
 
     let pagination = PaginationBuilder::new(offset);
@@ -319,10 +326,62 @@ pub async fn get_users_by_betting_volume(
     }))
 }
 
+/// SQL behind [`get_users_by_winnings`]. Placeholders: `$1` = limit, `$2` = offset.
+///
+/// Kept as a constant so the `EXPLAIN ANALYZE` harness in [`crate::db::explain`]
+/// profiles exactly the text that is served.
+pub(crate) const USERS_BY_WINNINGS_SQL: &str = r#"
+WITH settled AS (
+    -- The only scan of `predictions` ⨝ `pools`; referenced twice
+    -- below, so Postgres materialises it once.
+    SELECT p.user_address,
+           p.pool_id,
+           p.amount,
+           pl.total_stake,
+           COALESCE(
+               pl.result IS NOT NULL
+               AND p.outcome = CAST(pl.result AS INTEGER),
+               FALSE
+           ) AS is_win
+    FROM predictions p
+    JOIN pools pl ON pl.pool_id = p.pool_id
+    WHERE pl.state = 'settled'
+),
+pool_winning_totals AS (
+    SELECT pool_id, SUM(amount) AS winning_stake_total
+    FROM settled
+    WHERE is_win
+    GROUP BY pool_id
+),
+user_results AS (
+    SELECT
+        s.user_address,
+        SUM(s.amount * (s.total_stake::FLOAT / NULLIF(pwt.winning_stake_total, 0)))
+            FILTER (WHERE s.is_win)            AS total_winnings,
+        COUNT(*) FILTER (WHERE s.is_win)       AS winning_predictions,
+        COUNT(*)                               AS total_predictions
+    FROM settled s
+    LEFT JOIN pool_winning_totals pwt ON pwt.pool_id = s.pool_id
+    GROUP BY s.user_address
+)
+SELECT
+    user_address,
+    COALESCE(total_winnings, 0)::BIGINT AS total_winnings,
+    winning_predictions,
+    total_predictions
+FROM user_results
+ORDER BY COALESCE(total_winnings, 0) DESC, user_address
+LIMIT $1 OFFSET $2
+"#;
+
 /// Top users ranked by winnings from settled pools.
 ///
 /// `pool_winning_totals` pre-aggregates each pool's total winning-outcome
-/// stake once (avoiding N+1 correlated subqueries — see #1370).
+/// stake once (avoiding N+1 correlated subqueries — see #1370). As of #2204 the
+/// settled `predictions ⨝ pools` set is also scanned just once and shared by
+/// the winnings, win-count and total-count aggregates; the previous version
+/// scanned it three times (winning totals, winning predictions, user totals)
+/// and then `FULL OUTER JOIN`ed the results.
 pub async fn get_users_by_winnings(
     pool: &PgPool,
     limit: i64,
@@ -330,62 +389,15 @@ pub async fn get_users_by_winnings(
 ) -> Result<Vec<UserWinnings>, sqlx::Error> {
     use crate::db::builders::PaginationBuilder;
 
-    let rows = sqlx::query_as::<_, UserWinningsRow>(
-        r#"
-        WITH pool_winning_totals AS (
-            SELECT pl.pool_id,
-                   SUM(p.amount) AS winning_stake_total
-            FROM predictions p
-            JOIN pools pl ON pl.pool_id = p.pool_id
-            WHERE pl.state  = 'settled'
-              AND pl.result IS NOT NULL
-              AND p.outcome = CAST(pl.result AS INTEGER)
-            GROUP BY pl.pool_id
-        ),
-        winning_predictions AS (
-            SELECT
-                p.user_address,
-                p.amount,
-                pl.total_stake,
-                pwt.winning_stake_total
-            FROM predictions p
-            JOIN pools pl  ON pl.pool_id  = p.pool_id
-            JOIN pool_winning_totals pwt ON pwt.pool_id = pl.pool_id
-            WHERE pl.state  = 'settled'
-              AND pl.result IS NOT NULL
-              AND p.outcome = CAST(pl.result AS INTEGER)
-        ),
-        user_winnings AS (
-            SELECT
-                user_address,
-                SUM(amount * (total_stake::FLOAT / NULLIF(winning_stake_total, 0)))
-                    AS total_winnings,
-                COUNT(*) AS winning_predictions
-            FROM winning_predictions
-            GROUP BY user_address
-        ),
-        user_totals AS (
-            SELECT p.user_address, COUNT(*) AS total_predictions
-            FROM predictions p
-            JOIN pools pl ON pl.pool_id = p.pool_id
-            WHERE pl.state = 'settled'
-            GROUP BY p.user_address
+    let rows = crate::metrics::observe_db(
+        "get_users_by_winnings",
+        sqlx::query_as::<_, UserWinningsRow>(
+            USERS_BY_WINNINGS_SQL,
         )
-        SELECT
-            COALESCE(uw.user_address, ut.user_address)  AS user_address,
-            COALESCE(uw.total_winnings, 0)::BIGINT      AS total_winnings,
-            COALESCE(uw.winning_predictions, 0)         AS winning_predictions,
-            ut.total_predictions
-        FROM user_winnings uw
-        FULL OUTER JOIN user_totals ut ON uw.user_address = ut.user_address
-        WHERE ut.total_predictions > 0
-        ORDER BY COALESCE(uw.total_winnings, 0) DESC
-        LIMIT $1 OFFSET $2
-        "#,
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool),
     )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
     .await?;
 
     let pagination = PaginationBuilder::new(offset);
@@ -408,7 +420,7 @@ pub async fn get_users_by_winnings(
 
 /// Resolve the `period` filter (`"week"` / `"month"` / anything else = all-time)
 /// into the `created_at` cutoff timestamp used by [`leaderboard_sql`].
-fn leaderboard_cutoff(period: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn leaderboard_cutoff(period: &str) -> Option<DateTime<Utc>> {
     match period {
         "week" => Some(Utc::now() - chrono::Duration::days(7)),
         "month" => Some(Utc::now() - chrono::Duration::days(30)),
@@ -424,7 +436,7 @@ fn leaderboard_cutoff(period: &str) -> Option<DateTime<Utc>> {
 ///
 /// Placeholders: `$1` = limit, `$2` = offset, `$3` = optional pool ID,
 /// `$4` = optional `created_at` cutoff — see [`leaderboard_cutoff`].
-fn leaderboard_sql(rank_by: &str) -> String {
+pub(crate) fn leaderboard_sql(rank_by: &str) -> String {
     use crate::db::builders::SortOrder;
 
     // Use SortOrder enum to prevent SQL injection; all values are hardcoded.
@@ -524,13 +536,16 @@ pub async fn get_leaderboard_extended(
     let cutoff = leaderboard_cutoff(period);
     let sql = leaderboard_sql(rank_by);
 
-    let rows = sqlx::query_as::<_, LeaderboardRow>(&sql)
-        .bind(limit)
-        .bind(offset)
-        .bind(pool_id)
-        .bind(cutoff)
-        .fetch_all(pool)
-        .await?;
+    let rows = crate::metrics::observe_db(
+        "get_leaderboard_extended",
+        sqlx::query_as::<_, LeaderboardRow>(&sql)
+            .bind(limit)
+            .bind(offset)
+            .bind(pool_id)
+            .bind(cutoff)
+            .fetch_all(pool),
+    )
+    .await?;
 
     let pagination = PaginationBuilder::new(offset);
     Ok(pagination.apply_rank_fn(rows, |i, r| {
@@ -640,7 +655,10 @@ pub async fn insert_prediction_from_event(
     .execute(&mut **tx)
     .await?;
 
-    sqlx::query("UPDATE pools SET total_stake = total_stake + $1 WHERE pool_id = $2")
+    sqlx::query(
+        "UPDATE pools SET total_stake = total_stake + $1, prediction_count = prediction_count + 1 \
+         WHERE pool_id = $2",
+    )
         .bind(event.amount)
         .bind(event.pool_id as i64)
         .execute(&mut **tx)

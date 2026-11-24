@@ -94,6 +94,10 @@ impl PredifiContract {
         Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_treasury")?;
+        // The contract itself can never collect fees: paying it would be a self-transfer.
+        if treasury == env.current_contract_address() {
+            return Err(PredifiError::InvalidAddressOrToken);
+        }
         let mut config = Self::get_config(&env);
         config.treasury = treasury.clone();
         env.storage().instance().set(&DataKey::Config, &config);

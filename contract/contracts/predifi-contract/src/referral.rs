@@ -83,6 +83,8 @@ impl PredifiContract {
         let mut config = Self::get_config(&env);
         config.referral_bps = bps;
         env.storage().instance().set(&DataKey::Config, &config);
+        // Keep the legacy key in sync so the two can never disagree.
+        env.storage().instance().set(&DataKey::ReferralCutBps, &bps);
         Self::extend_instance(&env);
         Ok(())
     }

@@ -51,6 +51,9 @@ pub struct Metrics {
     /// A per-cache hit ratio can be computed as
     /// `hit / (hit + miss)` grouped by `cache_name`.
     pub redis_cache_lookups_total: CounterVec,
+    /// Total proactive cache-warming attempts by cache name and result
+    /// (`"ok"` / `"error"`), from [`crate::cache_warmer`] (#2205).
+    pub redis_cache_warm_total: CounterVec,
 
     // ── WebSocket ─────────────────────────────────────────────────────────────
     /// Current number of open WebSocket connections.
@@ -228,6 +231,14 @@ impl Metrics {
             &["cache_name", "outcome"],
         )?;
 
+        let redis_cache_warm_total = CounterVec::new(
+            Opts::new(
+                "app_redis_cache_warm_total",
+                "Total proactive cache-warming attempts by cache name and result (ok/error).",
+            ),
+            &["cache_name", "result"],
+        )?;
+
         // ── WebSocket ─────────────────────────────────────────────────────────
         let ws_connections_active = Gauge::with_opts(Opts::new(
             "app_ws_connections_active",
@@ -351,6 +362,7 @@ impl Metrics {
         registry.register(Box::new(redis_operation_duration_seconds.clone()))?;
         registry.register(Box::new(redis_operations_total.clone()))?;
         registry.register(Box::new(redis_cache_lookups_total.clone()))?;
+        registry.register(Box::new(redis_cache_warm_total.clone()))?;
         registry.register(Box::new(ws_connections_active.clone()))?;
         registry.register(Box::new(ws_connections_total.clone()))?;
         registry.register(Box::new(ws_disconnections_total.clone()))?;
@@ -386,6 +398,7 @@ impl Metrics {
             redis_operation_duration_seconds,
             redis_operations_total,
             redis_cache_lookups_total,
+            redis_cache_warm_total,
             ws_connections_active,
             ws_connections_total,
             ws_disconnections_total,
@@ -459,6 +472,14 @@ impl Metrics {
     pub fn record_cache_lookup(&self, cache_name: &str, outcome: &str) {
         self.redis_cache_lookups_total
             .with_label_values(&[cache_name, outcome])
+            .inc();
+    }
+
+    /// Record a proactive cache-warming attempt. `result` should be `"ok"` or
+    /// `"error"`.
+    pub fn record_cache_warm(&self, cache_name: &str, result: &str) {
+        self.redis_cache_warm_total
+            .with_label_values(&[cache_name, result])
             .inc();
     }
 
@@ -1066,6 +1087,7 @@ mod tests {
         "app_redis_operation_duration_seconds",
         "app_redis_operations_total",
         "app_redis_cache_lookups_total",
+        "app_redis_cache_warm_total",
         // WebSocket
         "app_ws_connections_active",
         "app_ws_connections_total",

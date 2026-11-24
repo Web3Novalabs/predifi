@@ -169,45 +169,58 @@ async fn save_cursor(pool: &PgPool, ledger: u64) {
 
 // ── RPC call ──────────────────────────────────────────────────────────────────
 
-/// Fetch one page of Stellar contract events.
-///
-/// Pass `paging_cursor = None` on the first call; subsequent calls should
-/// pass the `cursor` field from the previous page's result.  When `paging_cursor`
-/// is `Some`, `start_ledger` is ignored by the RPC and the cursor takes
-/// precedence — the field is still included so the span attributes remain useful.
-#[instrument(skip(client), name = "stellar_listener.fetch_events",
-    fields(rpc_url = %rpc_url, start_ledger = start_ledger))]
-async fn fetch_events(
-    client: &reqwest::Client,
-    rpc_url: &str,
+fn build_get_events_request(
     start_ledger: u64,
     paging_cursor: Option<&str>,
-) -> Result<GetEventsResult, String> {
+    contract_id: &str,
+) -> Value {
     let pagination = serde_json::json!({
         "limit": PAGE_LIMIT,
         "cursor": paging_cursor,
     });
+    let filters = serde_json::json!([{
+        "type": "contract",
+        "contractIds": [contract_id],
+    }]);
 
-    let params = if let Some(cur) = paging_cursor {
+    let params = if let Some(cursor) = paging_cursor {
         serde_json::json!({
-            "cursor": cur,
+            "cursor": cursor,
             "pagination": pagination,
-            "filters": []
+            "filters": filters
         })
     } else {
         serde_json::json!({
             "startLedger": start_ledger,
             "pagination": pagination,
-            "filters": []
+            "filters": filters
         })
     };
 
-    let body = serde_json::json!({
+    serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
         "method": "getEvents",
         "params": params,
-    });
+    })
+}
+
+/// Fetch one page of Stellar contract events.
+///
+/// Pass `paging_cursor = None` on the first call; subsequent calls should
+/// pass the `cursor` field from the previous page's result. When
+/// `paging_cursor` is `Some`, `start_ledger` is ignored by the RPC and the
+/// cursor takes precedence.
+#[instrument(skip(client), name = "stellar_listener.fetch_events",
+    fields(rpc_url = %rpc_url, start_ledger = start_ledger))]
+async fn fetch_events(
+    client: &reqwest::Client,
+    rpc_url: &str,
+    contract_id: &str,
+    start_ledger: u64,
+    paging_cursor: Option<&str>,
+) -> Result<GetEventsResult, String> {
+    let body = build_get_events_request(start_ledger, paging_cursor, contract_id);
 
     let resp = client
         .post(rpc_url)
@@ -247,6 +260,7 @@ async fn get_latest_ledger(client: &reqwest::Client, rpc_url: &str) -> Result<u6
 /// `db`        – PostgreSQL connection pool used to persist the ledger cursor
 /// `event_bus` – broadcast channel; new predictions are published here
 /// `timeout`   – maximum time to wait for an RPC response
+/// `contract_id` – PrediFi contract ID whose events the listener processes
 ///
 /// Returns the [`JoinHandle`] for the spawned task so the caller
 /// (typically [`crate::server::run`]) can abort it as part of the graceful
@@ -263,9 +277,19 @@ pub fn spawn(
     redis: RedisCache,
     timeout: Duration,
     max_batch_size: usize,
+    contract_id: Option<String>,
 ) -> JoinHandle<()> {
     crate::tracing_context::spawn_worker("stellar_listener", async move {
-        run_worker(rpc_url, db, event_bus, redis, timeout, max_batch_size).await;
+        run_worker(
+            rpc_url,
+            db,
+            event_bus,
+            redis,
+            timeout,
+            max_batch_size,
+            contract_id,
+        )
+        .await;
     })
 }
 
@@ -280,7 +304,7 @@ fn reconnect_delay_secs(consecutive_failures: u32) -> u64 {
         .min(MAX_RECONNECT_DELAY_SECS)
 }
 
-/// Run the listener using its default start-ledger selection.
+/// Run the listener only for the configured PrediFi contract.
 pub async fn run_worker(
     rpc_url: String,
     db: PgPool,
@@ -288,36 +312,22 @@ pub async fn run_worker(
     redis: RedisCache,
     timeout: Duration,
     max_batch_size: usize,
+    contract_id: Option<String>,
 ) {
-    run_worker_with_start_ledger(
-        rpc_url,
-        db,
-        event_bus,
-        redis,
-        timeout,
-        max_batch_size,
-        None,
-    )
-    .await;
-}
+    let contract_id = match contract_id.filter(|id| !id.trim().is_empty()) {
+        Some(contract_id) => contract_id,
+        None => {
+            error!(
+                "PREDIFI_CONTRACT_ID is not configured; the Stellar listener is disabled to prevent unfiltered event ingestion"
+            );
+            return;
+        }
+    };
 
-/// The main polling loop for the Stellar event listener.
-///
-/// Exposed so [`crate::server::run_with_signal`] can pass the configured
-/// initial cursor while rooting the listener under a named worker span.
-pub(crate) async fn run_worker_with_start_ledger(
-    rpc_url: String,
-    db: PgPool,
-    event_bus: crate::ws::EventBus,
-    redis: RedisCache,
-    timeout: Duration,
-    max_batch_size: usize,
-    configured_start_ledger: Option<u64>,
-) {
     let client = reqwest::Client::builder()
         .timeout(timeout)
         .build()
-        .expect("valid reqwest client");
+        .expect("reqwest client with only a timeout configured must always build");
     let mut ticker = interval(Duration::from_secs(POLL_INTERVAL_SECS));
 
     let stored_cursor = load_cursor(&db).await;
@@ -362,7 +372,7 @@ pub(crate) async fn run_worker_with_start_ledger(
             ticker.tick().await;
         }
 
-        match fetch_events(&client, &rpc_url, cursor, None).await {
+        match fetch_events(&client, &rpc_url, &contract_id, cursor, None).await {
             Ok(first_page) => {
                 if consecutive_failures > 0 {
                     info!(
@@ -386,6 +396,7 @@ pub(crate) async fn run_worker_with_start_ledger(
                     match fetch_events(
                         &client,
                         &rpc_url,
+                        &contract_id,
                         cursor,
                         paging_cursor.as_deref(),
                     )
@@ -425,7 +436,15 @@ pub(crate) async fn run_worker_with_start_ledger(
                     );
 
                     for chunk in all_events.chunks(batch_size) {
-                        process_event_batch(&db, &redis, &event_bus, chunk, batch_size).await;
+                        process_event_batch(
+                            &db,
+                            &redis,
+                            &event_bus,
+                            chunk,
+                            &contract_id,
+                            batch_size,
+                        )
+                        .await;
                     }
                 }
 
@@ -480,6 +499,10 @@ pub(crate) async fn run_worker_with_start_ledger(
     }
 }
 
+fn event_matches_contract(event: &StellarEvent, contract_id: &str) -> bool {
+    event.event_type == "contract" && event.contract_id.as_deref() == Some(contract_id)
+}
+
 /// Process a batch of Stellar events, dispatching each to the appropriate handler.
 ///
 /// Each call is wrapped in its own OTel span so per-batch latency is visible
@@ -491,6 +514,7 @@ async fn process_event_batch(
     redis: &RedisCache,
     event_bus: &crate::ws::EventBus,
     events: &[StellarEvent],
+    contract_id: &str,
     max_batch_size: usize,
 ) {
     let queue = worker_job_queue();
@@ -505,6 +529,15 @@ async fn process_event_batch(
             contract_id = ?event.contract_id,
             "stellar event"
         );
+
+        if event.event_type == "contract" && !event_matches_contract(event, contract_id) {
+            info!(
+                id = %event.id,
+                contract_id = ?event.contract_id,
+                "skipping event from unconfigured contract"
+            );
+            continue;
+        }
 
         // Idempotent skip for duplicate deliveries of the same event id.
         if queue.already_processed(&event.id) {
@@ -639,6 +672,8 @@ async fn handle_pool_created_event(
     // an older/partial event payload omits them rather than failing ingest.
     let options_count = extract_u32(data, "options_count").unwrap_or(2);
     let outcome_descriptions = extract_string_vec(data, "outcome_descriptions").unwrap_or_default();
+    // Optional creator-assigned tags; older events omit them.
+    let tags = extract_string_vec(data, "tags").unwrap_or_default();
 
     let pool_event = crate::db::PoolCreatedEvent {
         pool_id,
@@ -647,6 +682,7 @@ async fn handle_pool_created_event(
         token,
         category,
         description,
+        tags,
         options_count: options_count as i32,
         outcome_descriptions,
     };
@@ -841,42 +877,41 @@ mod tests {
     };
 
     #[test]
-    fn start_ledger_selection_prefers_stored_cursor() {
-        assert_eq!(
-            select_start_ledger(Some(42), Some(100), Some(1_000)),
-            Some(42)
-        );
+    fn get_events_request_filters_to_configured_contract() {
+        let expected_filters = serde_json::json!([{
+            "type": "contract",
+            "contractIds": ["CABC123"],
+        }]);
+        let initial_request = build_get_events_request(42, None, "CABC123");
+        assert_eq!(initial_request["method"], "getEvents");
+        assert_eq!(initial_request["params"]["startLedger"], 42);
+        assert_eq!(initial_request["params"]["filters"], expected_filters);
+
+        let paged_request = build_get_events_request(42, Some("next-page"), "CABC123");
+        assert_eq!(paged_request["params"]["cursor"], "next-page");
+        assert_eq!(paged_request["params"]["filters"], expected_filters);
     }
 
     #[test]
-    fn start_ledger_selection_uses_configured_start_without_stored_cursor() {
-        assert_eq!(select_start_ledger(None, Some(250), Some(1_000)), Some(250));
-    }
+    fn contract_event_filter_rejects_other_and_missing_contract_ids() {
+        let make_event = |contract_id: Option<&str>| StellarEvent {
+            event_type: String::from("contract"),
+            ledger: 42,
+            contract_id: contract_id.map(str::to_owned),
+            id: String::from("event"),
+            topics: None,
+            data: None,
+        };
 
-    #[test]
-    fn start_ledger_selection_uses_recent_rpc_ledger_as_fallback() {
-        assert_eq!(
-            select_start_ledger(None, None, Some(1_000)),
-            Some(1_000 - START_LEDGER_BUFFER)
-        );
-        assert_eq!(select_start_ledger(None, None, Some(1)), Some(1));
-    }
-
-    #[test]
-    fn start_ledger_out_of_range_errors_are_identified() {
-        assert!(is_start_ledger_out_of_range(
-            r#"RPC error -32602: Invalid params ({"name":"out_of_range"})"#
+        assert!(event_matches_contract(
+            &make_event(Some("CABC123")),
+            "CABC123"
         ));
-        assert!(is_start_ledger_out_of_range(
-            "startLedger 1 is older than oldest ledger 123"
+        assert!(!event_matches_contract(
+            &make_event(Some("COTHER123")),
+            "CABC123"
         ));
-        assert!(!is_start_ledger_out_of_range("RPC server unavailable"));
-    }
-
-    #[test]
-    fn start_ledger_out_of_range_recovery_moves_cursor_to_the_latest_available_ledger() {
-        assert_eq!(recovery_start_ledger(42, 1_000), 1_000);
-        assert_eq!(recovery_start_ledger(1_000, 1_000), 999);
+        assert!(!event_matches_contract(&make_event(None), "CABC123"));
     }
 
     // ── reconnect loop behaviour ──────────────────────────────────────────────
@@ -1248,7 +1283,7 @@ mod tests {
         let client = reqwest::Client::new();
 
         // First page
-        let first = fetch_events(&client, &url, 1, None)
+        let first = fetch_events(&client, &url, "CA", 1, None)
             .await
             .expect("first page should succeed");
         assert_eq!(
@@ -1262,7 +1297,7 @@ mod tests {
         );
 
         // Second page, using the cursor from the first
-        let second = fetch_events(&client, &url, 1, first.cursor.as_deref())
+        let second = fetch_events(&client, &url, "CA", 1, first.cursor.as_deref())
             .await
             .expect("second page should succeed");
         assert_eq!(second.events.len(), 2, "second page must carry 2 events");

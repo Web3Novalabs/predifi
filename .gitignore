@@ -19,6 +19,5 @@ CHANGES_SUMMARY.md
 # Kiro IDE workspace metadata
 .kiro/
 
-# Legacy StarkNet/Cairo build artifacts at the repository root.
-# The current contracts are Soroban and build under contract/target/.
-/target/
+# Backend build logs
+backend/*.txt

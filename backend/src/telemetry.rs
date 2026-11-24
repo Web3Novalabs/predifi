@@ -251,7 +251,7 @@ pub fn init_telemetry(service_name: &'static str, otlp_endpoint: &'static str) -
         .tonic()
         .with_endpoint(otlp_endpoint)
         .build_span_exporter()
-        .expect("failed to create OTLP span exporter");
+        .expect("otlp_endpoint must be a valid URI for the OTLP span exporter to build");
 
     let provider = trace::TracerProvider::builder()
         .with_config(trace::Config::default().with_resource(resource))

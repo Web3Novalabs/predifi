@@ -23,6 +23,10 @@ path = "src/bin/openapi_export.rs"
 name = "predifi-migration-check"
 path = "src/bin/migration_check.rs"
 
+[[bin]]
+name = "predifi-explain-queries"
+path = "src/bin/explain_queries.rs"
+
 [dependencies]
 axum = { version = "0.7.9", features = ["macros", "ws"] }
 tokio = { version = "1", features = ["full"] }

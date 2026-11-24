@@ -713,7 +713,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
         Self::extend_persistent(&env, &pool_key);
 
         if pool.creator != creator {
@@ -784,11 +784,11 @@ impl PredifiContract {
         caller.require_auth();
 
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
+        let pool: Pool = env
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
         Self::validate_pool_invariants(&pool);
         Self::extend_persistent(&env, &pool_key);
 
@@ -813,7 +813,11 @@ impl PredifiContract {
         // "pool has started" in this contract's model (no separate start_time).
         // We read the pool's participants_count field which is the authoritative participant counter.
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env.storage().persistent().get(&pool_key).expect("Pool not found");
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .ok_or(PredifiError::PoolNotFound)?;
         if pool.participants_count > 0 {
             return Err(PredifiError::InvalidPoolState);
         }
@@ -1765,7 +1769,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
         Self::validate_pool_invariants(&pool);
 
@@ -1942,7 +1946,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
         if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
@@ -2083,11 +2087,13 @@ impl PredifiContract {
         Self::enter_reentrancy_guard(&env);
 
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
-            .storage()
-            .persistent()
-            .get(&pool_key)
-            .expect("Pool not found");
+        let mut pool: Pool = match env.storage().persistent().get(&pool_key) {
+            Some(pool) => pool,
+            None => {
+                Self::exit_reentrancy_guard(&env);
+                return Err(PredifiError::PoolNotFound);
+            }
+        };
         Self::extend_persistent(&env, &pool_key);
 
         // Determine if caller is admin/operator (role 0 or 1)
@@ -2301,7 +2307,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
 
         if pool.state != MarketState::Active {
             return Err(PredifiError::InvalidPoolState);
@@ -2327,11 +2333,13 @@ impl PredifiContract {
         Ok(())
     }
 
-    /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
-    /// Instead of making N storage reads (one per outcome), it makes a single read.
+    /// Returns the full `Pool` record for `pool_id`.
     ///
-    /// Returns a Vec of stakes where index corresponds to outcome index.
-    /// For example, `stake\[0\]` is the total amount bet on outcome 0.
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::find_pool`] (on-chain, returns `Option<Pool>`),
+    /// [`Self::pool_exists`] (on-chain, returns `bool`), or the Rust-level
+    /// helper [`Self::try_get_pool`] to query a pool without panicking.
     pub fn get_pool(env: Env, pool_id: u64) -> Pool {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2343,6 +2351,28 @@ impl PredifiContract {
         pool
     }
 
+    /// Non-panicking variant of [`Self::get_pool`], exposed as a contract
+    /// entry point.
+    ///
+    /// Returns `Some(pool)` if a pool exists for `pool_id`, or `None` otherwise.
+    /// Extends the pool's storage TTL only when the pool exists.
+    ///
+    /// Note: this is named `find_pool` rather than `try_get_pool` because the
+    /// Soroban-generated client already reserves `try_get_pool` as the fallible
+    /// wrapper around `get_pool`. Inside the contract crate, use the
+    /// [`Self::try_get_pool`] helper.
+    pub fn find_pool(env: Env, pool_id: u64) -> Option<Pool> {
+        Self::try_get_pool(&env, pool_id)
+    }
+
+    /// Returns `true` if a pool exists for `pool_id`, `false` otherwise.
+    ///
+    /// Never panics. Cheaper than [`Self::find_pool`] when the pool data
+    /// itself is not needed.
+    pub fn pool_exists(env: Env, pool_id: u64) -> bool {
+        env.storage().persistent().has(&DataKey::Pool(pool_id))
+    }
+
     /// Returns the configuration fields of a pool as a `PoolConfig` struct.
     ///
     /// This is a lightweight alternative to `get_pool` when only the
@@ -2351,6 +2381,7 @@ impl PredifiContract {
     ///
     /// # Panics
     /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::pool_exists`] or [`Self::find_pool`] first to avoid the panic.
     pub fn get_pool_config(env: Env, pool_id: u64) -> PoolConfig {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2375,6 +2406,17 @@ impl PredifiContract {
         }
     }
 
+    /// Returns the per-outcome stakes for a pool in a single storage read.
+    ///
+    /// This function is optimized for markets with many outcomes (e.g., 32+ teams).
+    /// Instead of making N storage reads (one per outcome), it makes a single read.
+    ///
+    /// Returns a Vec of stakes where index corresponds to outcome index.
+    /// For example, `stake\[0\]` is the total amount bet on outcome 0.
+    ///
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::pool_exists`] or [`Self::find_pool`] first to avoid the panic.
     pub fn get_pool_outcome_stakes(env: Env, pool_id: u64) -> Vec<i128> {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2527,6 +2569,10 @@ impl PredifiContract {
     ///
     /// # Returns
     /// The number of unique participants as a `u32`.
+    ///
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::pool_exists`] or [`Self::find_pool`] first to avoid the panic.
     pub fn get_pool_participants_count(env: Env, pool_id: u64) -> u32 {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2542,6 +2588,10 @@ impl PredifiContract {
     ///
     /// Gas notes: uses the in-pool `participants_count` and computes odds from the
     /// already-loaded stakes vec via [`gas_opt::odds_from_stakes`].
+    ///
+    /// # Panics
+    /// Panics with "Pool not found" if no pool exists for the given `pool_id`.
+    /// Use [`Self::pool_exists`] or [`Self::find_pool`] first to avoid the panic.
     pub fn get_pool_stats(env: Env, pool_id: u64) -> PoolStats {
         let pool_key = DataKey::Pool(pool_id);
         let pool: Pool = env
@@ -2586,7 +2636,7 @@ impl PredifiContract {
             .storage()
             .persistent()
             .get(&pool_key)
-            .expect("Pool not found");
+            .ok_or(PredifiError::PoolNotFound)?;
         Self::extend_persistent(&env, &pool_key);
 
         if pool.state != MarketState::Active {
@@ -2610,6 +2660,23 @@ impl PredifiContract {
         .publish(&env);
 
         Ok(())
+    }
+}
+
+// ── Non-exported helpers ────────────────────────────────────────────────────
+impl PredifiContract {
+    /// Non-panicking pool lookup (Rust-level helper, not a contract entry point).
+    ///
+    /// Returns `Some(pool)` if a pool exists for `pool_id`, or `None` otherwise,
+    /// extending the pool's storage TTL only when it exists. On-chain callers
+    /// should use the [`Self::find_pool`] entry point, which wraps this helper.
+    pub fn try_get_pool(env: &Env, pool_id: u64) -> Option<Pool> {
+        let pool_key = DataKey::Pool(pool_id);
+        let pool: Option<Pool> = env.storage().persistent().get(&pool_key);
+        if pool.is_some() {
+            Self::extend_persistent(env, &pool_key);
+        }
+        pool
     }
 }
 

@@ -175,6 +175,28 @@ pub const DEFAULT_PAGE_LIMIT: i64 = 20;
 /// **Used for:** Clamping the `limit` query parameter on list endpoints.
 pub const MAX_PAGE_LIMIT: i64 = 100;
 
+/// Maximum row offset accepted by paginated list endpoints.
+///
+/// Bounding offsets limits the amount of work PostgreSQL may do to skip rows.
+pub const MAX_PAGINATION_OFFSET: i64 = 10_000;
+
+// ── Pool templates ────────────────────────────────────────────────────────────
+
+/// Minimum supported pool-template duration and recurrence interval (1 hour).
+pub const MIN_POOL_TEMPLATE_SECONDS: i64 = 60 * 60;
+
+/// Maximum supported pool-template duration and recurrence interval (365 days).
+pub const MAX_POOL_TEMPLATE_SECONDS: i64 = 365 * 24 * 60 * 60;
+
+/// Maximum number of characters in a pool-template name.
+pub const MAX_POOL_TEMPLATE_NAME_LENGTH: usize = 100;
+
+/// Maximum number of characters in a pool-template category.
+pub const MAX_POOL_TEMPLATE_CATEGORY_LENGTH: usize = 64;
+
+/// Maximum number of characters in a pool-template description.
+pub const MAX_POOL_TEMPLATE_DESCRIPTION_LENGTH: usize = 2_000;
+
 // ── JWT validation ────────────────────────────────────────────────────────────
 
 /// Number of dot-separated parts a well-formed JWT must have (header.payload.signature).

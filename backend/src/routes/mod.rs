@@ -72,6 +72,24 @@ mod tests {
             .expect("failed to build request")
     }
 
+    fn put_json(path: &str, body: serde_json::Value) -> Request<axum::body::Body> {
+        Request::builder()
+            .method("PUT")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .expect("failed to build request")
+    }
+
+    fn post_json(path: &str, body: serde_json::Value) -> Request<axum::body::Body> {
+        Request::builder()
+            .method("POST")
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .expect("failed to build request")
+    }
+
     async fn body_string(body: axum::body::Body) -> String {
         let bytes = body
             .collect()
@@ -263,6 +281,79 @@ mod tests {
         assert_ne!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
+    #[tokio::test]
+    async fn user_interests_invalid_values_return_invalid_input() {
+        let address = format!("G{}", "A".repeat(55));
+        let cases = [
+            (
+                serde_json::json!({
+                    "interests": (0..21).map(|index| format!("interest-{index}")).collect::<Vec<_>>()
+                }),
+                "no more than 20 entries",
+            ),
+            (
+                serde_json::json!({"interests": ["a".repeat(33)]}),
+                "32 characters or fewer",
+            ),
+        ];
+
+        for (body, expected_message) in cases {
+            let response = build_router_without_db()
+                .oneshot(put_json(&format!("/v1/users/{address}/interests"), body))
+                .await
+                .expect("request failed");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = body_string(response.into_body()).await;
+            assert!(
+                body.contains("\"code\":\"INVALID_INPUT\""),
+                "should return INVALID_INPUT, got: {body}"
+            );
+            assert!(
+                body.contains(expected_message),
+                "should explain the validation error, got: {body}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pool_template_invalid_durations_return_invalid_input() {
+        let cases = [
+            (0, 3_600, "duration_seconds"),
+            (3_600, -1, "recurrence_interval_seconds"),
+            (i64::MAX, 3_600, "duration_seconds"),
+        ];
+
+        for (duration_seconds, recurrence_interval_seconds, field) in cases {
+            let response = build_router_without_db()
+                .oneshot(post_json(
+                    "/v1/pool-templates",
+                    serde_json::json!({
+                        "creator": "creator",
+                        "name": "Template",
+                        "category": "sports",
+                        "description": "",
+                        "token": "token",
+                        "duration_seconds": duration_seconds,
+                        "recurrence_interval_seconds": recurrence_interval_seconds
+                    }),
+                ))
+                .await
+                .expect("request failed");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+            let body = body_string(response.into_body()).await;
+            assert!(
+                body.contains("\"code\":\"INVALID_INPUT\""),
+                "should return INVALID_INPUT, got: {body}"
+            );
+            assert!(
+                body.contains(field),
+                "should identify the invalid field, got: {body}"
+            );
+        }
+    }
+
     /// With a lazy (unreachable) DB the handler must attempt a query and return
     /// a DB error response, not the database-unavailable sentinel (which would
     /// mean the pool was never wired through).
@@ -358,5 +449,53 @@ mod tests {
             .expect("request failed");
         let body = body_string(response.into_body()).await;
         assert!(!body.contains("database not available"), "got: {body}");
+    }
+
+    fn valid_test_stellar_address() -> String {
+        let mut bytes = vec![crate::validated_types::STRKEY_VERSION_ACCOUNT_ID];
+        bytes.extend([1u8; 32]);
+        let checksum = crate::validated_types::crc16_xmodem(&bytes);
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        crate::validated_types::base32_encode(&bytes)
+    }
+
+    #[tokio::test]
+    async fn pagination_offsets_enforce_cap_and_return_invalid_input() {
+        let address = valid_test_stellar_address();
+        let paths = [
+            "/v1/pools?offset={offset}".to_string(),
+            format!("/v1/users/{address}/history?offset={{offset}}"),
+            format!("/v1/users/{address}/predictions?offset={{offset}}"),
+            "/v1/leaderboard?offset={offset}".to_string(),
+            "/v1/pools/1/leaderboard?offset={offset}".to_string(),
+            format!("/v1/notifications/{address}?offset={{offset}}"),
+        ];
+
+        for path in paths {
+            let response = build_router_without_db()
+                .oneshot(get(&path.replace("{offset}", "10000")))
+                .await
+                .expect("request failed");
+            assert_eq!(
+                response.status(),
+                StatusCode::SERVICE_UNAVAILABLE,
+                "offset at cap should pass query validation for {path}"
+            );
+
+            let response = build_router_without_db()
+                .oneshot(get(&path.replace("{offset}", "10001")))
+                .await
+                .expect("request failed");
+            assert_eq!(
+                response.status(),
+                StatusCode::BAD_REQUEST,
+                "offset above cap should be rejected for {path}"
+            );
+            let body = body_string(response.into_body()).await;
+            assert!(
+                body.contains("\"code\":\"INVALID_INPUT\""),
+                "expected INVALID_INPUT for {path}, got: {body}"
+            );
+        }
     }
 }
