@@ -61,14 +61,24 @@ export default function NotFound() {
         </p>
 
         {/* CTA */}
-        <Link
-          href="/"
-          prefetch
-          className="group inline-flex items-center gap-2 rounded-xl border border-[#37B7C3]/30 bg-[#37B7C3]/10 px-6 py-3 text-sm font-medium text-[#37B7C3] transition-all duration-200 hover:bg-[#37B7C3]/20 hover:border-[#37B7C3]/60 hover:gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]"
-        >
-          <ArrowLeft className="w-4 h-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
-          Go Home
-        </Link>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <Link
+            href="/"
+            prefetch
+            className="group inline-flex items-center gap-2 rounded-xl border border-[#37B7C3]/30 bg-[#37B7C3]/10 px-6 py-3 text-sm font-medium text-[#37B7C3] transition-all duration-200 hover:bg-[#37B7C3]/20 hover:border-[#37B7C3]/60 hover:gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]"
+          >
+            <ArrowLeft className="w-4 h-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
+            Back to home
+          </Link>
+          <Link
+            href="/user/pool-market"
+            prefetch
+            className="group inline-flex items-center gap-2 rounded-xl border border-[#37B7C3]/30 bg-[#37B7C3]/10 px-6 py-3 text-sm font-medium text-[#37B7C3] transition-all duration-200 hover:bg-[#37B7C3]/20 hover:border-[#37B7C3]/60 hover:gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#37B7C3]"
+          >
+            <ArrowLeft className="w-4 h-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
+            /user/pool-market
+          </Link>
+        </div>
       </div>
     </main>
   );

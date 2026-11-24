@@ -90,12 +90,17 @@ const config: Config = {
                     from: { transform: "scaleX(1)" },
                     to:   { transform: "scaleX(0)" },
                 },
+                // Skeleton shimmer: a highlight sweeping left to right
+                shimmer: {
+                    "100%": { transform: "translateX(100%)" },
+                },
             },
             animation: {
                 "fade-in":        "fadeIn 0.5s ease-out forwards",
                 "toast-in":       "toast-in  0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards",
                 "toast-out":      "toast-out 0.4s  cubic-bezier(0.4,  0, 1,   1) forwards",
                 "toast-progress": "toast-progress linear forwards",
+                shimmer:          "shimmer 1.6s ease-in-out infinite",
             },
         },
     },

@@ -120,7 +120,7 @@ export function SearchBar({
           type="button"
           onClick={handleClear}
           aria-label="Clear search"
-          className="absolute right-3 text-muted-foreground hover:text-foreground transition-colors"
+          className="absolute right-3 min-w-[44px] min-h-[44px] inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 rounded"
         >
           <X className="h-4 w-4" />
         </button>

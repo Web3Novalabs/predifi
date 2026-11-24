@@ -1,0 +1,184 @@
+"use client";
+
+/**
+ * NotificationBell
+ *
+ * Re-render optimisation (issue #1406)
+ * ─────────────────────────────────────
+ * Previously the component received `address` as a prop, requiring every
+ * parent that renders a nav-bar or profile header to thread the wallet address
+ * down through its own props. This is classic prop-drilling.
+ *
+ * Fix: read the address from WalletContext via useWalletAddress(). The hook
+ * only subscribes to address changes (not isConnecting / error), so the bell
+ * skips re-renders caused by wallet interaction state.
+ */
+
+import { useEffect, useId, useRef, useState } from "react";
+import { Bell } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { formatUtcDateTime } from "@/lib/date";
+import { useNotifications } from "@/lib/hooks/useNotifications";
+import { useWalletAddress } from "@/lib/context";
+import type { Notification, NotificationType } from "@/lib/api/notifications";
+
+const TYPE_LABEL: Record<NotificationType, string> = {
+  pool_ending_soon: "Ending soon",
+  pool_resolved: "Resolved",
+  claim_expiring: "Claim expiring",
+  new_pool_match: "New pool",
+};
+
+const TYPE_STYLES: Record<NotificationType, string> = {
+  pool_ending_soon: "bg-yellow-500/20 text-yellow-400",
+  pool_resolved: "bg-emerald-500/20 text-emerald-400",
+  claim_expiring: "bg-red-500/20 text-red-400",
+  new_pool_match: "bg-[#37B7C3]/20 text-[#7DE3EC]",
+};
+
+export function NotificationBell() {
+  const notificationsId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const address = useWalletAddress();
+  const [open, setOpen] = useState(false);
+  const { notifications, unreadCount, isLoading, isError, markRead, refresh } =
+    useNotifications(address);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [open]);
+
+  // Don't render anything until a wallet is connected.
+  if (!address) return null;
+
+  async function handleOpen() {
+    setOpen((prev) => !prev);
+  }
+
+  async function handleNotificationClick(notification: Notification) {
+    if (!notification.read) {
+      await markRead([notification.id]);
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={handleOpen}
+        aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ""}`}
+        aria-expanded={open}
+        aria-controls={notificationsId}
+        className="relative flex h-9 w-9 items-center justify-center rounded-full border border-zinc-800 bg-zinc-900 text-zinc-300 hover:text-white hover:border-zinc-700 transition-colors"
+      >
+        <Bell className="h-4 w-4" aria-hidden="true" />
+        {unreadCount > 0 && (
+          <span className="absolute -top-1 -right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#37B7C3] px-1 text-[10px] font-bold text-black">
+            {unreadCount > 9 ? "9+" : unreadCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          <div
+            aria-hidden="true"
+            className="fixed inset-0 z-40 cursor-default"
+            onClick={() => setOpen(false)}
+          />
+          <div
+            id={notificationsId}
+            className="absolute right-0 z-50 mt-2 w-80 max-h-96 overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl"
+            role="region"
+            aria-label="Notifications"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
+              <p className="text-sm font-semibold text-white">Notifications</p>
+              {unreadCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => markRead()}
+                  className="text-xs font-medium text-[#37B7C3] hover:underline"
+                >
+                  Mark all read
+                </button>
+              )}
+            </div>
+
+            {isLoading ? (
+              <p className="p-6 text-center text-sm text-zinc-500">
+                Loading…
+              </p>
+            ) : isError ? (
+              <div className="p-6 text-center space-y-3">
+                <p className="text-sm text-red-400">
+                  Failed to load notifications.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => refresh()}
+                  className="text-xs font-medium text-[#37B7C3] hover:underline"
+                >
+                  Try again
+                </button>
+              </div>
+            ) : notifications.length === 0 ? (
+              <p className="p-6 text-center text-sm text-zinc-500">
+                You&apos;re all caught up.
+              </p>
+            ) : (
+              <ul>
+                {notifications.map((notification) => (
+                  <li key={notification.id}>
+                    <button
+                      type="button"
+                      onClick={() => handleNotificationClick(notification)}
+                      className={cn(
+                        "w-full text-left px-4 py-3 border-b border-zinc-800/50 last:border-0 hover:bg-white/[0.03] transition-colors",
+                        !notification.read && "bg-[#37B7C3]/[0.04]",
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={cn(
+                            "text-[10px] font-semibold px-1.5 py-0.5 rounded-full",
+                            TYPE_STYLES[notification.notif_type],
+                          )}
+                        >
+                          {TYPE_LABEL[notification.notif_type]}
+                        </span>
+                        {!notification.read && (
+                          <span className="h-1.5 w-1.5 rounded-full bg-[#37B7C3]">
+                            <span className="sr-only">Unread</span>
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-sm text-white mt-1">
+                        {notification.title}
+                      </p>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        {notification.message}
+                      </p>
+                      <p className="text-[10px] text-zinc-600 mt-1">
+                        {formatUtcDateTime(notification.created_at)}
+                      </p>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}

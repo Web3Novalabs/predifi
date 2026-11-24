@@ -8,34 +8,19 @@ use crate::config::Config;
 use crate::metrics::{Metrics, SharedMetrics};
 use crate::request_logger::LoggingLayer;
 use crate::shutdown;
-use axum::{
-    extract::State,
-    middleware::{from_fn_with_state, Next},
-    response::IntoResponse,
-    routing::get,
-    Json, Router,
-};
+use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
 use http::HeaderValue;
 use serde_json::json;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::{sleep, Duration as TokioDuration};
 use tokio::task::JoinHandle;
-#[cfg(not(test))]
-use tower_governor::governor::GovernorConfigBuilder;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing::{error, info, warn};
 
-/// Build the CORS middleware layer from the validated origin list in `config`.
-///
-/// Only the origins listed in [`Config::cors_allowed_origins`] are permitted.
-/// The list is validated at startup (see `config::parse_cors_origins`), so any
-/// entry that reaches this function is already a well-formed `http://` or
-/// `https://` origin.  Entries that cannot be parsed into a [`HeaderValue`] are
-/// silently skipped (this should never happen in practice given the prior
-/// validation).
+// ── CORS ─────────────────────────────────────────────────────────────────────
+
 fn build_cors(config: &Config) -> CorsLayer {
     let origins: Vec<HeaderValue> = config
         .cors_allowed_origins
@@ -59,156 +44,82 @@ fn build_cors(config: &Config) -> CorsLayer {
         ])
 }
 
-/// Health-check handler.
-async fn health(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
-    use axum::http::StatusCode;
+// ── Handlers ─────────────────────────────────────────────────────────────────
 
-    let mut all_healthy = true;
-    let mut db_status = "ok";
-
-    if let Some(db) = &state.db {
-        if sqlx::query("SELECT 1").execute(db).await.is_err() {
-            db_status = "unreachable";
-            all_healthy = false;
-        }
-    } else {
-        db_status = "not_configured";
-    }
-
-    let mut rpc_status = "ok";
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(state.config.rpc_health_timeout_secs))
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-
-    // Try RPC health check with retry logic
-    let mut rpc_attempts = 0;
-    let max_attempts = state.config.rpc_health_retry_count as usize;
-
-    while rpc_attempts < max_attempts {
-        rpc_attempts += 1;
-
-        let rpc_req = client
-            .post(&state.config.stellar_rpc_url)
-            .json(&serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getHealth"
-            }))
-            .send()
-            .await;
-
-        match rpc_req {
-            Ok(res) if res.status().is_success() => {
-                break;
-            }
-            Ok(_res) => {}
-            Err(_e) => {}
-        }
-
-        // Exponential backoff: 2^(attempt-1) seconds, capped at 5 seconds
-        if rpc_attempts < max_attempts {
-            let backoff_duration = std::cmp::min(2u64.pow((rpc_attempts - 1) as u32), 5);
-            sleep(TokioDuration::from_secs(backoff_duration)).await;
-        }
-    }
-
-    if rpc_attempts >= max_attempts {
-        rpc_status = "unreachable";
-        all_healthy = false;
-    }
-
-    let mut redis_status = "ok";
-    if !state.redis.is_available() {
-        redis_status = "not_configured";
-        all_healthy = false;
-    } else if !state.redis.ping().await {
-        redis_status = "unreachable";
-        all_healthy = false;
-    }
-
-    let mut price_cache_status = "ok";
-    if state.cache.snapshot().is_empty() {
-        price_cache_status = "not_ready";
-        all_healthy = false;
-    }
-
-    let body = json!({
-        "status": if all_healthy { "ok" } else { "error" },
-        "service": "predifi-backend",
-        "version": env!("CARGO_PKG_VERSION"),
-        "dependencies": {
-            "db": db_status,
-            "rpc": rpc_status,
-            "redis": redis_status,
-            "price_cache": price_cache_status
-        },
-    });
-
-    if all_healthy {
-        (StatusCode::OK, Json(body)).into_response()
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
-    }
+/// `GET /live` — liveness probe, kept as an alias for `/health`.
+///
+/// Performs no I/O: the fact that a response came back is the proof that the
+/// process is alive. Dependency problems are a readiness concern and are
+/// reported by `/health/ready`.
+async fn live() -> Json<serde_json::Value> {
+    health().await
 }
 
-/// Readiness probe handler — signals whether the service is ready to accept traffic.
+/// `GET /health` — liveness probe.
 ///
-/// Unlike the general `/health` liveness endpoint, this probe focuses on
-/// Redis connectivity, which is required for the caching layer to function.
-/// Kubernetes (and similar orchestrators) use readiness probes to decide
-/// whether to route traffic to a pod; returning `503` here will temporarily
-/// remove the instance from the load-balancer rotation until Redis recovers.
+/// Performs no I/O and always answers 200 while the process is running. Use
+/// `/health/ready` to ask whether the dependencies are reachable and
+/// `/health/components` for a full diagnostic sweep.
+async fn health() -> Json<serde_json::Value> {
+    Json(crate::health::liveness(env!("CARGO_PKG_VERSION")))
+}
+
+/// `GET /health/ready` — readiness probe.
 ///
-/// # Responses
-/// - `200 OK` — Redis is reachable and the service is ready.
-/// - `503 Service Unavailable` — Redis is not configured or unreachable.
+/// Reports the status of every dependency that gates traffic on this instance
+/// and answers 503 while a required one is down.
+async fn health_ready(
+    State(state): State<crate::routes::v1::AppState>,
+) -> axum::response::Response {
+    crate::health::check_readiness(&state.config, state.db.as_ref(), &state.redis, &state.cache)
+        .await
+        .into_response_with_version(env!("CARGO_PKG_VERSION"))
+}
+
+/// `GET /health/components` — full component diagnostics.
+///
+/// Probes every dependency (database, Redis, Stellar RPC, disk, price cache)
+/// and reports each one individually.
+async fn health_components(
+    State(state): State<crate::routes::v1::AppState>,
+) -> axum::response::Response {
+    crate::health::check_all(&state.config, state.db.as_ref(), &state.redis, &state.cache)
+        .await
+        .into_response_with_version(env!("CARGO_PKG_VERSION"))
+}
+
+/// `GET /ready` — readiness probe, kept as an alias for `/health/ready`.
 async fn ready(State(state): State<crate::routes::v1::AppState>) -> axum::response::Response {
-    use axum::http::StatusCode;
-
-    let (redis_status, redis_error): (&str, Option<String>) = if !state.redis.is_available() {
-        (
-            "not_configured",
-            Some("Redis is not configured".to_string()),
-        )
-    } else if !state.redis.ping().await {
-        (
-            "unreachable",
-            Some("Redis ping failed — connection may be lost".to_string()),
-        )
-    } else {
-        ("ok", None)
-    };
-
-    let ready = redis_status == "ok";
-
-    let body = json!({
-        "status": if ready { "ready" } else { "not_ready" },
-        "dependencies": {
-            "redis": redis_status,
-        },
-        "errors": {
-            "redis": redis_error,
-        }
-    });
-
-    if ready {
-        (StatusCode::OK, Json(body)).into_response()
-    } else {
-        (StatusCode::SERVICE_UNAVAILABLE, Json(body)).into_response()
-    }
+    health_ready(State(state)).await
 }
 
-/// Root handler — returns a welcome message.
 async fn root() -> Json<serde_json::Value> {
-    Json(json!({
-        "message": "Welcome to the PrediFi backend",
-        "api": "/api/v1"
-    }))
+    Json(json!({ "message": "Welcome to the PrediFi backend", "api": "/api/v1" }))
 }
 
-/// Metrics endpoint exposed to Prometheus.
-async fn metrics(State(state): State<crate::routes::v1::AppState>) -> impl IntoResponse {
+async fn metrics_handler(
+    State(state): State<crate::routes::v1::AppState>,
+    headers: http::HeaderMap,
+) -> impl IntoResponse {
+    // When PREDIFI_METRICS_TOKEN is set, require a matching Bearer token.
+    // Comparison is constant-time to prevent timing attacks.
+    if let Some(expected) = &state.config.metrics_token {
+        let authorized = headers
+            .get(http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|token| constant_time_eq(token.as_bytes(), expected.as_bytes()))
+            .unwrap_or(false);
+
+        if !authorized {
+            return (
+                axum::http::StatusCode::UNAUTHORIZED,
+                [(http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                String::from("unauthorized"),
+            );
+        }
+    }
+
     match state.metrics.gather_text() {
         Ok(body) => (
             axum::http::StatusCode::OK,
@@ -223,83 +134,43 @@ async fn metrics(State(state): State<crate::routes::v1::AppState>) -> impl IntoR
     }
 }
 
-async fn metrics_middleware(
-    State(metrics): State<SharedMetrics>,
-    request: axum::http::Request<axum::body::Body>,
-    next: Next,
-) -> axum::response::Response {
-    let method = request.method().to_string();
-    let path = request.uri().path().to_string();
-
-    let response = next.run(request).await;
-    let status = response.status().as_u16().to_string();
-
-    metrics
-        .http_requests_total
-        .with_label_values(&[&method, &path, &status])
-        .inc();
-
-    response
+/// Constant-time byte comparison to prevent timing attacks when validating
+/// bearer tokens.
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// Build the Axum router with CORS, logging, and rate limiting middleware.
+/// Build the full router without a DB pool (for tests / rate-limit tests).
+///
+/// Rate limiting is excluded here; use [`build_router_with_rate_limit`] when
+/// you need it in non-test contexts.
 pub fn build_router(
     config: Config,
     cache: crate::price_cache::PriceCache,
     redis: crate::redis_cache::RedisCache,
     event_bus: crate::ws::EventBus,
 ) -> Router {
-    if cfg!(test) {
-        // Unit tests run in parallel and share the same Governor key extractor,
-        // which can cause unrelated tests to rate-limit each other. Use an
-        // effectively-unlimited quota for tests.
-        build_router_with_rate_period(
-            config,
-            cache,
-            redis,
-            event_bus,
-            std::time::Duration::from_secs(1),
-            u32::MAX,
-        )
-    } else {
-        build_router_with_rate_limit(
-            config,
-            cache,
-            redis,
-            event_bus,
-            crate::constants::RATE_LIMIT_PERIOD_SECS,
-            crate::constants::RATE_LIMIT_BURST_SIZE,
-        )
-    }
+    build_router_with_rate_limit(
+        config,
+        cache,
+        redis,
+        event_bus,
+        crate::constants::RATE_LIMIT_PERIOD_SECS,
+        crate::constants::RATE_LIMIT_BURST_SIZE,
+    )
 }
 
-/// Build the Axum router with explicit rate limit settings.
+/// Build the Axum router with explicit rate-limit settings (no DB pool).
 pub fn build_router_with_rate_limit(
     config: Config,
     cache: crate::price_cache::PriceCache,
     redis: crate::redis_cache::RedisCache,
     event_bus: crate::ws::EventBus,
-    per_second: u64,
-    burst_size: u32,
-) -> Router {
-    build_router_with_rate_period(
-        config,
-        cache,
-        redis,
-        event_bus,
-        std::time::Duration::from_secs(per_second),
-        burst_size,
-    )
-}
-
-#[allow(unused_variables)]
-fn build_router_with_rate_period(
-    config: Config,
-    cache: crate::price_cache::PriceCache,
-    redis: crate::redis_cache::RedisCache,
-    event_bus: crate::ws::EventBus,
-    period: std::time::Duration,
-    burst_size: u32,
+    _per_second: u64,
+    _burst_size: u32,
 ) -> Router {
     let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
         eprintln!("failed to initialize Prometheus metrics: {error}");
@@ -309,17 +180,23 @@ fn build_router_with_rate_period(
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::with_negative_ttl(Duration::from_secs(
+            config.pool_negative_cache_ttl_secs,
+        )),
         redis: redis.clone(),
         db: None,
         metrics: prometheus_metrics.clone(),
         event_bus: event_bus.clone(),
     };
 
-    let router = Router::new()
+    Router::new()
         .route("/", get(root))
+        .route("/live", get(live))
         .route("/health", get(health))
+        .route("/health/ready", get(health_ready))
+        .route("/health/components", get(health_components))
         .route("/ready", get(ready))
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(metrics_handler))
         .with_state(state)
         .nest(
             "/api",
@@ -333,35 +210,11 @@ fn build_router_with_rate_period(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(
-            prometheus_metrics.clone(),
-            metrics_middleware,
-        ))
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
-
-    #[cfg(not(test))]
-    let router = {
-        let governor_conf = Arc::new(
-            GovernorConfigBuilder::default()
-                .period(period)
-                .burst_size(burst_size)
-                .error_handler(|_| {
-                    (
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
-                })
-                .finish()
-                .unwrap(),
-        );
-        router.layer(tower_governor::GovernorLayer {
-            config: governor_conf,
-        })
-    };
-
-    router
+        .layer(
+            LoggingLayer::with_metrics(prometheus_metrics.clone())
+                .with_jwt(&config.secret_key, config.jwt_key_version),
+        )
 }
 
 /// Build the Axum router with a live database pool.
@@ -371,26 +224,28 @@ fn build_router_with_db(
     redis: crate::redis_cache::RedisCache,
     pool: sqlx::PgPool,
     event_bus: crate::ws::EventBus,
+    prometheus_metrics: SharedMetrics,
 ) -> Router {
-    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
-        eprintln!("failed to initialize Prometheus metrics: {error}");
-        std::process::exit(1);
-    }));
-
     let state = crate::routes::v1::AppState {
         config: Arc::new(config.clone()),
         cache: cache.clone(),
+        pool_cache: crate::pool_cache::PoolCache::with_negative_ttl(Duration::from_secs(
+            config.pool_negative_cache_ttl_secs,
+        )),
         redis: redis.clone(),
         db: Some(pool.clone()),
         metrics: prometheus_metrics.clone(),
         event_bus: event_bus.clone(),
     };
 
-    let router = Router::new()
+    Router::new()
         .route("/", get(root))
+        .route("/live", get(live))
         .route("/health", get(health))
+        .route("/health/ready", get(health_ready))
+        .route("/health/components", get(health_components))
         .route("/ready", get(ready))
-        .route("/metrics", get(metrics))
+        .route("/metrics", get(metrics_handler))
         .with_state(state)
         .nest(
             "/api",
@@ -404,68 +259,69 @@ fn build_router_with_db(
             ),
         )
         .merge(crate::openapi::swagger_router())
-        .layer(from_fn_with_state(
-            prometheus_metrics.clone(),
-            metrics_middleware,
-        ))
         .layer(build_cors(&config))
-        .layer(LoggingLayer);
-
-    #[cfg(not(test))]
-    let router = {
-        let governor_conf = Arc::new(
-            GovernorConfigBuilder::default()
-                .per_second(crate::constants::RATE_LIMIT_PERIOD_SECS)
-                .burst_size(crate::constants::RATE_LIMIT_BURST_SIZE)
-                .error_handler(|_| {
-                    (
-                        axum::http::StatusCode::TOO_MANY_REQUESTS,
-                        "Too Many Requests",
-                    )
-                        .into_response()
-                })
-                .finish()
-                .unwrap(),
-        );
-        router.layer(tower_governor::GovernorLayer {
-            config: governor_conf,
-        })
-    };
-
-    router
+        .layer(
+            LoggingLayer::with_metrics(prometheus_metrics.clone())
+                .with_jwt(&config.secret_key, config.jwt_key_version),
+        )
 }
 
-/// Initialise all dependencies, build the router, and start serving.
+/// Probe Redis once at startup and either fail fast or record a degraded
+/// state, depending on `config.redis_required`.
 ///
-/// This delegates to [`run_with_signal`] using [`crate::shutdown::wait_for_signal`]
-/// so that SIGINT, SIGTERM and (on Unix) SIGHUP cause a graceful drain of
-/// in-flight requests before the process exits.
+/// If Redis is configured but unreachable:
+/// - `config.redis_required == true`: logs a clear error and exits the
+///   process immediately, before the HTTP listener is bound, so an operator
+///   sees a startup failure rather than a silently degraded service.
+/// - `config.redis_required == false`: logs a single explicit warning and
+///   lets startup continue. The degraded state is then visible on every
+///   subsequent call to `/ready` and `/health`, which independently probe
+///   Redis per request via [`crate::redis_cache::RedisCache::ping`].
+async fn probe_redis_startup(config: &Config, redis: &crate::redis_cache::RedisCache) {
+    if redis.is_available() && redis.ping().await {
+        return;
+    }
+
+    if config.redis_required {
+        error!(
+            "Redis is configured (PREDIFI_REDIS_URL) but unreachable at startup, and \
+             PREDIFI_REDIS_REQUIRED=true; refusing to start. Set PREDIFI_REDIS_REQUIRED=false \
+             to start in a degraded mode instead."
+        );
+        std::process::exit(1);
+    }
+
+    warn!(
+        "Redis is configured (PREDIFI_REDIS_URL) but unreachable at startup; starting in a \
+         degraded mode (PREDIFI_REDIS_REQUIRED=false). Cache-backed reads will fall through to \
+         the database until Redis becomes reachable. This state is visible on /ready and /health."
+    );
+}
+
+// ── Server entry points ───────────────────────────────────────────────────────
+
+/// Initialise all dependencies, build the router, and start serving.
 pub async fn run(config: Config) {
     run_with_signal(config, shutdown::wait_for_signal()).await;
 }
 
 /// Initialise all dependencies, build the router, start serving, and tear
-/// everything down again on `signal`.
+/// everything down again when `signal` resolves.
 ///
-/// The function is split out from [`run`] so the shutdown plumbing is
-/// testable: callers (notably the integration tests in [`crate::tests`])
-/// pass a hand-crafted future instead of relying on real OS signals.
+/// Split out from [`run`] so the shutdown plumbing is testable via a
+/// hand-crafted future rather than real OS signals.
 ///
-/// # Order of operations on shutdown
-///
-/// 1. The provided `signal` future resolves (this is what kicks off the
-///    drain — Axum then refuses new connections and waits for in-flight
-///    ones to finish).
-/// 2. The HTTP server future is awaited with [`shutdown::with_shutdown_timeout`]
-///    giving in-flight requests up to `config.shutdown_timeout_secs` to
-///    finish.  This protects the process from being held hostage by a
-///    stuck handler.
-/// 3. The PostgreSQL connection pool is closed via [`sqlx::Pool::close`].
-///    In-flight queries get a chance to finish because `close` waits for
-///    outstanding checkouts to be returned.
-/// 4. Background workers (the price-cache fetcher and the Stellar event
-///    listener) are aborted so they do not keep the runtime alive after
-///    the listener has gone away.
+/// # Shutdown order
+/// 1. `signal` resolves → Axum stops accepting new connections.
+/// 2. In-flight requests drain (bounded by `config.shutdown_timeout_secs`).
+/// 3. Open WebSocket connections are sent a Close frame and given the same
+///    budget to disconnect cleanly (see [`shutdown::drain_websockets`]).
+/// 4. Background workers (price-cache fetcher, Stellar listener,
+///    notification sweep, pool cache warmer) are given the same budget to
+///    finish their current unit of work before being aborted (see
+///    [`shutdown::drain_workers`]).
+/// 5. PostgreSQL pool is closed.
+/// 6. OTel batch exporter is flushed via [`crate::telemetry::shutdown_tracer_provider`].
 pub async fn run_with_signal<F>(config: Config, signal: F)
 where
     F: Future<Output = ()> + Send + 'static,
@@ -477,31 +333,115 @@ where
             std::process::exit(1);
         });
 
+    let prometheus_metrics = Arc::new(Metrics::new().unwrap_or_else(|error| {
+        eprintln!("failed to initialize Prometheus metrics: {error}");
+        std::process::exit(1);
+    }));
+
+    // Repository functions record query latencies through the global sink.
+    crate::metrics::install_global(prometheus_metrics.clone());
+
     let cache = crate::price_cache::PriceCache::new();
-    let fetcher_handle: JoinHandle<()> = crate::price_cache::spawn_fetcher(cache.clone());
+    let fetcher_handle: JoinHandle<()> =
+        crate::price_cache::spawn_fetcher(cache.clone(), Some(prometheus_metrics.clone()));
 
-    let event_bus = crate::ws::EventBus::new();
+    let event_bus = crate::ws::EventBus::new().with_metrics(prometheus_metrics.clone());
+    // Cloned before `event_bus` is moved into the router below; used only to
+    // drive the WebSocket drain during shutdown.
+    let shutdown_event_bus = event_bus.clone();
+    let redis = crate::redis_cache::RedisCache::new(&config.redis_url)
+        .await
+        .with_metrics(prometheus_metrics.clone());
+    probe_redis_startup(&config, &redis).await;
 
-    // Spawn the on-chain event listener to keep pool and prediction indexes in sync.
-    let listener_handle: JoinHandle<()> = crate::worker::stellar_listener::spawn(
-        config.stellar_rpc_url.clone(),
-        pool.clone(),
-        event_bus.clone(),
-        std::time::Duration::from_secs(30),
-    );
+    // Clone before moving into the worker closure.
+    let listener_rpc_url = config.stellar_rpc_url.clone();
+    let listener_pool = pool.clone();
+    let listener_event_bus = event_bus.clone();
+    let listener_redis = redis.clone();
+    let listener_rpc_timeout = Duration::from_secs(config.rpc_timeout_secs);
+    let listener_batch_size = config.indexer_max_batch_size;
+    let listener_contract_id = config.predifi_contract_id.clone();
 
-    // Initialize Redis cache
-    let redis = crate::redis_cache::RedisCache::new(&config.redis_url).await;
+    // spawn_worker roots the listener under a named OTel span so all Stellar
+    // sync traces are correlated in the trace backend.
+    let listener_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("stellar_listener", async move {
+            crate::worker::stellar_listener::run_worker_with_start_ledger(
+                listener_rpc_url,
+                listener_pool,
+                listener_event_bus,
+                listener_redis,
+                listener_rpc_timeout,
+                listener_batch_size,
+                listener_contract_id,
+            )
+            .await;
+        });
+
+    // Periodically sweeps pool/prediction state to generate notifications
+    // (pool ending soon, resolved, claim window expiring, interest matches).
+    // Every insert is deduplicated on the DB side, so this can run on a fixed
+    // interval without ever double-notifying a user.
+    let notifications_pool = pool.clone();
+    let notifications_smtp = crate::email::SmtpConfig::from_config(&config);
+    let notifications_push = crate::push::PushConfig::from_config(&config);
+    let notifications_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("notification_sweep", async move {
+            crate::notifications::run_sweep_loop_with_delivery(
+                notifications_pool,
+                Duration::from_secs(300),
+                notifications_smtp,
+                notifications_push,
+            )
+            .await;
+        });
+
+    // Proactively refreshes the Redis cache for the default, first-page
+    // pool-list queries (see `cache_warmer` module docs for why only those).
+    // Ticks every half the pools TTL so an entry is refreshed well before it
+    // would otherwise expire and force a visitor to pay the cold-cache
+    // database round trip.
+    let warmer_pool = pool.clone();
+    let warmer_redis = redis.clone();
+    let warm_interval = Duration::from_secs((crate::redis_cache::POOLS_CACHE_TTL / 2).max(1));
+    let cache_warmer_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("pool_cache_warmer", async move {
+            crate::cache_warmer::run_warm_loop(warmer_pool, warmer_redis, warm_interval).await;
+        });
+
+    // Refreshes DB-derived gauges (pool counts by state, prediction volume
+    // per window) and process gauges (WebSocket connections, memory, DB pool).
+    let collector_pool = pool.clone();
+    let collector_metrics = prometheus_metrics.clone();
+    let collector_bus = event_bus.clone();
+    let metrics_collector_handle: JoinHandle<()> =
+        crate::tracing_context::spawn_worker("metrics_collector", async move {
+            crate::metrics::run_collector_loop(
+                collector_pool,
+                collector_metrics,
+                collector_bus,
+                Duration::from_secs(15),
+            )
+            .await;
+        });
+
     if redis.is_available() {
         info!("Redis cache initialized and available");
     } else {
         warn!("Redis cache unavailable - running without caching");
     }
 
-    let app = build_router_with_db(config.clone(), cache, redis, pool, event_bus);
+    let app = build_router_with_db(
+        config.clone(),
+        cache,
+        redis,
+        pool.clone(),
+        event_bus,
+        prometheus_metrics,
+    );
 
     let bind_addr = config.bind_address();
-
     let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
         .unwrap_or_else(|error| {
@@ -519,51 +459,113 @@ where
 
     let drain_timeout = Duration::from_secs(config.shutdown_timeout_secs.max(1));
 
-    // `axum::serve().with_graceful_shutdown(...)` resolves with
-    // `Result<(), std::io::Error>` so we cannot reuse the
-    // `shutdown::with_shutdown_timeout` helper directly — instead inline a
-    // short match so every branch records whether the drain completed,
-    // the handler returned an error, or we blew the deadline.
     match tokio::time::timeout(drain_timeout, server).await {
-        Ok(Ok(())) => {
-            info!(
-                timeout_secs = drain_timeout.as_secs(),
-                "HTTP server drained in-flight requests cleanly"
-            );
-        }
+        Ok(Ok(())) => info!(
+            timeout_secs = drain_timeout.as_secs(),
+            "HTTP server drained in-flight requests cleanly"
+        ),
         Ok(Err(error)) => {
-            warn!(
-                error = %error,
-                "HTTP server returned an error during shutdown drain"
-            );
+            warn!(error = %error, "HTTP server returned an error during shutdown drain")
         }
-        Err(_) => {
-            warn!(
-                component = "http server drain",
-                timeout_secs = drain_timeout.as_secs(),
-                "HTTP drain exceeded shutdown timeout; aborting in-flight handlers"
-            );
-        }
+        Err(_) => warn!(
+            component = "http server drain",
+            timeout_secs = drain_timeout.as_secs(),
+            "HTTP drain exceeded shutdown timeout; aborting in-flight handlers"
+        ),
     }
 
-    // Stop the background workers *before* closing the database pool so
-    // they cannot race the close by acquiring a fresh connection from the
-    // pool between `pool.close().await` starting and completing.  The
-    // listeners' loops are stateless w.r.t. in-flight work — the ledger
-    // cursor persists to the database after every successful poll — so a
-    // restarted worker will resume from the last persisted position.
-    fetcher_handle.abort();
-    listener_handle.abort();
+    // Signal every open WebSocket connection to close and give them the same
+    // drain budget as the HTTP server before moving on. This must happen
+    // before workers are stopped, since the Stellar listener and
+    // notification sweep both publish onto the event bus that WebSocket
+    // handlers read from.
+    shutdown::drain_websockets(&shutdown_event_bus.ws_shutdown_token(), drain_timeout).await;
 
-    // Close the database pool last so any in-flight query the listener was
-    // already running gets a chance to finish, and no NEW query can be
-    // submitted because the workers were already aborted above.
-    shutdown::with_shutdown_timeout(
-        drain_timeout,
-        "database pool close",
-        pool.close(),
-    )
-    .await;
+    // Give workers a chance to finish their current unit of work before
+    // forcibly aborting them, instead of killing them immediately. Each is
+    // bounded by the same drain timeout; a worker still running past it is
+    // aborted (see `shutdown::drain_workers`).
+    let workers = vec![
+        ("price_fetcher", fetcher_handle),
+        ("stellar_listener", listener_handle),
+        ("notification_sweep", notifications_handle),
+        ("pool_cache_warmer", cache_warmer_handle),
+        ("metrics_collector", metrics_collector_handle),
+    ];
+    shutdown::drain_workers(workers, drain_timeout).await;
+
+    // Close the pool after draining workers so they cannot race it.
+    shutdown::with_shutdown_timeout(drain_timeout, "database pool close", pool.close()).await;
+
+    // Flush the OTel batch exporter — must happen after all spans are done.
+    crate::telemetry::shutdown_tracer_provider();
 
     info!("graceful shutdown complete");
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, DEFAULT_CORS_ORIGINS};
+
+    fn config_with_origins(origins: Vec<&str>) -> Config {
+        let mut cfg = Config::default_for_test();
+        cfg.cors_allowed_origins = origins.into_iter().map(|s| s.to_string()).collect();
+        cfg
+    }
+
+    #[test]
+    fn build_cors_accepts_valid_https_origin() {
+        let cfg = config_with_origins(vec!["https://predifi.app"]);
+        let _layer = build_cors(&cfg);
+    }
+
+    #[test]
+    fn build_cors_default_origins_are_all_valid_header_values() {
+        let cfg = config_with_origins(DEFAULT_CORS_ORIGINS.to_vec());
+        let valid_count = cfg
+            .cors_allowed_origins
+            .iter()
+            .filter(|o| o.parse::<HeaderValue>().is_ok())
+            .count();
+        assert_eq!(
+            valid_count,
+            DEFAULT_CORS_ORIGINS.len(),
+            "every default CORS origin must parse into a valid HeaderValue"
+        );
+    }
+
+    #[test]
+    fn build_cors_accepts_origin_with_port() {
+        let cfg = config_with_origins(vec!["http://localhost:5173"]);
+        let _layer = build_cors(&cfg);
+        assert!("http://localhost:5173".parse::<HeaderValue>().is_ok());
+    }
+
+    #[test]
+    fn build_cors_accepts_multiple_origins() {
+        let cfg = config_with_origins(vec![
+            "https://predifi.app",
+            "https://staging.predifi.app",
+            "http://localhost:3000",
+        ]);
+        let _layer = build_cors(&cfg);
+    }
+
+    #[test]
+    fn build_cors_with_empty_origins_does_not_panic() {
+        let cfg = config_with_origins(vec![]);
+        let _layer = build_cors(&cfg);
+    }
+
+    #[test]
+    fn build_cors_uses_config_origins_not_hardcoded_list() {
+        let cfg_a = config_with_origins(vec!["https://app-a.example.com"]);
+        let cfg_b = config_with_origins(vec!["https://app-b.example.com"]);
+        let _layer_a = build_cors(&cfg_a);
+        let _layer_b = build_cors(&cfg_b);
+        assert_ne!(cfg_a.cors_allowed_origins, cfg_b.cors_allowed_origins);
+    }
 }

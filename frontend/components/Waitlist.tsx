@@ -2,6 +2,7 @@
 
 import { useState, FormEvent } from "react";
 import { isValidEmail } from "@/lib/email";
+import { API_BASE_URL } from "@/lib/api/pools";
 
 export default function Waitlist() {
   const [email, setEmail] = useState("");
@@ -29,14 +30,30 @@ export default function Waitlist() {
     setStatus("loading");
     setErrorMessage("");
 
-    // Simulate API call - replace with actual endpoint
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      const response = await fetch(
+        `${API_BASE_URL.replace(/\/$/, "")}/api/v1/waitlist`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: name.trim(), email: email.trim() }),
+        },
+      );
+
+      if (!response.ok) {
+        setStatus("error");
+        setErrorMessage(
+          response.status === 429
+            ? "Too many attempts. Please wait a moment and try again."
+            : "Something went wrong. Please try again.",
+        );
+        return;
+      }
+
       setStatus("success");
       setName("");
       setEmail("");
-      // eslint-disable-next-line
-    } catch (_) {
+    } catch {
       setStatus("error");
       setErrorMessage("Something went wrong. Please try again.");
     }

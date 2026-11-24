@@ -138,6 +138,109 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "Requires Docker container for Postgres"]
+    async fn pending_email_query_includes_verified_addresses() {
+        let (pool, container) = setup().await;
+
+        sqlx::query(
+            "INSERT INTO user_emails (user_address, email, email_enabled, verified) \
+             VALUES ('GVERIFIED', 'verified@example.com', TRUE, TRUE)",
+        )
+        .execute(&pool)
+        .await
+        .expect("insert verified email preference");
+
+        let notification_id: i64 = sqlx::query_scalar(
+            "INSERT INTO notifications (user_address, notif_type, title, message) \
+             VALUES ('GVERIFIED', 'pool_resolved', 'Resolved', 'A pool was resolved') \
+             RETURNING id",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("insert notification");
+
+        let pending = crate::email::fetch_pending_emails(&pool)
+            .await
+            .expect("fetch pending emails");
+        assert!(
+            pending.iter().any(|email| email.id == notification_id),
+            "enabled address must receive email even when verified = TRUE"
+        );
+
+        pool.close().await;
+        drop(container);
+    }
+
+    /// The pool-scoped leaderboard query (`/pools/:id/leaderboard`) must use
+    /// an index on `predictions.pool_id`, not a sequential scan, once the
+    /// table holds enough rows to make the difference measurable (#1733).
+    ///
+    /// Seeds many pools with many predictions each so that filtering to one
+    /// `pool_id` is highly selective (~0.3%), which is well within the range
+    /// where Postgres' planner should prefer `idx_predictions_pool_id` (or
+    /// one of the other `pool_id`-prefixed indexes from later migrations)
+    /// over scanning the whole table. If that index is ever dropped, this
+    /// selectivity gap means the planner falls back to a sequential scan and
+    /// the assertion below fails.
+    #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
+    async fn leaderboard_query_uses_index_not_seq_scan_on_predictions() {
+        let (pool, container) = setup().await;
+
+        const POOL_COUNT: i64 = 300;
+        const PREDICTIONS_PER_POOL: i64 = 300;
+
+        sqlx::query(
+            r#"
+            INSERT INTO pools (pool_id, name, category, total_stake, end_time, state, creator, token)
+            SELECT g, 'Pool ' || g, 'Test', 0, NOW() + INTERVAL '1 day', 'active', 'GCREATOR', 'XLM'
+            FROM generate_series(1, $1) AS g
+            "#,
+        )
+        .bind(POOL_COUNT)
+        .execute(&pool)
+        .await
+        .expect("seed pools");
+
+        sqlx::query(
+            r#"
+            INSERT INTO predictions (pool_id, user_address, outcome, amount)
+            SELECT g, 'GUSER' || ((g * 100000) + s)::text, (s % 2), 100
+            FROM generate_series(1, $1) AS g, generate_series(1, $2) AS s
+            "#,
+        )
+        .bind(POOL_COUNT)
+        .bind(PREDICTIONS_PER_POOL)
+        .execute(&pool)
+        .await
+        .expect("seed predictions");
+
+        // Fresh statistics are essential: without them the planner may still
+        // guess a sequential scan for a table it thinks is tiny/default-sized.
+        sqlx::query("ANALYZE predictions")
+            .execute(&pool)
+            .await
+            .expect("analyze predictions");
+        sqlx::query("ANALYZE pools")
+            .execute(&pool)
+            .await
+            .expect("analyze pools");
+
+        let plan = crate::db::explain_leaderboard_plan(&pool, "volume", "all", Some(1), 20, 0)
+            .await
+            .expect("explain leaderboard query");
+
+        assert!(
+            !plan.to_lowercase().contains("seq scan on predictions"),
+            "leaderboard query for a single pool_id must use an index on predictions, \
+             not a sequential scan; got plan:\n{plan}"
+        );
+
+        pool.close().await;
+        drop(container);
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
     async fn pool_status_defaults_to_open() {
         let (pool, container) = setup().await;
 
@@ -157,6 +260,38 @@ mod tests {
             .get(0);
 
         assert_eq!(status, "Open");
+
+        pool.close().await;
+        drop(container);
+    }
+
+    #[tokio::test]
+    #[ignore = "Requires Docker container for Postgres"]
+    async fn waitlist_signup_is_idempotent_and_case_insensitive() {
+        let (pool, container) = setup().await;
+
+        let first = crate::waitlist::normalize_email("Ada@Example.com");
+        crate::waitlist::add_to_waitlist(&pool, "Ada", &first)
+            .await
+            .expect("first sign-up");
+        // Same address, different case and name: must succeed without a second row.
+        let second = crate::waitlist::normalize_email("  ADA@example.COM ");
+        crate::waitlist::add_to_waitlist(&pool, "Ada L.", &second)
+            .await
+            .expect("duplicate sign-up must not error");
+
+        let count: i64 = sqlx::query("SELECT COUNT(*) FROM waitlist")
+            .fetch_one(&pool)
+            .await
+            .expect("count")
+            .get(0);
+        assert_eq!(count, 1);
+
+        // The table itself rejects a non-lowercase email.
+        let err = sqlx::query("INSERT INTO waitlist (name, email) VALUES ('x', 'MixedCase@example.com')")
+            .execute(&pool)
+            .await;
+        assert!(err.is_err(), "CHECK constraint must reject mixed-case email");
 
         pool.close().await;
         drop(container);

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { classifyWalletError } from "@/lib/walletErrors";
 
 /** Stellar / Soroban — no canonical EVM chain for this app.
  *  Set to the chain you actually target; null means "any chain is wrong
@@ -8,6 +9,12 @@ import { useEffect, useState, useCallback } from "react";
  *  wallet IS connected but on the wrong chain. */
 export const REQUIRED_CHAIN_ID = "0x1"; // Ethereum mainnet placeholder
 export const REQUIRED_CHAIN_NAME = "Ethereum Mainnet";
+
+export interface NetworkMismatchError {
+  currentNetwork: string;
+  requiredNetwork: string;
+  message: string;
+}
 
 export interface NetworkGuardState {
   /** True when wallet is connected on the wrong chain. */
@@ -18,6 +25,14 @@ export interface NetworkGuardState {
   switchNetwork: () => Promise<void>;
   /** Error message from the last failed switch attempt. */
   switchError: string | null;
+  /** Structured recovery hint when switch fails. */
+  switchRecoveryAction: string | null;
+  /** 
+   * Check network immediately before transaction submission.
+   * Returns null if network is correct, or NetworkMismatchError if wrong.
+   * Call this just before submitting any transaction to catch mid-session network switches.
+   */
+  checkNetworkBeforeSubmit: () => Promise<NetworkMismatchError | null>;
 }
 
 const CHAIN_NAMES: Record<string, string> = {
@@ -39,12 +54,14 @@ function chainName(hexId: string): string {
 export function useNetworkGuard(): NetworkGuardState {
   const [currentChainId, setCurrentChainId] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [switchRecoveryAction, setSwitchRecoveryAction] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     const eth = window.ethereum;
     if (!eth) return;
 
-    // Read current chain on mount
     eth.request({ method: "eth_chainId" }).then(setCurrentChainId).catch(() => {});
 
     const handler = (chainId: string) => setCurrentChainId(chainId);
@@ -58,16 +75,55 @@ export function useNetworkGuard(): NetworkGuardState {
 
   const switchNetwork = useCallback(async () => {
     const eth = window.ethereum;
-    if (!eth) return;
+    if (!eth) {
+      const classified = classifyWalletError(
+        new Error("wallet extension not found")
+      );
+      setSwitchError(classified.message);
+      setSwitchRecoveryAction(classified.recoveryAction);
+      return;
+    }
     setSwitchError(null);
+    setSwitchRecoveryAction(null);
     try {
       await eth.request({
         method: "wallet_switchEthereumChain",
         params: [{ chainId: REQUIRED_CHAIN_ID }],
       });
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Network switch failed.";
-      setSwitchError(msg);
+      const classified = classifyWalletError(err);
+      setSwitchError(classified.message);
+      setSwitchRecoveryAction(classified.recoveryAction);
+    }
+  }, []);
+
+  const checkNetworkBeforeSubmit = useCallback(async (): Promise<NetworkMismatchError | null> => {
+    const eth = window.ethereum;
+    if (!eth) {
+      // No wallet installed - let the transaction submission handle this
+      return null;
+    }
+
+    try {
+      // Re-fetch the current chain ID to catch mid-session network switches
+      const freshChainId = (await eth.request({ method: "eth_chainId" })) as string;
+      
+      if (freshChainId.toLowerCase() !== REQUIRED_CHAIN_ID.toLowerCase()) {
+        const current = chainName(freshChainId);
+        const required = REQUIRED_CHAIN_NAME;
+        return {
+          currentNetwork: current,
+          requiredNetwork: required,
+          message: `Network mismatch: You are on ${current} but this transaction requires ${required}. Please switch networks and try again.`,
+        };
+      }
+      
+      return null;
+    } catch (err) {
+      // If we can't check the network, allow the transaction to proceed
+      // The wallet or RPC will likely fail with a more specific error
+      console.error("Failed to check network before submit:", err);
+      return null;
     }
   }, []);
 
@@ -76,5 +132,7 @@ export function useNetworkGuard(): NetworkGuardState {
     currentChainName: currentChainId ? chainName(currentChainId) : "",
     switchNetwork,
     switchError,
+    switchRecoveryAction,
+    checkNetworkBeforeSubmit,
   };
 }

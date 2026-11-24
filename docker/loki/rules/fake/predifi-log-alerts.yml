@@ -1,0 +1,41 @@
+# Log-based alert rules evaluated by the Loki ruler.
+# `fake` is the tenant directory Loki uses when auth_enabled is false.
+groups:
+  - name: predifi-backend-logs
+    interval: 1m
+    rules:
+      - alert: BackendErrorLogSpike
+        expr: 'sum(rate({job="predifi", service="backend", level="ERROR"}[5m])) > 0.2'
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend error log rate elevated"
+          description: "The backend is logging errors at {{ $value | printf \"%.2f\" }} per second over the last 5 minutes."
+
+      - alert: BackendPanic
+        expr: 'sum(count_over_time({job="predifi", service="backend"} |~ "(?i)panicked at" [5m])) > 0'
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend panic detected in logs"
+          description: "A Rust panic was logged by the backend within the last 5 minutes."
+
+      - alert: DatabaseErrorLogs
+        expr: 'sum(count_over_time({job="predifi", service="backend", level="ERROR"} |~ "(?i)(database|connection pool|sqlx)" [10m])) > 5'
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Repeated database errors in backend logs"
+          description: "More than 5 database-related error lines were logged in the last 10 minutes."
+
+      - alert: NoBackendLogs
+        expr: 'sum(count_over_time({job="predifi", service="backend"}[10m])) == 0'
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No backend logs received"
+          description: "Loki has not received any backend log lines for 10 minutes — the service or the log shipper may be down."

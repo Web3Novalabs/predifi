@@ -1,137 +1,323 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useId, type KeyboardEvent } from "react";
+import dynamic from "next/dynamic";
 import { cn } from "@/lib/utils";
 import { formatUtcDateTime } from "@/lib/date";
+import { formatChartValue } from "@/lib/stakeFilters";
+import { useCurrentUserAddress } from "@/lib/hooks/useCurrentUserAddress";
+import { useProfile } from "@/lib/hooks/useProfile";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { ShareButton, CopyButton, Skeleton } from "@/components/ui";
+import type { ClaimStatus } from "@/lib/api/profile";
+import type { PerformanceChartsProps } from "@/components/profile/PerformanceCharts";
+
+/**
+ * Dynamically import the recharts-based performance charts so the recharts
+ * library (and its d3 dependencies) is code-split into its own chunk instead
+ * of inflating the initial `/user/my-profile` bundle (#1939). Mirrors the
+ * same pattern already used for `StakedChart` on the dashboard.
+ */
+const PerformanceCharts = dynamic<PerformanceChartsProps>(
+  () =>
+    import("@/components/profile/PerformanceCharts").then(
+      (mod) => mod.PerformanceCharts,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Skeleton className="h-[280px] lg:col-span-2 rounded-xl" />
+        <Skeleton className="h-[280px] rounded-xl" />
+      </div>
+    ),
+  },
+);
+
+/**
+ * Issue #1931: social sharing for individual predictions. Mirrors the
+ * pool-level share URL in `app/user/pool-market/[id]/page.tsx`, but adds the
+ * `?outcome=` query param so the shared link (and its OG card, via
+ * `/api/og/pool/[id]`) highlights this specific prediction rather than the
+ * pool's overall leaderboard of outcomes.
+ */
+const SITE_URL = "https://predifi.app";
+
+function shareUrlForClaim(claim: ClaimStatus): string {
+  return `${SITE_URL}/user/pool-market/${claim.pool_id}?outcome=${claim.outcome}`;
+}
 
 type PredictionStatus = "Active" | "Won" | "Lost" | "Pending";
 
-interface PredictionHistoryEntry {
-  id: string;
-  pool: string;
-  outcome: string;
-  stake: string;
-  payout: string;
-  status: PredictionStatus;
-  date: string;
-}
-
-const MOCK_PREDICTIONS: PredictionHistoryEntry[] = [
-  { id: "1", pool: "BTC above $125k by Dec 2025", outcome: "Yes", stake: "50 XLM", payout: "127.50 XLM", status: "Won",     date: "2025-06-01T14:00:00Z" },
-  { id: "2", pool: "ETH flips BTC market cap",    outcome: "No",  stake: "30 XLM", payout: "—",           status: "Active",  date: "2025-06-10T09:30:00Z" },
-  { id: "3", pool: "XLM price above $1.00 Q3",   outcome: "Yes", stake: "20 XLM", payout: "—",           status: "Pending", date: "2025-06-15T11:00:00Z" },
-  { id: "4", pool: "Fed rate cut before Nov",     outcome: "Yes", stake: "40 XLM", payout: "—",           status: "Lost",    date: "2025-05-20T16:45:00Z" },
-  { id: "5", pool: "Stellar mainnet upgrade v21", outcome: "Yes", stake: "25 XLM", payout: "62.50 XLM",   status: "Won",     date: "2025-05-05T08:00:00Z" },
-];
-
 const STATUS_STYLES: Record<PredictionStatus, string> = {
-  Active:  "bg-blue-500/20 text-blue-400",
-  Won:     "bg-emerald-500/20 text-emerald-400",
-  Lost:    "bg-red-500/20 text-red-400",
+  Active: "bg-blue-500/20 text-blue-400",
+  Won: "bg-emerald-500/20 text-emerald-400",
+  Lost: "bg-red-500/20 text-red-400",
   Pending: "bg-yellow-500/20 text-yellow-400",
 };
 
 type Tab = "All" | PredictionStatus;
 const TABS: Tab[] = ["All", "Active", "Won", "Lost", "Pending"];
 
+function predictionStatus(claim: ClaimStatus): PredictionStatus {
+  if (claim.pool_state === "active") return "Active";
+  if (claim.pool_state !== "settled" || claim.is_winner === null) return "Pending";
+  return claim.is_winner ? "Won" : "Lost";
+}
+
+function ClaimBadge({ claim }: { claim: ClaimStatus }) {
+  if (claim.is_winner !== true) {
+    return <span className="text-xs text-zinc-600">—</span>;
+  }
+  if (claim.claimed) {
+    return <span className="text-xs font-medium text-emerald-400">Claimed</span>;
+  }
+  if (claim.claim_expired) {
+    return <span className="text-xs font-medium text-red-400">Expired</span>;
+  }
+  if (claim.claim_window_expires_at) {
+    return (
+      <span className="text-xs font-medium text-yellow-400">
+        Claim by {formatUtcDateTime(claim.claim_window_expires_at)}
+      </span>
+    );
+  }
+  return <span className="text-xs font-medium text-yellow-400">Unclaimed</span>;
+}
+
+function truncateAddress(address: string): string {
+  if (address.length <= 10) return address;
+  return `${address.slice(0, 4)}…${address.slice(-4)}`;
+}
+
 export function PredictionHistoryClient() {
+  const address = useCurrentUserAddress();
+  const { profile, isLoading, isError, refresh } = useProfile(address);
   const [activeTab, setActiveTab] = useState<Tab>("All");
+  const id = useId();
 
-  const filtered = activeTab === "All"
-    ? MOCK_PREDICTIONS
-    : MOCK_PREDICTIONS.filter((p) => p.status === activeTab);
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (
+      event.key !== "ArrowLeft" &&
+      event.key !== "ArrowRight" &&
+      event.key !== "Home" &&
+      event.key !== "End"
+    ) {
+      return;
+    }
 
-  const totalStaked = MOCK_PREDICTIONS.reduce((sum, p) => sum + parseFloat(p.stake), 0);
-  const won = MOCK_PREDICTIONS.filter((p) => p.status === "Won");
-  const winRate = Math.round((won.length / MOCK_PREDICTIONS.length) * 100);
-  const totalEarned = won.reduce((sum, p) => sum + parseFloat(p.payout) || 0, 0);
+    event.preventDefault();
+    const tabs = Array.from(
+      event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>(
+        '[role="tab"]',
+      ) ?? [],
+    );
+    if (tabs.length === 0) return;
+
+    const currentIndex = tabs.indexOf(event.currentTarget);
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+            tabs.length;
+    tabs[nextIndex].focus();
+    tabs[nextIndex].click();
+  };
+
+  const filtered = useMemo(() => {
+    const claims = profile?.claims ?? [];
+    if (activeTab === "All") return claims;
+    return claims.filter((c) => predictionStatus(c) === activeTab);
+  }, [profile?.claims, activeTab]);
+
+  const stats = profile?.stats;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8 space-y-8">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      className="min-h-screen bg-[#0A0A0A] p-6 lg:p-8 space-y-8"
+    >
       {/* Profile header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
-        <div className="w-16 h-16 rounded-full bg-gradient-to-br from-[#37B7C3]/40 to-indigo-500/40 border border-white/10 flex-shrink-0" />
-        <div>
-          <h1 className="text-2xl font-bold text-white">My Profile</h1>
-          <p className="text-zinc-400 text-xs mt-0.5 font-mono">GDRX…7K4P</p>
-        </div>
-      </div>
-
-      {/* Stats row */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[
-          { label: "Total Predictions", value: MOCK_PREDICTIONS.length },
-          { label: "Win Rate",          value: `${winRate}%` },
-          { label: "Total Staked",      value: `${totalStaked} XLM` },
-          { label: "Total Earned",      value: `${totalEarned} XLM` },
-        ].map(({ label, value }) => (
-          <div key={label} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 space-y-1">
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p>
-            <p className="text-lg font-bold text-white font-mono">{value}</p>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5">
+        <div className="flex items-center gap-5">
+          <div
+            aria-hidden="true"
+            className="w-16 h-16 rounded-full bg-gradient-to-br from-[#37B7C3]/40 to-indigo-500/40 border border-white/10 flex-shrink-0"
+          />
+          <div>
+            <h1 className="text-2xl font-bold text-white">My Profile</h1>
+            <p className="text-zinc-400 text-xs mt-0.5 font-mono">
+              {address ? truncateAddress(address) : "Not connected"}
+            </p>
           </div>
-        ))}
+        </div>
+        <NotificationBell />
       </div>
 
-      {/* Predictions history */}
-      <div className="space-y-4">
-        <h2 className="text-base font-semibold text-white">Prediction History</h2>
+      {isError ? (
+        <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-zinc-800 bg-zinc-900 py-12 text-zinc-500">
+          <p>Couldn&apos;t load your profile.</p>
+          <button
+            type="button"
+            onClick={refresh}
+            className="text-sm font-medium text-[#37B7C3] hover:underline"
+          >
+            Try again
+          </button>
+        </div>
+      ) : (
+        <>
+          {/* Stats row */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
+            {isLoading || !stats
+              ? Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 space-y-2">
+                    <Skeleton className="h-3 w-20" />
+                    <Skeleton className="h-5 w-16" />
+                  </div>
+                ))
+              : [
+                  { label: "Total Predictions", value: stats.total_predictions },
+                  { label: "Win Rate", value: `${stats.win_rate.toFixed(0)}%` },
+                  { label: "Total Staked", value: formatChartValue(stats.total_staked) },
+                  { label: "Total Earned", value: formatChartValue(stats.total_earnings) },
+                  { label: "Active Positions", value: stats.active_positions },
+                ].map(({ label, value }) => (
+                  <div key={label} className="rounded-xl border border-zinc-800 bg-zinc-900 p-4 space-y-1">
+                    <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{label}</p>
+                    <p className="text-lg font-bold text-white font-mono">{value}</p>
+                  </div>
+                ))}
+          </div>
 
-        {/* Tabs */}
-        <div className="flex items-center gap-1 border-b border-zinc-800 overflow-x-auto">
-          {TABS.map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              onClick={() => setActiveTab(tab)}
-              className={cn(
-                "px-4 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap",
-                activeTab === tab
-                  ? "text-[#37B7C3]"
-                  : "text-zinc-500 hover:text-zinc-300",
-              )}
+          {/* Performance charts */}
+          {!isLoading && stats && (
+            <PerformanceCharts stats={stats} performance={profile?.performance ?? []} />
+          )}
+
+          {/* Predictions history */}
+          <div className="space-y-4">
+            <h2 className="text-base font-semibold text-white">Prediction History</h2>
+
+            {/* Tabs */}
+            <div
+              role="tablist"
+              aria-label="Filter prediction history"
+              className="flex items-center gap-1 border-b border-zinc-800 overflow-x-auto"
             >
-              {tab}
-              {activeTab === tab && (
-                <span className="absolute bottom-0 left-0 w-full h-0.5 bg-[#37B7C3]" />
-              )}
-            </button>
-          ))}
-        </div>
-
-        {/* Table */}
-        {filtered.length === 0 ? (
-          <p className="text-center py-10 text-zinc-500 text-sm">No predictions found.</p>
-        ) : (
-          <div className="rounded-xl border border-zinc-800 overflow-hidden">
-            {/* Header */}
-            <div className="hidden sm:grid grid-cols-6 px-4 py-2.5 bg-zinc-900 text-[10px] text-zinc-500 uppercase tracking-wider border-b border-zinc-800">
-              <span className="col-span-2">Pool</span>
-              <span>Outcome</span>
-              <span>Stake</span>
-              <span>Payout</span>
-              <span>Status</span>
+              {TABS.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  id={`${id}-tab-${tab.toLowerCase()}`}
+                  role="tab"
+                  aria-selected={activeTab === tab}
+                  aria-controls={`${id}-prediction-panel`}
+                  tabIndex={activeTab === tab ? 0 : -1}
+                  onClick={() => setActiveTab(tab)}
+                  onKeyDown={handleTabKeyDown}
+                  className={cn(
+                    "px-4 py-2.5 text-sm font-medium transition-colors relative whitespace-nowrap",
+                    activeTab === tab ? "text-[#37B7C3]" : "text-zinc-500 hover:text-zinc-300",
+                  )}
+                >
+                  {tab}
+                  {activeTab === tab && (
+                    <span className="absolute bottom-0 left-0 w-full h-0.5 bg-[#37B7C3]" />
+                  )}
+                </button>
+              ))}
             </div>
-            {/* Rows */}
-            {filtered.map((p) => (
-              <div
-                key={p.id}
-                className="grid grid-cols-2 sm:grid-cols-6 items-center gap-2 px-4 py-3 border-b border-zinc-800/50 last:border-0 hover:bg-white/[0.02] transition-colors"
-              >
-                <div className="col-span-2 sm:col-span-2 min-w-0">
-                  <p className="text-sm text-white truncate">{p.pool}</p>
-                  <p className="text-[10px] text-zinc-500 mt-0.5">{formatUtcDateTime(p.date)}</p>
-                </div>
-                <span className="text-sm text-zinc-300 hidden sm:block">{p.outcome}</span>
-                <span className="text-sm font-mono text-zinc-300 hidden sm:block">{p.stake}</span>
-                <span className="text-sm font-mono text-zinc-300 hidden sm:block">{p.payout}</span>
-                <span className={cn("text-[10px] font-semibold px-2 py-1 rounded-full w-fit", STATUS_STYLES[p.status])}>
-                  {p.status}
-                </span>
+
+            {/* Table */}
+            <div
+              id={`${id}-prediction-panel`}
+              role="tabpanel"
+              aria-labelledby={`${id}-tab-${activeTab.toLowerCase()}`}
+              tabIndex={0}
+              aria-busy={isLoading}
+            >
+            {isLoading ? (
+              <div className="space-y-2">
+                <p className="sr-only" role="status">Loading predictions…</p>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 w-full rounded-lg" />
+                ))}
               </div>
-            ))}
+            ) : filtered.length === 0 ? (
+              <p className="text-center py-10 text-zinc-500 text-sm">No predictions found.</p>
+            ) : (
+              <div
+                className="rounded-xl border border-zinc-800 overflow-hidden"
+                role="table"
+                aria-label="Prediction history"
+                aria-busy={isLoading}
+              >
+                {/* Header */}
+                <div role="rowgroup">
+                  <div className="sr-only sm:not-sr-only sm:grid grid-cols-8 px-4 py-2.5 bg-zinc-900 text-[10px] text-zinc-500 uppercase tracking-wider border-b border-zinc-800" role="row">
+                    <span className="col-span-2" role="columnheader">Pool</span>
+                    <span role="columnheader">Outcome</span>
+                    <span role="columnheader">Stake</span>
+                    <span role="columnheader">Status</span>
+                    <span className="col-span-2" role="columnheader">Claim</span>
+                    <span role="columnheader">Share</span>
+                  </div>
+                </div>
+                {/* Rows */}
+                <div role="rowgroup">
+                  {filtered.map((claim) => {
+                    const status = predictionStatus(claim);
+                    const shareUrl = shareUrlForClaim(claim);
+                    const shareTitle = `I predicted Outcome ${claim.outcome} on "${claim.pool_name}" — predict with me on PrediFi`;
+                    return (
+                      <div
+                        key={claim.prediction_id}
+                        className="grid grid-cols-3 sm:grid-cols-8 items-center gap-2 px-4 py-3 border-b border-zinc-800/50 last:border-0 hover:bg-white/[0.02] transition-colors"
+                        role="row"
+                      >
+                        <div className="col-span-2 sm:col-span-2 min-w-0" role="cell">
+                          <p className="text-sm text-white truncate">{claim.pool_name}</p>
+                        </div>
+                        <span className="text-sm text-zinc-300 sr-only sm:not-sr-only sm:block" role="cell">
+                          Outcome {claim.outcome}
+                        </span>
+                        <span className="text-sm font-mono text-zinc-300 sr-only sm:not-sr-only sm:block" role="cell">
+                          {formatChartValue(claim.amount)}
+                        </span>
+                        <span
+                          role="cell"
+                          className={cn(
+                            "text-[10px] font-semibold px-2 py-1 rounded-full w-fit",
+                            STATUS_STYLES[status],
+                          )}
+                        >
+                          {status}
+                        </span>
+                        <div className="col-span-2 sr-only sm:not-sr-only sm:block" role="cell">
+                          <ClaimBadge claim={claim} />
+                        </div>
+                        <div className="flex items-center justify-end gap-1" role="cell">
+                          <CopyButton
+                            text={shareUrl}
+                            size="sm"
+                            aria-label="Copy prediction link"
+                          />
+                          <ShareButton url={shareUrl} title={shareTitle} text={claim.pool_name} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            </div>
           </div>
-        )}
-      </div>
-    </div>
+        </>
+      )}
+    </main>
   );
 }

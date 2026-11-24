@@ -27,8 +27,11 @@ fn test_dynamic_fee_tiers_application() {
     let admin = Address::generate(&env);
     ac_client.grant_role(&admin, &ROLE_ADMIN);
 
-    // Set global fee to 3%
+    // Propose global fee of 3% and apply it after the timelock.
     client.set_fee_bps(&admin, &300u32);
+    env.ledger()
+        .with_mut(|l| l.timestamp = crate::FEE_CHANGE_TIMELOCK_SECONDS + 1);
+    client.apply_fee_bps(&admin);
 
     // Set up fee tiers
     // Threshold 1M (1,000,000 * 10^7) -> 1% (100 bps)
@@ -332,7 +335,7 @@ fn test_set_fee_tiers_unsorted_thresholds() {
     let result = client.try_set_fee_tiers(&admin, &tiers);
     assert_eq!(
         result.err().unwrap().unwrap(),
-        crate::PredifiError::InvalidFeeBps
+        crate::PredifiError::InvalidData
     );
 }
 
@@ -362,8 +365,116 @@ fn test_set_fee_tiers_duplicate_thresholds() {
     let result = client.try_set_fee_tiers(&admin, &tiers);
     assert_eq!(
         result.err().unwrap().unwrap(),
+        crate::PredifiError::InvalidData
+    );
+}
+
+#[test]
+fn test_set_fee_tiers_exceeds_max_fee_tiers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = crate::test::setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    // MAX_FEE_TIERS + 1 correctly sorted tiers with valid fees.
+    let mut tiers: Vec<FeeTier> = Vec::new(&env);
+    for i in 0..(crate::MAX_FEE_TIERS + 1) {
+        tiers.push_back(FeeTier {
+            stake_threshold: (i as i128 + 1) * 1_000_000,
+            fee_bps: 100,
+        });
+    }
+
+    let result = client.try_set_fee_tiers(&admin, &tiers);
+    assert_eq!(
+        result.err().unwrap().unwrap(),
+        crate::PredifiError::InvalidData
+    );
+    assert_eq!(client.get_fee_tiers().len(), 0);
+}
+
+#[test]
+fn test_set_fee_tiers_accepts_exactly_max_fee_tiers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = crate::test::setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let mut tiers: Vec<FeeTier> = Vec::new(&env);
+    for i in 0..crate::MAX_FEE_TIERS {
+        tiers.push_back(FeeTier {
+            stake_threshold: (i as i128 + 1) * 1_000_000,
+            fee_bps: 100,
+        });
+    }
+
+    client.set_fee_tiers(&admin, &tiers);
+    assert_eq!(client.get_fee_tiers().len(), crate::MAX_FEE_TIERS);
+}
+
+#[test]
+fn test_set_fee_tiers_fee_bps_above_max() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = crate::test::setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let tiers = Vec::from_array(
+        &env,
+        [
+            FeeTier {
+                stake_threshold: 1_000_000,
+                fee_bps: 100,
+            },
+            FeeTier {
+                stake_threshold: 5_000_000,
+                fee_bps: 10_001,
+            }, // > 100%
+        ],
+    );
+
+    let result = client.try_set_fee_tiers(&admin, &tiers);
+    assert_eq!(
+        result.err().unwrap().unwrap(),
         crate::PredifiError::InvalidFeeBps
     );
+}
+
+#[test]
+fn test_set_fee_tiers_valid_list() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (ac_client, client, _, _, _, _, _, _) = crate::test::setup(&env);
+
+    let admin = Address::generate(&env);
+    ac_client.grant_role(&admin, &ROLE_ADMIN);
+
+    let tiers = Vec::from_array(
+        &env,
+        [
+            FeeTier {
+                stake_threshold: 1_000_000,
+                fee_bps: 100,
+            },
+            FeeTier {
+                stake_threshold: 5_000_000,
+                fee_bps: 50,
+            },
+            FeeTier {
+                stake_threshold: 10_000_000,
+                fee_bps: 10_000,
+            }, // boundary: exactly 100% is allowed
+        ],
+    );
+
+    assert_eq!(client.try_set_fee_tiers(&admin, &tiers), Ok(Ok(())));
+    assert_eq!(client.get_fee_tiers(), tiers);
 }
 
 #[test]

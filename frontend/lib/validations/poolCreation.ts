@@ -19,17 +19,31 @@ export const POOL_CATEGORIES = [
 
 export type PoolCategory = (typeof POOL_CATEGORIES)[number];
 
-/** Minimum stake denominations per token (display units, not stroops). */
+/** Minimum stake denominations per token (display units, not stroops).
+ * Frontend UX constraint. The contract enforces pool.min_stake > 0 in `constants.rs`.
+ */
 export const MIN_STAKE: Record<string, number> = {
   XLM: 1,
   STRK: 0.0001,
 };
 
-/** Maximum stake denominations per token (display units). */
+/** Maximum stake denominations per token (display units).
+ * Frontend UX constraint. No hard global maximum in contract; per-pool max_stake is 0 (unlimited) or >= min_stake.
+ */
 export const MAX_STAKE: Record<string, number> = {
   XLM: 1_000_000,
   STRK: 1_000_000,
 };
+
+/** Minimum number of outcomes a pool must define.
+ * Source: contract `constants.rs` implicitly (binary markets minimum).
+ */
+export const MIN_OUTCOMES = 2;
+
+/** Maximum number of outcomes a pool may define.
+ * Source: contract `constants.rs` MAX_OPTIONS_COUNT = 100.
+ */
+export const MAX_OUTCOMES = 100;
 
 /** Form field values for pool creation. */
 export interface CreatePoolFormValues {
@@ -39,10 +53,12 @@ export interface CreatePoolFormValues {
   description: string;
   /** Category bucket this pool belongs to. */
   category: PoolCategory | "";
-  /** Option A label (e.g. "Yes", "Team A wins"). */
-  optionA: string;
-  /** Option B label (e.g. "No", "Team B wins"). */
-  optionB: string;
+  /**
+   * Labels for each possible outcome (e.g. `["Yes", "No"]` or
+   * `["Team A", "Team B", "Draw"]`). Must contain between
+   * {@link MIN_OUTCOMES} and {@link MAX_OUTCOMES} non-empty, unique entries.
+   */
+  outcomes: string[];
   /** Minimum stake required to participate (display units). */
   minStake: string;
   /** Maximum stake per participant (display units). */
@@ -51,6 +67,8 @@ export interface CreatePoolFormValues {
   closeTime: string;
   /** Selected token ID (e.g. "XLM" or "STRK"). */
   token: string;
+  /** Optional comma-separated tags string. */
+  tags?: string;
   /** Creator agrees to pool creation terms. */
   termsAccepted: boolean;
 }
@@ -58,10 +76,16 @@ export interface CreatePoolFormValues {
 /** Per-field validation error messages. */
 export type CreatePoolFormErrors = Partial<
   Record<keyof CreatePoolFormValues, string>
->;
+> & {
+  /** Per-outcome error messages, indexed the same as `values.outcomes`. */
+  outcomeErrors?: (string | undefined)[];
+};
 
-/** Minimum minutes a pool close time must be in the future. */
-const MIN_CLOSE_MINUTES = 30;
+/** Minimum seconds a pool close time must be in the future.
+ * Source: contract `constants.rs` DEFAULT_MIN_POOL_DURATION = 3600 (1 hour).
+ * Note: The contract allows this to be reconfigured, but the default is 1 hour.
+ */
+const MIN_CLOSE_SECONDS = 3600;
 
 /**
  * Validate pool creation form values.
@@ -99,28 +123,34 @@ export function validateCreatePool(
     errors.category = "Please select a category.";
   }
 
-  // ── options ───────────────────────────────────────────────────────────────
-  const optionA = values.optionA.trim();
-  const optionB = values.optionB.trim();
+  // ── outcomes ──────────────────────────────────────────────────────────────
+  const outcomeErrors: (string | undefined)[] = values.outcomes.map(
+    (outcome) => {
+      const trimmed = outcome.trim();
+      if (!trimmed) return "Outcome label is required.";
+      // Source: contract `constants.rs` MAX_OUTCOME_DESCRIPTION_LEN = 128.
+      if (trimmed.length > 128) return "Must be 128 characters or fewer.";
+      return undefined;
+    },
+  );
 
-  if (!optionA) {
-    errors.optionA = "Option A label is required.";
-  } else if (optionA.length < 1) {
-    errors.optionA = "Option A must not be empty.";
-  } else if (optionA.length > 50) {
-    errors.optionA = "Option A must be 50 characters or fewer.";
+  const trimmedOutcomes = values.outcomes.map((o) => o.trim().toLowerCase());
+  trimmedOutcomes.forEach((outcome, index) => {
+    if (!outcome || outcomeErrors[index]) return;
+    const firstDuplicateIndex = trimmedOutcomes.indexOf(outcome);
+    if (firstDuplicateIndex !== index) {
+      outcomeErrors[index] = "Outcome labels must be unique.";
+    }
+  });
+
+  if (outcomeErrors.some((e) => e !== undefined)) {
+    errors.outcomeErrors = outcomeErrors;
   }
 
-  if (!optionB) {
-    errors.optionB = "Option B label is required.";
-  } else if (optionB.length < 1) {
-    errors.optionB = "Option B must not be empty.";
-  } else if (optionB.length > 50) {
-    errors.optionB = "Option B must be 50 characters or fewer.";
-  }
-
-  if (optionA && optionB && optionA.toLowerCase() === optionB.toLowerCase()) {
-    errors.optionB = "Option B must be different from Option A.";
+  if (values.outcomes.length < MIN_OUTCOMES) {
+    errors.outcomes = `A pool needs at least ${MIN_OUTCOMES} outcomes.`;
+  } else if (values.outcomes.length > MAX_OUTCOMES) {
+    errors.outcomes = `A pool can have at most ${MAX_OUTCOMES} outcomes.`;
   }
 
   // ── stake bounds ──────────────────────────────────────────────────────────
@@ -161,14 +191,15 @@ export function validateCreatePool(
   } else {
     const closeMs = new Date(values.closeTime).getTime();
     const nowMs = Date.now();
-    const minFutureMs = nowMs + MIN_CLOSE_MINUTES * 60 * 1000;
+    const minFutureMs = nowMs + MIN_CLOSE_SECONDS * 1000;
 
     if (Number.isNaN(closeMs)) {
       errors.closeTime = "Enter a valid date and time.";
     } else if (closeMs <= nowMs) {
       errors.closeTime = "Close time must be in the future.";
     } else if (closeMs < minFutureMs) {
-      errors.closeTime = `Close time must be at least ${MIN_CLOSE_MINUTES} minutes from now.`;
+      const minutes = Math.ceil(MIN_CLOSE_SECONDS / 60);
+      errors.closeTime = `Close time must be at least ${minutes} minutes from now.`;
     }
   }
 
@@ -182,7 +213,7 @@ export function validateCreatePool(
 
 /** Returns the minimum ISO datetime string usable in <input type="datetime-local">. */
 export function minCloseTimeValue(): string {
-  const d = new Date(Date.now() + MIN_CLOSE_MINUTES * 60 * 1000);
+  const d = new Date(Date.now() + MIN_CLOSE_SECONDS * 1000);
   // datetime-local format: "YYYY-MM-DDTHH:MM"
   return d.toISOString().slice(0, 16);
 }

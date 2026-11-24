@@ -370,6 +370,7 @@ impl core::fmt::Display for PrediFiError {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
     use super::PrediFiError;
 
     #[test]
@@ -402,6 +403,64 @@ mod tests {
             error.as_str().contains("authorized"),
             "message should help explain access failure"
         );
+    }
+
+    #[test]
+    fn all_error_codes_are_unique() {
+        use std::collections::BTreeSet;
+
+        let mut seen = BTreeSet::new();
+        let variants = [
+            PrediFiError::NotInitialized,
+            PrediFiError::AlreadyInitializedOrConfigNotSet,
+            PrediFiError::Unauthorized,
+            PrediFiError::InsufficientPermissions,
+            PrediFiError::PoolNotFound,
+            PrediFiError::PoolAlreadyResolved,
+            PrediFiError::PoolNotResolved,
+            PrediFiError::PoolExpiryError,
+            PrediFiError::InvalidPoolState,
+            PrediFiError::InvalidOutcome,
+            PrediFiError::StateError,
+            PrediFiError::PredictionNotFound,
+            PrediFiError::PredictionAlreadyExists,
+            PrediFiError::InvalidPredictionAmount,
+            PrediFiError::PredictionTooLate,
+            PrediFiError::InsufficientBalanceOrStakeLimit,
+            PrediFiError::AlreadyClaimed,
+            PrediFiError::NotAWinner,
+            PrediFiError::RewardError,
+            PrediFiError::InvalidTimestamp,
+            PrediFiError::TimeConstraintError,
+            PrediFiError::InvalidData,
+            PrediFiError::InvalidAddressOrToken,
+            PrediFiError::InvalidPagination,
+            PrediFiError::InvalidFeeBps,
+            PrediFiError::MetadataError,
+            PrediFiError::ArithmeticError,
+            PrediFiError::FeeExceedsAmount,
+            PrediFiError::InvalidAmount,
+            PrediFiError::StorageError,
+            PrediFiError::ConsistencyError,
+            PrediFiError::BalanceMismatch,
+            PrediFiError::TokenError,
+            PrediFiError::WithdrawalOrTreasuryError,
+            PrediFiError::OracleError,
+            PrediFiError::ResolutionError,
+            PrediFiError::AdminError,
+            PrediFiError::RateLimitOrSuspiciousActivity,
+            PrediFiError::RequiredResolutionsExceedOperators,
+        ];
+
+        for variant in variants {
+            let code = variant.code();
+            assert!(
+                seen.insert(code),
+                "duplicate error code {} for variant {:?}",
+                code,
+                variant
+            );
+        }
     }
 
     // --- Exhaustive per-variant tests ---
