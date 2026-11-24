@@ -1,4 +1,5 @@
 import React from "react";
+import Link from "next/link";
 import {
   ArrowUpRight,
   ChartPie,
@@ -21,7 +22,7 @@ const InstinctsToSignals = React.memo(function InstinctsToSignals() {
 
       <div className="flex lg:flex-row flex-col items-center justify-center gap-y-10 gap-x-[80px] mt-[50px] mb-10">
         <div className="space-y-[10px] max-w-[340px]">
-          <ChartPie size={40} />
+          <ChartPie size={40} aria-hidden="true" />
           <h3 className="text-sm lg:text-lg font-medium">
             Real-Time Statistics
           </h3>
@@ -30,14 +31,14 @@ const InstinctsToSignals = React.memo(function InstinctsToSignals() {
           </p>
         </div>
         <div className="space-y-[10px] max-w-[340px]">
-          <SquareSplitHorizontal size={40} />
+          <SquareSplitHorizontal size={40} aria-hidden="true" />
           <h3 className="text-sm lg:text-lg font-medium">Diverse Pool Types</h3>
           <p className="text-xs lg:text-base/[140%] tracking-[2%] opacity-70 font-medium">
             Win Bet, Opinion-Based, Over/Under, Parlay (coming soon)
           </p>
         </div>
         <div className="space-y-[10px] max-w-[340px]">
-          <LayoutPanelTop size={40} />
+          <LayoutPanelTop size={40} aria-hidden="true" />
           <h3 className="text-sm lg:text-lg font-medium">
             Decentralized Platform
           </h3>
@@ -47,9 +48,12 @@ const InstinctsToSignals = React.memo(function InstinctsToSignals() {
         </div>
       </div>
 
-      <button className="w-full max-w-[300px] py-[10px] gap-x-3 items-center flex justify-center text-lg bg-[#37B7C31A] rounded-[10px] mx-auto">
-        Learn more <ArrowUpRight />
-      </button>
+      <Link
+        href="/features"
+        className="w-full max-w-[300px] py-[10px] gap-x-3 items-center flex justify-center text-lg bg-[#37B7C31A] rounded-[10px] mx-auto"
+      >
+        Learn more <ArrowUpRight aria-hidden="true" />
+      </Link>
     </div>
   );
 });

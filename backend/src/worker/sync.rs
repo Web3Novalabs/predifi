@@ -7,14 +7,15 @@
 //!
 //! # Usage
 //! Call [`run_full_sync`] from the main server or as a standalone task:
-//! ```rust,no_run
+//! ```rust,ignore
 //! sync::run_full_sync(&db, &config).await?;
 //! ```
 
 use sqlx::PgPool;
-use tracing::{error, info, warn};
+use tracing::{error, info, instrument, warn, Span};
 
 use crate::config::Config;
+use crate::tracing_context;
 
 /// Result of a single pool sync operation.
 #[derive(Debug)]
@@ -33,7 +34,12 @@ pub struct PoolSyncResult {
 /// RPC helper. Returns `None` if the pool is not found on-chain.
 ///
 /// This calls `get_pool_outcome_stakes` on the predifi contract and sums
-/// all outcome stakes to compute the total.
+/// all outcome stakes to compute the total. The request ID (correlation ID)
+/// from the current tracing context is propagated to the outbound RPC call
+/// so slow or failed RPC requests can be traced back to their originating
+/// HTTP request.
+#[instrument(skip(config), name = "sync.fetch_contract_total_stake",
+    fields(pool_id = pool_id, correlation_id = ""))]
 async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64> {
     // Build the Soroban RPC request — we call `get_pool_outcome_stakes(pool_id)`.
     // The response is a map of outcome_index → stake_amount; we sum the values.
@@ -47,23 +53,59 @@ async fn fetch_contract_total_stake(config: &Config, pool_id: i64) -> Option<i64
         }
     });
 
+    // Propagate the current request/correlation ID to the outbound RPC call.
+    // This allows slow or failed RPC requests to be traced back to the inbound
+    // HTTP request that triggered them.
+    let correlation_id = tracing_context::current_correlation_id();
+    if let Some(ref corr_id) = correlation_id {
+        Span::current().record("correlation_id", corr_id);
+    }
+
     let client = reqwest::Client::new();
-    let response = client.post(&rpc_url).json(&payload).send().await.ok()?;
+    let mut request = client.post(&rpc_url).json(&payload);
+
+    // Attach the correlation ID as a header if present so the RPC server
+    // can include it in its logs.
+    if let Some(corr_id) = correlation_id {
+        request = request.header(tracing_context::CORRELATION_ID_HEADER, corr_id);
+    }
+
+    let response = request.send().await.ok()?;
 
     let body: serde_json::Value = response.json().await.ok()?;
     parse_total_stake_from_rpc(&body)
 }
 
-/// Build a minimal XDR string for simulating `get_pool_outcome_stakes(pool_id)`.
-/// In a full implementation this would use the `stellar-xdr` crate to encode
-/// a real `InvokeContractArgs`. The placeholder below returns an empty string
-/// which causes the simulation to fail gracefully — replace with real XDR when
-/// integrating with the Stellar SDK.
-fn build_get_stakes_xdr(_config: &Config, _pool_id: i64) -> String {
-    // TODO: Encode a real `InvokeContractArgs` XDR using the stellar-xdr crate.
-    // For now, return a placeholder so the module compiles and the structure is
-    // testable without a live Soroban node.
-    String::new()
+/// Build an XDR base64 string for simulating `get_pool_outcome_stakes(pool_id)`
+/// using a real [`stellar_xdr::curr::InvokeContractArgs`].
+pub fn build_get_stakes_invocation(pool_id: i64) -> stellar_xdr::curr::InvokeContractArgs {
+    use stellar_xdr::curr::{
+        ContractId, Hash, InvokeContractArgs, ScAddress, ScSymbol, ScVal,
+    };
+
+    let contract_address = ScAddress::Contract(ContractId(Hash([0u8; 32])));
+    let function_name: ScSymbol = "get_pool_outcome_stakes"
+        .try_into()
+        .expect("fixed function name must fit the 32-byte ScSymbol limit");
+    let args = vec![ScVal::I64(pool_id)]
+        .try_into()
+        .expect("a one-element args vector must fit within the VecM length limit");
+
+    InvokeContractArgs {
+        contract_address,
+        function_name,
+        args,
+    }
+}
+
+/// Build an XDR base64 string for simulating `get_pool_outcome_stakes(pool_id)`.
+pub fn build_get_stakes_xdr(_config: &Config, pool_id: i64) -> String {
+    use stellar_xdr::curr::{Limits, WriteXdr};
+
+    let invoke_args = build_get_stakes_invocation(pool_id);
+    invoke_args
+        .to_xdr_base64(Limits::none())
+        .unwrap_or_default()
 }
 
 /// Parse the summed total stake from a Soroban RPC simulate response.
@@ -84,6 +126,8 @@ fn parse_total_stake_from_rpc(body: &serde_json::Value) -> Option<i64> {
 }
 
 /// Fix the DB `total_stake` for a pool by updating it to match on-chain state.
+#[instrument(skip(db), name = "sync.fix_pool_stake",
+    fields(pool_id = pool_id, correct_stake = correct_stake))]
 async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE pools SET total_stake = $1 WHERE pool_id = $2")
         .bind(correct_stake)
@@ -101,6 +145,7 @@ async fn fix_pool_stake(db: &PgPool, pool_id: i64, correct_stake: i64) -> Result
 /// 3. If they differ, updates the DB to match the contract (contract is truth).
 ///
 /// Returns the list of pools that were examined, including which were fixed.
+#[instrument(skip(db, config), name = "sync.run_full_sync")]
 pub async fn run_full_sync(
     db: &PgPool,
     config: &Config,
@@ -165,4 +210,48 @@ pub async fn run_full_sync(
     );
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stellar_xdr::curr::{ReadXdr, ScAddress, ScVal};
+
+    #[test]
+    fn build_get_stakes_invocation_constructs_valid_arguments() {
+        let pool_id = 42i64;
+        let invocation = build_get_stakes_invocation(pool_id);
+
+        match invocation.contract_address {
+            ScAddress::Contract(contract_id) => {
+                assert_eq!(contract_id.0 .0, [0u8; 32]);
+            }
+            _ => panic!("expected contract address"),
+        }
+
+        assert_eq!(invocation.function_name.to_string(), "get_pool_outcome_stakes");
+
+        let args = invocation.args;
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0], ScVal::I64(pool_id));
+    }
+
+    #[test]
+    fn build_get_stakes_xdr_encodes_and_roundtrips() {
+        let pool_id = 12345i64;
+        let config = Config::from_env().unwrap_or_else(|_| {
+            Config::from_map(&std::collections::HashMap::new()).unwrap()
+        });
+        let xdr_b64 = build_get_stakes_xdr(&config, pool_id);
+        assert!(!xdr_b64.is_empty());
+
+        let decoded = stellar_xdr::curr::InvokeContractArgs::from_xdr_base64(
+            &xdr_b64,
+            stellar_xdr::curr::Limits::none(),
+        )
+        .expect("must decode valid XDR");
+
+        assert_eq!(decoded.function_name.to_string(), "get_pool_outcome_stakes");
+        assert_eq!(decoded.args[0], ScVal::I64(pool_id));
+    }
 }

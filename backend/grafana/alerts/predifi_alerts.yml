@@ -1,0 +1,111 @@
+groups:
+  - name: predifi_production_alerts
+    rules:
+      # ── 1. API Error Rate (5xx > 1% over 5m) ───────────────────────────────
+      - alert: HighApiErrorRate
+        expr: (sum(rate(app_http_requests_total{status=~"5.."}[5m])) / sum(rate(app_http_requests_total[5m]))) * 100 > 1
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API HTTP 5xx error rate exceeded 1%"
+          description: "API HTTP 5xx error rate is currently {{ $value | printf \"%.2f\" }}% over the last 5 minutes."
+
+      # ── 2. Request Latency (p99 > 500ms over 5m) ───────────────────────────
+      - alert: HighP99Latency
+        expr: histogram_quantile(0.99, sum(rate(app_http_request_duration_seconds_bucket[5m])) by (le)) > 0.5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p99 latency is greater than 500ms"
+          description: "The 99th percentile HTTP request latency is {{ $value | printf \"%.3f\" }}s."
+
+      # ── 2b. Latency target (p99 > 100ms over 10m, #2204) ───────────────────
+      - alert: ApiP99LatencyAboveTarget
+        expr: histogram_quantile(0.99, sum(rate(app_http_request_duration_seconds_bucket[10m])) by (le)) > 0.1
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "API p99 latency is above the 100ms target"
+          description: "The 99th percentile HTTP request latency is {{ $value | printf \"%.3f\" }}s. Check app_db_query_duration_seconds by query_type, then run predifi-explain-queries."
+
+      # ── 3. Worker Queue Depth & DLQ Accumulation ────────────────────────────
+      - alert: WorkerQueueBacklog
+        expr: app_worker_queue_depth > 50
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker queue depth exceeded 50 jobs"
+          description: "Worker queue backlog is currently {{ $value }} jobs, indicating worker lag or processing delays."
+
+      - alert: WorkerDLQBacklog
+        expr: app_worker_dlq_depth > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Worker dead-letter queue (DLQ) backlog exceeded 10 jobs"
+          description: "Worker DLQ contains {{ $value }} failed jobs that exhausted retries and require operator intervention."
+
+      # ── 4. Database Connection Saturation ───────────────────────────────────
+      - alert: DatabaseConnectionPoolSaturated
+        expr: db_pool_utilization_ratio > 0.8
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Database connection pool utilization exceeded 80%"
+          description: "Database connection pool utilization is currently {{ $value | printf \"%.1f\" }}% (checked out / total slots)."
+
+      - alert: DatabaseConnectionPoolCritical
+        expr: db_pool_utilization_ratio > 0.95
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database connection pool utilization near exhaustion (>95%)"
+          description: "Database connection pool is at {{ $value | printf \"%.1f\" }}% utilization, risking query timeouts and failures."
+
+      # ── Auxiliary Reliability Alerts ────────────────────────────────────────
+      # Database Query Failure Spike
+      - alert: DatabaseQueryFailures
+        expr: sum(rate(app_db_queries_total{result="error"}[5m])) > 5
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Database query error spike detected"
+          description: "Database queries are failing at {{ $value | printf \"%.1f\" }} errors per second."
+
+      # Redis Operation Failures
+      - alert: HighRedisErrors
+        expr: sum(rate(app_redis_operations_total{result="error"}[5m])) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis operation error rate"
+          description: "Redis operations are failing at {{ $value | printf \"%.1f\" }} errors per second."
+
+      # Contract Interaction Failures
+      - alert: ContractInteractionFailures
+        expr: sum(rate(app_db_queries_total{query_type=~".*contract.*",result="error"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Smart contract interaction failure detected"
+          description: "Contract operations are producing errors."
+
+      # Backend Memory Usage > 90%
+      - alert: BackendMemoryHigh
+        expr: (app_memory_used_bytes / app_memory_total_bytes) * 100 > 90
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend memory usage exceeded 90% threshold"
+          description: "Backend process memory usage is at {{ $value | printf \"%.2f\" }}%, risk of Out-Of-Memory (OOM) killer."

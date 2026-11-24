@@ -40,7 +40,7 @@ export default function WaitlistPage() {
     <div className="text-sm min-h-screen bg-[#001112] flex flex-col">
       <Navbar />
 
-      <main className="w-full overflow-x-hidden flex-1">
+      <main id="main-content" tabIndex={-1} className="w-full overflow-x-hidden flex-1">
         <WaitlistForm />
       </main>
 

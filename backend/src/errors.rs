@@ -59,25 +59,108 @@ impl From<sqlx::Error> for AppError {
 
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
+        use crate::response::error_codes;
         use crate::response::ApiResponse;
         use axum::http::StatusCode;
 
         match self {
             AppError::NotFound(msg) => {
-                ApiResponse::<()>::error(StatusCode::NOT_FOUND, msg).into_response()
+                ApiResponse::<()>::error(StatusCode::NOT_FOUND, error_codes::NOT_FOUND, msg)
+                    .into_response()
             }
             AppError::Conflict(msg) => {
-                ApiResponse::<()>::error(StatusCode::CONFLICT, msg).into_response()
+                ApiResponse::<()>::error(StatusCode::CONFLICT, error_codes::CONFLICT, msg)
+                    .into_response()
             }
             AppError::InvalidInput(msg) => {
-                ApiResponse::<()>::error(StatusCode::BAD_REQUEST, msg).into_response()
+                ApiResponse::<()>::error(StatusCode::BAD_REQUEST, error_codes::INVALID_INPUT, msg)
+                    .into_response()
             }
-            AppError::ServiceUnavailable(msg) => {
-                ApiResponse::<()>::error(StatusCode::SERVICE_UNAVAILABLE, msg).into_response()
-            }
+            AppError::ServiceUnavailable(msg) => ApiResponse::<()>::error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                error_codes::SERVICE_UNAVAILABLE,
+                msg,
+            )
+            .into_response(),
             AppError::Internal(msg) => {
-                ApiResponse::<()>::error(StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+                // Never expose internal error details (DB messages, low-level
+                // errors) to clients: log them server-side and return a
+                // generic, stable message instead.
+                tracing::error!(error = %msg, "internal server error");
+                ApiResponse::<()>::error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error_codes::INTERNAL_ERROR,
+                    "internal server error",
+                )
+                .into_response()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+
+    #[test]
+    fn display_not_found() {
+        let err = AppError::NotFound("pool 42".to_string());
+        assert_eq!(err.to_string(), "not found: pool 42");
+    }
+
+    #[test]
+    fn display_conflict() {
+        let err = AppError::Conflict("duplicate entry".to_string());
+        assert_eq!(err.to_string(), "conflict: duplicate entry");
+    }
+
+    #[test]
+    fn display_invalid_input() {
+        let err = AppError::InvalidInput("bad field".to_string());
+        assert_eq!(err.to_string(), "invalid input: bad field");
+    }
+
+    #[test]
+    fn display_service_unavailable() {
+        let err = AppError::ServiceUnavailable("db down".to_string());
+        assert_eq!(err.to_string(), "service unavailable: db down");
+    }
+
+    #[test]
+    fn display_internal() {
+        let err = AppError::Internal("unexpected".to_string());
+        assert_eq!(err.to_string(), "internal error: unexpected");
+    }
+
+    #[test]
+    fn not_found_maps_to_404() {
+        let resp = AppError::NotFound("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn conflict_maps_to_409() {
+        let resp = AppError::Conflict("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn invalid_input_maps_to_400() {
+        let resp = AppError::InvalidInput("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn service_unavailable_maps_to_503() {
+        let resp = AppError::ServiceUnavailable("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn internal_maps_to_500() {
+        let resp = AppError::Internal("x".to_string()).into_response();
+        assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

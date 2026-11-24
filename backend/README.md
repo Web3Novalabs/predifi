@@ -53,14 +53,14 @@ The server listens on `http://localhost:3000`.
 Verify it is running:
 
 ```bash
-curl http://localhost:3000/           # 200 — welcome message
-curl http://localhost:3000/health     # 200 — {"status":"ok","service":"predifi-backend","version":"0.1.0"}
-curl http://localhost:3000/missing    # 404 — unknown route
-curl http://localhost:3000/               # 200 - welcome message
-curl http://localhost:3000/health         # 200 - {"status":"ok","version":"v1"}
-curl http://localhost:3000/api/v1         # 200 - version discovery
-curl http://localhost:3000/api/v1/health  # 200 - {"status":"ok","version":"v1"}
-curl http://localhost:3000/missing        # 404 - unknown route
+curl http://localhost:3000/                 # 200 — welcome message
+curl http://localhost:3000/health           # 200 — {"status":"alive","service":"predifi-backend",...} (liveness, no I/O)
+curl http://localhost:3000/health/ready     # 200/503 — per-dependency readiness
+curl http://localhost:3000/health/components# 200/503 — full component diagnostics
+curl http://localhost:3000/missing          # 404 — unknown route
+curl http://localhost:3000/api/v1           # 200 — version discovery
+curl http://localhost:3000/api/v1/health    # 200 — {"status":"alive","version":"v1",...}
+curl http://localhost:3000/api/v1/health/ready # 200/503 — per-dependency readiness
 ```
 
 Auto-restart on file changes (requires `cargo-watch`):
@@ -80,7 +80,9 @@ reads environment variables into a typed `Config` struct.
 | :------------------------ | :---------------------------------------------------- | :----------------------------- |
 | `APP_HOST`                | `0.0.0.0`                                             | Host interface to bind         |
 | `APP_PORT`                | `3000`                                                | HTTP port                      |
-| `RUST_LOG`                | `info`                                                | Tracing filter level           |
+| `RUST_LOG`                | `info`                                                | Tracing filter; per-module directives allowed, e.g. `info,predifi_backend::ws=debug` |
+| `PREDIFI_LOG_FORMAT`      | `json`                                                | `json` or `pretty` (compact, for local dev) |
+| `PREDIFI_CONTRACT_ID`     | (unset)                                               | PrediFi Stellar contract to filter and ingest; required in production. |
 | `DATABASE_URL`            | `postgres://postgres:postgres@localhost:5432/predifi` | PostgreSQL DSN                 |
 | `DB_MAX_CONNECTIONS`      | `10`                                                  | SQLx pool max connections      |
 | `DB_MIN_CONNECTIONS`      | `1`                                                   | SQLx pool min connections      |
@@ -103,9 +105,51 @@ still validating pool configuration and creating a reusable `PgPool` handle.
 
 ## Structured tracing
 
-`tracing-subscriber` is initialized once in `main`, using `RUST_LOG` for
-filtering. The request middleware now emits structured tracing events rather
-than plain `println!` output.
+`tracing-subscriber` is initialized once at startup (`run_server`) with a
+reloadable per-module `EnvFilter` built from `RUST_LOG`, and emits one JSON
+object per line (`PREDIFI_LOG_FORMAT=pretty` for local development). The
+filter can be changed at runtime via `PATCH /api/v1/admin/log-level`
+(see `docs/admin-log-level.md`).
+
+Every HTTP request runs inside an `http.request` span carrying:
+
+- `correlation_id` — taken from `x-correlation-id` / `x-request-id` when it is
+  a well-formed ID (1–128 chars of `[A-Za-z0-9._:-]`), otherwise a new UUID.
+  It is echoed back in the `x-correlation-id` response header, available to
+  handlers as `Extension<CorrelationId>` and to any code on the request's task
+  via `tracing_context::current_correlation_id()`, carried into tasks started
+  with `tracing_context::spawn*`, and forwarded on outbound calls with
+  `tracing_context::propagate_correlation_id`.
+- `user_address` — the redacted wallet from a *verified* access token, else
+  `anonymous`.
+- `pool_id` — parsed from `/pools/:id` and `/markets/:id` paths.
+- `http.route` (normalised, e.g. `/api/v1/pools/:id`) and `http.target`.
+
+Background workers get their own `worker` span and correlation ID.
+
+---
+
+## Metrics
+
+`GET /metrics` serves Prometheus metrics. Besides HTTP latency/counts
+(labelled by normalised route), the backend records:
+
+| Metric | Type | Labels |
+|---|---|---|
+| `app_db_query_duration_seconds`, `app_db_queries_total` | histogram, counter | `query_type`, `result` |
+| `app_redis_operation_duration_seconds`, `app_redis_operations_total` | histogram, counter | `operation`, `result` |
+| `app_ws_connections_active` / `_total`, `app_ws_disconnections_total` | gauge, counters | — |
+| `app_ws_messages_sent_total`, `app_ws_bytes_sent_total` | counters | `kind`, `encoding` |
+| `app_ws_events_dropped_total`, `app_ws_batch_size` | counter, histogram | `reason` |
+| `app_active_pools`, `app_resolved_pools`, `app_cancelled_pools` | gauges | — |
+| `app_predictions_window`, `app_prediction_volume_window_stroops` | gauges | `window` = `1m`/`5m`/`1h`/`24h` |
+| `app_predictions_total`, `app_prediction_volume_stroops_total` | counters | — |
+| `db_pool_size` / `_idle` / `_active` / `_utilization_ratio` | gauges | — |
+
+Pool counts and windowed prediction volume are read from the database every
+15 s by the `metrics_collector` worker, so they are correct across restarts
+and replicas. The Grafana dashboard in `grafana/dashboards/` has data source,
+instance, DB query type and Redis operation template variables.
 
 ---
 
@@ -130,6 +174,31 @@ Tests use Tower's `.oneshot()` helper, so no live server is needed.
 ```bash
 cargo test
 ```
+
+---
+
+## Check database migrations
+
+Before deploying schema changes, run the migration preflight against a
+disposable or staging database with the same schema version as the target
+environment:
+
+```bash
+cargo run --bin predifi-migration-check
+```
+
+The command reads `PREDIFI_DATABASE_URL`, applies only pending migrations
+inside a transaction, previews table/column/index changes, checks backward
+compatibility, and verifies the schema is unchanged after rollback. It exits
+with a failure status if a migration cannot be dry-run, its rollback fails, or
+the preview contains a breaking or phased change. It never applies migrations
+permanently. Do not run the preflight against production: even rolled-back DDL
+can hold locks or perform expensive work while it executes.
+
+Migrations must use unique, increasing SQLx version prefixes and should be
+append-only after release. Use expand/backfill/contract deployments for
+destructive changes; do not use this preflight as a substitute for testing
+application behavior or long-running locks on production-sized data.
 
 ---
 
@@ -231,3 +300,57 @@ let app = Router::new()
     .route("/", get(handler))
     .layer(LoggingLayer);
 ```
+
+---
+
+## `GET /api/v1/markets/:id/predictions` — cursor-paginated predictions per market
+
+Returns the predictions placed in a specific prediction market (pool), ordered
+newest first, with cursor-based pagination.
+
+### Query parameters
+
+| Parameter | Type    | Required | Description                                                       |
+| :-------- | :------ | :------- | :---------------------------------------------------------------- |
+| `after`   | integer | No       | Cursor value from the previous page's `next_cursor` field         |
+| `limit`   | integer | No       | Page size, 1–100 (default 20)                                     |
+
+### Example — first page
+
+```bash
+curl "http://localhost:3000/api/v1/markets/42/predictions?limit=3"
+```
+
+```json
+{
+  "status": "success",
+  "data": {
+    "market_id": 42,
+    "predictions": [
+      { "id": 305, "pool_id": 42, "user_address": "GABC...", "outcome": 1, "amount": 500, "created_at": "2026-06-29T08:00:00Z" },
+      { "id": 304, "pool_id": 42, "user_address": "GDEF...", "outcome": 0, "amount": 200, "created_at": "2026-06-28T22:30:00Z" },
+      { "id": 302, "pool_id": 42, "user_address": "GXYZ...", "outcome": 1, "amount": 100, "created_at": "2026-06-28T10:15:00Z" }
+    ],
+    "total": 47,
+    "limit": 3,
+    "next_cursor": 302
+  }
+}
+```
+
+### Example — next page
+
+```bash
+curl "http://localhost:3000/api/v1/markets/42/predictions?limit=3&after=302"
+```
+
+Pass `next_cursor` from the previous response as `after`. When `next_cursor` is
+`null` you have reached the last page.
+
+### Error responses
+
+| Status | Code                   | When                             |
+| :----- | :--------------------- | :------------------------------- |
+| 404    | `NOT_FOUND`            | The market ID does not exist     |
+| 503    | `DATABASE_UNAVAILABLE` | No database pool configured      |
+| 500    | `INTERNAL_ERROR`       | Unexpected database query error  |

@@ -1,0 +1,136 @@
+﻿cargo : [1m[93mwarning[0m[1m[97m: unused import: `BytesN`[0m
+At line:15 char:4058
++ ... pgrep\bin'; cargo test -p predifi-contract --test pause_unpause_tests ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([1m[93mwarnin...t: `BytesN`[0m:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  [1m[96m--> [0mcontracts\predifi-contract\src\lib.rs:54:14
+   [1m[96m|[0m
+[1m[96m54[0m [1m[96m|[0m     Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
+   [1m[96m|[0m              [1m[93m^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::events::Events::publish`: use the 
+#[contractevent] macro on a contract event type[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\creator_incentive.rs:68:22
+   [1m[96m|[0m
+[1m[96m68[0m [1m[96m|[0m         env.events().publish((soroban_sdk::Symbol::new(env, 
+"creator_incentive_config_updated"),), self.clone());
+   [1m[96m|[0m                      [1m[93m^^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::events::Events::publish`: use the 
+#[contractevent] macro on a contract event type[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\creator_incentive.rs:83:22
+   [1m[96m|[0m
+[1m[96m83[0m [1m[96m|[0m         env.events().publish((soroban_sdk::Symbol::new(env, 
+"creator_incentive_paid"),), self.clone());
+   [1m[96m|[0m                      [1m[93m^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: variable does not need to be mutable[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\pool.rs:771:13
+    [1m[96m|[0m
+[1m[96m771[0m [1m[96m|[0m         let mut pool: Pool = env
+    [1m[96m|[0m             [1m[96m----[0m[1m[93m^^^^[0m
+    [1m[96m|[0m             [1m[96m|[0m
+    [1m[96m|[0m             [1m[96mhelp: remove this `mut`[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: associated constant `MIN_CONFIDENCE_RATIO_BPS` is never used[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\oracle.rs:213:11
+    [1m[96m|[0m
+[1m[96m 23[0m [1m[96m|[0m impl PredifiContract {
+    [1m[96m|[0m [1m[96m--------------------[0m [1m[96massociated constant in this implementation[0m
+[1m[96m...[0m
+[1m[96m213[0m [1m[96m|[0m     const MIN_CONFIDENCE_RATIO_BPS: u32 = 500; // 5%
+    [1m[96m|[0m           [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: function `calculate_payout_pool` is never used[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\payouts.rs:75:8
+   [1m[96m|[0m
+[1m[96m75[0m [1m[96m|[0m pub fn calculate_payout_pool(total_stake: i128, fee_bps: i128) -> Result<i128, 
+PrediFiError> {
+   [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m: `predifi-contract` (lib) generated 6 warnings (run `cargo fix --lib -p predifi-contract` to 
+apply 2 suggestions)
+[1m[92m   Compiling[0m predifi-contract v0.0.0 
+(C:\Users\USA\Documents\wavyboy\predifi\contract\contracts\predifi-contract)
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::register_stellar_asset_contract`: use 
+[Env::register_stellar_asset_contract_v2][0m
+   [1m[96m--> [0mcontracts\predifi-contract\tests\common\mod.rs:138:29
+    [1m[96m|[0m
+[1m[96m138[0m [1m[96m|[0m     let token_address = env.register_stellar_asset_contract(token_admin_addr);
+    [1m[96m|[0m                             [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[93mwarning[0m: `predifi-contract` (test "update_referrer_tests") generated 1 warning (1 duplicate)
+[1m[93mwarning[0m: `predifi-contract` (test "pause_unpause_tests") generated 1 warning (1 duplicate)
+[1m[93mwarning[0m: `predifi-contract` (test "concurrent_predictions_stress") generated 1 warning
+[1m[93mwarning[0m: `predifi-contract` (test "pool_lifecycle_tests") generated 1 warning (1 duplicate)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`test` 
+profile [unoptimized + debuginfo]]8;;\ target(s) in 27.17s
+[1m[92m     Running[0m tests\concurrent_predictions_stress.rs 
+(target\debug\deps\concurrent_predictions_stress-debaed452acb4f5f.exe)
+
+running 5 tests
+test predictions_from_many_users_are_independently_tracked ... ok
+test single_user_can_place_many_predictions ... ok
+test stake_accounting_is_exact_across_outcomes ... ok
+test high_volume_pool_resolves_and_leaves_active_index ... ok
+test many_distinct_predictions_accumulate_stake_and_participants ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.35s
+
+[1m[92m     Running[0m tests\pause_unpause_tests.rs (target\debug\deps\pause_unpause_tests-50f8b2b67c05f08e.exe)
+
+running 9 tests
+test double_pause_is_rejected ... ok
+test non_admin_cannot_pause ... ok
+test pause_emits_alert_and_pause_events ... ok
+test pause_sets_flag_and_unpause_clears_it ... ok
+test non_admin_cannot_unpause ... ok
+test pause_blocks_create_pool ... ok
+test unpause_emits_unpause_event ... ok
+test unpause_when_not_paused_is_rejected ... ok
+test unpause_restores_create_pool ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+[1m[92m     Running[0m tests\pool_lifecycle_tests.rs (target\debug\deps\pool_lifecycle_tests-a61c406bbd65c6fd.exe)
+
+running 12 tests
+test mark_pool_ready_requires_staking_closed ... ok
+test full_lifecycle_sequence ... ok
+test close_staking_is_idempotent ... ok
+test close_staking_before_end_time_is_rejected ... ok
+test create_pool_initial_state_is_active ... ok
+test mark_pool_ready_after_delay_emits_event ... ok
+test duplicate_vote_is_rejected_when_quorum_not_yet_reached ... ok
+test close_staking_after_end_time_succeeds_and_emits_event ... ok
+test resolve_pool_out_of_range_outcome_is_rejected ... ok
+test resolve_pool_requires_operator_role ... ok
+test resolving_an_already_resolved_pool_is_rejected ... ok
+test resolve_pool_transitions_to_resolved ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.33s
+
+[1m[92m     Running[0m tests\update_referrer_tests.rs (target\debug\deps\update_referrer_tests-c28c1bb4ad2143a5.exe)
+
+running 6 tests
+test contract_address_referral_is_rejected ... ok
+test update_referrer_while_paused_is_rejected ... ok
+test self_referral_is_rejected ... ok
+test update_referrer_sets_referrer_and_emits_event ... ok
+test update_referrer_can_overwrite_previous_referrer ... ok
+test update_referrer_with_none_removes_referrer ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+

@@ -12,8 +12,10 @@
 // │ Role     │ Value │ Description                                          │
 // ├──────────┼───────┼──────────────────────────────────────────────────────┤
 // │ Admin    │   0   │ Full control over protocol configuration and role    │
-// │          │       │ management. Can assign/revoke roles, transfer      │
-// │          │       │ admin rights, and manage all contract settings.    │
+// │          │       │ management. Can assign/revoke roles and manage all   │
+// │          │       │ contract settings. Admin rights are transferred via  │
+// │          │       │ the two-step `propose_new_admin` + `accept_admin_role`│
+// │          │       │ flow.                                                │
 // ├──────────┼───────┼──────────────────────────────────────────────────────┤
 // │ Operator │   1   │ Can manage prediction pools, perform operational    │
 // │          │       │ tasks such as resolving pools and updating config.  │
@@ -48,8 +50,17 @@
 //   grants it the Admin role (0).  Calling `init` a second time will panic
 //   with `AlreadyInitializedOrConfigNotSet`.
 //
-//   Example (Stellar CLI):
+//   `init` calls `admin.require_auth()`, so the invocation MUST be signed
+//   (authorised) by `admin_address`.  A third party can therefore no longer
+//   initialise the contract with an arbitrary admin.  To close the window
+//   between deployment and initialisation entirely, deploy and call `init`
+//   atomically in the same transaction (e.g. from a deployer/factory
+//   contract), or invoke `init` immediately after deployment and verify
+//   `get_admin()` before wiring the contract into the protocol.
+//
+//   Example (Stellar CLI — the source account must be the admin):
 //     stellar contract invoke --id <ACCESS_CONTROL_ID> \
+//       --source <ADMIN_IDENTITY> \
 //       -- init --admin <ADMIN_ADDRESS>
 //
 // Step 3 — Grant operational roles.
@@ -68,6 +79,26 @@
 //   The predifi contract will cross-call `has_role` on every privileged
 //   operation to enforce permissions.
 //
+// TRANSFERRING ADMIN RIGHTS
+// ─────────────────────────
+// Admin rights are transferred using a two-step process for security:
+//
+// Step 1 — The current admin proposes a new admin:
+//   stellar contract invoke --id <ACCESS_CONTROL_ID> \
+//     -- propose_new_admin \
+//        --current_admin <ADMIN_ADDRESS> \
+//        --new_admin <PROPOSED_ADMIN_ADDRESS>
+//
+// Step 2 — The proposed admin accepts the role:
+//   stellar contract invoke --id <ACCESS_CONTROL_ID> \
+//     -- accept_admin_role \
+//        --new_admin <PROPOSED_ADMIN_ADDRESS>
+//
+// This two-step flow protects against:
+// - Mistyped or incorrect admin addresses
+// - Transferring to addresses without access to the private key
+// - Unauthorized admin transfers
+//
 // ROLES ARE ASSIGNED
 // ───────────────────
 // 1. Deploy this access-control contract and call `init(admin)` to set the
@@ -78,8 +109,9 @@
 //    - `revoke_role`: Remove a specific role from a user
 //    - `transfer_role`: Move a role from one user to another
 //    - `revoke_all_roles`: Remove all roles from a user
-//    - `propose_new_admin` + `accept_admin_role`: Two-step admin transfer (recommended)
-//    - `transfer_admin`: Legacy one-step admin transfer
+//    - The current (final) admin can never lose the Admin role via `revoke_role` /
+//      `revoke_all_roles` (they return `AdminError`); transfer admin first.
+//    - `propose_new_admin` + `accept_admin_role`: Two-step admin transfer
 // 4. Any contract can check if a user has a role by calling `has_role(user, role)`.
 // 5. The `has_any_role` function allows checking if a user has any of a set of roles.
 //
@@ -87,13 +119,45 @@
 // ───────────────────────
 // - Only the admin can assign or revoke roles
 // - All admin operations require authentication (`require_auth`)
-// - Admin transfer supports a two-step propose/accept flow for safety
+// - Admin transfer uses a two-step propose/accept flow for safety
 // - Role checks are performed via storage lookups in persistent storage
 //
 // ═══════════════════════════════════════════════════════════════════════════
 
 use predifi_errors::PrediFiError;
 use soroban_sdk::{contract, contractevent, contractimpl, contracttype, Address, Env};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STORAGE & LEDGER CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Number of ledgers in a day (assuming ~5 second ledger close time).
+///
+/// **Units:** Ledgers (dimensionless)
+///
+/// **Rationale:** Stellar ledgers close approximately every 5 seconds. This constant
+/// represents the number of ledgers that elapse in a 24-hour period (86400 seconds / 5).
+pub const DAY_IN_LEDGERS: u32 = 17280;
+
+/// Threshold for extending storage TTL (14 days in ledgers).
+///
+/// **Units:** Ledgers (dimensionless)
+/// **Value:** 241,920 ledgers (14 days)
+///
+/// **Rationale:** When storage entries approach expiration, they must be extended to
+/// prevent data loss. This threshold provides a 14-day buffer, ensuring that even if
+/// the contract is not called frequently, storage entries remain valid.
+pub const BUMP_THRESHOLD: u32 = 14 * DAY_IN_LEDGERS;
+
+/// Amount to extend storage TTL by (30 days in ledgers).
+///
+/// **Units:** Ledgers (dimensionless)
+/// **Value:** 518,400 ledgers (30 days)
+///
+/// **Rationale:** When storage TTL is extended, it's extended by a significant duration
+/// to minimize the frequency of future extensions. 30 days provides a reasonable balance
+/// between storage efficiency and cost.
+pub const BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 
 /// Role-based access control enumeration.
 ///
@@ -159,14 +223,6 @@ pub struct RoleTransferredEvent {
     pub from: Address,
     pub to: Address,
     pub role: Role,
-}
-
-#[contractevent(topics = ["admin_transferred"])]
-#[contracttype(export = false)]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AdminTransferredEvent {
-    pub admin: Address,
-    pub new_admin: Address,
 }
 
 #[contractevent(topics = ["admin_transfer_proposed"])]
@@ -245,29 +301,63 @@ pub struct AccessControl;
 
 #[contractimpl]
 impl AccessControl {
+    /// Extend the TTL of instance storage.
+    ///
+    /// Instance storage entries (e.g., admin address, proposed admin, operator count)
+    /// are extended to `BUMP_AMOUNT` ledgers when they are accessed or modified.
+    /// This prevents them from expiring and becoming unavailable.
+    fn extend_instance(env: &Env) {
+        env.storage()
+            .instance()
+            .extend_ttl(BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
+    /// Extend the TTL of a single persistent storage entry identified by `key`.
+    ///
+    /// Persistent storage entries (e.g., role assignments) can expire if they
+    /// are not accessed frequently enough. This function must be called whenever
+    /// a key is written or read so that the data survives until the next expected
+    /// access. Failure to call this after a write would leave the entry at its
+    /// default ledger TTL, which may be shorter than `BUMP_AMOUNT`.
+    fn extend_persistent(env: &Env, key: &DataKey) {
+        env.storage()
+            .persistent()
+            .extend_ttl(key, BUMP_THRESHOLD, BUMP_AMOUNT);
+    }
+
     /// Initialise the access-control contract and set the first administrator.
     ///
     /// This function **must be called exactly once** immediately after deployment.
     /// It stores `admin` as the sole administrator and automatically grants it
     /// the `Admin` role (discriminant 0).
     ///
+    /// # Authorization
+    /// Calls `admin.require_auth()`: the `admin` address must sign (authorise)
+    /// this invocation. Deploy and initialise atomically in the same
+    /// transaction, or call `init` immediately after deployment.
+    ///
     /// # Panics
-    /// Panics with `AlreadyInitializedOrConfigNotSet` if called a second time.
+    /// Panics with `AlreadyInitializedOrConfigNotSet` if called a second time,
+    /// and fails with an auth error if `admin` has not authorised the call.
     ///
     /// # Bootstrap sequence
     /// 1. Deploy this contract and note its address.
-    /// 2. Call `init(admin_address)` — the admin role is set automatically.
+    /// 2. Call `init(admin_address)` signed by `admin_address` — the admin role
+    ///    is set automatically.
     /// 3. Use `assign_role` to grant `Operator` / `Oracle` roles as needed.
     /// 4. Pass this contract's address to `predifi_contract::init` as the
     ///    `access_control` argument so the main contract can verify permissions.
     pub fn init(env: &Env, admin: Address) {
+        admin.require_auth();
         if env.storage().instance().has(&DataKey::Admin) {
             soroban_sdk::panic_with_error!(&env, PrediFiError::AlreadyInitializedOrConfigNotSet);
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
+        Self::extend_instance(&env);
         env.storage()
             .persistent()
             .set(&DataKey::Role(admin.clone(), Role::Admin), &());
+        Self::extend_persistent(&env, &DataKey::Role(admin.clone(), Role::Admin));
 
         AdminInitEvent { admin }.publish(env);
     }
@@ -278,6 +368,7 @@ impl AccessControl {
     /// Panics with "NotInitialized" if the contract has not been initialized.
     #[must_use]
     pub fn get_admin(env: &Env) -> Address {
+        Self::extend_instance(&env);
         env.storage()
             .instance()
             .get(&DataKey::Admin)
@@ -287,6 +378,7 @@ impl AccessControl {
     /// Gets the proposed admin address if one exists.
     #[must_use]
     pub fn get_proposed_admin(env: &Env) -> Option<Address> {
+        Self::extend_instance(&env);
         env.storage().instance().get(&DataKey::ProposedAdmin)
     }
 
@@ -312,6 +404,7 @@ impl AccessControl {
         let is_new = !env.storage().persistent().has(&role_key);
 
         env.storage().persistent().set(&role_key, &());
+        Self::extend_persistent(&env, &role_key);
 
         if matches!(role, Role::Operator) && is_new {
             let count: u32 = env
@@ -338,6 +431,13 @@ impl AccessControl {
     /// # Errors
     /// Returns `Unauthorized` if the caller is not the current admin.
     /// Returns `InsufficientPermissions` if the user does not have the specified role.
+    /// Returns `AdminError` if the revocation would remove the `Admin` role from the
+    /// current admin (the final admin). This is rejected so the contract can never be
+    /// locked out of administration; hand over via `propose_new_admin` /
+    /// `accept_admin_role` first.
+    ///
+    /// A non-admin cannot revoke its own role (`Unauthorized`): only the admin
+    /// removes roles. The admin may revoke its own non-`Admin` roles.
     pub fn revoke_role(
         env: &Env,
         admin_caller: Address,
@@ -349,6 +449,10 @@ impl AccessControl {
         let current_admin = Self::get_admin(env);
         if admin_caller != current_admin {
             return Err(PrediFiError::Unauthorized);
+        }
+
+        if matches!(role, Role::Admin) && user == current_admin {
+            return Err(PrediFiError::AdminError);
         }
 
         if !env
@@ -373,6 +477,7 @@ impl AccessControl {
                 env.storage()
                     .instance()
                     .set(&DataKey::OperatorCount, &(count - 1));
+                Self::extend_instance(&env);
             }
         }
 
@@ -388,7 +493,12 @@ impl AccessControl {
     /// Checks if a user has a specific role.
     #[must_use]
     pub fn has_role(env: &Env, user: Address, role: Role) -> bool {
-        env.storage().persistent().has(&DataKey::Role(user, role))
+        let role_key = DataKey::Role(user, role);
+        let exists = env.storage().persistent().has(&role_key);
+        if exists {
+            Self::extend_persistent(&env, &role_key);
+        }
+        exists
     }
 
     /// Transfers a role from one user to another.
@@ -426,6 +536,7 @@ impl AccessControl {
         let to_key = DataKey::Role(to.clone(), role.clone());
         let to_is_new = !env.storage().persistent().has(&to_key);
         env.storage().persistent().set(&to_key, &());
+        Self::extend_persistent(&env, &to_key);
 
         // Operator count: removed from `from` (always), added to `to` only if new
         if matches!(role, Role::Operator) {
@@ -444,6 +555,7 @@ impl AccessControl {
             env.storage()
                 .instance()
                 .set(&DataKey::OperatorCount, &new_count);
+            Self::extend_instance(&env);
         }
 
         RoleTransferredEvent {
@@ -453,33 +565,6 @@ impl AccessControl {
             role,
         }
         .publish(env);
-        Ok(())
-    }
-
-    /// Transfers admin role to a new admin (legacy one-step transfer).
-    ///
-    /// # Errors
-    /// Returns `Unauthorized` if the caller is not the current admin.
-    pub fn transfer_admin(
-        env: &Env,
-        admin_caller: &Address,
-        new_admin: Address,
-    ) -> Result<(), PrediFiError> {
-        admin_caller.require_auth();
-
-        let current_admin = Self::get_admin(env);
-        if admin_caller != &current_admin {
-            return Err(PrediFiError::Unauthorized);
-        }
-
-        Self::apply_admin_transfer(env, current_admin.clone(), &new_admin);
-
-        AdminTransferredEvent {
-            admin: current_admin,
-            new_admin,
-        }
-        .publish(env);
-
         Ok(())
     }
 
@@ -502,12 +587,10 @@ impl AccessControl {
         env.storage()
             .instance()
             .set(&DataKey::ProposedAdmin, &new_admin);
+        Self::extend_instance(&env);
 
-        AdminTransferProposedEvent {
-            admin: current_admin,
-            proposed_admin: new_admin,
-        }
-        .publish(env);
+        // Note: AdminTransferProposedEvent was removed for consistency
+        // The proposed admin can be verified via get_proposed_admin()
 
         Ok(())
     }
@@ -519,6 +602,7 @@ impl AccessControl {
     pub fn accept_admin_role(env: &Env, new_admin: Address) -> Result<(), PrediFiError> {
         new_admin.require_auth();
 
+        Self::extend_instance(&env);
         let proposed_admin: Option<Address> = env.storage().instance().get(&DataKey::ProposedAdmin);
         if proposed_admin != Some(new_admin.clone()) {
             return Err(PrediFiError::Unauthorized);
@@ -527,11 +611,8 @@ impl AccessControl {
         let current_admin = Self::get_admin(env);
         Self::apply_admin_transfer(env, current_admin.clone(), &new_admin);
 
-        AdminTransferredEvent {
-            admin: current_admin,
-            new_admin,
-        }
-        .publish(env);
+        // Note: AdminTransferredEvent was removed in favor of simpler flow
+        // Admin transfer is now only visible through the change in get_admin() result
 
         Ok(())
     }
@@ -539,6 +620,7 @@ impl AccessControl {
     /// Checks if a user is the current admin.
     #[must_use]
     pub fn is_admin(env: &Env, user: &Address) -> bool {
+        Self::extend_instance(&env);
         let stored: Option<Address> = env.storage().instance().get(&DataKey::Admin);
         match stored {
             Some(admin) => admin == *user,
@@ -550,6 +632,9 @@ impl AccessControl {
     ///
     /// # Errors
     /// Returns `Unauthorized` if the caller is not the current admin.
+    /// Returns `AdminError` if `user` is the current admin (the final admin), since
+    /// that would strip its `Admin` role; use `propose_new_admin` / `accept_admin_role`
+    /// to transfer admin rights first.
     pub fn revoke_all_roles(
         env: &Env,
         admin_caller: Address,
@@ -560,6 +645,10 @@ impl AccessControl {
         let current_admin = Self::get_admin(env);
         if admin_caller != current_admin {
             return Err(PrediFiError::Unauthorized);
+        }
+
+        if user == current_admin {
+            return Err(PrediFiError::AdminError);
         }
 
         for role in &[
@@ -583,6 +672,7 @@ impl AccessControl {
                         env.storage()
                             .instance()
                             .set(&DataKey::OperatorCount, &(count - 1));
+                        Self::extend_instance(&env);
                     }
                 }
             }
@@ -601,11 +691,9 @@ impl AccessControl {
     #[must_use]
     pub fn has_any_role(env: &Env, user: &Address, roles: &soroban_sdk::Vec<Role>) -> bool {
         for role in roles.iter() {
-            if env
-                .storage()
-                .persistent()
-                .has(&DataKey::Role(user.clone(), role))
-            {
+            let role_key = DataKey::Role(user.clone(), role);
+            if env.storage().persistent().has(&role_key) {
+                Self::extend_persistent(&env, &role_key);
                 return true;
             }
         }
@@ -619,6 +707,7 @@ impl AccessControl {
     /// permanently unresolvable).
     #[must_use]
     pub fn get_operator_count(env: &Env) -> u32 {
+        Self::extend_instance(&env);
         env.storage()
             .instance()
             .get(&DataKey::OperatorCount)
@@ -627,7 +716,9 @@ impl AccessControl {
 
     fn apply_admin_transfer(env: &Env, current_admin: Address, new_admin: &Address) {
         env.storage().instance().set(&DataKey::Admin, new_admin);
+        Self::extend_instance(&env);
         env.storage().instance().remove(&DataKey::ProposedAdmin);
+        Self::extend_instance(&env);
 
         env.storage()
             .persistent()
@@ -635,6 +726,7 @@ impl AccessControl {
         env.storage()
             .persistent()
             .set(&DataKey::Role(new_admin.clone(), Role::Admin), &());
+        Self::extend_persistent(&env, &DataKey::Role(new_admin.clone(), Role::Admin));
     }
 }
 

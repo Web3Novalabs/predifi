@@ -1,0 +1,539 @@
+﻿cargo : [1m[93mwarning[0m[1m[97m: unused import: `BytesN`[0m
+At line:15 char:4058
++ ... pgrep\bin'; cargo test -p predifi-contract --no-run *> compile_t2.txt ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([1m[93mwarnin...t: `BytesN`[0m:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+  [1m[96m--> [0mcontracts\predifi-contract\src\lib.rs:54:14
+   [1m[96m|[0m
+[1m[96m54[0m [1m[96m|[0m     Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
+   [1m[96m|[0m              [1m[93m^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::events::Events::publish`: use the 
+#[contractevent] macro on a contract event type[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\creator_incentive.rs:68:22
+   [1m[96m|[0m
+[1m[96m68[0m [1m[96m|[0m         env.events().publish((soroban_sdk::Symbol::new(env, 
+"creator_incentive_config_updated"),), self.clone());
+   [1m[96m|[0m                      [1m[93m^^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::events::Events::publish`: use the 
+#[contractevent] macro on a contract event type[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\creator_incentive.rs:83:22
+   [1m[96m|[0m
+[1m[96m83[0m [1m[96m|[0m         env.events().publish((soroban_sdk::Symbol::new(env, 
+"creator_incentive_paid"),), self.clone());
+   [1m[96m|[0m                      [1m[93m^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: variable does not need to be mutable[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\pool.rs:771:13
+    [1m[96m|[0m
+[1m[96m771[0m [1m[96m|[0m         let mut pool: Pool = env
+    [1m[96m|[0m             [1m[96m----[0m[1m[93m^^^^[0m
+    [1m[96m|[0m             [1m[96m|[0m
+    [1m[96m|[0m             [1m[96mhelp: remove this `mut`[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: associated constant `MIN_CONFIDENCE_RATIO_BPS` is never used[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\oracle.rs:213:11
+    [1m[96m|[0m
+[1m[96m 23[0m [1m[96m|[0m impl PredifiContract {
+    [1m[96m|[0m [1m[96m--------------------[0m [1m[96massociated constant in this implementation[0m
+[1m[96m...[0m
+[1m[96m213[0m [1m[96m|[0m     const MIN_CONFIDENCE_RATIO_BPS: u32 = 500; // 5%
+    [1m[96m|[0m           [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: function `calculate_payout_pool` is never used[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\payouts.rs:75:8
+   [1m[96m|[0m
+[1m[96m75[0m [1m[96m|[0m pub fn calculate_payout_pool(total_stake: i128, fee_bps: i128) -> Result<i128, 
+PrediFiError> {
+   [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m: `predifi-contract` (lib) generated 6 warnings (run `cargo fix --lib -p predifi-contract` to 
+apply 2 suggestions)
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::register_stellar_asset_contract`: use 
+[Env::register_stellar_asset_contract_v2][0m
+   [1m[96m--> [0mcontracts\predifi-contract\tests\common\mod.rs:138:29
+    [1m[96m|[0m
+[1m[96m138[0m [1m[96m|[0m     let token_address = env.register_stellar_asset_contract(token_admin_addr);
+    [1m[96m|[0m                             [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[92m   Compiling[0m predifi-contract v0.0.0 
+(C:\Users\USA\Documents\wavyboy\predifi\contract\contracts\predifi-contract)
+[1m[93mwarning[0m: `predifi-contract` (test "pool_lifecycle_tests") generated 1 warning
+[1m[93mwarning[0m: `predifi-contract` (test "pause_unpause_tests") generated 1 warning (1 duplicate)
+[1m[93mwarning[0m: `predifi-contract` (test "concurrent_predictions_stress") generated 1 warning (1 duplicate)
+[1m[93mwarning[0m[1m[97m: unused import: `Symbol`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\boundary_edge_case_tests.rs:24:39
+   [1m[96m|[0m
+[1m[96m24[0m [1m[96m|[0m     token, vec, Address, Env, String, Symbol,
+   [1m[96m|[0m                                       [1m[93m^^^^^^[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: unused imports: `Ledger`, `String`, `Symbol`, and `token`[0m
+ [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:7:31
+  [1m[96m|[0m
+[1m[96m7[0m [1m[96m|[0m     testutils::{Address as _, Ledger},
+  [1m[96m|[0m                               [1m[93m^^^^^^[0m
+[1m[96m8[0m [1m[96m|[0m     token, vec, Address, BytesN, Env, String, Symbol,
+  [1m[96m|[0m     [1m[93m^^^^^[0m                             [1m[93m^^^^^^[0m  [1m[93m^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: unused import: `BytesN`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\lib.rs:54:14
+   [1m[96m|[0m
+[1m[96m54[0m [1m[96m|[0m     Address, BytesN, Env, IntoVal, String, Symbol, SymbolStr, TryFromVal, Vec,
+   [1m[96m|[0m              [1m[93m^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: unused imports: `DataKey` and `PredifiError`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\issues_1878_1879_1884_1885_boundary_tests.rs:36:5
+   [1m[96m|[0m
+[1m[96m36[0m [1m[96m|[0m     DataKey, MarketState, PoolConfig, PredifiContract, PredifiContractClient, 
+PredifiError,
+   [1m[96m|[0m     [1m[93m^^^^^^^[0m                                                                   
+[1m[93m^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: unused import: `Vec`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\issues_1878_1879_1884_1885_boundary_tests.rs:41:39
+   [1m[96m|[0m
+[1m[96m41[0m [1m[96m|[0m     token, vec, Address, Env, String, Vec,
+   [1m[96m|[0m                                       [1m[93m^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated associated function `soroban_sdk::String::from_slice`: use 
+from_str[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:115:34
+    [1m[96m|[0m
+[1m[96m115[0m [1m[96m|[0m             description: String::from_slice(&env, "1000-user stress test"),
+    [1m[96m|[0m                                  [1m[93m^^^^^^^^^^[0m
+    [1m[96m|[0m
+    [1m[96m= [0m[1m[97mnote[0m: `#[warn(deprecated)]` on by default
+
+[1m[93mwarning[0m[1m[97m: use of deprecated associated function `soroban_sdk::String::from_slice`: use 
+from_str[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:116:35
+    [1m[96m|[0m
+[1m[96m116[0m [1m[96m|[0m             metadata_url: String::from_slice(&env, "https://example.com"),
+    [1m[96m|[0m                                   [1m[93m^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::budget`: use cost_estimate().budget()[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:145:34
+    [1m[96m|[0m
+[1m[96m145[0m [1m[96m|[0m             let gas_before = env.budget().cpu_instruction_cost();
+    [1m[96m|[0m                                  [1m[93m^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::budget`: use cost_estimate().budget()[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:149:33
+    [1m[96m|[0m
+[1m[96m149[0m [1m[96m|[0m             let gas_after = env.budget().cpu_instruction_cost();
+    [1m[96m|[0m                                 [1m[93m^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::budget`: use cost_estimate().budget()[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:166:34
+    [1m[96m|[0m
+[1m[96m166[0m [1m[96m|[0m             let gas_before = env.budget().cpu_instruction_cost();
+    [1m[96m|[0m                                  [1m[93m^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::budget`: use cost_estimate().budget()[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:170:33
+    [1m[96m|[0m
+[1m[96m170[0m [1m[96m|[0m             let gas_after = env.budget().cpu_instruction_cost();
+    [1m[96m|[0m                                 [1m[93m^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated associated function `soroban_sdk::String::from_slice`: use 
+from_str[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:268:34
+    [1m[96m|[0m
+[1m[96m268[0m [1m[96m|[0m             description: String::from_slice(&env, "16-outcome stress test"),
+    [1m[96m|[0m                                  [1m[93m^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated associated function `soroban_sdk::String::from_slice`: use 
+from_str[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:269:35
+    [1m[96m|[0m
+[1m[96m269[0m [1m[96m|[0m             metadata_url: String::from_slice(&env, "https://example.com"),
+    [1m[96m|[0m                                   [1m[93m^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::budget`: use cost_estimate().budget()[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:306:38
+    [1m[96m|[0m
+[1m[96m306[0m [1m[96m|[0m                 let gas_before = env.budget().cpu_instruction_cost();
+    [1m[96m|[0m                                      [1m[93m^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::budget`: use cost_estimate().budget()[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:310:37
+    [1m[96m|[0m
+[1m[96m310[0m [1m[96m|[0m                 let gas_after = env.budget().cpu_instruction_cost();
+    [1m[96m|[0m                                     [1m[93m^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated associated function `soroban_sdk::String::from_slice`: use 
+from_str[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:422:34
+    [1m[96m|[0m
+[1m[96m422[0m [1m[96m|[0m             description: String::from_slice(&env, "Claim complexity test"),
+    [1m[96m|[0m                                  [1m[93m^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated associated function `soroban_sdk::String::from_slice`: use 
+from_str[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:423:35
+    [1m[96m|[0m
+[1m[96m423[0m [1m[96m|[0m             metadata_url: String::from_slice(&env, "https://example.com"),
+    [1m[96m|[0m                                   [1m[93m^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::events::Events::publish`: use the 
+#[contractevent] macro on a contract event type[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\creator_incentive.rs:68:22
+   [1m[96m|[0m
+[1m[96m68[0m [1m[96m|[0m         env.events().publish((soroban_sdk::Symbol::new(env, 
+"creator_incentive_config_updated"),), self.clone());
+   [1m[96m|[0m                      [1m[93m^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::register_stellar_asset_contract`: use 
+[Env::register_stellar_asset_contract_v2][0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\referral_integration_tests.rs:99:30
+   [1m[96m|[0m
+[1m[96m99[0m [1m[96m|[0m     let token_contract = env.register_stellar_asset_contract(token_admin_addr.clone());
+   [1m[96m|[0m                              [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::register_stellar_asset_contract`: use 
+[Env::register_stellar_asset_contract_v2][0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\referral_integration_tests.rs:295:30
+    [1m[96m|[0m
+[1m[96m295[0m [1m[96m|[0m     let token_contract = env.register_stellar_asset_contract(token_admin_addr.clone());
+    [1m[96m|[0m                              [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: use of deprecated method `soroban_sdk::Env::register_stellar_asset_contract`: use 
+[Env::register_stellar_asset_contract_v2][0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\referral_integration_tests.rs:417:30
+    [1m[96m|[0m
+[1m[96m417[0m [1m[96m|[0m     let token_contract = env.register_stellar_asset_contract(token_admin_addr.clone());
+    [1m[96m|[0m                              [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:15:10
+   [1m[96m|[0m
+[1m[96m15[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, 
+_creator) =
+   [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_ac_client`[0m
+   [1m[96m|[0m
+   [1m[96m= [0m[1m[97mnote[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:26:10
+   [1m[96m|[0m
+[1m[96m26[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, 
+_creator) =
+   [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:37:10
+   [1m[96m|[0m
+[1m[96m37[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, 
+_creator) =
+   [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:63:10
+   [1m[96m|[0m
+[1m[96m63[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, 
+_creator) =
+   [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:74:10
+   [1m[96m|[0m
+[1m[96m74[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, 
+_creator) =
+   [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:90:10
+   [1m[96m|[0m
+[1m[96m90[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, _operator, 
+_creator) =
+   [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:103:10
+    [1m[96m|[0m
+[1m[96m103[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:116:10
+    [1m[96m|[0m
+[1m[96m116[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:127:10
+    [1m[96m|[0m
+[1m[96m127[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:138:10
+    [1m[96m|[0m
+[1m[96m138[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:149:10
+    [1m[96m|[0m
+[1m[96m149[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:160:10
+    [1m[96m|[0m
+[1m[96m160[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:171:10
+    [1m[96m|[0m
+[1m[96m171[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:182:10
+    [1m[96m|[0m
+[1m[96m182[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:193:10
+    [1m[96m|[0m
+[1m[96m193[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:204:10
+    [1m[96m|[0m
+[1m[96m204[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:215:10
+    [1m[96m|[0m
+[1m[96m215[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:230:10
+    [1m[96m|[0m
+[1m[96m230[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:241:10
+    [1m[96m|[0m
+[1m[96m241[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:252:10
+    [1m[96m|[0m
+[1m[96m252[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_client`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\access_control_audit_tests.rs:268:10
+    [1m[96m|[0m
+[1m[96m268[0m [1m[96m|[0m     let (ac_client, client, _token_address, _token, _token_admin, _treasury, 
+_operator, _creator) =
+    [1m[96m|[0m          [1m[93m^^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an 
+underscore: `_ac_client`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `i`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:103:13
+    [1m[96m|[0m
+[1m[96m103[0m [1m[96m|[0m         for i in 0..1000u32 {
+    [1m[96m|[0m             [1m[93m^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_i`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `ac_id`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:253:30
+    [1m[96m|[0m
+[1m[96m253[0m [1m[96m|[0m         let (client, _admin, ac_id, token_client, token_admin_client) = 
+stress_setup(&env);
+    [1m[96m|[0m                              [1m[93m^^^^^[0m [1m[93mhelp: if this is intentional, prefix it 
+with an underscore: `_ac_id`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `i`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:257:13
+    [1m[96m|[0m
+[1m[96m257[0m [1m[96m|[0m         for i in 0..1000u32 {
+    [1m[96m|[0m             [1m[93m^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_i`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `i`[0m
+   [1m[96m--> [0mcontracts\predifi-contract\src\stress_test_high_volume.rs:411:13
+    [1m[96m|[0m
+[1m[96m411[0m [1m[96m|[0m         for i in 0..200u32 {
+    [1m[96m|[0m             [1m[93m^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: 
+`_i`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `token`[0m
+     [1m[96m--> [0mcontracts\predifi-contract\src\test.rs:12997:44
+      [1m[96m|[0m
+[1m[96m12997[0m [1m[96m|[0m     let (ac_client, client, token_address, token, token_admin_client, treasury, 
+operator, creator) =
+      [1m[96m|[0m                                            [1m[93m^^^^^[0m [1m[93mhelp: if this is 
+intentional, prefix it with an underscore: `_token`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `treasury`[0m
+     [1m[96m--> [0mcontracts\predifi-contract\src\test.rs:12997:71
+      [1m[96m|[0m
+[1m[96m12997[0m [1m[96m|[0m     let (ac_client, client, token_address, token, token_admin_client, treasury, 
+operator, creator) =
+      [1m[96m|[0m                                                                       [1m[93m^^^^^^^^[0m 
+[1m[93mhelp: if this is intentional, prefix it with an underscore: `_treasury`[0m
+
+[1m[93mwarning[0m[1m[97m: unused variable: `operator`[0m
+     [1m[96m--> [0mcontracts\predifi-contract\src\test.rs:12997:81
+      [1m[96m|[0m
+[1m[96m12997[0m [1m[96m|[0m     let (ac_client, client, token_address, token, token_admin_client, treasury, 
+operator, creator) =
+      [1m[96m|[0m                                                                                 
+[1m[93m^^^^^^^^[0m [1m[93mhelp: if this is intentional, prefix it with an underscore: `_operator`[0m
+
+[1m[93mwarning[0m[1m[97m: variable does not need to be mutable[0m
+     [1m[96m--> [0mcontracts\predifi-contract\src\test.rs:13104:28
+      [1m[96m|[0m
+[1m[96m13104[0m [1m[96m|[0m     env.ledger().with_mut(|mut l| {
+      [1m[96m|[0m                            [1m[96m----[0m[1m[93m^[0m
+      [1m[96m|[0m                            [1m[96m|[0m
+      [1m[96m|[0m                            [1m[96mhelp: remove this `mut`[0m
+
+[1m[93mwarning[0m[1m[97m: variable does not need to be mutable[0m
+     [1m[96m--> [0mcontracts\predifi-contract\src\test.rs:13185:28
+      [1m[96m|[0m
+[1m[96m13185[0m [1m[96m|[0m     env.ledger().with_mut(|mut l| {
+      [1m[96m|[0m                            [1m[96m----[0m[1m[93m^[0m
+      [1m[96m|[0m                            [1m[96m|[0m
+      [1m[96m|[0m                            [1m[96mhelp: remove this `mut`[0m
+
+[1m[93mwarning[0m[1m[97m: variable does not need to be mutable[0m
+     [1m[96m--> [0mcontracts\predifi-contract\src\test.rs:13259:28
+      [1m[96m|[0m
+[1m[96m13259[0m [1m[96m|[0m     env.ledger().with_mut(|mut l| {
+      [1m[96m|[0m                            [1m[96m----[0m[1m[93m^[0m
+      [1m[96m|[0m                            [1m[96m|[0m
+      [1m[96m|[0m                            [1m[96mhelp: remove this `mut`[0m
+
+[1m[93mwarning[0m[1m[97m: variable does not need to be mutable[0m
+     [1m[96m--> [0mcontracts\predifi-contract\src\test.rs:13347:28
+      [1m[96m|[0m
+[1m[96m13347[0m [1m[96m|[0m     env.ledger().with_mut(|mut l| {
+      [1m[96m|[0m                            [1m[96m----[0m[1m[93m^[0m
+      [1m[96m|[0m                            [1m[96m|[0m
+      [1m[96m|[0m                            [1m[96mhelp: remove this `mut`[0m
+
+[1m[93mwarning[0m[1m[97m: struct `TokenTestContext` is never constructed[0m
+ [1m[96m--> [0mcontracts\predifi-contract\src\test_utils.rs:3:12
+  [1m[96m|[0m
+[1m[96m3[0m [1m[96m|[0m pub struct TokenTestContext {
+  [1m[96m|[0m            [1m[93m^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: associated items `deploy` and `mint` are never used[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\test_utils.rs:10:12
+   [1m[96m|[0m
+[1m[96m 9[0m [1m[96m|[0m impl TokenTestContext {
+   [1m[96m|[0m [1m[96m---------------------[0m [1m[96massociated items in this implementation[0m
+[1m[96m10[0m [1m[96m|[0m     pub fn deploy(env: &Env, admin: &Address) -> Self {
+   [1m[96m|[0m            [1m[93m^^^^^^[0m
+[1m[96m...[0m
+[1m[96m23[0m [1m[96m|[0m     pub fn mint(&self, to: &Address, amount: i128) {
+   [1m[96m|[0m            [1m[93m^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: function `transition_pool_to_disputed` is never used[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\test_utils.rs:41:8
+   [1m[96m|[0m
+[1m[96m41[0m [1m[96m|[0m pub fn transition_pool_to_disputed(env: &Env, pool_id: u64) {
+   [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: function `create_disputed_pool` is never used[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\test_utils.rs:64:8
+   [1m[96m|[0m
+[1m[96m64[0m [1m[96m|[0m pub fn create_disputed_pool(env: &Env, pool_id: u64) -> u64 {
+   [1m[96m|[0m        [1m[93m^^^^^^^^^^^^^^^^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: field `token` is never read[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\pause_unpause_boundary_tests.rs:76:9
+   [1m[96m|[0m
+[1m[96m73[0m [1m[96m|[0m struct PauseTestEnv<'a> {
+   [1m[96m|[0m        [1m[96m------------[0m [1m[96mfield in this struct[0m
+[1m[96m...[0m
+[1m[96m76[0m [1m[96m|[0m     pub token: token::Client<'a>,
+   [1m[96m|[0m         [1m[93m^^^^^[0m
+
+[1m[93mwarning[0m[1m[97m: field `env` is never read[0m
+  [1m[96m--> [0mcontracts\predifi-contract\src\withdraw_treasury_boundary_tests.rs:71:9
+   [1m[96m|[0m
+[1m[96m70[0m [1m[96m|[0m struct TreasuryTestEnv<'a> {
+   [1m[96m|[0m        [1m[96m---------------[0m [1m[96mfield in this struct[0m
+[1m[96m71[0m [1m[96m|[0m     pub env: Env,
+   [1m[96m|[0m         [1m[93m^^^[0m
+
+[1m[93mwarning[0m: `predifi-contract` (test "update_referrer_tests") generated 1 warning (1 duplicate)
+[1m[93mwarning[0m: `predifi-contract` (lib test) generated 62 warnings (3 duplicates) (run `cargo fix --lib -p 
+predifi-contract --tests` to apply 37 suggestions)
+[1m[93mwarning[0m: `predifi-contract` (test "event_assertion_tests") generated 1 warning (1 duplicate)
+[1m[92m    Finished[0m ]8;;https://doc.rust-lang.org/cargo/reference/profiles.html#default-profiles\`test` 
+profile [unoptimized + debuginfo]]8;;\ target(s) in 29.41s
+[1m[92m  Executable[0m unittests src\lib.rs (target\debug\deps\predifi_contract-bc595a0c4a14fd68.exe)
+[1m[92m  Executable[0m tests\concurrent_predictions_stress.rs 
+(target\debug\deps\concurrent_predictions_stress-debaed452acb4f5f.exe)
+[1m[92m  Executable[0m tests\event_assertion_tests.rs (target\debug\deps\event_assertion_tests-0920cb69fd40d48a.exe)
+[1m[92m  Executable[0m tests\pause_unpause_tests.rs (target\debug\deps\pause_unpause_tests-50f8b2b67c05f08e.exe)
+[1m[92m  Executable[0m tests\pool_lifecycle_tests.rs (target\debug\deps\pool_lifecycle_tests-a61c406bbd65c6fd.exe)
+[1m[92m  Executable[0m tests\price_feed_integration_test.rs 
+(target\debug\deps\price_feed_integration_test-7f8abdf0d0d07109.exe)
+[1m[92m  Executable[0m tests\safe_math_boundaries.rs (target\debug\deps\safe_math_boundaries-39f84617ccabf58d.exe)
+[1m[92m  Executable[0m tests\update_referrer_tests.rs (target\debug\deps\update_referrer_tests-c28c1bb4ad2143a5.exe)
+[1m[92m  Executable[0m tests\version_string_test.rs (target\debug\deps\version_string_test-63d857d85f623278.exe)

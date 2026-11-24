@@ -9,7 +9,7 @@
 use std::process::ExitCode;
 
 use predifi_backend::config::Config;
-use predifi_backend::seed::{run_seed, SeedConfig, DEFAULT_NUM_POOLS};
+use predifi_backend::seed::{run_seed, SeedConfig, SeedScenario, DEFAULT_NUM_POOLS};
 use tracing::{error, info};
 
 #[tokio::main]
@@ -33,6 +33,22 @@ async fn main() -> ExitCode {
         match arg.as_str() {
             "-h" | "--help" => show_help = true,
             "--fresh" => seed_config.fresh = true,
+            "--scenario" => match iter.next() {
+                Some(value) => match SeedScenario::parse(&value) {
+                    Some(scenario) => seed_config.scenario = scenario,
+                    None => {
+                        eprintln!(
+                            "error: unknown scenario {value:?} (expected one of: {})",
+                            SeedScenario::NAMES.join(", ")
+                        );
+                        return ExitCode::from(2);
+                    }
+                },
+                None => {
+                    eprintln!("error: --scenario requires a value");
+                    return ExitCode::from(2);
+                }
+            },
             "--num-pools" => match iter.next() {
                 Some(value) => match value.parse::<usize>() {
                     Ok(n) if n > 0 => seed_config.num_pools = n,
@@ -88,6 +104,7 @@ async fn main() -> ExitCode {
     info!(
         num_pools = seed_config.num_pools,
         fresh = seed_config.fresh,
+        scenario = seed_config.scenario.as_str(),
         "seeding database"
     );
 
@@ -136,7 +153,15 @@ fn print_help() {
     println!("OPTIONS:");
     println!("    --fresh           Truncate seed tables before inserting (destructive)");
     println!("    --num-pools N     Number of pools to generate (default: {DEFAULT_NUM_POOLS})");
+    println!("    --scenario NAME   Seed a targeted scenario (default: all)");
     println!("    -h, --help        Print this help message and exit");
+    println!();
+    println!("SCENARIOS:");
+    for name in SeedScenario::NAMES {
+        if let Some(scenario) = SeedScenario::parse(name) {
+            println!("    {:<16}{}", name, scenario.description());
+        }
+    }
     println!();
     println!("ENVIRONMENT:");
     println!("    PREDIFI_DATABASE_URL   Postgres connection string");

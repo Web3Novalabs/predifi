@@ -49,10 +49,11 @@ export default function WaitlistForm() {
     <section className="relative py-12 md:py-[105px] flex flex-col items-center text-center overflow-visible px-5">
       {/* Background Pattern — decorative full-bleed raster image */}
       <Image
-        src="/swirl-pattern.png"
+        src="/swirl-pattern.webp"
         alt=""
         aria-hidden="true"
         fill
+        sizes="100vw"
         className="object-cover pointer-events-none z-0"
         priority
       />

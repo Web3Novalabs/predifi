@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `update_price_feed` now rejects an update whose `timestamp` is not strictly newer than the one
+  already stored for the same `feed_pair` (`PredifiError::InvalidData`), so a delayed or replayed
+  submission can no longer overwrite a newer price (#2018).
+- `oracle_resolve` and `resolve_pool_from_price` return `PoolNotFound` / `PriceFeedNotFound`
+  instead of aborting with a VM panic when the pool or feed does not exist; no error codes changed
+  (#2019).
+- Re-indented the module docs in `price_feed.rs` so Clippy's `doc_overindented_list_items` and
+  `doc_lazy_continuation` lints pass (#2015).
+- Removed the unused `BytesN` import in `lib.rs` and the unnecessary `mut` in
+  `update_pool_description`, and made `payouts::calculate_payout_pool` test-only (production code
+  never called it; it remains the reference the payout unit and property tests compare against), so
+  Clippy no longer reports them under `-D warnings` (#2013).
+- Migrated the creator incentive events from the deprecated `env.events().publish` to
+  `#[contractevent]`. Topics (`creator_incentive_config_updated`, `creator_incentive_paid`) and
+  payload fields are unchanged; the config event struct is now `CreatorIncentiveUpdateEvent`
+  because `#[contractevent]` limits struct names to 32 characters (#2014).
+
+### Added
+- Pool creator incentive system (#1933): `claim_creator_incentive` pays a
+  pool's creator a configurable share (`set_creator_incentive_bps`) of that
+  pool's protocol fee once it reaches a minimum participation threshold
+  (`set_creator_min_participants`, default 5 unique participants) and is
+  resolved. Reward/reputation metrics are queryable via `get_creator_stats`.
+
 ## [0.1.0] - 2026-03-24
 
 ### Added

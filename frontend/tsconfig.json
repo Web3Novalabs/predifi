@@ -9,6 +9,7 @@
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
@@ -26,7 +27,8 @@
       "@/*": [
         "./*"
       ]
-    }
+    },
+    "types": ["jest"]
   },
   "include": [
     "next-env.d.ts",
@@ -37,7 +39,6 @@
     "**/*.mts"
   ],
   "exclude": [
-    "node_modules",
-    "__tests__"
+    "node_modules"
   ]
 }

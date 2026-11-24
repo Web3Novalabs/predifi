@@ -162,15 +162,12 @@ describe("CLS (Cumulative Layout Shift) Utilities", () => {
       );
 
       const { container, rerender } = render(<TestForm hasError={false} />);
-      const formElement = container.querySelector("form");
-      const initialHeight = formElement?.offsetHeight || 0;
+      const reservedWrapper = container.querySelector("form > div") as HTMLElement;
+      expect(reservedWrapper.style.opacity).toBe("0");
 
       rerender(<TestForm hasError={true} />);
-      const heightWithError = formElement?.offsetHeight || 0;
-
-      // Height should increase by approximately the minHeight value
-      expect(heightWithError).toBeGreaterThan(initialHeight);
-      // But should not cause visual jank (verified via transition)
+      expect(reservedWrapper.style.opacity).toBe("1");
+      expect(reservedWrapper.style.minHeight).toBe("50px");
     });
 
     it("should prevent layout shift when menu opens", async () => {
@@ -185,14 +182,12 @@ describe("CLS (Cumulative Layout Shift) Utilities", () => {
       );
 
       const { container, rerender } = render(<TestNav isOpen={false} />);
-      const navElement = container.querySelector("nav");
-      const closedHeight = navElement?.offsetHeight || 0;
+      const dropdownWrapper = container.querySelector("nav > div") as HTMLElement;
+      expect(dropdownWrapper.style.maxHeight).toBe("0px");
 
       rerender(<TestNav isOpen={true} />);
-      const openHeight = navElement?.offsetHeight || 0;
-
-      // Menu should expand smoothly
-      expect(openHeight).toBeGreaterThan(closedHeight);
+      expect(dropdownWrapper.style.maxHeight).toBe("500px");
+      expect(dropdownWrapper.style.opacity).toBe("1");
     });
   });
 });

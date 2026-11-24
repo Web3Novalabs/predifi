@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { notFound } from "next/navigation";
+import { isComponentsDemoEnabled } from "@/lib/componentsDemo";
 import { Send, Heart, Download } from "lucide-react";
 import {
   Button,
@@ -407,5 +409,6 @@ function ComponentShowcase() {
 }
 
 export default function ComponentsDemo() {
+  if (!isComponentsDemoEnabled()) notFound();
   return <ComponentShowcase />;
 }

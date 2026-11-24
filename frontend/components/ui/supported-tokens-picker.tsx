@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useId, useState, useRef, useEffect } from "react";
 import { ChevronDown, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +38,8 @@ export function SupportedTokensPicker({
 }: SupportedTokensPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const optionsId = useId();
 
   const selectedToken = tokens.find((t) => t.id === value) || tokens[0];
 
@@ -59,8 +61,18 @@ export function SupportedTokensPicker({
   }, []);
 
   return (
-    <div className={cn("relative", className)} ref={containerRef}>
+    <div
+      className={cn("relative", className)}
+      ref={containerRef}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && isOpen) {
+          setIsOpen(false);
+          triggerRef.current?.focus();
+        }
+      }}
+    >
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => !disabled && setIsOpen(!isOpen)}
         disabled={disabled}
@@ -71,8 +83,8 @@ export function SupportedTokensPicker({
           disabled && "cursor-not-allowed opacity-50",
           isOpen && "ring-2 ring-ring ring-offset-2"
         )}
-        aria-haspopup="listbox"
         aria-expanded={isOpen}
+        aria-controls={optionsId}
         aria-label="Select token"
       >
         {selectedToken.icon}
@@ -86,50 +98,50 @@ export function SupportedTokensPicker({
         />
       </button>
 
-      {isOpen && (
-        <div
-          className="absolute top-full left-0 z-50 mt-2 w-48 rounded-lg border border-input bg-background shadow-lg"
-          role="listbox"
-          aria-label="Supported tokens"
-        >
-          <div className="py-1">
-            {tokens.map((token) => (
-              <button
-                key={token.id}
-                type="button"
-                onClick={() => {
-                  onChange?.(token);
-                  setIsOpen(false);
-                }}
-                className={cn(
-                  "flex w-full items-center gap-3 px-3 py-2 text-sm transition-colors",
-                  "hover:bg-accent",
-                  "focus-visible:outline-none focus-visible:bg-accent",
-                  token.id === value && "bg-accent"
-                )}
-                role="option"
-                aria-selected={token.id === value}
-              >
-                {token.icon}
-                <div className="flex-1 text-left">
-                  <div className="font-medium text-foreground">
-                    {token.symbol}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {token.name}
-                  </div>
+      <div
+        id={optionsId}
+        hidden={!isOpen}
+        className="absolute top-full left-0 z-50 mt-2 w-48 rounded-lg border border-input bg-background shadow-lg"
+        role="group"
+        aria-label="Supported tokens"
+      >
+        <div className="py-1">
+          {tokens.map((token) => (
+            <button
+              key={token.id}
+              type="button"
+              onClick={() => {
+                onChange?.(token);
+                setIsOpen(false);
+                triggerRef.current?.focus();
+              }}
+              className={cn(
+                "flex w-full items-center gap-3 px-3 py-2 text-sm transition-colors",
+                "hover:bg-accent",
+                "focus-visible:outline-none focus-visible:bg-accent",
+                token.id === value && "bg-accent"
+              )}
+              aria-pressed={token.id === value}
+            >
+              {token.icon}
+              <div className="flex-1 text-left">
+                <div className="font-medium text-foreground">
+                  {token.symbol}
                 </div>
-                {token.id === value && (
-                  <Check
-                    className="h-4 w-4 text-primary"
-                    aria-hidden="true"
-                  />
-                )}
-              </button>
-            ))}
-          </div>
+                <div className="text-xs text-muted-foreground">
+                  {token.name}
+                </div>
+              </div>
+              {token.id === value && (
+                <Check
+                  className="h-4 w-4 text-primary"
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
