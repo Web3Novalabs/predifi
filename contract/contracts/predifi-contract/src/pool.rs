@@ -373,7 +373,7 @@ impl PredifiContract {
     /// - `Pool.state == MarketState::Active`
     /// - `Pool.outcome == UNRESOLVED_OUTCOME`
     /// - `Pool.total_stake == initial_liquidity` (if provided)
-    /// - `Pool.fee_bps` set from current config
+    /// - `Pool.fee_bps` starts at zero and is set from the dynamic fee at resolution
     /// - Initial liquidity transferred from creator
     /// - Pool added to active index
     ///
@@ -469,7 +469,10 @@ impl PredifiContract {
 
         // Validate: minimum pool duration
         if min_pool_duration > 0 {
-            if end_time < current_time.saturating_add(min_pool_duration) {
+            if end_time < current_time
+                .checked_add(min_pool_duration)
+                .ok_or(PredifiError::InvalidTimestamp)?
+            {
                 return Err(PredifiError::InvalidTimestamp);
             }
         }
@@ -552,7 +555,7 @@ impl PredifiContract {
         // This is the standard pattern in Soroban - invalid tokens will fail when
         // transfers are attempted during place_prediction.
 
-        if config.description.len() > 256 {
+        if config.description.len() == 0 || config.description.len() > 256 {
             return Err(PredifiError::InvalidData);
         }
         if config.metadata_url.len() > 512 {
@@ -609,7 +612,7 @@ impl PredifiContract {
             private: config.private,
             whitelist_key: config.whitelist_key.clone(),
             outcome_descriptions: config.outcome_descriptions.clone(),
-            fee_bps: Self::get_config(&env).fee_bps,
+            fee_bps: 0,
             participants_count: 0,
             resolution_timestamp: None, // Set when pool is resolved
         };

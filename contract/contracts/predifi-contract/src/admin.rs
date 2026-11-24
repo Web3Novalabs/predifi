@@ -119,7 +119,7 @@ use crate::{
     DEFAULT_PREDICTION_COOLDOWN_SECONDS,
     FEE_CHANGE_TIMELOCK_SECONDS,
     MAX_CLAIM_WINDOW,
-    MAX_FEE_TIERS,
+    MAX_POOL_DURATION,
     MAX_RESOLUTION_DELAY,
     MIN_CLAIM_WINDOW,
 };
@@ -546,6 +546,10 @@ impl PredifiContract {
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_min_pool_duration")?;
 
+        if duration > MAX_POOL_DURATION {
+            return Err(PredifiError::InvalidData);
+        }
+
         let mut config = Self::get_config(&env);
         config.min_pool_duration = duration;
         env.storage().instance().set(&DataKey::Config, &config);
@@ -573,7 +577,9 @@ impl PredifiContract {
         Self::require_not_paused(&env)?;
         admin.require_auth();
         Self::require_admin_role(&env, &admin, "set_min_stake")?;
-        assert!(amount > 0, "min_stake must be greater than zero");
+        if amount <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
 
         let mut config = Self::get_config(&env);
         config.min_stake = amount;
