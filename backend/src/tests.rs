@@ -1679,3 +1679,173 @@ async fn graceful_shutdown_drains_many_concurrent_requests() {
         .await
         .expect("server must exit");
 }
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// WebSocket Client IP Extraction Tests
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Test that client IP is extracted from peer socket address when proxy headers are not trusted.
+#[tokio::test]
+async fn client_ip_uses_peer_address_by_default() {
+    use std::net::{IpAddr, SocketAddr};
+    use axum::extract::ConnectInfo;
+    use axum::http::HeaderMap;
+
+    let peer_addr = SocketAddr::from(([192, 168, 1, 100], 54321));
+    let connect_info = ConnectInfo(peer_addr);
+    let headers = HeaderMap::new();
+
+    // Default config has trust_proxy_headers = false
+    let config = crate::config::Config::default_for_test();
+
+    let ip = crate::ws::get_client_ip(&connect_info, config.trust_proxy_headers, &headers);
+    assert_eq!(ip, "192.168.1.100", "should use peer socket address by default");
+}
+
+/// Test that X-Forwarded-For is ignored when proxy headers are not trusted.
+#[tokio::test]
+async fn client_ip_ignores_x_forwarded_for_when_untrusted() {
+    use std::net::SocketAddr;
+    use axum::extract::ConnectInfo;
+    use axum::http::HeaderMap;
+
+    let peer_addr = SocketAddr::from(([192, 168, 1, 100], 54321));
+    let connect_info = ConnectInfo(peer_addr);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-forwarded-for", "10.0.0.1, 10.0.0.2".parse().unwrap());
+
+    // Default config has trust_proxy_headers = false
+    let config = crate::config::Config::default_for_test();
+
+    let ip = crate::ws::get_client_ip(&connect_info, config.trust_proxy_headers, &headers);
+    assert_eq!(
+        ip, "192.168.1.100",
+        "should ignore X-Forwarded-For when not trusted"
+    );
+}
+
+/// Test that X-Real-IP is ignored when proxy headers are not trusted.
+#[tokio::test]
+async fn client_ip_ignores_x_real_ip_when_untrusted() {
+    use std::net::SocketAddr;
+    use axum::extract::ConnectInfo;
+    use axum::http::HeaderMap;
+
+    let peer_addr = SocketAddr::from(([192, 168, 1, 100], 54321));
+    let connect_info = ConnectInfo(peer_addr);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-real-ip", "10.0.0.99".parse().unwrap());
+
+    // Default config has trust_proxy_headers = false
+    let config = crate::config::Config::default_for_test();
+
+    let ip = crate::ws::get_client_ip(&connect_info, config.trust_proxy_headers, &headers);
+    assert_eq!(
+        ip, "192.168.1.100",
+        "should ignore X-Real-IP when not trusted"
+    );
+}
+
+/// Test that X-Forwarded-For rightmost IP is used when proxy headers are trusted.
+#[tokio::test]
+async fn client_ip_prefers_x_forwarded_for_rightmost_when_trusted() {
+    use std::net::SocketAddr;
+    use axum::extract::ConnectInfo;
+    use axum::http::HeaderMap;
+
+    let peer_addr = SocketAddr::from(([127, 0, 0, 1], 54321)); // This is the proxy's IP
+    let connect_info = ConnectInfo(peer_addr);
+
+    let mut headers = HeaderMap::new();
+    // Simulate a request that passed through multiple proxies:
+    // client (10.0.0.50) -> proxy1 (10.0.0.1) -> proxy2 (10.0.0.2) -> us
+    // The rightmost IP is what our trusted proxy added
+    headers.insert(
+        "x-forwarded-for",
+        "10.0.0.50, 10.0.0.1, 10.0.0.2".parse().unwrap(),
+    );
+
+    let mut config = crate::config::Config::default_for_test();
+    config.trust_proxy_headers = true;
+
+    let ip = crate::ws::get_client_ip(&connect_info, config.trust_proxy_headers, &headers);
+    assert_eq!(
+        ip, "10.0.0.2",
+        "should use rightmost (trusted proxy-added) IP from X-Forwarded-For"
+    );
+}
+
+/// Test that X-Real-IP is used as fallback when X-Forwarded-For is absent and headers are trusted.
+#[tokio::test]
+async fn client_ip_uses_x_real_ip_as_fallback_when_trusted() {
+    use std::net::SocketAddr;
+    use axum::extract::ConnectInfo;
+    use axum::http::HeaderMap;
+
+    let peer_addr = SocketAddr::from(([127, 0, 0, 1], 54321));
+    let connect_info = ConnectInfo(peer_addr);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-real-ip", "10.0.0.99".parse().unwrap());
+
+    let mut config = crate::config::Config::default_for_test();
+    config.trust_proxy_headers = true;
+
+    let ip = crate::ws::get_client_ip(&connect_info, config.trust_proxy_headers, &headers);
+    assert_eq!(
+        ip, "10.0.0.99",
+        "should use X-Real-IP when X-Forwarded-For is absent and headers are trusted"
+    );
+}
+
+/// Test that peer address is used as final fallback when headers are trusted but both are missing.
+#[tokio::test]
+async fn client_ip_uses_peer_address_fallback_when_headers_absent() {
+    use std::net::SocketAddr;
+    use axum::extract::ConnectInfo;
+    use axum::http::HeaderMap;
+
+    let peer_addr = SocketAddr::from(([192, 168, 1, 100], 54321));
+    let connect_info = ConnectInfo(peer_addr);
+
+    let headers = HeaderMap::new();
+
+    let mut config = crate::config::Config::default_for_test();
+    config.trust_proxy_headers = true;
+
+    let ip = crate::ws::get_client_ip(&connect_info, config.trust_proxy_headers, &headers);
+    assert_eq!(
+        ip, "192.168.1.100",
+        "should fall back to peer address when headers are absent but trusted"
+    );
+}
+
+/// Test that X-Forwarded-For with whitespace is handled correctly.
+#[tokio::test]
+async fn client_ip_trims_x_forwarded_for_whitespace() {
+    use std::net::SocketAddr;
+    use axum::extract::ConnectInfo;
+    use axum::http::HeaderMap;
+
+    let peer_addr = SocketAddr::from(([127, 0, 0, 1], 54321));
+    let connect_info = ConnectInfo(peer_addr);
+
+    let mut headers = HeaderMap::new();
+    // Include extra whitespace around IPs (common in real proxies)
+    headers.insert(
+        "x-forwarded-for",
+        "  10.0.0.1  ,  10.0.0.2  ".parse().unwrap(),
+    );
+
+    let mut config = crate::config::Config::default_for_test();
+    config.trust_proxy_headers = true;
+
+    let ip = crate::ws::get_client_ip(&connect_info, config.trust_proxy_headers, &headers);
+    assert_eq!(
+        ip, "10.0.0.2",
+        "should trim whitespace from X-Forwarded-For IPs"
+    );
+}
