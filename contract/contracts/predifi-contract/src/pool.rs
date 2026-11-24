@@ -781,7 +781,7 @@ impl PredifiContract {
         caller.require_auth();
 
         let pool_key = DataKey::Pool(pool_id);
-        let mut pool: Pool = env
+        let pool: Pool = env
             .storage()
             .persistent()
             .get(&pool_key)

@@ -41,7 +41,7 @@
 //! winnings — it reduces the amount the treasury would otherwise sweep via
 //! `withdraw_treasury` for that pool's fee.
 
-use soroban_sdk::{contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{contractevent, contractimpl, contracttype, token, Address, Env};
 
 use crate::{
     calculate_protocol_fee, DataKey, MarketState, Pool, PredifiContract, PredifiContractArgs,
@@ -55,33 +55,23 @@ pub struct CreatorStats {
     pub total_incentive_earned: i128,
 }
 
-#[contracttype]
+#[contractevent(topics = ["creator_incentive_config_updated"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CreatorIncentiveConfigUpdatedEvent {
+pub struct CreatorIncentiveUpdateEvent {
     pub admin: Address,
     pub incentive_bps: u32,
     pub min_participants: u32,
 }
 
-impl CreatorIncentiveConfigUpdatedEvent {
-    pub fn publish(&self, env: &Env) {
-        env.events().publish((soroban_sdk::Symbol::new(env, "creator_incentive_config_updated"),), self.clone());
-    }
-}
-
-#[contracttype]
+#[contractevent(topics = ["creator_incentive_paid"])]
+#[contracttype(export = false)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreatorIncentivePaidEvent {
     pub pool_id: u64,
     pub creator: Address,
     pub amount: i128,
     pub participants_count: u32,
-}
-
-impl CreatorIncentivePaidEvent {
-    pub fn publish(&self, env: &Env) {
-        env.events().publish((soroban_sdk::Symbol::new(env, "creator_incentive_paid"),), self.clone());
-    }
 }
 
 #[contractimpl]
@@ -109,7 +99,7 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         let min_participants = Self::get_creator_min_participants(env.clone());
-        CreatorIncentiveConfigUpdatedEvent {
+        CreatorIncentiveUpdateEvent {
             admin,
             incentive_bps,
             min_participants,
@@ -149,7 +139,7 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         let incentive_bps = Self::get_creator_incentive_bps(env.clone());
-        CreatorIncentiveConfigUpdatedEvent {
+        CreatorIncentiveUpdateEvent {
             admin,
             incentive_bps,
             min_participants,

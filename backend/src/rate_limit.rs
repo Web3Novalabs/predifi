@@ -139,7 +139,7 @@ pub(crate) fn rate_limited_router(
                 .key_extractor(SmartIpKeyExtractor)
                 .error_handler(|_| crate::response::rate_limit_error_response())
                 .finish()
-                .expect("invalid governor config"),
+                .expect("RateLimitTier burst and period constants must be non-zero"),
         );
         router.layer(tower_governor::GovernorLayer { config })
     } else {
@@ -150,7 +150,7 @@ pub(crate) fn rate_limited_router(
                 .key_extractor(PeerIpKeyExtractor)
                 .error_handler(|_| crate::response::rate_limit_error_response())
                 .finish()
-                .expect("invalid governor config"),
+                .expect("RateLimitTier burst and period constants must be non-zero"),
         );
         router.layer(tower_governor::GovernorLayer { config })
     }

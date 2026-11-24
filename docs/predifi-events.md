@@ -696,8 +696,48 @@ functional module (not in `events.rs`). Indexers should handle them too:
 | `prediction_cooldown_update` | `admin.rs` | `set_prediction_cooldown` |
 | `storage_ttl_renewed` | `admin.rs` | `renew_storage_ttl` |
 | `emergency_withdraw` | `treasury.rs` | `emergency_withdraw` |
-| `creator_incentive_config_updated` | `creator_incentive.rs` | `set_creator_incentive_bps` |
+| `creator_incentive_config_updated` | `creator_incentive.rs` | `set_creator_incentive_bps`, `set_creator_min_participants` |
 | `creator_incentive_paid` | `creator_incentive.rs` | `claim_creator_incentive` |
+
+### Creator incentive events
+
+Both events are declared in `creator_incentive.rs` with `#[contractevent]`. The
+topic list is just the event name, so there is a single topic and no indexed
+fields; every value is in the `Map<Symbol, Val>` payload.
+
+#### `CreatorIncentiveUpdateEvent` — topic `creator_incentive_config_updated`
+
+| Emitting entry point | Module | When |
+| --- | --- | --- |
+| `set_creator_incentive_bps` | `creator_incentive.rs` | an admin changes the creator incentive rate |
+| `set_creator_min_participants` | `creator_incentive.rs` | an admin changes the minimum participant count |
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `admin` | `Address` | Admin that made the change |
+| `incentive_bps` | `u32` | Incentive rate after the change, in basis points of the pool's protocol fee (`0` = disabled) |
+| `min_participants` | `u32` | Minimum `participants_count` a pool needs before its creator can claim, after the change |
+
+Both fields always carry the **current** configuration: whichever setting was
+not changed is read back from storage, so an indexer can mirror the config from
+this event alone.
+
+#### `CreatorIncentivePaidEvent` — topic `creator_incentive_paid`
+
+| Emitting entry point | Module | When |
+| --- | --- | --- |
+| `claim_creator_incentive` | `creator_incentive.rs` | a pool creator is paid their share of the protocol fee |
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `pool_id` | `u64` | The resolved pool the incentive was claimed for |
+| `creator` | `Address` | Pool creator that received the payout |
+| `amount` | `i128` | Incentive amount transferred, in the pool token's smallest unit |
+| `participants_count` | `u32` | The pool's participant count when the incentive was claimed |
+
+> The Rust struct for the config event is `CreatorIncentiveUpdateEvent` rather
+> than `CreatorIncentiveConfigUpdatedEvent` because `#[contractevent]` limits
+> the struct name to 32 characters. The topic string is unchanged.
 
 ---
 

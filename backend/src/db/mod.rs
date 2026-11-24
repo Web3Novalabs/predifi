@@ -258,7 +258,8 @@ where
         }
     }
 
-    let last_error = last_error.expect("at least one error should exist after retry loop");
+    let last_error = last_error
+        .expect("retry loop runs at least once and leaves last_error set on exhaustion");
     error!(
         attempts = max_attempts,
         error = %last_error,
